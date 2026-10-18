@@ -125,7 +125,7 @@ fn surface_dot(
         g.clone(),
         front(),
         &b,
-        Some(0),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
         screen(at.0, at.1),
         1.0,
         options,
@@ -335,7 +335,7 @@ fn smudge_and_clone_refuse_the_2d_symmetry_in_3d_too() {
         g,
         front(),
         &b,
-        Some(0),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
         screen(-0.5, 0.0),
         1.0,
         SurfaceStrokeOptions {
@@ -350,7 +350,7 @@ fn smudge_and_clone_refuse_the_2d_symmetry_in_3d_too() {
 
 /// 板の UV の格子と、X のミラーの 3D の対称を 2D のブラシに付ける。
 fn with_model_symmetry(g: &Arc<SurfaceGeometry>, mut b: Brush) -> Brush {
-    let grid = Arc::new(UvGrid::new(g, 0));
+    let grid = Arc::new(UvGrid::new(g, &yolu_core::geometry::MaterialSet::one(0)));
     b.model_symmetry = yolu_core::geometry::ModelSymmetry::new(grid, &mirror_x()).map(Arc::new);
     assert!(b.model_symmetry.is_some());
     b
@@ -447,13 +447,16 @@ fn the_3d_selection_pen_returns_the_projected_amounts_and_refuses_when_out_of_me
         radius: 6.0,
         hardness: 0.6,
         opacity: 1.0,
-        pressure_size: false,
-        pressure_opacity: true,
+        pressure: yolu_core::PressureSwitches {
+            size: false,
+            opacity: true,
+            flow: false,
+        },
     };
     let (mut s, first) = SurfaceCoverStroke::begin(
         g.clone(),
         front(),
-        Some(0),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
         params,
         ProjectionSettings::default(),
         SIZE,
@@ -479,7 +482,7 @@ fn the_3d_selection_pen_returns_the_projected_amounts_and_refuses_when_out_of_me
     let refused = SurfaceCoverStroke::begin(
         g,
         front(),
-        Some(0),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
         params,
         ProjectionSettings::default(),
         SIZE,

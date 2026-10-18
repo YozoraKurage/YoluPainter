@@ -1,5 +1,5 @@
-//! レイヤーのロック（正本の版 12。属性の印のビット 1 と、直後の int）の読み書き。正解は C# の実際の書き手（`tools/io-fixtures/M2Fixture.cs` の
-//! `--locks`）が作った `locks-v21.utpaint` と、Rust が書いて C# の読み手に読ませた `rust-written-locks-v21.*`。ロックは合成を変えない。
+//! レイヤーのロック（正本の版 12。属性の印のビット 1 と、直後の int）の読み書き。正解は C# の実際の書き手が作った
+//!  `locks-v21.utpaint` と、Rust が書いて C# の読み手に読ませた `rust-written-locks-v21.*`。ロックは合成を変えない。
 use yolu_core::{
     BlendMode, Channel, ChannelBlend, CoreError, Document, LayerId, LayerKind, LayerLocks, Rect,
 };
@@ -149,8 +149,8 @@ fn a_native_document_written_by_csharp_with_locks_reads_into_core_and_writes_bac
 }
 
 /// Rust が編集してロックを付け外しした版 21。固定の ID で作り、ファイルと同じバイト列になる。作り直すときは
-/// `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp layer_locks::rust_written`、続けて
-/// `python3 tools/io-fixtures/generate.py --source <Unity 版> --rust-written-locks` で Unity 版の読み手の記録を取り直す。
+/// `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp layer_locks::rust_written`。
+/// Unity 版の読み手の記録（`*.unity.txt`）は Unity 0.2.0 で取った物で、取り直す道は無い。
 fn edited_locked_document() -> Document {
     let mut core = NativeDocument::read(&read("locks-v21.utpaint"))
         .unwrap()
@@ -197,7 +197,7 @@ fn rust_written_locks_are_what_this_writer_produces_and_unity_reads_and_resaves_
     assert_eq!(
         bytes[8..12],
         21i32.to_le_bytes(),
-        "ユーザーチャンネルが無い文書は版 21（Unity 0.2.0 が読める）"
+        "ユーザーチャンネルが無い文書はバージョン 21（Unity 0.2.0 が読める）"
     );
     // 書いたものを読み戻すと、自分のロックも効くロックも同じ
     let back = NativeDocument::read(&bytes).unwrap().to_core().unwrap();
@@ -341,11 +341,11 @@ fn a_document_with_locks_reads_as_version_12_and_is_refused_as_version_11() {
         assert_eq!(
             core.layer(id_of(&core, "a")).unwrap().locks(),
             bits(1 | 4),
-            "版 {version}"
+            "バージョン {version}"
         );
         assert!(
             core.layer(id_of(&core, "b")).unwrap().clipping(),
-            "版 {version}"
+            "バージョン {version}"
         );
         assert_eq!(
             core.layer(id_of(&core, "b")).unwrap().locks(),
@@ -355,7 +355,7 @@ fn a_document_with_locks_reads_as_version_12_and_is_refused_as_version_11() {
     for version in [5, 6, 11] {
         assert!(
             NativeDocument::read(&relabel(version)).is_err(),
-            "ロックの印を持つ正本を版 {version} と偽ると断る"
+            "ロックの印を持つ正本をバージョン {version} と偽ると断る"
         );
     }
     // ロックの無い同じ文書は、版 11 と偽っても読める（ロックの無い文書は版 11 と同じ並び）
@@ -368,7 +368,7 @@ fn a_document_with_locks_reads_as_version_12_and_is_refused_as_version_11() {
 
 fn writer() -> WriterInfo {
     WriterInfo {
-        app: "試験の書き手".into(),
+        app: "テストの書き手".into(),
         version: "0.0.1".into(),
         unity: "standalone".into(),
     }
@@ -384,7 +384,7 @@ fn locks_survive_a_project_save_and_open() {
         &[SetSpec {
             id: SET.into(),
             name: "ロック".into(),
-            material: yolu_io::MaterialRef::Unassigned,
+            materials: vec![yolu_io::MaterialRef::Unassigned],
             document: Some(NativeDocument::from_core(&core).unwrap().into()),
             composites: yolu_io::composite_pngs(&core).unwrap(),
         }],

@@ -147,7 +147,7 @@ pub fn projection(mode: u8, v: usize) -> Projection {
     }
     p
 }
-/// デカールの `apply_decal_to_value` 用の人工の値（座標だけで決まる。tools/csharp-golden/FillGolden.cs の Value と同じ式）。
+/// デカールの `apply_decal_to_value` 用の人工の値（座標だけで決まる）。
 #[allow(dead_code)] // 計測の example はこの支えを読むが、値の経路は使わない
 pub fn decal_values(w: usize, h: usize) -> Vec<u8> {
     let mut d = vec![0; w * h * 4];

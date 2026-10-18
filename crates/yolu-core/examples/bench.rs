@@ -1,4 +1,4 @@
-//! 速さの計測（tools/csharp-golden/run.sh bench の C# と同じ中身）。
+//! 速さの計測。
 //!   cargo run --release -p yolu-core --example bench [回数] [M2 の種類だけ: round|jitter|tip|texture|dual|color|all|blur|smudge]
 //! 4096² の合成（全タイル乱数の 1 レイヤー、Normal + Multiply 0.7 の 2 レイヤー、グループ・マスク・調整・塗りつぶしの文書、Normal の合成と
 //! Height → Normal の出力）と、101 点のストローク（半径 40 を空のレイヤー・乱数の画素の上、半径 200 を空のレイヤー）。
@@ -106,7 +106,7 @@ fn time_composite(doc: &Document, runs: usize) -> String {
     stats(&mut ms)
 }
 
-/// M2 のブラシの計測の設定（tools/csharp-golden/Golden.cs の bench と同じ）。
+/// M2 のブラシの計測の設定。
 fn dynamic_brush(kind: &str, radius: f64) -> Brush {
     let mut b = Brush::from(BrushSettings {
         radius,

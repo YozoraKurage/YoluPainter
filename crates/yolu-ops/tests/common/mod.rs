@@ -114,7 +114,7 @@ impl Set {
         SetSpec {
             id: self.id,
             name: self.name,
-            material,
+            materials: vec![material],
             document: Some(self.source),
             composites: self.composites,
         }

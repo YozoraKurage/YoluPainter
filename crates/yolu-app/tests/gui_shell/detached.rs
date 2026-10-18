@@ -5,6 +5,7 @@
 //! 別ウィンドウは、試験の既定（kittest は子の viewport を根の中の egui のウィンドウに埋める）ではメインウィンドウの中の egui のウィンドウに描かれる。別ウィンドウの入力は
 //! `common::viewports` の口で子の viewport を本物の別のパスとして回して確かめる（子ウィンドウの絵は撮らない）。
 use crate::common;
+use crate::common::drive::{Drive, DriveApp};
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -381,7 +382,7 @@ fn headless_the_window_menu_lists_the_panels_and_holds_the_layout_reset() {
         "ヘルプ"
     );
     assert_eq!(shell::MENU_TITLES.len(), 8);
-    app.ui.panels.open = Tab::ALL
+    app.ui_mut().panels.open = Tab::ALL
         .iter()
         .copied()
         .filter(|t| *t != Tab::Pose)
@@ -420,11 +421,11 @@ fn headless_the_window_menu_lists_the_panels_and_holds_the_layout_reset() {
             ..
         } = entry
         {
-            assert_eq!(label, tab.title_in(app.lang));
+            assert_eq!(label, tab.title_in(app.lang()));
             assert_eq!(*check, yolu_app::ui::menu::Check::Checked, "{label}");
         }
     }
-    app.ui.panels.open.retain(|t| *t != Tab::Log);
+    app.ui_mut().panels.open.retain(|t| *t != Tab::Log);
     let entries = shell::menu_entries(&app, shell::WINDOW_MENU);
     let log = entries.iter().find(|e| e.label() == Some("ログ")).unwrap();
     assert!(matches!(
@@ -450,16 +451,16 @@ fn headless_the_window_menu_lists_the_panels_and_holds_the_layout_reset() {
             .collect()
     };
     assert_eq!(names(&app, Tab::Layers), vec!["別ウィンドウで開く"]);
-    app.ui.panels.outside = vec![Tab::Layers];
-    app.ui.panels.alone = vec![Tab::Layers];
+    app.ui_mut().panels.outside = vec![Tab::Layers];
+    app.ui_mut().panels.alone = vec![Tab::Layers];
     assert_eq!(names(&app, Tab::Layers), vec!["ドックに戻す"]);
-    app.ui.panels.outside = vec![Tab::Layers, Tab::Log];
-    app.ui.panels.alone.clear();
+    app.ui_mut().panels.outside = vec![Tab::Layers, Tab::Log];
+    app.ui_mut().panels.alone.clear();
     assert_eq!(
         names(&app, Tab::Layers),
         vec!["別ウィンドウで開く", "ドックに戻す"]
     );
-    app.lang = yolu_app::lang::Lang::En;
+    app.set_lang(yolu_app::lang::Lang::En);
     assert_eq!(
         names(&app, Tab::Layers),
         vec!["Open in New Window", "Return to Dock"]
@@ -548,7 +549,7 @@ fn the_tab_menu_opens_a_panel_in_a_new_window_and_returns_it_to_the_dock() {
     let tab = h.state().tab_rects[&Tab::History];
     right_click(&mut h, tab.center());
     assert!(matches!(
-        h.state().state.popup.as_ref().map(|p| p.kind),
+        h.popup().as_ref().map(|p| p.kind),
         Some(yolu_app::state::PopupKind::DockTab(Tab::History))
     ));
     // egui_dock の英語の「Eject」は出さない
@@ -652,10 +653,9 @@ fn a_floating_window_made_by_the_dock_becomes_an_outside_window_with_its_group()
 #[test]
 fn the_window_menu_brings_a_panel_forward_and_reset_closes_the_outside_windows() {
     let mut h = app(1280.0, 800.0, 64);
-    h.state_mut().apply(Action::Dock(DockOp::Detach(Tab::Log)));
+    h.act(Action::Dock(DockOp::Detach(Tab::Log)));
     h.run();
-    h.state_mut()
-        .apply(Action::Dock(DockOp::Show(Tab::History)));
+    h.act(Action::Dock(DockOp::Show(Tab::History)));
     h.run();
     // 「ウィンドウ」を開いて、ログ（別ウィンドウ）を選ぶと、そのウィンドウのタブが前に（ウィンドウを前へ出す頼みも送る）
     let at = menu_title(&h, "ウィンドウ").center();
@@ -671,8 +671,7 @@ fn the_window_menu_brings_a_panel_forward_and_reset_closes_the_outside_windows()
     let item = popup_item(&h, "テクスチャセット");
     click(&mut h, item.center());
     h.run();
-    h.state_mut()
-        .apply(Action::Dock(DockOp::Show(Tab::Channels)));
+    h.act(Action::Dock(DockOp::Show(Tab::Channels)));
     h.run();
     let dock = &h.state().dock;
     let (node, index) = dock.find_main_surface_tab(&Tab::Channels).unwrap();
@@ -704,18 +703,26 @@ fn the_window_menu_brings_a_panel_forward_and_reset_closes_the_outside_windows()
 /// 「ウィンドウ」を開いた所と、タブの右クリック（撮る）。
 fn snapshot_menus(lang: yolu_app::lang::Lang, suffix: &str) {
     let mut h = app(1280.0, 800.0, 64);
-    h.state_mut().state.lang = lang;
+    h.set_lang(lang);
     h.run();
     let title = shell::menu_titles(lang)[shell::WINDOW_MENU];
     let at = menu_title(&h, title).center();
     click(&mut h, at);
     h.run();
-    h.snapshot(format!("window_menu{suffix}"));
-    h.state_mut().state.popup = None;
+    // 日本語は画面全体（メニューを開いた形の見本）、英語はメニューと見出しだけ
+    let menu_name = format!("window_menu{suffix}");
+    if lang == yolu_app::lang::Lang::Ja {
+        common::shot::window(&mut h, &menu_name);
+    } else {
+        let menu = crate::shots::popup(&h).union(menu_title(&h, title));
+        common::shot::region(&mut h, &menu_name, menu);
+    }
+    *h.popup_mut() = None;
     h.run();
     let tab = h.state().tab_rects[&Tab::Layers];
     right_click(&mut h, tab.center());
-    h.snapshot(format!("dock_tab_menu{suffix}"));
+    let menu = crate::shots::popup(&h).union(tab);
+    common::shot::region(&mut h, &format!("dock_tab_menu{suffix}"), menu);
 }
 
 #[test]
@@ -758,8 +765,7 @@ fn outside_windows_are_remembered_and_come_back_at_the_next_start() {
     let settings = dir.join("settings.conf");
     let open = || app_with_settings(&settings);
     let mut h = open();
-    h.state_mut()
-        .apply(Action::Dock(DockOp::Detach(Tab::History)));
+    h.act(Action::Dock(DockOp::Detach(Tab::History)));
     h.run();
     // ウィンドウの置き場所（OS のウィンドウなら利用者が動かした所）
     h.state_mut().detached.windows[0].record = Some(record(1650.0, 140.0, 420.0, 360.0));
@@ -787,8 +793,7 @@ fn dragging_the_only_tab_of_an_outside_window_inside_the_window_keeps_that_windo
     let dir = settings_dir("lone-drag");
     let settings = dir.join("settings.conf");
     let mut h = app_with_settings(&settings);
-    h.state_mut()
-        .apply(Action::Dock(DockOp::Detach(Tab::History)));
+    h.act(Action::Dock(DockOp::Detach(Tab::History)));
     h.run();
     // （外のウィンドウは、置いたあと 1 回描き直して矩形が決まる）
     h.run();
@@ -868,7 +873,7 @@ fn app_with_viewports() -> (Harness<'static, YoluApp>, Driver) {
         .entry(ViewportId::ROOT)
         .or_default()
         .inner_rect = Some(Rect::from_min_size(Pos2::ZERO, ROOT_SIZE.into()));
-    h.state_mut().state.bake.backend = yolu_app::bake::BakeBackend::Cpu;
+    h.bake_mut().backend = yolu_app::bake::BakeBackend::Cpu;
     h.run();
     (h, driver)
 }
@@ -880,7 +885,7 @@ fn detach_to(
     tab: Tab,
     inner: Rect,
 ) -> ViewportId {
-    h.state_mut().apply(Action::Dock(DockOp::Detach(tab)));
+    h.act(Action::Dock(DockOp::Detach(tab)));
     h.run();
     let id = h
         .state()
@@ -931,11 +936,11 @@ fn an_outside_window_runs_its_own_pass_and_takes_the_same_shortcuts() {
     driver.take_ran();
     h.run();
     assert!(driver.take_ran().contains(&id), "子ウィンドウのパスが回る");
-    assert_eq!(h.state().state.tool, yolu_app::state::Tool::Brush);
+    assert_eq!(h.tool(), yolu_app::state::Tool::Brush);
     // 別ウィンドウに打ったキーは、メインウィンドウと同じ表で効く（E は消しゴム）
     driver.child(id, |c| c.events.extend(key_events(Key::E)));
     h.run();
-    assert_eq!(h.state().state.tool, yolu_app::state::Tool::Eraser);
+    assert_eq!(h.tool(), yolu_app::state::Tool::Eraser);
     // 別ウィンドウの中のタブの見出し（子ウィンドウの点）も控える
     assert!(h.state().detached.windows[0]
         .tab_rects
@@ -1020,7 +1025,7 @@ fn a_menu_opened_in_an_outside_window_is_drawn_and_chosen_there() {
         }
     });
     h.run();
-    let popup = h.state().state.popup.as_ref().expect("メニューが開く");
+    let popup = h.popup().as_ref().expect("メニューが開く");
     assert_eq!(popup.state.viewport, id, "別ウィンドウに開く");
     assert!(popup.state.rect.is_positive(), "別ウィンドウのパスが描いた");
     // 別ウィンドウのキーで選ぶ（ただ 1 つのタブなので「ドックに戻す」だけ）
@@ -1030,7 +1035,7 @@ fn a_menu_opened_in_an_outside_window_is_drawn_and_chosen_there() {
     });
     h.run();
     let app = h.state();
-    assert!(app.state.popup.is_none());
+    assert!(app.state.popup().is_none());
     assert!(app.detached.windows.is_empty());
     assert!(app.dock.find_tab(&Tab::History).is_some());
 }
@@ -1043,18 +1048,16 @@ fn copy_after_shift_is_merged(
     child: Option<(&Driver, ViewportId)>,
 ) -> bool {
     let os = yolu_app::clipboard::os::MemoryClipboard::new();
-    h.state_mut().state.clip.set_os(Box::new(os));
-    let layer = h.state().state.selected_layer.unwrap();
+    h.clip_mut().set_os(Box::new(os));
+    let layer = h.selected_layer().unwrap();
     for y in 10..30 {
         for x in 10..30 {
-            h.state_mut()
-                .state
-                .doc
+            h.doc_mut()
                 .set_pixel(layer, x, y, yolu_app::engine::Rgba8::new(200, 10, 20, 255))
                 .unwrap();
         }
     }
-    h.state_mut().state.doc.clear_history().unwrap();
+    h.doc_mut().clear_history().unwrap();
     let shift = Modifiers::COMMAND | Modifiers::SHIFT;
     match child {
         // フォーカスのあるウィンドウは外のウィンドウ（キーはそのウィンドウにだけ来る）
@@ -1072,7 +1075,7 @@ fn copy_after_shift_is_merged(
         }
     }
     h.run();
-    h.state().state.clip.pixels.as_ref().map(|p| p.source())
+    h.clip().pixels.as_ref().map(|p| p.source())
         == Some(yolu_app::engine::ClipboardSource::Composite)
 }
 
@@ -1173,7 +1176,7 @@ fn the_canvas_in_an_outside_window_still_draws() {
         "子ウィンドウの点: {rect:?}"
     );
     let c = rect.center();
-    let before = h.state().state.can_undo();
+    let before = h.app().can_undo();
     driver.child(id, |c2| {
         c2.events.push(Event::PointerMoved(c));
         c2.events.push(Event::PointerButton {
@@ -1200,7 +1203,7 @@ fn the_canvas_in_an_outside_window_still_draws() {
     });
     h.run();
     assert!(
-        !before && h.state().state.can_undo(),
+        !before && h.app().can_undo(),
         "別ウィンドウのキャンバスに描けた"
     );
 }
@@ -1708,14 +1711,13 @@ fn after_a_tab_is_torn_off_by_the_pen_its_bar_can_be_dragged_by_the_pen_and_then
     assert_eq!(h.state().detached.windows.len(), 1, "ウィンドウはそのまま");
 }
 
-/// 絵: 自前の枠の別ウィンドウ（試験のウィンドウではメインウィンドウの中に描く）。タブの行の右端に閉じる（名前は「ドックに戻す」）。
-fn snapshot_frame(lang: yolu_app::lang::Lang, suffix: &str) {
+/// 絵（日本語だけ）: 自前の枠の別ウィンドウ（試験のウィンドウではメインウィンドウの中に描く）。タブの行の右端に閉じる（名前は「ドックに戻す」）。
+fn snapshot_frame(lang: yolu_app::lang::Lang) {
     let mut h = app(1280.0, 800.0, 64);
-    h.state_mut().state.lang = lang;
+    h.set_lang(lang);
     h.state_mut().set_custom_frame(true);
     h.run();
-    h.state_mut()
-        .apply(Action::Dock(DockOp::Detach(Tab::Layers)));
+    h.act(Action::Dock(DockOp::Detach(Tab::Layers)));
     h.run();
     let app = h.state_mut();
     let serial = app.detached.windows[0].serial;
@@ -1732,15 +1734,216 @@ fn snapshot_frame(lang: yolu_app::lang::Lang, suffix: &str) {
     use egui_kittest::kittest::Queryable;
     let name = lang.pick("ドックに戻す", "Return to Dock");
     assert!(h.query_by_label(name).is_some(), "閉じるの名前");
-    h.snapshot(format!("detached_frame{suffix}"));
+    if lang == yolu_app::lang::Lang::Ja {
+        common::shot::window(&mut h, "detached_frame");
+    }
 }
 
 #[test]
 fn snapshot_the_outside_window_with_the_custom_frame() {
-    snapshot_frame(yolu_app::lang::Lang::Ja, "");
+    snapshot_frame(yolu_app::lang::Lang::Ja);
 }
 
 #[test]
 fn snapshot_the_outside_window_with_the_custom_frame_in_english() {
-    snapshot_frame(yolu_app::lang::Lang::En, "_english");
+    snapshot_frame(yolu_app::lang::Lang::En);
+}
+
+// ───────── 保存していない変更の問いが開いている間 ─────────
+
+/// 別ウィンドウの履歴の先頭の行（「開始位置」。押すと文書を最初まで戻す）の点（子ウィンドウの点）。
+fn history_start_row(h: &Harness<'static, YoluApp>) -> Pos2 {
+    let tab = h.state().detached.windows[0].tab_rects[&Tab::History];
+    pos2(tab.left() + 40.0, tab.bottom() + 16.0)
+}
+
+fn click_child(h: &mut Harness<'static, YoluApp>, driver: &Driver, id: ViewportId, at: Pos2) {
+    play_child(
+        h,
+        driver,
+        id,
+        vec![
+            Event::PointerMoved(at),
+            child_button(at, true),
+            child_button(at, false),
+        ],
+    );
+    h.run();
+}
+
+fn ctrl_z() -> Event {
+    Event::Key {
+        key: Key::Z,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::COMMAND,
+    }
+}
+
+#[test]
+fn while_the_unsaved_changes_question_is_open_an_outside_panel_does_not_change_the_document() {
+    let (mut h, driver) = app_with_viewports();
+    h.state_mut().set_discard_window(true);
+    h.doc_mut().add_layer("after").unwrap();
+    h.set_modified(true);
+    let id = detach_to(
+        &mut h,
+        &driver,
+        Tab::History,
+        Rect::from_min_size(pos2(1400.0, 100.0), vec2(360.0, 480.0)),
+    );
+    let layers = h.doc().layers().len();
+    let at = history_start_row(&h);
+    // 問いが無ければ、この点のクリックは文書を最初まで戻す（点が当たっていることの確かめ）
+    click_child(&mut h, &driver, id, at);
+    assert_eq!(h.doc().undo_count(), 0, "問いが無いと戻る");
+    assert_eq!(h.doc().layers().len(), layers - 1);
+    h.doc_mut().redo().unwrap();
+    h.run();
+    assert_eq!(h.doc().layers().len(), layers);
+    driver.child(id, |c| c.events.push(ctrl_z()));
+    h.run();
+    assert_eq!(h.doc().undo_count(), 0, "問いが無いとキーでも戻る");
+    h.doc_mut().redo().unwrap();
+    h.run();
+    // 問いが開いている間は、同じクリックで何も変わらない
+    h.act(Action::Quit);
+    h.run();
+    assert!(h.discard_ask().is_some(), "問いが開く");
+    let undo = h.doc().undo_count();
+    click_child(&mut h, &driver, id, at);
+    assert_eq!(h.doc().undo_count(), undo, "文書は変わらない");
+    assert_eq!(h.doc().layers().len(), layers);
+    // 別ウィンドウに打ったキー（元に戻す）も、文書に届かない
+    driver.child(id, |c| c.events.push(ctrl_z()));
+    h.run();
+    assert_eq!(h.doc().undo_count(), undo, "キーでも変わらない");
+    assert!(h.discard_ask().is_some(), "問いは開いたまま");
+}
+
+/// 別ウィンドウのキャンバスに、押す→動かす→離すで 1 本引く。
+fn stroke_in_child(h: &mut Harness<'static, YoluApp>, driver: &Driver, id: ViewportId, c: Pos2) {
+    let press = |pressed: bool, at: Pos2| Event::PointerButton {
+        pos: at,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Modifiers::NONE,
+    };
+    driver.child(id, |c2| {
+        c2.events.push(Event::PointerMoved(c));
+        c2.events.push(press(true, c));
+    });
+    h.step();
+    for dx in [10.0, 20.0, 30.0] {
+        driver.child(id, |c2| {
+            c2.events.push(Event::PointerMoved(c + vec2(dx, 0.0)))
+        });
+        h.step();
+    }
+    driver.child(id, |c2| c2.events.push(press(false, c + vec2(30.0, 0.0))));
+    h.run();
+}
+
+#[test]
+fn while_the_unsaved_changes_question_is_open_the_canvas_in_an_outside_window_does_not_draw() {
+    let (mut h, driver) = app_with_viewports();
+    h.state_mut().set_discard_window(true);
+    let id = detach_to(
+        &mut h,
+        &driver,
+        Tab::Canvas,
+        Rect::from_min_size(pos2(1300.0, 0.0), vec2(700.0, 600.0)),
+    );
+    h.run();
+    let c = h
+        .state()
+        .canvas_view_rect()
+        .expect("別ウィンドウでキャンバスを描いた")
+        .center();
+    // 問いが無ければ描ける（同じ操作で Undo の数が増える）
+    let before = h.doc().undo_count();
+    stroke_in_child(&mut h, &driver, id, c);
+    let drawn = h.doc().undo_count();
+    assert!(drawn > before, "問いが無いと別ウィンドウに描ける");
+    h.set_modified(true);
+    h.act(Action::Quit);
+    h.run();
+    assert!(h.discard_ask().is_some(), "問いが開く");
+    // 問いが開いている間は、同じ操作で文書は変わらない
+    stroke_in_child(&mut h, &driver, id, c + vec2(0.0, 40.0));
+    assert_eq!(
+        h.doc().undo_count(),
+        drawn,
+        "別ウィンドウのキャンバスに描けない"
+    );
+    assert!(!h.app().is_stroking(), "ストロークも残らない");
+    assert!(h.discard_ask().is_some(), "問いは開いたまま");
+}
+
+#[test]
+fn while_the_unsaved_changes_question_is_open_the_3d_view_in_an_outside_window_does_not_paint() {
+    let (mut h, driver) = app_with_viewports();
+    h.state_mut().set_discard_window(true);
+    h.view3d_mut().load_demo();
+    let id = detach_to(
+        &mut h,
+        &driver,
+        Tab::View3d,
+        Rect::from_min_size(pos2(1300.0, 0.0), vec2(700.0, 600.0)),
+    );
+    h.run();
+    let c = h
+        .state()
+        .view3d_rect()
+        .expect("別ウィンドウで 3D ビューを描いた")
+        .center();
+    // 問いが無ければ描ける（同じ操作で Undo の数が増える）
+    let before = h.doc().undo_count();
+    stroke_in_child(&mut h, &driver, id, c);
+    let drawn = h.doc().undo_count();
+    assert!(
+        drawn > before,
+        "問いが無いと別ウィンドウの 3D ビューに描ける"
+    );
+    h.set_modified(true);
+    h.act(Action::Quit);
+    h.run();
+    assert!(h.discard_ask().is_some(), "問いが開く");
+    // 問いが開いている間は、同じ操作で文書は変わらない
+    stroke_in_child(&mut h, &driver, id, c + vec2(0.0, 20.0));
+    assert_eq!(h.doc().undo_count(), drawn, "3D ビューに描けない");
+    assert!(h.stroke().is_none(), "ストロークも残らない");
+    assert!(h.discard_ask().is_some(), "問いは開いたまま");
+}
+
+#[test]
+fn an_added_3d_view_in_an_outside_window_takes_the_input() {
+    use yolu_app::view3d::ViewId;
+    let (mut h, driver) = app_with_viewports();
+    h.view3d_mut().load_demo();
+    h.run();
+    let second = h.add_view3d_tab().expect("3D ビュー 2 を足す");
+    h.run();
+    let id = detach_to(
+        &mut h,
+        &driver,
+        Tab::View3dMore(second),
+        Rect::from_min_size(pos2(1300.0, 0.0), vec2(700.0, 600.0)),
+    );
+    h.run();
+    let c = h
+        .view3d_rect_of(second)
+        .expect("別ウィンドウで 3D ビュー 2 を描いた")
+        .center();
+    // 別ウィンドウの 3D ビュー 2 に描ける（ポインタの乗ったビューが今のビュー）
+    let before = h.doc().undo_count();
+    stroke_in_child(&mut h, &driver, id, c);
+    assert!(
+        h.doc().undo_count() > before,
+        "別ウィンドウの 3D ビュー 2 に描ける"
+    );
+    assert_eq!(h.view3d().active_view(), second);
+    // メインウィンドウの 3D ビューは、そのまま描いている
+    assert!(h.view3d_rect_of(ViewId::FIRST).is_some());
 }

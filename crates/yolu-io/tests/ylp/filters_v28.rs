@@ -198,8 +198,8 @@ fn every_new_kind_round_trips_at_version_28_with_default_and_odd_values() {
 #[test]
 fn documents_without_the_new_kinds_keep_their_version() {
     assert_eq!(EFFECTS_VERSION, 28);
-    // 読める一番新しい版はベイクの優先の版 33（版 28 の中身も読み書きできる）
-    assert_eq!(MAX_NATIVE_VERSION, yolu_io::RULERS_VERSION);
+    // 読める一番新しい版はレイヤーセットの版 36（版 28 の中身も読み書きできる）
+    assert_eq!(MAX_NATIVE_VERSION, yolu_io::LAYER_SETS_VERSION);
     let (mut doc, id) = plain();
     assert_eq!(
         NativeDocument::from_core(&doc).unwrap().version(),
@@ -319,11 +319,14 @@ fn versions_without_a_meaning_are_refused_by_the_number() {
         .map(|e| e.to_string());
     assert!(
         e.is_some_and(|e| e.contains(&n.to_string())),
-        "版 {n} を断らなかった"
+        "バージョン {n} を断らなかった"
     );
     // 範囲の外
     for n in [0, -1, yolu_io::SEAMS_VERSION + 1, i32::MAX] {
-        assert!(NativeDocument::read(&numbered(n)).is_err(), "版 {n}");
+        assert!(
+            NativeDocument::read(&numbered(n)).is_err(),
+            "バージョン {n}"
+        );
     }
     // 分けた正本の中の版（ヘッダーの中の版）は `bigdoc_tests` の `wrong_parts_are_refused` が断ることを確かめる
 }

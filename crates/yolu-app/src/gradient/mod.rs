@@ -6,15 +6,16 @@
 pub mod canvas;
 pub mod props;
 
+use crate::engine::{LayerKind, Rgba8};
 use egui::Pos2;
 use yolu_core::glam::DVec2;
 use yolu_core::material::{ChannelPaint, GradientSettings, GradientShape};
-use yolu_core::{LayerKind, Rgba8};
 
+use crate::features::Feature;
 use crate::matpaint::single_value;
 use crate::matpaint::MaterialPaint;
 use crate::notice::Source;
-use crate::state::{to_byte, AppState, Rgba, StrokeSource};
+use crate::state::{AppState, Rgba, StrokeSource};
 
 /// 終点の色。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -95,10 +96,6 @@ impl GradientOp {
     }
 }
 
-fn rgba8(c: Rgba) -> Rgba8 {
-    Rgba8::new(to_byte(c[0]), to_byte(c[1]), to_byte(c[2]), to_byte(c[3]))
-}
-
 impl AppState {
     /// これ以内（キャンバスの画素）しか動かさなければ、ドラッグでなくクリックで、何も塗らない。
     pub const GRADIENT_CLICK: f64 = 1.5;
@@ -108,7 +105,7 @@ impl AppState {
         let from = single_value(self.color.main);
         let to = match self.gradient.end {
             End::Transparent => Rgba8::TRANSPARENT,
-            End::Sub => rgba8(self.color.sub),
+            End::Sub => Rgba8::from_unit_f32(self.color.sub),
         };
         (from, to)
     }
@@ -129,10 +126,7 @@ impl AppState {
                 self.gradient.between = true;
                 self.info(
                     Source::Gradient,
-                    lang.pick(
-                        "現在のマテリアルを終点にしました",
-                        "The current material is the end",
-                    ),
+                    lang.t("gradient-the-current-material-is-the"),
                 );
             }
             GradientOp::Apply { start, end } => self.gradient_paint(start, end),
@@ -166,23 +160,17 @@ impl AppState {
     /// グラデーションを塗るレイヤーとマスクを描くか（塗れなければ理由を知らせて None）。
     pub(crate) fn gradient_target(&mut self) -> Option<(yolu_core::LayerId, bool)> {
         let lang = self.lang;
-        let Some(id) = self.selected_layer else {
-            self.refuse(
-                Source::Gradient,
-                lang.pick("描くレイヤーがありません。", "No layer to paint on."),
-            );
-            return None;
+        let id = match crate::stroke_gate::selected(self) {
+            Ok(id) => id,
+            Err(reason) => {
+                self.refuse(Source::Gradient, reason);
+                return None;
+            }
         };
         let masked = self.m2.edit_mask;
-        let kind = self.doc.layer(id).map(|l| l.kind());
+        let kind = self.session.doc.layer(id).map(|l| l.kind());
         if !masked && kind != Some(LayerKind::Raster) {
-            self.refuse(
-                Source::Gradient,
-                lang.pick(
-                    "ペイントレイヤーかマスクだけにグラデーションを塗れます",
-                    "Only a paint layer or a mask takes a gradient",
-                ),
-            );
+            self.refuse(Source::Gradient, lang.t("gradient-only-a-paint-layer-or"));
             return None;
         }
         Some((id, masked))
@@ -209,13 +197,14 @@ impl AppState {
             opacity: f64::from(self.brush.opacity),
         };
         let erase = self.gradient.erase;
-        let revision = self.doc.revision();
-        self.doc.end_coalescing();
+        let revision = self.session.doc.revision();
+        self.session.doc.end_coalescing();
         let result = if masked {
             // マスクは、始点の黒（隠す量 1）から透明へ。消す（reveal）なら見せる向き
             settings.from = Rgba8::new(0, 0, 0, 255);
             settings.to = Rgba8::TRANSPARENT;
-            self.doc
+            self.session
+                .doc
                 .gradient_mask_at(id, &settings, region, erase, place)
         } else if self.paints_material() {
             let channels = self.paint_channels();
@@ -229,7 +218,7 @@ impl AppState {
             } else {
                 None
             };
-            self.doc.gradient_material_at(
+            self.session.doc.gradient_material_at(
                 id,
                 &channels,
                 end_paints.as_deref(),
@@ -241,7 +230,7 @@ impl AppState {
         } else {
             // 描くチャンネル 1 つ。無効のチャンネルは有効にして、1 回の Undo で塗る
             let channel = self.m2.paint_channel;
-            self.doc.gradient_material_at(
+            self.session.doc.gradient_material_at(
                 id,
                 &[ChannelPaint::new(channel, from)],
                 Some(&[ChannelPaint::new(channel, to)]),
@@ -252,23 +241,15 @@ impl AppState {
             )
         };
         match result {
-            Ok(true) => self.info(
-                Source::Gradient,
-                lang.pick("グラデーションを塗りました", "Gradient applied"),
-            ),
-            Ok(false) => self.refuse(
-                Source::Gradient,
-                lang.pick("塗る所がありません", "Nothing to paint there"),
-            ),
+            Ok(true) => self.info(Source::Gradient, lang.t("gradient-gradient-applied")),
+            Ok(false) => self.refuse(Source::Gradient, lang.t("gradient-nothing-to-paint-there")),
             Err(e) => self.notify(
                 crate::notice::Kind::of_core(&e),
                 Source::Gradient,
                 lang.core_error(&e),
             ),
         }
-        if self.doc.revision() != revision {
-            self.modified = true;
-        }
+        self.session.mark_modified_if_changed(revision);
     }
 
     /// ドラッグの途中の形を捨てる（Esc・ツールの切り替え・フォーカスを失ったとき。2D のキャンバスと 3D ビューの両方）。何かあったか。
@@ -276,6 +257,7 @@ impl AppState {
         self.gradient.pen_down = None;
         let surface = self
             .view3d
+            .view
             .input
             .draft
             .take_if(|d| d.kind == crate::view3d::draft::DraftKind::Gradient)
@@ -283,3 +265,14 @@ impl AppState {
         self.gradient.drag.take().is_some() || surface
     }
 }
+
+/// 機能の表の行（ツールを替えたとき・ペイントのモードを出るとき、途中のドラッグを捨てる）。
+pub(crate) const FEATURE: Feature = Feature {
+    tool_left: Some(|app| {
+        app.gradient_cancel_drag();
+    }),
+    paint_left: Some(|app| {
+        app.gradient_cancel_drag();
+    }),
+    ..Feature::new("gradient")
+};

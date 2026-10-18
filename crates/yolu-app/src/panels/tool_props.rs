@@ -17,10 +17,23 @@ use crate::ui::widgets::Rows;
 
 /// ツールプロパティのパネル。
 pub fn show(ui: &mut Ui, app: &mut AppState) {
-    let r = ui.max_rect();
-    ui.advance_cursor_after_rect(r);
+    let full = ui.max_rect();
+    ui.advance_cursor_after_rect(full);
+    // ブラシ・消しゴムは、下の端にブラシの詳細のボタンの帯を固定し、スクロールはその上まで
+    let footer = brushes::has_detail_footer(app.tool).then(|| {
+        Rect::from_min_max(
+            pos2(
+                full.left(),
+                (full.bottom() - brushes::FOOTER_HEIGHT).max(full.top()),
+            ),
+            full.max,
+        )
+    });
+    let r = footer.map_or(full, |f| {
+        Rect::from_min_max(full.min, pos2(full.right(), f.top()))
+    });
     let ctx = ui.ctx().clone();
-    app.brushes.samples.begin_frame(ctx.cumulative_pass_nr());
+    app.ui.samples.begin_frame(ctx.cumulative_pass_nr());
     let tool = app.tool;
     let def = tool.def();
     let index = tool as usize;
@@ -64,6 +77,9 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         "subtools.props.scroll",
         &mut app.subtools.ui.props_scroll[index],
     );
+    if let Some(footer) = footer {
+        brushes::detail_footer(ui, app, footer);
+    }
 }
 
 /// ブラシサイズのパネル（大きさを持つツールだけ丸を出す。持たないツールは空）。
@@ -71,15 +87,24 @@ pub fn show_sizes(ui: &mut Ui, app: &mut AppState) {
     let r = ui.max_rect();
     ui.advance_cursor_after_rect(r);
     if !app.tool.def().sized {
+        app.subtools.ui.sizes_followed = None;
         return;
     }
     // 丸の段の数は幅で決まる。パネルに収まるなら全幅の並び、収まらなければつまみの分を引いた幅の並び
     let wide = brushes::sizes_height(r.width());
-    let content = if wide <= r.height() {
-        wide
+    let fit = if wide <= r.height() {
+        r.width()
     } else {
-        brushes::sizes_height(r.width() - crate::ui::scroll::BAR_WIDTH)
+        r.width() - crate::ui::scroll::BAR_WIDTH
     };
+    let content = brushes::sizes_height(fit);
+    // 選んでいる大きさの段へ送るのは、段が替わったとき（初めに描くときも）だけ。そのあとの利用者のスクロールは保つ
+    let near = brushes::nearest_size(app.brush.radius * 2.0);
+    if app.subtools.ui.sizes_followed != Some(near) {
+        app.subtools.ui.sizes_followed = Some(near);
+        let offset = &mut app.subtools.ui.sizes_scroll;
+        *offset = brushes::size_row_offset(fit, near, r.height(), *offset);
+    }
     let bar = Scroll::begin(ui, r, content, &mut app.subtools.ui.sizes_scroll);
     let scroll = app.subtools.ui.sizes_scroll;
     let area = Rect::from_min_max(

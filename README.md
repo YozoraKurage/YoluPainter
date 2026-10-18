@@ -15,10 +15,10 @@ Windows を主な対象にしています。Mac と Linux は試用向けです�
 - 2D と 3D のペイント。筆圧と傾きに応えるブラシ、色の混ぜ、ぼかし・指先・クローン、対称、定規、ステンシル
 - ペイント・編集・ポーズのモード。3D ビューで投影の箱・デカール・点・3D のパス・ポーズのボーンを選んで動かせます
 - キー・マウスの組み合わせとパイメニューの割り当てを、設定のウィンドウの「ショートカット」の区分で変えられます
-- レイヤー、グループ、マスク、クリッピング、26 の合成モード、調整レイヤー、テキストレイヤー、ロック
+- レイヤー、グループ、マスク、クリッピング、26 の合成モード、調整レイヤー、テキストレイヤー、ロック、チャンネルごとに出力を選べるレイヤーセット
 - Color・Roughness・Metallic・Height・Normal・Emission とユーザーチャンネルを 1 回のストロークでまとめて描くマテリアルのペイント
 - フィルター、焼いたメッシュマップ（AO（アンビエントオクルージョン）・曲率・厚み・ID など）を読む Generator、ノイズとグランジ、スマートマテリアル
-- 3D ビューでの lilToon の見た目
+- 3D ビューでの lilToon の見た目。3D ビューは増やして並べられます
 - Unity との Live Link。シーンのモデルを 1 回の操作で開き、書き出した絵を Unity へ返します（マテリアルに当てるのは、Unity で確かめたときだけ）
 - コマンドライン（`yolupainter-cli`）と、MCP でつなぐ AI のアシスタントからの、レイヤー・マスク・効果の操作
 - PSD のレイヤー・グループ・マスク・調整の読み書き、ABR のブラシと CLIP STUDIO のブラシ（.sut）の取り込み
@@ -30,12 +30,12 @@ Windows を主な対象にしています。Mac と Linux は試用向けです�
 Windows（64 ビット）のインストーラーと zip は [Releases](https://github.com/YozoraKurage/YoluPainter/releases) にあります。
 インストールの選択肢と更新は [docs/INSTALL.md](docs/INSTALL.md) を見てください。
 
-Linux には、x86_64 の tar.gz（`yolupainter-<版>-x86_64-unknown-linux-gnu.tar.gz`）と、ARM（aarch64）の試作の tar.gz（`yolupainter-<版>-aarch64-unknown-linux-gnu-experimental.tar.gz`）も付きます。
-ウィンドウは X11 で開くので、Wayland のデスクトップでは XWayland の上で動きます。アプリは自分では更新しません。新しい版は、ヘルプのメニューにリリースのページを開く項目が出て知らせます。
+Linux には、x86_64 の tar.gz（`yolupainter-<バージョン>-x86_64-unknown-linux-gnu.tar.gz`）と、ARM（aarch64）の試作の tar.gz（`yolupainter-<バージョン>-aarch64-unknown-linux-gnu-experimental.tar.gz`）も付きます。
+ウィンドウは X11 で開くので、Wayland のデスクトップでは XWayland の上で動きます。アプリは自分では更新しません。新しいバージョンは、ヘルプのメニューにリリースのページを開く項目が出て知らせます。
 ARM の実機では動かして確かめていません。実行に要る物は [docs/BUILDING.md の Linux の節](docs/BUILDING.md#linux試用)にあります。
 
-Mac には、試作の zip（`yolupainter-<版>-macos-universal-experimental.zip`）も付きます。Apple Silicon 向けと Intel 向けの両方のコードを持つ（universal の）`YoluPainter.app` が入っています。
-Apple の開発者の署名と公証はなく（署名は ad-hoc だけ）、アプリは自分では更新しません。新しい版は、ヘルプのメニューにリリースのページを開く項目が出て知らせます。
+Mac には、試作の zip（`yolupainter-<バージョン>-macos-universal-experimental.zip`）も付きます。Apple Silicon 向けと Intel 向けの両方のコードを持つ（universal の）`YoluPainter.app` が入っています。
+Apple の開発者の署名と公証はなく（署名は ad-hoc だけ）、アプリは自分では更新しません。新しいバージョンは、ヘルプのメニューにリリースのページを開く項目が出て知らせます。
 0.6.0 を Apple Silicon の Mac（macOS 27）で開き、ウィンドウが出て描けることを確かめました。Intel の Mac では動かしていません。
 
 署名がないので、zip を展開した `YoluPainter.app` を初めて開くと macOS が止めます。次の順で開きます（[Apple の手引き](https://support.apple.com/ja-jp/guide/mac-help/mh40616/mac)）。
@@ -54,7 +54,7 @@ Rust の stable と C/C++ のビルド環境が要ります。
 cargo build --release -p yolu-app --locked
 ```
 
-OS ごとの準備は [docs/BUILDING.md](docs/BUILDING.md)、試験は [docs/DEVELOPMENT.md](https://github.com/YozoraKurage/YoluPainter/blob/main/docs/DEVELOPMENT.md) にあります。
+OS ごとの準備は [docs/BUILDING.md](docs/BUILDING.md)、テストは [docs/DEVELOPMENT.md](https://github.com/YozoraKurage/YoluPainter/blob/main/docs/DEVELOPMENT.md) にあります。
 
 ## 文書
 
@@ -70,7 +70,7 @@ OS ごとの準備は [docs/BUILDING.md](docs/BUILDING.md)、試験は [docs/DEV
 
 ## プライバシー
 
-更新の確認を選んだときに GitHub へ最新の版を問い合わせるほかは、ネットワークへ情報を送りません。Live Link は同じ PC のフォルダでファイルを受け渡します。外からの操作は、設定で入れている間だけ `127.0.0.1`（この PC の中）で待ちます。
+更新の確認を選んだときに GitHub へ最新のバージョンを問い合わせるほかは、ネットワークへ情報を送りません。Live Link は同じ PC のフォルダでファイルを受け渡します。外からの操作は、設定で入れている間だけ `127.0.0.1`（この PC の中）で待ちます。
 
 ## 許諾
 

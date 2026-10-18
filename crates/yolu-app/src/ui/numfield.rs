@@ -139,7 +139,7 @@ pub fn number_field(
     );
     let pointer_x = response.interact_pointer_pos().map(|p| p.x);
     let mut dragging = false;
-    if enabled && response.is_pointer_button_down_on() {
+    if enabled && super::widgets::pressed_by_primary(&response) {
         let cancelled = ui.data(|d| d.get_temp::<bool>(cancel_id)).unwrap_or(false);
         if !cancelled {
             if ui.data(|d| d.get_temp::<f64>(start_id)).is_none() {

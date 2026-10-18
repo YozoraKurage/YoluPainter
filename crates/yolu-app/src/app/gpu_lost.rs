@@ -131,9 +131,9 @@ impl YoluApp {
         // 変更があれば、復旧の書き置きを今すぐ取る（文書そのものは触らない）。保存が期限に間に合わなかったときは、書き置きを取れない
         let saved = if save_late {
             Saved::No
-        } else if !self.state.modified {
+        } else if !self.state.session.is_modified() {
             Saved::NothingToSave
-        } else if self.state.recovery.is_enabled()
+        } else if self.state.services.recovery.is_enabled()
             && self.state.recovery_flush_within(self.gpu_lost_wait)
         {
             Saved::Yes
@@ -267,10 +267,9 @@ mod tests {
         crate::crash::install_at(dir.join("logs"));
         let mut state = AppState::new_in(64, 64, Lang::En);
         if mode != "no" {
-            state.recovery.set_space_probe(Some(space_probe()));
+            state.services.recovery.set_space_probe(Some(space_probe()));
             state
-                .recovery
-                .enable(
+                .recovery_enable(
                     dir.join("recovery"),
                     RecoverySettings {
                         interval_seconds: 3600,
@@ -280,22 +279,22 @@ mod tests {
                 .unwrap();
         }
         if mode != "nothing" {
-            let layer = state.selected_layer.unwrap();
+            let layer = state.session.selected_layer.unwrap();
             let brush = state.stroke_settings(false);
-            let mut stroke = state.doc.begin_stroke(layer, &brush).unwrap();
+            let mut stroke = state.session.doc.begin_stroke(layer, &brush).unwrap();
             stroke
-                .add_point(&mut state.doc, 20.0, 20.0, 1.0, DVec2::ZERO)
+                .add_point(&mut state.session.doc, 20.0, 20.0, 1.0, DVec2::ZERO)
                 .unwrap();
-            state.doc.end_stroke(stroke).unwrap();
-            state.modified = true;
+            state.session.doc.end_stroke(stroke).unwrap();
+            state.session.mark_modified();
         }
         let ctx = egui::Context::default();
         let mut app = YoluApp::for_context(&ctx, state, PenInput::detached());
         if mode == "slowsave" {
             // 前の書き置きがあり、そのあと始めた保存が（止めてあって）終わらない
             assert!(app.state.recovery_flush());
-            app.state.save.background = true;
-            std::mem::forget(app.state.save.hold_next());
+            app.state.services.save.background = true;
+            std::mem::forget(app.state.services.save.hold_next());
             app.state
                 .apply(crate::state::Action::SaveProjectAs(dir.join("slow.ylp")));
             assert!(app.state.is_saving());
@@ -403,11 +402,10 @@ mod tests {
     /// 次の起動が復旧のウィンドウに並べる行（落ちた体の書き置き）の数。
     fn offered_rows(root: &Path) -> usize {
         let mut next = AppState::new_in(64, 64, Lang::En);
-        next.recovery.set_space_probe(Some(space_probe()));
-        next.recovery
-            .enable(root.to_path_buf(), RecoverySettings::default())
+        next.services.recovery.set_space_probe(Some(space_probe()));
+        next.recovery_enable(root.to_path_buf(), RecoverySettings::default())
             .unwrap();
-        next.recovery.window.as_ref().map_or(0, |w| w.rows.len())
+        next.ui.recovery_window.as_ref().map_or(0, |w| w.rows.len())
     }
 
     #[test]

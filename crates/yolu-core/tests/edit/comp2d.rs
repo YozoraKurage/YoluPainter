@@ -70,9 +70,6 @@ fn brush(rng: &mut Rng, radius: f64) -> BrushSettings {
         opacity: 0.5 + rng.below(50) as f64 / 100.0,
         flow: 1.0,
         color: Rgba8::new(rng.bits() as u8, rng.bits() as u8, rng.bits() as u8, 255),
-        pressure_size: false,
-        pressure_opacity: false,
-        pressure_flow: false,
         erase: rng.chance(15),
         anti_alias: yolu_core::AntiAlias::None,
     }
@@ -135,8 +132,17 @@ fn memo_case_in(
     let radius = 3.0 + rng.below(8) as f64;
     let br = brush(&mut rng, radius);
     let (mut sa, mut sb) = (
-        with.begin_stroke(la, &br).ok()?,
-        without.begin_stroke(lb, &br).ok()?,
+        with.begin_brush_stroke(
+            la,
+            &yolu_core::Brush::simple(br, yolu_core::PressureSwitches::NONE),
+        )
+        .ok()?,
+        without
+            .begin_brush_stroke(
+                lb,
+                &yolu_core::Brush::simple(br, yolu_core::PressureSwitches::NONE),
+            )
+            .ok()?,
     );
     assert_same(&with, &without, &format!("seed {seed} 始め"));
     let mut x = rng.below(width as u64 - 10) as f64;
@@ -235,8 +241,17 @@ fn memo_long_stroke(seed: u64, budget: u64) -> Option<(u64, bool)> {
     let mut rng = Rng(seed ^ 0x5EED);
     let br = brush(&mut rng, 6.0);
     let (mut sa, mut sb) = (
-        with.begin_stroke(la, &br).ok()?,
-        without.begin_stroke(lb, &br).ok()?,
+        with.begin_brush_stroke(
+            la,
+            &yolu_core::Brush::simple(br, yolu_core::PressureSwitches::NONE),
+        )
+        .ok()?,
+        without
+            .begin_brush_stroke(
+                lb,
+                &yolu_core::Brush::simple(br, yolu_core::PressureSwitches::NONE),
+            )
+            .ok()?,
     );
     let fits = |d: &Document, what: &str| {
         let (memo, rollback) = (
@@ -300,7 +315,12 @@ fn the_memory_is_not_used_when_it_is_switched_off() {
     let id = paintable(&d, &rasters)[0];
     let mut rng = Rng(1);
     let br = brush(&mut rng, 6.0);
-    let mut s = d.begin_stroke(id, &br).unwrap();
+    let mut s = d
+        .begin_brush_stroke(
+            id,
+            &yolu_core::Brush::simple(br, yolu_core::PressureSwitches::NONE),
+        )
+        .unwrap();
     s.add_point(&mut d, 30.0, 20.0, 1.0, DVec2::ZERO).unwrap();
     let _ = d.composite_channel(Channel::Color, d.bounds()).unwrap();
     assert_eq!(d.composite_memo_stats().built, 0);

@@ -14,6 +14,7 @@
 //!   [`Document::move_rulers`](crate::Document::move_rulers)・[`Document::set_snap_ruler`](crate::Document::set_snap_ruler)）。ドラッグと
 //!   スライダーは `coalesce` で 1 回にまとめる。画素も合成も変えない。
 
+use crate::Reason;
 use std::fmt;
 
 use glam::{DVec2, DVec3, Vec3};
@@ -241,7 +242,7 @@ impl Ruler {
     /// 3D の対称は `b − a` が `up` と平行でない。
     pub fn validate(&self) -> Result<(), CoreError> {
         if self.id.0 == 0 {
-            return Err(CoreError::InvalidArgument("定規の ID（0 は使わない）"));
+            return Err(CoreError::InvalidArgument(Reason::RulerIdZero));
         }
         match self.place {
             RulerPlace::Canvas { a, b } => {
@@ -249,16 +250,16 @@ impl Ruler {
                     || a.abs().max_element() > MAX_CANVAS_COORD
                     || b.abs().max_element() > MAX_CANVAS_COORD
                 {
-                    return Err(CoreError::InvalidArgument("定規の点（有限・±1e7）"));
+                    return Err(CoreError::InvalidArgument(Reason::CanvasRulerPointsRange));
                 }
                 if a.distance(b) < MIN_CANVAS_SEPARATION {
                     return Err(CoreError::InvalidArgument(
-                        "定規の 2 点が近すぎる（0.01 画素以上）",
+                        Reason::CanvasRulerPointsTooClose,
                     ));
                 }
                 if self.see_through {
                     return Err(CoreError::InvalidArgument(
-                        "見えない面にも写すのは 3D の対称だけ",
+                        Reason::HiddenFacesOnlyFor3DSymmetry,
                     ));
                 }
             }
@@ -268,45 +269,51 @@ impl Ruler {
                     || b.abs().max_element() > MAX_MODEL_COORD
                     || up.abs().max_element() > MAX_MODEL_COORD
                 {
-                    return Err(CoreError::InvalidArgument("定規の点（有限・±1e6）"));
+                    return Err(CoreError::InvalidArgument(Reason::ModelRulerPointsRange));
                 }
                 if a.distance(b) < MIN_MODEL_SEPARATION {
-                    return Err(CoreError::InvalidArgument("定規の 2 点が近すぎる（1e-6）"));
+                    return Err(CoreError::InvalidArgument(Reason::ModelRulerPointsTooClose));
                 }
                 let Some(u) = unit(up) else {
-                    return Err(CoreError::InvalidArgument("定規の向きが 0"));
+                    return Err(CoreError::InvalidArgument(Reason::RulerDirectionZero));
                 };
                 if self.kind == RulerKind::Symmetry {
                     let d = b - a;
                     if (d - u * d.dot(u)).length() < MIN_MODEL_SEPARATION {
                         return Err(CoreError::InvalidArgument(
-                            "対称定規の最初の線が回転の軸と平行",
+                            Reason::SymmetryRulerLineParallelToAxis,
                         ));
                     }
                 } else if self.see_through {
                     return Err(CoreError::InvalidArgument(
-                        "見えない面にも写すのは 3D の対称だけ",
+                        Reason::HiddenFacesOnlyFor3DSymmetry,
                     ));
                 }
             }
         }
         if self.two_points && self.kind != RulerKind::Perspective {
-            return Err(CoreError::InvalidArgument("2 点はパースだけ"));
+            return Err(CoreError::InvalidArgument(
+                Reason::TwoPointsOnlyForPerspective,
+            ));
         }
         if self.kind == RulerKind::Symmetry {
             if !LINES.contains(&self.lines) {
-                return Err(CoreError::InvalidArgument("対称定規の線の本数（2〜16）"));
+                return Err(CoreError::InvalidArgument(
+                    Reason::SymmetryRulerLineCountRange,
+                ));
             }
             if self.line_symmetry && !self.lines.is_multiple_of(2) {
-                return Err(CoreError::InvalidArgument("線対称の線の本数（偶数）"));
+                return Err(CoreError::InvalidArgument(
+                    Reason::LineSymmetryNeedsEvenLines,
+                ));
             }
         } else if self.lines != 0 || self.line_symmetry {
-            return Err(CoreError::InvalidArgument("線の本数と線対称は対称定規だけ"));
+            return Err(CoreError::InvalidArgument(
+                Reason::LineCountOnlyForSymmetryRulers,
+            ));
         }
         if self.kind == RulerKind::Line && self.snap {
-            return Err(CoreError::InvalidArgument(
-                "直線定規はスナップする特殊定規にならない",
-            ));
+            return Err(CoreError::InvalidArgument(Reason::StraightRulerCannotSnap));
         }
         Ok(())
     }
@@ -561,7 +568,7 @@ mod tests {
         assert_eq!(
             DVec3::ZERO.distance(exact),
             MIN_MODEL_SEPARATION,
-            "試験の前提"
+            "テストの前提"
         );
         assert!(
             line(DVec3::ZERO, exact, DVec3::Y).validate().is_ok(),
@@ -591,7 +598,7 @@ mod tests {
         assert_eq!(
             (tiny - DVec3::Y * tiny.dot(DVec3::Y)).length(),
             MIN_MODEL_SEPARATION,
-            "試験の前提"
+            "テストの前提"
         );
         assert!(ruler.validate().is_ok(), "直交する成分がちょうど最小");
     }
@@ -604,7 +611,7 @@ mod tests {
         assert_eq!(
             DVec2::ZERO.distance(exact),
             MIN_CANVAS_SEPARATION,
-            "試験の前提"
+            "テストの前提"
         );
         assert!(line(exact).validate().is_ok(), "ちょうど最小の間隔");
         assert!(line(exact * 0.9).validate().is_err(), "最小より近い");

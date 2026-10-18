@@ -22,15 +22,16 @@ fn options() -> Options<'static> {
 }
 
 fn brush(radius: f64) -> PathBrush {
-    PathBrush(BrushSettings {
-        radius,
-        hardness: 1.0,
-        spacing: 0.1,
-        color: Rgba8::new(255, 255, 255, 255),
-        pressure_size: false,
-        pressure_opacity: false,
-        ..BrushSettings::default()
-    })
+    PathBrush(
+        BrushSettings {
+            radius,
+            hardness: 1.0,
+            spacing: 0.1,
+            color: Rgba8::new(255, 255, 255, 255),
+            ..BrushSettings::default()
+        },
+        yolu_core::PressureSwitches::NONE,
+    )
 }
 
 /// 全部が覆い 255 の w × h の筆先。
@@ -338,4 +339,63 @@ fn a_3d_mirrored_path_lands_on_the_reflected_surface_and_reversing_keeps_the_pix
         reversed.chunks(4).filter(|p| p[3] > 0).count(),
     );
     assert!((a as i64 - b as i64).abs() <= a as i64 / 20, "{a} {b}");
+}
+
+/// `plane` の左上の三角形（番号 1）をマテリアル 1、右下の三角形（番号 0）をマテリアル 0 にした形。
+fn two_material_plane() -> SurfaceGeometry {
+    let g = plane();
+    let mut triangles = g.triangles().to_vec();
+    triangles[1].material = 1;
+    SurfaceGeometry::new(triangles, 1, DEFAULT_WELD_TOLERANCE).unwrap()
+}
+
+#[test]
+fn a_3d_mirrored_path_reaches_every_material_of_the_set_and_only_those() {
+    use yolu_core::geometry::MaterialSet;
+    use yolu_core::paths::PathSymmetry;
+    let g = two_material_plane();
+    // 元の点は左上（マテリアル 1）、x = 0.5 で映した先は右下（マテリアル 0）
+    let points = vec![on(0.1, 0.2), on(0.2, 0.4)];
+    assert!(points.iter().all(|p| p.triangle == 1));
+    let mirror = PathStyle {
+        symmetry: PathSymmetry::Mirror {
+            point: Vec3::new(0.5, 0.0, 0.0),
+            normal: Vec3::X,
+        },
+        ..Default::default()
+    };
+    let path = surface(&g, points, 0.04, mirror);
+    let draw = |material: Option<&MaterialSet>| {
+        let r = render_surface(
+            &path,
+            &g,
+            &Options {
+                material,
+                ..options()
+            },
+        )
+        .unwrap();
+        (r.channels[0].1.to_canvas_bytes(), r.gaps)
+    };
+    let px = |v: f64| (v * SIZE as f64) as u32;
+    // 組が両方のマテリアルを含めば、別のマテリアルの面へ映した写しも描く
+    let both = MaterialSet::new([0, 1]);
+    let (bytes, gaps) = draw(Some(&both));
+    assert_eq!(gaps, 0);
+    assert!(
+        alpha(&bytes, px(0.85), px(0.3)) > 0,
+        "映した側（マテリアル 0）"
+    );
+    assert!(
+        alpha(&bytes, px(0.15), px(0.3)) > 0,
+        "元の側（マテリアル 1）"
+    );
+    // 映した先が組の外のマテリアルなら、写しは描かず点の数を欠落に数える
+    let only_source = MaterialSet::one(1);
+    let (bytes, gaps) = draw(Some(&only_source));
+    assert_eq!(gaps, 2);
+    assert_eq!(alpha(&bytes, px(0.85), px(0.3)), 0);
+    assert!(alpha(&bytes, px(0.15), px(0.3)) > 0);
+    // 組を渡さなければ、元の点と同じマテリアルの面だけ（1 つのマテリアルの組と同じバイト）
+    assert_eq!(draw(None), (bytes, gaps));
 }

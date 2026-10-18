@@ -113,7 +113,7 @@ fn all_rulers(d: &Document) -> Vec<(LayerId, Vec<Ruler>)> {
 #[test]
 fn documents_without_rulers_keep_their_old_version_and_ones_with_rulers_are_version_35() {
     assert_eq!(RULERS_VERSION, 35);
-    assert_eq!(MAX_NATIVE_VERSION, RULERS_VERSION);
+    const { assert!(RULERS_VERSION < MAX_NATIVE_VERSION) };
     let mut w = world();
     // 定規が無い文書: 版 21、定規の欄は無い
     let plain = NativeDocument::from_core(&w.doc).unwrap();
@@ -138,10 +138,13 @@ fn documents_without_rulers_keep_their_old_version_and_ones_with_rulers_are_vers
     // ほかの機能（アンチエイリアスのパス = 34）と一緒なら 35 で、パスも残る
     let mut w2 = world();
     let mut path = path_with(PathSymmetry::None, 1);
-    path.brush = PathBrush(BrushSettings {
-        anti_alias: yolu_core::AntiAlias::Medium,
-        ..path.brush.0
-    });
+    path.brush = PathBrush(
+        BrushSettings {
+            anti_alias: yolu_core::AntiAlias::Medium,
+            ..path.brush.0
+        },
+        yolu_core::PressureSwitches::default(),
+    );
     w2.doc.set_canvas_path(w2.a, path).unwrap();
     assert_eq!(
         NativeDocument::from_core(&w2.doc).unwrap().version(),
@@ -296,8 +299,8 @@ fn a_reader_that_stops_at_34_refuses_a_rulers_file() {
         bytes[8..12].copy_from_slice(&older.to_le_bytes());
         assert!(NativeDocument::read(&bytes).is_err(), "{older}");
     }
-    // 35 の上の版は断る
-    for newer in [MAX_NATIVE_VERSION + 1, 36, 40] {
+    // 読み手の一番新しい版の上の版は断る
+    for newer in [MAX_NATIVE_VERSION + 1, 40] {
         let mut b = native.to_bytes();
         b[8..12].copy_from_slice(&newer.to_le_bytes());
         let e = NativeDocument::read(&b).unwrap_err().to_string();
@@ -454,7 +457,7 @@ fn a_ylp_keeps_the_rulers_and_the_version() {
     let spec = SetSpec {
         id: "0f0f0f0f-0000-4000-8000-000000000035".into(),
         name: "Set".into(),
-        material: MaterialRef::Unassigned,
+        materials: vec![MaterialRef::Unassigned],
         document: Some(native.clone().into()),
         composites: vec![],
     };
@@ -483,12 +486,15 @@ fn path_with(symmetry: PathSymmetry, id: u128) -> CanvasPath {
         },
         id,
         channel: Channel::Color,
-        brush: PathBrush(BrushSettings {
-            radius: 2.25,
-            hardness: 1.0,
-            color: Rgba8::new(20, 30, 200, 255),
-            ..BrushSettings::default()
-        }),
+        brush: PathBrush(
+            BrushSettings {
+                radius: 2.25,
+                hardness: 1.0,
+                color: Rgba8::new(20, 30, 200, 255),
+                ..BrushSettings::default()
+            },
+            yolu_core::PressureSwitches::default(),
+        ),
         points: vec![
             CanvasPoint::new(3.5, 4.0, 1.0).unwrap(),
             CanvasPoint::new(27.25, 21.5, 1.0).unwrap(),

@@ -3,7 +3,7 @@ use cases::*;
 use std::sync::atomic::AtomicBool;
 use yolu_core::{fill_image::*, Rgba8};
 
-/// 正解の組: C# が撮った、異方性を切った道（`tools/csharp-golden/fill.sh golden`）と、Rust が撮った、異方性を入れた道
+/// 正解の組: 前の Unity 版の C# が撮った、異方性を切った道と、Rust が撮った、異方性を入れた道
 /// （撮り直しは `YOLU_GOLDEN_UPDATE=1`）。
 #[derive(Clone, Copy)]
 struct Golden {
@@ -361,22 +361,55 @@ fn geometry_uses_barycentric_and_face_normal_with_atomic_failure() {
     };
     let t = SurfaceTriangle::new(Vec3::ZERO, Vec3::X, Vec3::Y, Vec2::ZERO, Vec2::X, Vec2::Y);
     let g = SurfaceGeometry::new(vec![t], 17, DEFAULT_WELD_TOLERANCE).unwrap();
-    let maps = ModelMaps::from_geometry(&g, 4, 4, 0, 208, 16, None).unwrap();
+    let maps = ModelMaps::from_geometry(
+        &g,
+        4,
+        4,
+        &yolu_core::geometry::MaterialSet::one(0),
+        208,
+        16,
+        None,
+    )
+    .unwrap();
     assert_eq!(maps.revision, 17);
     assert_eq!(maps.positions().coverage[0], 1);
     assert_eq!(maps.positions().coverage[15], 0);
     assert_eq!(&maps.normals().values[..3], &[32768, 32768, 65535]);
     assert_eq!(&maps.positions().values[..2], &[8192, 8192]);
     assert!(matches!(
-        ModelMaps::from_geometry(&g, 4, 4, 0, 207, 16, None),
+        ModelMaps::from_geometry(
+            &g,
+            4,
+            4,
+            &yolu_core::geometry::MaterialSet::one(0),
+            207,
+            16,
+            None
+        ),
         Err(FillError::OverBudget { .. })
     ));
     assert!(matches!(
-        ModelMaps::from_geometry(&g, 4, 4, 0, 208, 0, None),
+        ModelMaps::from_geometry(
+            &g,
+            4,
+            4,
+            &yolu_core::geometry::MaterialSet::one(0),
+            208,
+            0,
+            None
+        ),
         Err(FillError::OverBudget { .. })
     ));
     assert!(matches!(
-        ModelMaps::from_geometry(&g, 4, 4, 0, 208, 16, Some(&AtomicBool::new(true))),
+        ModelMaps::from_geometry(
+            &g,
+            4,
+            4,
+            &yolu_core::geometry::MaterialSet::one(0),
+            208,
+            16,
+            Some(&AtomicBool::new(true))
+        ),
         Err(FillError::Canceled)
     ));
 }
@@ -913,7 +946,16 @@ fn geometry_maps_drive_planar_triplanar_and_decal_to_known_pixels() {
 
     // 平らな板（z の幅が 0 の軸）: 位置は 0.5 → 32768 に符号化され、復号で bounds の最小へ戻る
     let flat = board(0., false);
-    let maps = ModelMaps::from_geometry(&flat, 8, 8, 0, u64::MAX, u64::MAX, None).unwrap();
+    let maps = ModelMaps::from_geometry(
+        &flat,
+        8,
+        8,
+        &yolu_core::geometry::MaterialSet::one(0),
+        u64::MAX,
+        u64::MAX,
+        None,
+    )
+    .unwrap();
     assert_eq!(maps.bounds_min, [-1., -1., 0.]);
     assert_eq!(maps.bounds_max, [1., 1., 0.]);
     assert!(maps.positions().values.chunks(3).all(|p| p[2] == 32768));
@@ -963,8 +1005,16 @@ fn geometry_maps_drive_planar_triplanar_and_decal_to_known_pixels() {
         }
     }
     let minus_board = board(0., true);
-    let minus_maps =
-        ModelMaps::from_geometry(&minus_board, 8, 8, 0, u64::MAX, u64::MAX, None).unwrap();
+    let minus_maps = ModelMaps::from_geometry(
+        &minus_board,
+        8,
+        8,
+        &yolu_core::geometry::MaterialSet::one(0),
+        u64::MAX,
+        u64::MAX,
+        None,
+    )
+    .unwrap();
     let minus =
         FillSampler::bind(input_from(&minus_maps, triplanar_projection, Some(&chain))).unwrap();
     let out = render(&minus);
@@ -981,7 +1031,16 @@ fn geometry_maps_drive_planar_triplanar_and_decal_to_known_pixels() {
     // デカール: 斜めの板（z が 0..1、-Z 寄りの面）。箱は x が -0.5..0.5、z が 0.375..0.625 の帯
     // （y は広く取る）。z の復号がずれると行の範囲が変わる
     let slanted = board(1., true);
-    let maps = ModelMaps::from_geometry(&slanted, 8, 8, 0, u64::MAX, u64::MAX, None).unwrap();
+    let maps = ModelMaps::from_geometry(
+        &slanted,
+        8,
+        8,
+        &yolu_core::geometry::MaterialSet::one(0),
+        u64::MAX,
+        u64::MAX,
+        None,
+    )
+    .unwrap();
     assert_eq!(maps.bounds_max, [1., 1., 1.]);
     let decal_image = ramp(4, 8);
     let decal_chain =
@@ -1264,7 +1323,16 @@ fn anisotropic_reads_an_oblique_planar_projection_with_less_blur_on_every_thread
     let chain =
         ImageMipChain::build(&image, 32, 32, Conversion::None, false, u64::MAX, None).unwrap();
     let flat = board(0., false);
-    let maps = ModelMaps::from_geometry(&flat, 32, 32, 0, u64::MAX, u64::MAX, None).unwrap();
+    let maps = ModelMaps::from_geometry(
+        &flat,
+        32,
+        32,
+        &yolu_core::geometry::MaterialSet::one(0),
+        u64::MAX,
+        u64::MAX,
+        None,
+    )
+    .unwrap();
     let projection = Projection {
         mode: ProjectionMode::Planar,
         tiles: [8., 8.],
@@ -1352,7 +1420,16 @@ fn anisotropic_changes_nothing_for_a_round_footprint() {
     let chain =
         ImageMipChain::build(&image, 8, 8, Conversion::None, false, u64::MAX, None).unwrap();
     let flat = board(0., false);
-    let maps = ModelMaps::from_geometry(&flat, 8, 8, 0, u64::MAX, u64::MAX, None).unwrap();
+    let maps = ModelMaps::from_geometry(
+        &flat,
+        8,
+        8,
+        &yolu_core::geometry::MaterialSet::one(0),
+        u64::MAX,
+        u64::MAX,
+        None,
+    )
+    .unwrap();
     for tiles in [[1., 1.], [3., 3.]] {
         let projection = Projection {
             mode: ProjectionMode::Planar,

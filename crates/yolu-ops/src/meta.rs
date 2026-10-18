@@ -227,7 +227,7 @@ fn build() -> Vec<CommandSpec> {
         ),
         spec::<SaveArgs, Saved>(
             "save", "saved", false, Always, true,
-            ("保存", "開いている .ylp に上書きで保存する（前の版は隣の退避のフォルダに残る）。confirm: true が要る。"),
+            ("保存", "開いている .ylp に上書きで保存する（前のバージョンは隣の退避のフォルダに残る）。confirm: true が要る。"),
             ("Save", "Save over the opened .ylp (the previous version is kept in the backups folder next to it). Needs confirm: true."),
         ),
         spec::<SaveAsArgs, Saved>(

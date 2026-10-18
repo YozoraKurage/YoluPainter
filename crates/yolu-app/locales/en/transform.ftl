@@ -1,0 +1,36 @@
+# Screen text (transform). Keys are "transform-" plus a short name from the English text; tooltip keys end in -tip.
+
+transform-liquify-input-limit-reached = Liquify input limit reached
+transform-no-layer-with-pixels-to = No layer with pixels to move.
+transform-no-pixels-to-move-inside = No pixels to move inside the selection.
+transform-no-pixels-to-move = No pixels to move.
+transform-that-would-collapse-the-layer = That would collapse the layer.
+transform-transform-cancelled = Transform cancelled.
+transform-bilinear = Bilinear
+transform-nearest = Nearest
+transform-flip-horizontal = Flip Horizontal
+transform-flip-vertical = Flip Vertical
+transform-rotate-90-counter-clockwise = Rotate 90° Counter-clockwise
+transform-rotate-90-clockwise = Rotate 90° Clockwise
+transform-resampling = Resampling
+transform-bilinear-smooths-nearest-keeps-hard-tip = Bilinear smooths, Nearest keeps hard pixels. Whole-pixel moves, 90° turns and flips copy pixels exactly either way
+transform-mesh = Mesh
+transform-columns = Columns
+transform-rows = Rows
+transform-numeric = Numeric
+transform-horizontal-offset-is-right-tip = Horizontal offset (+ is right)
+transform-vertical-offset-is-up-tip = Vertical offset (+ is up)
+transform-width = Width
+transform-horizontal-scale-a-negative-value-tip = Horizontal scale (a negative value flips)
+transform-height = Height
+transform-vertical-scale-a-negative-value-tip = Vertical scale (a negative value flips)
+transform-angle = Angle
+transform-counter-clockwise-about-the-centre-tip = Counter-clockwise, about the centre of what moves
+transform-bilinear-smooths-nearest-keeps-hard-2-tip = Bilinear smooths, Nearest keeps hard pixels
+transform-apply = Apply
+transform-transform-by-these-numbers-one-tip = Transform by these numbers (one undo step)
+transform-reset = Reset
+transform-back-to-no-change-tip = Back to no change
+transform-diameter = Diameter
+transform-strength = Strength
+transform-restore-how-strongly-pixels-go-tip = Restore: how strongly pixels go back to the start of this liquify session

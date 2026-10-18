@@ -10,8 +10,10 @@ use super::*;
 
 /// 下地 g と荷を混ぜた色（`MixDab::pixel_color` の f32 の式）: 重み 下地のアルファ × (1 − 絵の具の量)・荷のアルファ × 量で補間し、
 /// 0〜255 に四捨五入する。アルファは荷のまま。重みの和が 0 以下のレーンは偽（混ぜる色が無く、塗らない）。
+/// 標準の空間で筆の初めの絵の具の量が 1（ほとんどの打点）なら、これまでと同じ式。知覚的は、重みの比（荷の側）を求めてから、レーンごとに
+/// `MixDab::perceptual_pixel`（f64 の + − × ÷ √ と表引きだけの式）で混ぜるので、道によらず同じバイト。
 #[inline(always)]
-unsafe fn mix_color<V: Lanes32>(mix: &MixDab, g: [V::F; 4]) -> (V::M, [V::F; 4]) {
+unsafe fn mix_color<V: Slice32>(mix: &MixDab, g: [V::F; 4]) -> (V::M, [V::F; 4]) {
     unsafe {
         let (zero, one) = (V::splat(0.0), V::splat(1.0));
         let amount = V::splat(mix.paint as f32);
@@ -20,16 +22,57 @@ unsafe fn mix_color<V: Lanes32>(mix: &MixDab, g: [V::F; 4]) -> (V::M, [V::F; 4])
         let w = V::add(wu, wc);
         let valid = V::not(V::le(w, zero));
         let mut d = [zero; 4];
-        for c in 0..3 {
-            let mixed = V::div(
-                V::add(V::mul(g[c], wu), V::mul(V::splat(mix.carry[c] as f32), wc)),
-                w,
-            );
-            d[c] = byte255::<V>(mixed);
+        if mix.space == MixSpace::Perceptual {
+            let mut ground = [[0.0f32; 8]; 3];
+            for c in 0..3 {
+                V::store_f32(&mut ground[c], g[c]);
+            }
+            let (mut ratio, mut ok) = ([0.0f32; 8], [0.0f32; 8]);
+            V::store_f32(&mut ratio, V::div(wc, w));
+            V::store_f32(&mut ok, V::select(valid, one, zero));
+            let mut out = [[0.0f32; 3]; 8];
+            for k in 0..V::N {
+                if ok[k] > 0.0 {
+                    let rgb = mix.perceptual_pixel(
+                        [
+                            f64::from(ground[0][k]),
+                            f64::from(ground[1][k]),
+                            f64::from(ground[2][k]),
+                        ],
+                        f64::from(ratio[k]),
+                    );
+                    out[k] = rgb.map(byte_of);
+                }
+            }
+            for c in 0..3 {
+                d[c] = V::from_fn(|k| out[k][c]);
+            }
+        } else {
+            // 筆の初めの絵の具の量が 1 未満の最初の打点だけ、荷は下の色との混ざり（描く色の割合 = first_load）
+            let load = V::splat(mix.first_load as f32);
+            let rest = V::splat(1.0 - mix.first_load as f32);
+            for c in 0..3 {
+                let carry = if mix.first_load < 1.0 {
+                    V::add(
+                        V::mul(V::splat(mix.carry[c] as f32), load),
+                        V::mul(g[c], rest),
+                    )
+                } else {
+                    V::splat(mix.carry[c] as f32)
+                };
+                let mixed = V::div(V::add(V::mul(g[c], wu), V::mul(carry, wc)), w);
+                d[c] = byte255::<V>(mixed);
+            }
         }
         d[3] = V::splat(f32::from(super::super::effects::byte255(mix.carry[3])));
         (valid, d)
     }
+}
+
+/// 0〜255 の実数を、四捨五入した 0〜255 の整数の値（f32）にする（`byte255` と同じ丸め）。
+#[inline(always)]
+fn byte_of(v: f64) -> f32 {
+    f32::from(super::super::effects::byte255(v))
 }
 
 /// 1 画素の混ぜた色（画素ごとの式が使う）。None は混ぜる色が無い。
@@ -113,7 +156,7 @@ unsafe fn color_block<V: Slice32>(
         let accumulated = V::select(
             V::ge(previous, ceiling),
             previous,
-            accumulate::<V>(previous, ceiling, flow),
+            dab.settle::<V>(previous, ceiling, flow),
         );
         V::store_f32(
             &mut st.wash[local..],

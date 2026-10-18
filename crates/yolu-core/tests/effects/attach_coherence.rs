@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use yolu_core::generator::{self, Settings};
 use yolu_core::{
     AnchorId, AnchorPlacement, BlendMode, Channel, Document, EffectSettings, FilterId, FilterSpec,
-    FilterTarget, LayerId, TileCoord,
+    FilterTarget, LayerId, Rgba8, TileCoord,
 };
 
 fn tiles_differing(doc: &Document, a: &[u8], b: &[u8]) -> HashSet<TileCoord> {
@@ -570,7 +570,7 @@ fn walk_anchor_world(make: fn() -> (Document, Vec<LayerId>), seeds: u64, steps: 
 #[test]
 fn anchor_readers_follow_what_they_read() {
     let deltas = walk_anchor_world(anchor_world, 16, 100);
-    assert!(deltas > 1000, "試験が動かしていない: {deltas}");
+    assert!(deltas > 1000, "テストが動かしていない: {deltas}");
 }
 
 /// グループの中: Anchor を置いたレイヤーと、それを読むレイヤーが同じグループにいる（読むレイヤーが host より上）。グループのマスクの Anchor も読む。
@@ -662,7 +662,7 @@ fn a_layer_above_its_host_in_the_same_group_reads_the_anchor_without_recursing()
 #[test]
 fn anchors_inside_groups_follow_what_they_read() {
     let deltas = walk_anchor_world(grouped_anchor_world, 16, 100);
-    assert!(deltas > 1000, "試験が動かしていない: {deltas}");
+    assert!(deltas > 1000, "テストが動かしていない: {deltas}");
 }
 
 /// マスクを持つレイヤーが host で、その上のレイヤーがマスクの Anchor を読む。host は画素のタイルを持たない（マスクだけを塗った空のレイヤー）か、持つ。
@@ -850,4 +850,200 @@ fn a_global_stage_after_an_anchor_stage_changes_every_tile_of_the_reader() {
         widest > 4,
         "正規化が離れたタイルの出力も変えている: {widest}"
     );
+}
+
+/// 画素・マスクの画素・タイルの直接の書き込みを、ストロークや Undo と混ぜて乱数で動かす。評価のキャッシュは捨てないので、書いたタイルの届く範囲の
+/// ブロックだけが評価し直される: どの書き込みの後も、キャッシュを使った合成が評価し直しと同じバイトで、変化の記録が違いを全部含む。
+fn walk_direct_writes(make: fn() -> (Document, Vec<LayerId>), seeds: u64, steps: usize) -> usize {
+    let mut deltas = 0usize;
+    let (w, h, ts) = (40u32, 28u32, 8u32);
+    for seed in 0..seeds {
+        let (mut doc, layers) = make();
+        let mut rng = Rng(seed * 15485863 + 11);
+        let channels = [Channel::Color, Channel::Height];
+        let mut previous: Vec<Vec<u8>> = channels.iter().map(|c| whole(&doc, *c)).collect();
+        let mut since = doc.change_serial();
+        for step in 0..steps {
+            let layer = layers[rng.below(3)];
+            let channel = channels[rng.below(2)];
+            let color = Rgba8::new(
+                rng.below(256) as u8,
+                rng.below(256) as u8,
+                rng.below(256) as u8,
+                if rng.below(4) == 0 {
+                    0
+                } else {
+                    rng.below(256) as u8
+                },
+            );
+            match rng.below(10) {
+                0..=3 => {
+                    let (x, y) = (rng.below(w as usize) as u32, rng.below(h as usize) as u32);
+                    let _ = doc.set_channel_pixel(layer, channel, x, y, color);
+                }
+                4 | 5 => {
+                    let (x, y) = (rng.below(w as usize) as u32, rng.below(h as usize) as u32);
+                    let _ = doc.set_mask_pixel(layer, x, y, rng.below(256) as u8);
+                }
+                6 => {
+                    // 余白の無い内側のタイルを丸ごと
+                    let coord = TileCoord::new(rng.below(5) as u32, rng.below(3) as u32);
+                    let mut bytes = vec![0u8; (ts * ts * 4) as usize];
+                    for p in bytes.as_chunks_mut::<4>().0 {
+                        p.copy_from_slice(&[
+                            rng.below(256) as u8,
+                            rng.below(256) as u8,
+                            rng.below(256) as u8,
+                            255,
+                        ]);
+                    }
+                    let _ = doc.import_tile(layer, channel, coord, &bytes);
+                }
+                7 => {
+                    let coord = TileCoord::new(rng.below(5) as u32, rng.below(3) as u32);
+                    let mut bytes = vec![0u8; (ts * ts * 4) as usize];
+                    for p in bytes.as_chunks_mut::<4>().0 {
+                        p[3] = rng.below(256) as u8;
+                    }
+                    let _ = doc.import_mask_tile(layer, coord, &bytes);
+                }
+                8 => {
+                    if doc
+                        .layer(layer)
+                        .is_some_and(|l| l.surface(channel).is_some())
+                    {
+                        stroke(&mut doc, layer, channel, &mut rng);
+                    }
+                }
+                _ => {
+                    let _ = doc.undo();
+                }
+            }
+            deltas += check_after_edit(
+                &mut doc,
+                &mut previous,
+                &mut since,
+                &format!("seed {seed} step {step}"),
+            );
+        }
+    }
+    deltas
+}
+
+#[test]
+fn direct_writes_never_show_stale_output_next_to_anchors_and_mask_filters() {
+    let deltas = walk_direct_writes(anchor_world, 12, 100);
+    assert!(deltas > 1000, "テストが動かしていない: {deltas}");
+    let deltas = walk_direct_writes(grouped_anchor_world, 8, 100);
+    assert!(deltas > 500, "テストが動かしていない: {deltas}");
+}
+
+/// 近傍のフィルター（ぼかし・方向のぼかし・モルフォロジー・グロー）と全域の段（正規化）を置いた文書: 書いたタイルの届く範囲のブロックが評価し直されて、
+/// 届かないブロックと、ほかのレイヤーは評価し直されない。
+#[test]
+fn a_direct_write_re_evaluates_only_the_blocks_it_reaches() {
+    use yolu_core::filter::{MorphologyMode, Settings as FilterSettings};
+    let (mut doc, l) = world();
+    let (base, mid, top) = (l[0], l[1], l[2]);
+    let add = |doc: &mut Document, layer: LayerId, settings: FilterSettings, c: Channel| {
+        doc.add_filter(
+            layer,
+            FilterTarget::Content,
+            FilterSpec::new(EffectSettings::Filter(settings)).channels(&[c]),
+        )
+        .unwrap();
+    };
+    // 元画素の 1 タイルが 8 画素、ブロックは 16 画素（40×28 の文書で 3×2 ブロック）。届く範囲は 1 タイルより小さい
+    add(
+        &mut doc,
+        base,
+        FilterSettings::GaussianBlur { radius: 3 },
+        Channel::Color,
+    );
+    add(
+        &mut doc,
+        mid,
+        FilterSettings::Morphology {
+            mode: MorphologyMode::Dilate,
+            radius: 2,
+        },
+        Channel::Height,
+    );
+    add(
+        &mut doc,
+        top,
+        FilterSettings::DirectionalBlur {
+            angle: 30.0,
+            distance: 4.0,
+        },
+        Channel::Color,
+    );
+    add(
+        &mut doc,
+        top,
+        FilterSettings::Glow {
+            threshold: 0.2,
+            radius: 3,
+            intensity: 0.7,
+        },
+        Channel::Color,
+    );
+    let (color, height) = (whole(&doc, Channel::Color), whole(&doc, Channel::Height));
+    let evaluated = |doc: &Document| doc.effect_counters().blocks_evaluated;
+    let warm = evaluated(&doc);
+    // 何も書かなければ、評価し直さない
+    assert!(whole(&doc, Channel::Color) == color && whole(&doc, Channel::Height) == height);
+    assert_eq!(evaluated(&doc), warm, "書かなければ評価し直さない");
+
+    // 内側の画素: 土台の Color のぼかしの 1 ブロックだけが評価し直される。上のレイヤーの段は届かない
+    assert!(doc
+        .set_channel_pixel(base, Channel::Color, 2, 2, Rgba8::new(250, 10, 10, 255))
+        .unwrap());
+    let after = whole(&doc, Channel::Color);
+    assert_ne!(after, color, "書いた画素が合成に出る");
+    assert_eq!(evaluated(&doc) - warm, 1, "ぼかしの届くブロックは 1 つだけ");
+    let before_fresh = evaluated(&doc);
+    doc.release_effect_cache();
+    assert_eq!(whole(&doc, Channel::Color), after, "評価し直しと同じバイト");
+    assert!(evaluated(&doc) - before_fresh > 1, "捨てれば全部評価し直す");
+    let warm = evaluated(&doc);
+
+    // 別のタイルの画素: そのタイルの届くブロックだけ
+    assert!(doc
+        .set_channel_pixel(top, Channel::Color, 39, 27, Rgba8::new(10, 250, 10, 255))
+        .unwrap());
+    let after = whole(&doc, Channel::Color);
+    // 上のレイヤーの 2 つの段の届く範囲の和（7 画素）は 1 タイルに収まる: 書いたタイルのブロック（右下）と、そのタイルが読むウィンドウに入る隣のブロック（左下）
+    // の 2 つで、ほかの 4 つのブロックは評価し直さない
+    assert_eq!(
+        evaluated(&doc) - warm,
+        2,
+        "右下と、ウィンドウが届く隣の 2 ブロックだけ"
+    );
+    doc.release_effect_cache();
+    assert_eq!(whole(&doc, Channel::Color), after);
+    let _ = whole(&doc, Channel::Height);
+    let warm = evaluated(&doc);
+
+    // フィルターの無いチャンネル・フィルターの無いレイヤーへの書き込みは、評価のキャッシュに触らない
+    assert!(doc
+        .set_channel_pixel(base, Channel::Height, 3, 3, Rgba8::new(40, 40, 40, 255))
+        .unwrap());
+    let _ = whole(&doc, Channel::Height);
+    assert_eq!(
+        evaluated(&doc) - warm,
+        0,
+        "Height のフィルターは中のレイヤーだけ"
+    );
+
+    // 中の Height のモルフォロジーへ書く: そのブロックだけ
+    let warm = evaluated(&doc);
+    assert!(doc
+        .set_channel_pixel(mid, Channel::Height, 20, 14, Rgba8::new(255, 255, 255, 255))
+        .unwrap());
+    let after = whole(&doc, Channel::Height);
+    // タイル (2, 1) と、そのまわり 1 タイル（半径 2 が届く）を含むブロック: 6 つのうち 4 つ
+    assert_eq!(evaluated(&doc) - warm, 4);
+    doc.release_effect_cache();
+    assert_eq!(whole(&doc, Channel::Height), after);
 }

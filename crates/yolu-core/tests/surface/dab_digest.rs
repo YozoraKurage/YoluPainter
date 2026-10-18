@@ -43,15 +43,16 @@ fn camera() -> CameraView {
 }
 
 fn brush() -> Brush {
-    let mut b = Brush::from(BrushSettings {
-        radius: 14.0,
-        hardness: 0.8,
-        spacing: 0.15,
-        color: Rgba8::new(200, 60, 30, 255),
-        pressure_size: true,
-        pressure_opacity: true,
-        ..BrushSettings::default()
-    });
+    let mut b = Brush::simple(
+        BrushSettings {
+            radius: 14.0,
+            hardness: 0.8,
+            spacing: 0.15,
+            color: Rgba8::new(200, 60, 30, 255),
+            ..BrushSettings::default()
+        },
+        yolu_core::PressureSwitches::default(),
+    );
     b.seed = 7;
     b
 }
@@ -192,7 +193,7 @@ fn digest(g: &Arc<SurfaceGeometry>, v: &Variant, threads: usize) -> String {
             g.clone(),
             view,
             &v.brush.base,
-            Some(0),
+            Some(&yolu_core::geometry::MaterialSet::one(0)),
             c + Vec2::new(-r, -r * 0.2),
             0.6,
             v.options,

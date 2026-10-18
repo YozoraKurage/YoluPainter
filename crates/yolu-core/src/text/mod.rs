@@ -15,6 +15,7 @@
 //! フォントのファイルは文書に入れない（フォントの許諾が絡む）。文書はフォントの名前（同梱）か、利用者が選んだファイル（OS のフォントも）の
 //! 道・中身の SHA-256・ファミリー名・PostScript 名・太さ・斜体かを持ち、フォントの中身は呼び手が渡す（[`TextFont`]）。
 
+use crate::Reason;
 mod layout;
 mod render;
 #[cfg(test)]
@@ -103,7 +104,7 @@ impl TextFont {
                         .bytes()
                         .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
                 {
-                    return Err(CoreError::InvalidArgument("同梱のフォントの名前"));
+                    return Err(CoreError::InvalidArgument(Reason::BundledFontName));
                 }
             }
             TextFont::File { path, names, .. } => {
@@ -111,7 +112,7 @@ impl TextFont {
                     || path.len() > MAX_FONT_PATH_BYTES
                     || path.chars().any(char::is_control)
                 {
-                    return Err(CoreError::InvalidArgument("フォントのファイルの道"));
+                    return Err(CoreError::InvalidArgument(Reason::FontFilePath));
                 }
                 let name_ok =
                     |s: &str| s.len() <= MAX_FONT_FAMILY_BYTES && !s.chars().any(char::is_control);
@@ -119,7 +120,7 @@ impl TextFont {
                     || !name_ok(&names.postscript)
                     || !(1..=1000).contains(&names.weight)
                 {
-                    return Err(CoreError::InvalidArgument("フォントの名前"));
+                    return Err(CoreError::InvalidArgument(Reason::FontName));
                 }
             }
         }
@@ -181,36 +182,36 @@ impl TextSettings {
     /// 値の検査（範囲・有限・文の長さと文字）。
     pub fn validate(&self) -> Result<(), CoreError> {
         if self.text.len() > MAX_TEXT_BYTES {
-            return Err(CoreError::InvalidArgument("文の長さ"));
+            return Err(CoreError::InvalidArgument(Reason::TextLength));
         }
         if self
             .text
             .chars()
             .any(|c| c.is_control() && c != '\n' && c != '\t')
         {
-            return Err(CoreError::InvalidArgument("文の制御文字"));
+            return Err(CoreError::InvalidArgument(Reason::ControlCharactersInText));
         }
         self.font.validate()?;
         let within = |v: f64, lo: f64, hi: f64| v.is_finite() && v >= lo && v <= hi;
         if !within(self.size, MIN_SIZE, MAX_SIZE) {
-            return Err(CoreError::InvalidArgument("文字のサイズ"));
+            return Err(CoreError::InvalidArgument(Reason::TextSize));
         }
         if !within(self.line_height, MIN_LINE_HEIGHT, MAX_LINE_HEIGHT) {
-            return Err(CoreError::InvalidArgument("行間"));
+            return Err(CoreError::InvalidArgument(Reason::LineSpacing));
         }
         if !within(self.letter_spacing, MIN_LETTER_SPACING, MAX_LETTER_SPACING) {
-            return Err(CoreError::InvalidArgument("字間"));
+            return Err(CoreError::InvalidArgument(Reason::Tracking));
         }
         if !within(self.x, -MAX_COORDINATE, MAX_COORDINATE)
             || !within(self.y, -MAX_COORDINATE, MAX_COORDINATE)
         {
-            return Err(CoreError::InvalidArgument("文字の位置"));
+            return Err(CoreError::InvalidArgument(Reason::TextPosition));
         }
         if !within(self.rotation, -360.0, 360.0) {
-            return Err(CoreError::InvalidArgument("文字の回転"));
+            return Err(CoreError::InvalidArgument(Reason::TextRotation));
         }
         if !within(self.wrap_width, 0.0, MAX_COORDINATE) {
-            return Err(CoreError::InvalidArgument("折り返しの幅"));
+            return Err(CoreError::InvalidArgument(Reason::WrapWidth));
         }
         Ok(())
     }
@@ -265,9 +266,9 @@ pub struct FontDescription {
 pub fn describe_font(bytes: &[u8], index: u32) -> Result<FontDescription, CoreError> {
     use skrifa::{string::StringId, MetadataProvider};
     let font = skrifa::FontRef::from_index(bytes, index)
-        .map_err(|_| CoreError::InvalidArgument("フォントのファイルを読めない"))?;
+        .map_err(|_| CoreError::InvalidArgument(Reason::CannotReadFontFile))?;
     if font.outline_glyphs().format().is_none() {
-        return Err(CoreError::InvalidArgument("フォントに輪郭が無い"));
+        return Err(CoreError::InvalidArgument(Reason::FontHasNoOutlines));
     }
     let clean = |s: String| -> String {
         let s: String = s.chars().filter(|c| !c.is_control()).collect();

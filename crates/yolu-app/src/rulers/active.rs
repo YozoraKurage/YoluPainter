@@ -64,17 +64,24 @@ pub struct Shown<'a> {
 impl AppState {
     /// 選んでいるレイヤーで描くときに効く定規。
     pub fn rulers_active(&self, place: Place) -> Active<'_> {
-        self.rulers_active_for(place, self.selected_layer)
+        self.rulers_active_for(place, self.session.selected_layer)
     }
 
     /// `drawing` で描くときに効く定規。
     pub fn rulers_active_for(&self, place: Place, drawing: Option<LayerId>) -> Active<'_> {
         let mut active = Active::default();
-        if self.doc.layers().iter().all(|l| l.rulers().is_empty()) {
+        if self
+            .session
+            .doc
+            .layers()
+            .iter()
+            .all(|l| l.rulers().is_empty())
+        {
             return active;
         }
         if self.rulers.snap_ruler {
             active.straight = self
+                .session
                 .doc
                 .straight_rulers_seen_from(drawing)
                 .into_iter()
@@ -82,7 +89,7 @@ impl AppState {
                 .collect();
         }
         if self.rulers.snap_special {
-            let special = self.doc.snapping_special_rulers(drawing);
+            let special = self.session.doc.snapping_special_rulers(drawing);
             active.canvas_symmetry = special
                 .canvas
                 .filter(|r| r.ruler.kind == RulerKind::Symmetry)
@@ -102,17 +109,24 @@ impl AppState {
 
     /// この描く所で表示する定規（見えているものだけ）。
     pub fn rulers_shown(&self, place: Place) -> Vec<Shown<'_>> {
-        let drawing = self.selected_layer;
-        if self.doc.layers().iter().all(|l| l.rulers().is_empty()) {
+        let drawing = self.session.selected_layer;
+        if self
+            .session
+            .doc
+            .layers()
+            .iter()
+            .all(|l| l.rulers().is_empty())
+        {
             return Vec::new();
         }
         let space = place.space();
-        let special = self.doc.snapping_special_rulers(drawing);
+        let special = self.session.doc.snapping_special_rulers(drawing);
         let chosen = match space {
             RulerSpace::Canvas => special.canvas,
             RulerSpace::Model => special.model,
         };
-        self.doc
+        self.session
+            .doc
             .rulers_seen_from(drawing)
             .into_iter()
             .filter(|r| r.ruler.space() == space)
@@ -136,10 +150,11 @@ impl AppState {
     /// 選んでいる定規（持ち主が選んでいるレイヤーのときだけ）。
     pub fn selected_ruler(&self) -> Option<(LayerId, &Ruler)> {
         let (owner, id) = self.rulers.selected?;
-        if self.selected_layer != Some(owner) {
+        if self.session.selected_layer != Some(owner) {
             return None;
         }
         let ruler = self
+            .session
             .doc
             .layer(owner)?
             .rulers()
@@ -153,26 +168,26 @@ impl AppState {
     pub fn no_symmetry_reason(&self, place: Place, drawing: LayerId) -> &'static str {
         let lang = self.lang;
         if !self.rulers.snap_special {
-            let special = self.doc.snapping_special_rulers(Some(drawing));
+            let special = self.session.doc.snapping_special_rulers(Some(drawing));
             let chosen = match place {
                 Place::Canvas => special.canvas,
                 Place::View3d => special.model,
             };
             if chosen.is_some_and(|r| r.ruler.kind == RulerKind::Symmetry) {
-                return lang.pick(
-                    "特殊定規にスナップが切れています",
-                    "Snap to Special Ruler is off",
-                );
+                return lang.t("rulers-snap-to-special-ruler-is");
             }
         }
-        lang.pick("対称定規がありません", "No symmetry ruler")
+        lang.t("rulers-no-symmetry-ruler")
     }
 
     /// 2D のキャンバスの点 `at`（キャンバスの座標）から、バケツ・自動選択が範囲を求める種の点。`snap` が真で、効いている 2D の対称定規が
     /// あれば、`at` を写しの全部の点にして返す（最初は `at` 自身）。キャンバスの外の点は捨て、同じ画素に重なった点は 1 回にする。
     /// 切か対称定規が無ければ、`at` だけ（キャンバスの外なら空）。
     pub fn symmetry_seeds(&self, at: (f64, f64), snap: bool) -> Vec<(f64, f64)> {
-        let (w, h) = (self.doc.width() as f64, self.doc.height() as f64);
+        let (w, h) = (
+            self.session.doc.width() as f64,
+            self.session.doc.height() as f64,
+        );
         let inside =
             |p: &(f64, f64)| p.0.is_finite() && (0.0..w).contains(&p.0) && (0.0..h).contains(&p.1);
         let transforms = snap
@@ -205,7 +220,7 @@ impl AppState {
         if self
             .rulers
             .selected
-            .is_some_and(|(owner, _)| self.selected_layer != Some(owner))
+            .is_some_and(|(owner, _)| self.session.selected_layer != Some(owner))
         {
             self.rulers.selected = None;
         }
@@ -383,7 +398,7 @@ mod tests {
 
     fn state() -> AppState {
         let mut s = AppState::new(64, 64);
-        s.doc.clear_history().unwrap();
+        s.session.doc.clear_history().unwrap();
         s
     }
 
@@ -420,7 +435,7 @@ mod tests {
     #[test]
     fn the_reason_for_no_symmetry_names_the_switched_off_snap_only_when_turning_it_on_would_help() {
         let mut s = state();
-        let layer = s.selected_layer.unwrap();
+        let layer = s.session.selected_layer.unwrap();
         let none = s.lang.pick("対称定規がありません", "No symmetry ruler");
         let off = s.lang.pick(
             "特殊定規にスナップが切れています",
@@ -489,13 +504,13 @@ mod tests {
     #[test]
     fn what_is_seen_follows_the_scope_the_eye_and_the_drawing_layer() {
         let mut s = state();
-        let below = s.selected_layer.unwrap();
-        let top = s.doc.add_layer("Top").unwrap();
-        let group = s.doc.group_layers(&[top], "G").unwrap();
-        s.selected_layer = Some(top);
-        s.doc.clear_history().unwrap();
+        let below = s.session.selected_layer.unwrap();
+        let top = s.session.doc.add_layer("Top").unwrap();
+        let group = s.session.doc.group_layers(&[top], "G").unwrap();
+        s.session.selected_layer = Some(top);
+        s.session.doc.clear_history().unwrap();
         // 一番上の段のレイヤーに付けた「同じグループの中」の定規は、文書の全部のレイヤーから見える
-        s.selected_layer = Some(below);
+        s.session.selected_layer = Some(below);
         let mut r = Ruler::canvas(
             RulerId(1),
             RulerKind::Line,
@@ -504,22 +519,22 @@ mod tests {
         );
         r.scope = yolu_core::RulerScope::Group;
         s.ruler_create(r).unwrap();
-        s.selected_layer = Some(top);
+        s.session.selected_layer = Some(top);
         assert_eq!(s.rulers_shown(Place::Canvas).len(), 1);
         assert!(
             !s.rulers_shown(Place::Canvas)[0].editable,
             "選んでいるレイヤーの物ではない"
         );
         // 持ち主の目を閉じると隠れる
-        s.doc.set_layer_visible(below, false).unwrap();
+        s.session.doc.set_layer_visible(below, false).unwrap();
         assert!(s.rulers_shown(Place::Canvas).is_empty());
         assert!(s.rulers_active(Place::Canvas).straight.is_empty());
-        s.doc.set_layer_visible(below, true).unwrap();
+        s.session.doc.set_layer_visible(below, true).unwrap();
         // グループの目を閉じても、グループの中のレイヤーに付けた定規は隠れる
         put(&mut s, RulerKind::Line, (0.0, 20.0), (64.0, 20.0));
         assert_eq!(s.rulers_shown(Place::Canvas).len(), 2);
         assert!(s.rulers_shown(Place::Canvas).iter().any(|r| r.editable));
-        s.doc.set_layer_visible(group, false).unwrap();
+        s.session.doc.set_layer_visible(group, false).unwrap();
         assert_eq!(s.rulers_shown(Place::Canvas).len(), 1);
     }
 
@@ -528,7 +543,7 @@ mod tests {
         let mut s = state();
         let rect = egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(640.0, 640.0));
         let view = s.view.view(rect, 64, 64);
-        let layer = s.selected_layer;
+        let layer = s.session.selected_layer;
         put(&mut s, RulerKind::Line, (0.0, 20.0), (64.0, 20.0));
         let at = |x: f64, y: f64| view.to_screen(x, y);
         // 20 の線の上 2.5 画素 = 25 点（内）

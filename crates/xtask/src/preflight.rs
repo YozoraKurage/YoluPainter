@@ -413,7 +413,7 @@ fn nsis_outcome(script: &str) -> Outcome {
         .filter(|t| !NSIS_STUBS.iter().any(|stub| t.eq_ignore_ascii_case(stub)))
         .map(|t| {
             format!(
-                "installer/yolupainter.nsi の Target {t} は、公式の Windows 版 NSIS に stub がありません（{} のどちらか）",
+                "installer/yolupainter.nsi の Target {t} は、公式の Windows 用 NSIS に stub がありません（{} のどちらか）",
                 NSIS_STUBS.join("・")
             )
         })
@@ -429,7 +429,7 @@ fn nsis_outcome(script: &str) -> Outcome {
 fn check_mcpb(root: &Path, offline: bool) -> Outcome {
     let version = match workspace_version() {
         Ok(version) => version,
-        Err(error) => return Failed(vec![format!("版を取得できません: {error}")]),
+        Err(error) => return Failed(vec![format!("バージョンを取得できません: {error}")]),
     };
     let mut problems = Vec::new();
     if let Err(error) = check_mcpb_manifest(&mcpb_manifest(&version), &version) {
@@ -452,7 +452,7 @@ fn check_mcpb(root: &Path, offline: bool) -> Outcome {
     }
     if problems.is_empty() {
         Passed(format!(
-            "manifest と許諾の束（yolu-cli）が通る（版 {version}）"
+            "manifest と許諾の束（yolu-cli）が通る（バージョン {version}）"
         ))
     } else {
         Failed(limited(problems))
@@ -530,7 +530,7 @@ fn rust_target_installed(triple: &str) -> bool {
 fn check_macos(root: &Path) -> Outcome {
     let version = match workspace_version() {
         Ok(version) => version,
-        Err(error) => return Failed(vec![format!("版を取得できません: {error}")]),
+        Err(error) => return Failed(vec![format!("バージョンを取得できません: {error}")]),
     };
     let on_macos = cfg!(target_os = "macos");
     let problems = macos_problems(
@@ -544,9 +544,9 @@ fn check_macos(root: &Path) -> Outcome {
         return Failed(limited(problems));
     }
     Passed(if on_macos {
-        format!("Info.plist・アイコンの元・文書の一覧・ツール・Rust のターゲットがそろっている（版 {version}）")
+        format!("Info.plist・アイコンの元・文書の一覧・ツール・Rust のターゲットがそろっている（バージョン {version}）")
     } else {
-        format!("Info.plist・アイコンの元・文書の一覧がそろっている（版 {version}。ツールは macOS の上でだけ見る）")
+        format!("Info.plist・アイコンの元・文書の一覧がそろっている（バージョン {version}。ツールは macOS の上でだけ見る）")
     })
 }
 
@@ -582,18 +582,18 @@ fn version_outcome(
     let mut problems = Vec::new();
     if kind == Some(Kind::Stable) && !version.pre.is_empty() {
         problems.push(format!(
-            "stable の配布にプレリリースの版は使えません（{version}）"
+            "stable の配布にプレリリースのバージョンは使えません（{version}）"
         ));
     }
     // 試験版は、アプリが「試験版を使う」の設定で見つけられる形の版にする（版の前後が SemVer のとおりに並ぶ形）。
     if kind == Some(Kind::Prerelease) && !is_beta_version(version) {
         problems.push(format!(
-            "prerelease の配布の版には alpha.N・beta.N・rc.N のプレリリース識別子が要ります（{version}。例: 0.4.0-rc.1）"
+            "prerelease の配布のバージョンには alpha.N・beta.N・rc.N のプレリリース識別子が要ります（{version}。例: 0.4.0-rc.1）"
         ));
     }
     if tag == Ok(true) {
         problems.push(format!(
-            "タグ v{version} が origin に既にあります（版を上げてください）"
+            "タグ v{version} が origin に既にあります（バージョンを上げてください）"
         ));
     }
     if !problems.is_empty() {
@@ -603,14 +603,14 @@ fn version_outcome(
         Err(why) => Skipped(format!(
             "origin に問い合わせられず、タグ v{version} がまだ無いことは確かめていません（{why}）"
         )),
-        Ok(_) => Passed(format!("版 {version}・タグ v{version} はまだ無い")),
+        Ok(_) => Passed(format!("バージョン {version}・タグ v{version} はまだ無い")),
     }
 }
 
 fn check_version(root: &Path, kind: Option<Kind>) -> Outcome {
     match workspace_version() {
         Ok(version) => version_outcome(&version, kind, tag_exists(root, "origin", &version)),
-        Err(error) => Failed(vec![format!("版を取得できません: {error}")]),
+        Err(error) => Failed(vec![format!("バージョンを取得できません: {error}")]),
     }
 }
 
@@ -729,7 +729,7 @@ fn check_installer(root: &Path) -> Outcome {
     match python(root).arg("tools/test-installer.py").output() {
         Err(error) => Failed(vec![format!("Python を起動できません: {error}")]),
         Ok(output) if output.status.success() => {
-            Passed("Wine でインストーラーの試験が通りました".into())
+            Passed("Wine でインストーラーのテストが通りました".into())
         }
         Ok(output) => {
             let mut all = lines(&output.stdout);

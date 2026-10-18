@@ -254,6 +254,7 @@ impl ModelSymmetry {
                     let found = match find_copy(
                         geometry,
                         hit,
+                        Some(self.grid.material()),
                         self.mirror.as_ref(),
                         self.radial.as_ref(),
                         copy,

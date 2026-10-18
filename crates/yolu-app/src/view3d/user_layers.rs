@@ -46,6 +46,15 @@ pub fn plan(size: [u32; 2], count: usize, paint_shift: u32, limit: u32, budget: 
     ];
     (shift, mip_bytes(reduced, per_texel))
 }
+
+/// ユーザーチャンネル `count` 個（[`MAX_LAYERS`] まで）を、文書の大きさ `size` のまま（縮めずに）持つときのバイト数（ミップ込み）。
+pub fn full_bytes(size: [u32; 2], count: usize) -> u64 {
+    if count == 0 {
+        return 0;
+    }
+    mip_bytes(size, 4 * layer_count(count.min(MAX_LAYERS)) as u64)
+}
+
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 struct State {

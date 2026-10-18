@@ -108,9 +108,13 @@ fn plain() -> ProjectionSettings {
     }
 }
 
+/// マテリアル 0 の組（設定が借りるので、ずっと生きている値）。
+static MATERIAL_0: std::sync::LazyLock<yolu_core::geometry::MaterialSet> =
+    std::sync::LazyLock::new(|| yolu_core::geometry::MaterialSet::one(0));
+
 fn settings(shape: ScreenShape, positions: bool) -> ScreenCoverSettings {
     ScreenCoverSettings {
-        material: Some(0),
+        material: Some(&MATERIAL_0),
         projection: plain(),
         shape,
         positions,

@@ -76,8 +76,8 @@ fn painted(brush: &yolu_core::Brush) -> usize {
     let layer = doc.add_layer("L").unwrap();
     let mut b = brush.clone();
     b.base.color = Rgba8::new(0, 0, 0, 255);
-    b.base.pressure_size = false;
-    b.base.pressure_opacity = false;
+    b.influences.size.pressure.on = false;
+    b.influences.opacity.pressure.on = false;
     let mut stroke = doc.begin_brush_stroke(layer, &b).unwrap();
     stroke
         .add_point(&mut doc, 20.0, 48.0, 1.0, DVec2::ZERO)
@@ -100,7 +100,7 @@ fn every_bundled_brush_paints_and_keeps_its_id() {
     let mut ids = BTreeSet::new();
     for b in &bundled::krita4().brushes {
         assert!((4.0..=40.0).contains(&b.brush.base.radius), "{}", b.name);
-        assert!(!b.brush.base.pressure_opacity, "{}", b.name);
+        assert!(!b.brush.influences.opacity.pressure.on, "{}", b.name);
         assert!(b.brush.validate().is_ok(), "{}", b.name);
         assert!(painted(&b.brush) > 0, "{} は描くと跡が残る", b.name);
         assert!(b.id.starts_with("bundled:krita4/"), "{}", b.id);
@@ -136,7 +136,7 @@ fn bundled_hoses_and_pngs_keep_their_tips() {
 }
 
 /// 同梱の PNG の筆先を、Rust とは別の復号器（Pillow）で求めた被覆率の指紋と比べる（Unity 版の PNG の読みは Core の外の
-/// Texture2D.LoadImage を通るので C# の照合に入らない。同じ式を Pillow の RGBA 変換の上で組んだもの。tools/brush-fixtures/png_tips.py）。
+/// Texture2D.LoadImage を通るので C# の照合に入らない。同じ式を Pillow の RGBA 変換の上で組んだ指紋）。
 #[test]
 fn bundled_png_tips_match_an_independent_decoder() {
     let expected = std::fs::read_to_string(format!(

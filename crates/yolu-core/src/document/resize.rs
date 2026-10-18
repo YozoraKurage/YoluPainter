@@ -10,6 +10,7 @@ use crate::paths::{render_list, CanvasPath, CanvasPoint, Options, PathSymmetry};
 use crate::rulers::{Ruler, RulerPlace, MAX_CANVAS_COORD, MIN_CANVAS_SEPARATION};
 use crate::surface::{PixelReader, Tile};
 use crate::text::TextSettings;
+use crate::Reason;
 use crate::{
     Channel, ChannelKind, CoreError, LayerId, NormalSettings, Rgba8, Surface, SymmetryMode,
     TileCoord,
@@ -444,7 +445,7 @@ impl Document {
         } = prepared;
         if id != self.id || revision != self.revision {
             return Err(CoreError::InvalidArgument(
-                "大きさの変更の準備のあとにプロジェクトが変わった",
+                Reason::ProjectChangedSinceResizePrepared,
             ));
         }
         self.commit_resized(copy, &mut report)?;
@@ -530,7 +531,7 @@ impl Document {
             || width > Self::MAX_NATIVE_SIDE
             || height > Self::MAX_NATIVE_SIDE
         {
-            return Err(CoreError::InvalidArgument("画像の辺は 1〜8192"));
+            return Err(CoreError::InvalidArgument(Reason::ImageSideRange));
         }
         Ok(())
     }

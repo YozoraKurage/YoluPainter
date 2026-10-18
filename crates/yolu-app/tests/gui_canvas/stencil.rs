@@ -3,6 +3,7 @@
 //! 通して塗った結果。どれも「操作 → 文書が変わる → Undo で戻る」。ステンシルは文書ではなくアプリの状態で、保存しない。
 //! `headless_` で始まる試験は画面を描かず、Wine でも回る。
 use crate::common;
+use crate::common::drive::Drive;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -72,9 +73,7 @@ fn color_png(dir: &Path, name: &str) -> PathBuf {
 }
 
 fn load(h: &mut Harness<'_, YoluApp>, path: &Path) {
-    h.state_mut()
-        .state
-        .apply(Action::Stencil(StencilOp::Load(path.to_path_buf())));
+    h.act(Action::Stencil(StencilOp::Load(path.to_path_buf())));
     h.run();
 }
 
@@ -135,11 +134,11 @@ impl egui::DroppedFile for Dropped {
 }
 
 fn popup_kind(h: &Harness<'_, YoluApp>) -> Option<PopupKind> {
-    h.state().state.popup.as_ref().map(|p| p.kind)
+    h.popup().as_ref().map(|p| p.kind)
 }
 
 fn st<'a>(h: &'a Harness<'_, YoluApp>) -> &'a yolu_app::stencil::StencilState {
-    &h.state().state.stencil
+    h.stencil()
 }
 
 /// 画面の左右へ横切る線（中心の高さ）。
@@ -153,10 +152,10 @@ fn line_across(h: &mut Harness<'_, YoluApp>, from_dx: f32, to_dx: f32) {
 }
 
 fn small_brush(h: &mut Harness<'_, YoluApp>) {
-    let s = &mut h.state_mut().state;
-    s.brush.radius = 6.0;
-    s.brush.hardness = 1.0;
-    s.m2.random_seed = false;
+    let s = h.app_mut();
+    s.brush_mut().radius = 6.0;
+    s.brush_mut().hardness = 1.0;
+    s.m2_mut().random_seed = false;
 }
 
 // ───────── 画面なしの試験（Wine でも回る） ─────────
@@ -172,60 +171,60 @@ fn headless_loading_a_png_sets_the_stencil_and_bad_files_say_why() {
         }
     });
     let mut s = AppState::new(64, 64);
-    assert!(!s.stencil.applies() && !s.stencil.shown());
-    s.apply(Action::Stencil(StencilOp::Load(path.clone())));
-    let img = s.stencil.image.as_ref().expect("読んだ");
+    assert!(!s.stencil().applies() && !s.stencil().shown());
+    s.act(Action::Stencil(StencilOp::Load(path.clone())));
+    let img = s.stencil().image.as_ref().expect("読んだ");
     assert_eq!(
         (img.name.as_str(), img.width, img.height),
         ("half.png", 64, 32)
     );
-    assert!(s.message.contains("half.png"), "{}", s.message);
-    assert_eq!(s.stencil.recent.len(), 1);
-    assert!(s.stencil.applies() && s.stencil.shown());
-    assert!(!s.doc.can_undo() && !s.modified, "文書は変わらない");
+    assert!(s.message().contains("half.png"), "{}", s.message());
+    assert_eq!(s.stencil().recent.len(), 1);
+    assert!(s.stencil().applies() && s.stencil().shown());
+    assert!(!s.doc().can_undo() && !s.modified(), "文書は変わらない");
     // 灰色の画像は、自動で量
-    assert_eq!(s.stencil.resolved_mode(), Some(StencilMode::Mask));
+    assert_eq!(s.stencil().resolved_mode(), Some(StencilMode::Mask));
 
     // PNG でないファイル・無いファイル・大きすぎる画像は、今のステンシルのまま理由を出す
     let bad = dir.join("bad.png");
     std::fs::write(&bad, b"not a png at all").unwrap();
     for target in [bad.clone(), dir.join("missing.png")] {
-        s.message.clear();
-        s.apply(Action::Stencil(StencilOp::Load(target.clone())));
+        s.message_mut().clear();
+        s.act(Action::Stencil(StencilOp::Load(target.clone())));
         let name = target.file_name().unwrap().to_string_lossy().into_owned();
         assert!(
-            s.message.contains(&name) && s.message.contains("読めません"),
+            s.message().contains(&name) && s.message().contains("読めません"),
             "{}",
-            s.message
+            s.message()
         );
-        assert_eq!(s.stencil.image.as_ref().unwrap().name, "half.png");
+        assert_eq!(s.stencil().image.as_ref().unwrap().name, "half.png");
     }
     let wide = write_png(&dir, "wide.png", 8193, 1, |_, _| [255; 4]);
-    s.message.clear();
-    s.apply(Action::Stencil(StencilOp::Load(wide)));
+    s.message_mut().clear();
+    s.act(Action::Stencil(StencilOp::Load(wide)));
     assert!(
-        s.message.contains("wide.png") && s.message.contains("8193"),
+        s.message().contains("wide.png") && s.message().contains("8193"),
         "{}",
-        s.message
+        s.message()
     );
-    assert_eq!(s.stencil.image.as_ref().unwrap().name, "half.png");
-    assert_eq!(s.stencil.recent.len(), 1, "読めなかった画像は覚えない");
+    assert_eq!(s.stencil().image.as_ref().unwrap().name, "half.png");
+    assert_eq!(s.stencil().recent.len(), 1, "読めなかった画像は覚えない");
     // 英語
-    s.lang = Lang::En;
-    s.apply(Action::Stencil(StencilOp::Load(bad)));
+    s.set_lang(Lang::En);
+    s.act(Action::Stencil(StencilOp::Load(bad)));
     assert!(
-        s.message.contains("Cannot load the stencil"),
+        s.message().contains("Cannot load the stencil"),
         "{}",
-        s.message
+        s.message()
     );
     // 読んだ画像の一覧から読み直す。新しい順で、同じ画像は 1 つ
     let other = ring_png(&dir, "ring.png");
-    s.apply(Action::Stencil(StencilOp::Load(other)));
-    s.apply(Action::Stencil(StencilOp::Load(path)));
-    let names: Vec<&str> = s.stencil.recent.iter().map(|r| r.name.as_str()).collect();
+    s.act(Action::Stencil(StencilOp::Load(other)));
+    s.act(Action::Stencil(StencilOp::Load(path)));
+    let names: Vec<&str> = s.stencil().recent.iter().map(|r| r.name.as_str()).collect();
     assert_eq!(names, ["half.png", "ring.png"]);
-    s.apply(Action::Stencil(StencilOp::Recent(1)));
-    assert_eq!(s.stencil.image.as_ref().unwrap().name, "ring.png");
+    s.act(Action::Stencil(StencilOp::Recent(1)));
+    assert_eq!(s.stencil().image.as_ref().unwrap().name, "ring.png");
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -234,16 +233,16 @@ fn headless_a_too_big_mip_chain_is_refused_and_the_old_stencil_stays() {
     let dir = temp_dir("budget");
     let path = half_png(&dir, "half.png");
     let mut s = AppState::new(64, 64);
-    s.apply(Action::Stencil(StencilOp::Load(path.clone())));
-    s.stencil.mip_budget = 10; // ミップマップの予算を下げる
+    s.act(Action::Stencil(StencilOp::Load(path.clone())));
+    s.stencil_mut().mip_budget = 10; // ミップマップの予算を下げる
     let big = ring_png(&dir, "ring.png");
-    s.apply(Action::Stencil(StencilOp::Load(big)));
+    s.act(Action::Stencil(StencilOp::Load(big)));
     assert!(
-        s.message.contains("ring.png") && s.message.contains("ミップマップ"),
+        s.message().contains("ring.png") && s.message().contains("ミップマップ"),
         "{}",
-        s.message
+        s.message()
     );
-    assert_eq!(s.stencil.image.as_ref().unwrap().name, "half.png");
+    assert_eq!(s.stencil().image.as_ref().unwrap().name, "half.png");
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -251,14 +250,14 @@ fn headless_a_too_big_mip_chain_is_refused_and_the_old_stencil_stays() {
 fn headless_load_failures_are_told_in_the_selected_language_with_no_japanese_in_english() {
     let dir = temp_dir("errlang");
     let mut s = AppState::new(64, 64);
-    s.apply(Action::Stencil(StencilOp::Load(half_png(&dir, "half.png"))));
-    s.lang = Lang::En;
+    s.act(Action::Stencil(StencilOp::Load(half_png(&dir, "half.png"))));
+    s.set_lang(Lang::En);
     let bad = dir.join("bad.png");
     std::fs::write(&bad, b"not a png at all").unwrap();
     let wide = write_png(&dir, "wide.png", 8193, 1, |_, _| [255; 4]);
     let ring = ring_png(&dir, "ring.png");
     // ミップマップが予算を超える画像（core の InvalidArgument）は、core の英訳の表を通る
-    s.stencil.mip_budget = 10;
+    s.stencil_mut().mip_budget = 10;
     let cases = [
         (ring.clone(), "Stencil mipmap budget exceeded"),
         (dir.join("missing.png"), "File or folder not found"),
@@ -266,32 +265,33 @@ fn headless_load_failures_are_told_in_the_selected_language_with_no_japanese_in_
         (wide, "Image too large (8193 × 1; maximum side 8192)"),
     ];
     for (path, reason) in cases {
-        s.message.clear();
-        s.apply(Action::Stencil(StencilOp::Load(path.clone())));
+        s.message_mut().clear();
+        s.act(Action::Stencil(StencilOp::Load(path.clone())));
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
         assert!(
-            s.message.starts_with("Cannot load the stencil")
-                && s.message.contains(&name)
-                && s.message.contains(reason),
+            s.message().starts_with("Cannot load the stencil")
+                && s.message().contains(&name)
+                && s.message().contains(reason),
             "{}",
-            s.message
+            s.message()
         );
         // 「×」だけは英語の文にも出る。かなと漢字は混ざらない
         assert!(
-            s.message.chars().all(|c| c.is_ascii() || c == '×'),
+            s.message().chars().all(|c| c.is_ascii() || c == '×'),
             "{}",
-            s.message
+            s.message()
         );
-        assert_eq!(s.stencil.image.as_ref().unwrap().name, "half.png");
+        assert_eq!(s.stencil().image.as_ref().unwrap().name, "half.png");
     }
     // 同じ失敗を日本語で
-    s.lang = Lang::Ja;
-    s.message.clear();
-    s.apply(Action::Stencil(StencilOp::Load(ring)));
+    s.set_lang(Lang::Ja);
+    s.message_mut().clear();
+    s.act(Action::Stencil(StencilOp::Load(ring)));
     assert!(
-        s.message.contains("ステンシルのミップマップが予算を超える"),
+        s.message()
+            .contains("ステンシルのミップマップが予算を超える"),
         "{}",
-        s.message
+        s.message()
     );
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -299,58 +299,60 @@ fn headless_load_failures_are_told_in_the_selected_language_with_no_japanese_in_
 #[test]
 fn headless_ops_clamp_their_values_and_are_refused_while_stroking() {
     let mut s = AppState::new(64, 64);
-    s.stencil.set_image_rgba("a", 2, 2, &[255; 16]).unwrap();
-    s.apply(Action::Stencil(StencilOp::Size(1e9)));
-    assert_eq!(s.stencil.size, MAX_SIZE);
-    s.apply(Action::Stencil(StencilOp::Size(0.0)));
-    assert_eq!(s.stencil.size, MIN_SIZE);
-    s.apply(Action::Stencil(StencilOp::Size(f32::NAN)));
-    assert_eq!(s.stencil.size, DEFAULT_SIZE);
-    s.apply(Action::Stencil(StencilOp::Opacity(7.0)));
-    assert_eq!(s.stencil.opacity, 1.0);
-    s.apply(Action::Stencil(StencilOp::Opacity(f32::INFINITY)));
-    assert_eq!(s.stencil.opacity, 0.5, "有限でない値は初めの値");
-    s.apply(Action::Stencil(StencilOp::Angle(190.0)));
-    assert_eq!(s.stencil.angle, -170.0);
-    s.apply(Action::Stencil(StencilOp::Mode(StencilMode::Color)));
-    s.apply(Action::Stencil(StencilOp::Tiling(StencilTiling::Both)));
-    s.apply(Action::Stencil(StencilOp::Invert(true)));
+    s.stencil_mut()
+        .set_image_rgba("a", 2, 2, &[255; 16])
+        .unwrap();
+    s.act(Action::Stencil(StencilOp::Size(1e9)));
+    assert_eq!(s.stencil().size, MAX_SIZE);
+    s.act(Action::Stencil(StencilOp::Size(0.0)));
+    assert_eq!(s.stencil().size, MIN_SIZE);
+    s.act(Action::Stencil(StencilOp::Size(f32::NAN)));
+    assert_eq!(s.stencil().size, DEFAULT_SIZE);
+    s.act(Action::Stencil(StencilOp::Opacity(7.0)));
+    assert_eq!(s.stencil().opacity, 1.0);
+    s.act(Action::Stencil(StencilOp::Opacity(f32::INFINITY)));
+    assert_eq!(s.stencil().opacity, 0.5, "有限でない値は初めの値");
+    s.act(Action::Stencil(StencilOp::Angle(190.0)));
+    assert_eq!(s.stencil().angle, -170.0);
+    s.act(Action::Stencil(StencilOp::Mode(StencilMode::Color)));
+    s.act(Action::Stencil(StencilOp::Tiling(StencilTiling::Both)));
+    s.act(Action::Stencil(StencilOp::Invert(true)));
     assert_eq!(
-        (s.stencil.mode, s.stencil.tiling, s.stencil.invert),
+        (s.stencil().mode, s.stencil().tiling, s.stencil().invert),
         (StencilMode::Color, StencilTiling::Both, true)
     );
-    s.apply(Action::Stencil(StencilOp::ResetPlacement));
+    s.act(Action::Stencil(StencilOp::ResetPlacement));
     assert_eq!(
-        (s.stencil.center, s.stencil.size, s.stencil.angle),
+        (s.stencil().center, s.stencil().size, s.stencil().angle),
         ([0.5, 0.5], DEFAULT_SIZE, 0.0)
     );
-    assert_eq!(s.stencil.tiling, StencilTiling::Both, "置き場だけ戻す");
+    assert_eq!(s.stencil().tiling, StencilTiling::Both, "置き場だけ戻す");
 
     // 描いている最中は、何も変えない
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let stroke = s.begin_paint_stroke(layer, false).unwrap();
-    s.stroke = Some(stroke);
+    *s.stroke_mut() = Some(stroke);
     for op in [
         StencilOp::Size(1.0),
         StencilOp::Clear,
         StencilOp::Mode(StencilMode::Mask),
         StencilOp::Pick,
     ] {
-        s.message.clear();
-        s.apply(Action::Stencil(op));
-        assert_eq!(s.message, "描いている間はできません。");
+        s.message_mut().clear();
+        s.act(Action::Stencil(op));
+        assert_eq!(s.message(), "描いている間はできません。");
     }
-    assert!(s.stencil.image.is_some() && s.stencil.size == DEFAULT_SIZE);
-    assert_eq!(s.dialog_request, None);
+    assert!(s.stencil().image.is_some() && s.stencil().size == DEFAULT_SIZE);
+    assert_eq!(*s.dialog_request(), None);
     // ステンシルを外すと、置き場も読み方も残る
-    let stroke = s.stroke.take().unwrap();
-    s.doc.cancel_stroke(stroke);
-    s.apply(Action::Stencil(StencilOp::Clear));
-    assert!(s.stencil.image.is_none());
-    assert_eq!(s.stencil.mode, StencilMode::Color);
-    assert_eq!(s.message, "ステンシルを外しました。");
-    s.apply(Action::Stencil(StencilOp::Pick));
-    assert_eq!(s.dialog_request, Some(DialogRequest::OpenStencil));
+    let stroke = s.stroke_mut().take().unwrap();
+    s.doc_mut().cancel_stroke(stroke);
+    s.act(Action::Stencil(StencilOp::Clear));
+    assert!(s.stencil().image.is_none());
+    assert_eq!(s.stencil().mode, StencilMode::Color);
+    assert_eq!(s.message(), "ステンシルを外しました。");
+    s.act(Action::Stencil(StencilOp::Pick));
+    assert_eq!(*s.dialog_request(), Some(DialogRequest::OpenStencil));
 }
 
 /// 64 × 64 のキャンバスの矩形（拡大 100% でキャンバスにぴったり重なる）。
@@ -360,13 +362,13 @@ fn exact_rect() -> Rect {
 
 /// キャンバスの横線を、ステンシルを通して描く（ステンシルはキャンバスと 1 対 1 で重ねる）。
 fn stencil_line(s: &mut AppState, y: f32) {
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let stencil = s.canvas_stencil(exact_rect()).unwrap();
     let mut stroke = s.begin_paint_stroke_with(layer, false, stencil).unwrap();
     for i in 0..=28 {
         stroke
             .add_point(
-                &mut s.doc,
+                s.doc_mut(),
                 4.0 + 2.0 * i as f64,
                 y as f64,
                 1.0,
@@ -374,17 +376,17 @@ fn stencil_line(s: &mut AppState, y: f32) {
             )
             .unwrap();
     }
-    s.doc.end_stroke(stroke).unwrap();
+    s.doc_mut().end_stroke(stroke).unwrap();
 }
 
 fn half_state(dir: &Path) -> AppState {
     let mut s = AppState::new(64, 64);
-    s.stencil.size = 1.0; // キャンバスにぴったり（画像は正方形）
-    s.brush.radius = 3.0;
-    s.brush.hardness = 1.0;
-    s.m2.random_seed = false;
-    s.apply(Action::Stencil(StencilOp::Load(half_png(dir, "half.png"))));
-    assert!(s.stencil.image.is_some(), "{}", s.message);
+    s.stencil_mut().size = 1.0; // キャンバスにぴったり（画像は正方形）
+    s.brush_mut().radius = 3.0;
+    s.brush_mut().hardness = 1.0;
+    s.m2_mut().random_seed = false;
+    s.act(Action::Stencil(StencilOp::Load(half_png(dir, "half.png"))));
+    assert!(s.stencil().image.is_some(), "{}", s.message());
     s
 }
 
@@ -395,37 +397,37 @@ fn headless_a_canvas_stroke_through_the_stencil_paints_only_where_it_is_open_and
     let mut s = half_state(&dir);
     stencil_line(&mut s, 32.0);
     assert_eq!(
-        composite_pixel(&s.doc, 10, 32)[3],
+        composite_pixel(s.doc(), 10, 32)[3],
         255,
         "白い所（左）は通る"
     );
     assert_eq!(
-        composite_pixel(&s.doc, 54, 32)[3],
+        composite_pixel(s.doc(), 54, 32)[3],
         0,
         "黒い所（右）は止める"
     );
-    assert!(s.doc.can_undo());
-    s.apply(Action::Undo);
-    assert_eq!(composite_pixel(&s.doc, 10, 32)[3], 0);
-    assert!(!s.doc.can_undo(), "ストロークは 1 回の Undo");
+    assert!(s.doc().can_undo());
+    s.act(Action::Undo);
+    assert_eq!(composite_pixel(s.doc(), 10, 32)[3], 0);
+    assert!(!s.doc().can_undo(), "ストロークは 1 回の Undo");
 
     // 反転: 黒が通る
-    s.apply(Action::Stencil(StencilOp::Invert(true)));
+    s.act(Action::Stencil(StencilOp::Invert(true)));
     stencil_line(&mut s, 32.0);
-    assert_eq!(composite_pixel(&s.doc, 10, 32)[3], 0);
-    assert_eq!(composite_pixel(&s.doc, 54, 32)[3], 255);
-    s.apply(Action::Undo);
+    assert_eq!(composite_pixel(s.doc(), 10, 32)[3], 0);
+    assert_eq!(composite_pixel(s.doc(), 54, 32)[3], 255);
+    s.act(Action::Undo);
 
     // N を押しているあいだは、ステンシルを使わない（置き場・画像はそのまま）
-    s.stencil.ignore_held = true;
+    s.stencil_mut().ignore_held = true;
     assert!(s.canvas_stencil(exact_rect()).unwrap().is_none());
-    s.stencil.ignore_held = false;
+    s.stencil_mut().ignore_held = false;
     assert!(s.canvas_stencil(exact_rect()).unwrap().is_some());
 
     // ステンシルを外すと、そのまま全部に塗れる
-    s.apply(Action::Stencil(StencilOp::Clear));
+    s.act(Action::Stencil(StencilOp::Clear));
     stencil_line(&mut s, 32.0);
-    assert_eq!(composite_pixel(&s.doc, 54, 32)[3], 255);
+    assert_eq!(composite_pixel(s.doc(), 54, 32)[3], 255);
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -435,10 +437,10 @@ fn headless_the_stencil_stays_on_the_screen_when_the_canvas_view_changes() {
     let mut s = half_state(&dir);
     // 画面は 64 × 64 の矩形そのまま。画面を 90° 回すと、キャンバスの左は画面の上へ回る。ステンシルは画面に貼り付いているので、
     // 白い左半分は画面の左のまま（キャンバスの上の位置が変わる）
-    s.view.set_angle(90.0);
+    s.view_mut().set_angle(90.0);
     let rect = exact_rect();
     let stencil = s.canvas_stencil(rect).unwrap().unwrap();
-    let view = s.view.view(rect, 64, 64);
+    let view = s.view().view(rect, 64, 64);
     for (screen, open) in [
         (pos2(10.0, 32.0), true),
         (pos2(54.0, 32.0), false),
@@ -452,11 +454,11 @@ fn headless_the_stencil_stays_on_the_screen_when_the_canvas_view_changes() {
         assert_eq!(sample.amount > 0.5, open, "{screen:?} → ({x}, {y})");
     }
     // 拡大・反転・パンでも同じ
-    s.view.flip_horizontally();
-    s.view.zoom = 0.5;
-    s.view.pan = vec2(5.0, -3.0);
+    s.view_mut().flip_horizontally();
+    s.view_mut().zoom = 0.5;
+    s.view_mut().pan = vec2(5.0, -3.0);
     let stencil = s.canvas_stencil(rect).unwrap().unwrap();
-    let view = s.view.view(rect, 64, 64);
+    let view = s.view().view(rect, 64, 64);
     for (screen, open) in [(pos2(10.0, 32.0), true), (pos2(54.0, 32.0), false)] {
         let (x, y) = view.to_canvas(screen);
         let sample = stencil
@@ -483,25 +485,25 @@ fn headless_the_placement_moves_scales_and_turns_the_image() {
     };
     assert!(open_at(&s, 10.0, 32.0) && !open_at(&s, 54.0, 32.0));
     // 時計回りに 90°: 画像の左（白）が画面の上へ
-    s.apply(Action::Stencil(StencilOp::Angle(90.0)));
+    s.act(Action::Stencil(StencilOp::Angle(90.0)));
     assert!(open_at(&s, 32.0, 10.0) && !open_at(&s, 32.0, 54.0));
     assert!(!open_at(&s, 10.0, 32.0));
-    s.apply(Action::Stencil(StencilOp::Angle(0.0)));
+    s.act(Action::Stencil(StencilOp::Angle(0.0)));
     // 小さくすると、画像の外は塗らない（繰り返さない）
-    s.apply(Action::Stencil(StencilOp::Size(0.25)));
+    s.act(Action::Stencil(StencilOp::Size(0.25)));
     assert!(
         open_at(&s, 28.0, 32.0) && !open_at(&s, 10.0, 32.0),
         "画像の外"
     );
     // 動かす: 中心を左へ
-    s.stencil.set_center(0.25, 0.5);
+    s.stencil_mut().set_center(0.25, 0.5);
     assert!(open_at(&s, 12.0, 32.0) && !open_at(&s, 20.0, 32.0) && !open_at(&s, 40.0, 32.0));
     // 繰り返す（横）: 外にも画像が並ぶ（幅 16 点ごとに白黒）
-    s.apply(Action::Stencil(StencilOp::Tiling(
+    s.act(Action::Stencil(StencilOp::Tiling(
         StencilTiling::Horizontal,
     )));
-    s.stencil.set_center(0.5, 0.5);
-    s.apply(Action::Stencil(StencilOp::Size(0.25)));
+    s.stencil_mut().set_center(0.5, 0.5);
+    s.act(Action::Stencil(StencilOp::Size(0.25)));
     let tiled: Vec<bool> = [4.0, 12.0, 20.0, 28.0, 36.0, 44.0, 52.0, 60.0]
         .iter()
         .map(|x| open_at(&s, *x, 32.0))
@@ -517,21 +519,21 @@ fn headless_the_placement_moves_scales_and_turns_the_image() {
 
 /// キャンバスの点（x, y）をなぞる 1 本のストロークを、今のステンシルの設定で描く（試験のツール）。
 fn run_stroke(s: &mut AppState, eraser: bool, points: &[(f64, f64)]) {
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let stencil = s.canvas_stencil(exact_rect()).unwrap();
     let mut stroke = s.begin_paint_stroke_with(layer, eraser, stencil).unwrap();
     for &(x, y) in points {
         stroke
-            .add_point(&mut s.doc, x, y, 1.0, Default::default())
+            .add_point(s.doc_mut(), x, y, 1.0, Default::default())
             .unwrap();
     }
-    s.doc.end_stroke(stroke).unwrap();
+    s.doc_mut().end_stroke(stroke).unwrap();
 }
 
 /// キャンバスの 1 行の覆い（左から）。
 fn alpha_row(s: &AppState, y: u32) -> Vec<u8> {
-    (0..s.doc.width())
-        .map(|x| composite_pixel(&s.doc, x, y)[3])
+    (0..s.doc().width())
+        .map(|x| composite_pixel(s.doc(), x, y)[3])
         .collect()
 }
 
@@ -541,17 +543,17 @@ fn headless_the_eraser_goes_through_the_stencil_too() {
     let dir = temp_dir("eraser");
     let mut s = half_state(&dir);
     // まず、ステンシル無しで全体に描く
-    s.apply(Action::Stencil(StencilOp::Clear));
+    s.act(Action::Stencil(StencilOp::Clear));
     stencil_line(&mut s, 32.0);
-    assert_eq!(composite_pixel(&s.doc, 54, 32)[3], 255);
-    s.apply(Action::Stencil(StencilOp::Load(dir.join("half.png"))));
+    assert_eq!(composite_pixel(s.doc(), 54, 32)[3], 255);
+    s.act(Action::Stencil(StencilOp::Load(dir.join("half.png"))));
     // 消しゴム: 左（白い所）だけ消える
     let line: Vec<(f64, f64)> = (0..=28).map(|i| (4.0 + 2.0 * i as f64, 32.0)).collect();
     run_stroke(&mut s, true, &line);
-    assert_eq!(composite_pixel(&s.doc, 10, 32)[3], 0, "白い所は消える");
-    assert_eq!(composite_pixel(&s.doc, 54, 32)[3], 255, "黒い所は残る");
-    s.apply(Action::Undo);
-    assert_eq!(composite_pixel(&s.doc, 10, 32)[3], 255);
+    assert_eq!(composite_pixel(s.doc(), 10, 32)[3], 0, "白い所は消える");
+    assert_eq!(composite_pixel(s.doc(), 54, 32)[3], 255, "黒い所は残る");
+    s.act(Action::Undo);
+    assert_eq!(composite_pixel(s.doc(), 10, 32)[3], 255);
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -563,26 +565,26 @@ fn headless_the_blur_brush_blurs_only_where_the_stencil_is_open() {
     let dir = temp_dir("blur");
     let mut s = half_state(&dir);
     // 幅 4・間隔 4 の縦縞を、ステンシル無しで全体に描く
-    s.apply(Action::Stencil(StencilOp::Clear));
-    s.brush.radius = 2.0;
+    s.act(Action::Stencil(StencilOp::Clear));
+    s.brush_mut().radius = 2.0;
     for k in 0..8 {
         let x = 2.0 + 8.0 * k as f64;
         let stripe: Vec<(f64, f64)> = (0..=30).map(|i| (x, 2.0 + 2.0 * i as f64)).collect();
         run_stroke(&mut s, false, &stripe);
     }
-    s.apply(Action::Stencil(StencilOp::Load(dir.join("half.png"))));
+    s.act(Action::Stencil(StencilOp::Load(dir.join("half.png"))));
     let before = alpha_row(&s, 32);
     assert!(
         before[0..32].contains(&0) && before[0..32].contains(&255),
         "縞: {before:?}"
     );
     // ぼかしで横切る（画面の左右とも、行 32 を中心に半径 6 の帯）
-    s.brush.radius = 6.0;
+    s.brush_mut().radius = 6.0;
     s.m2_ui(UiOp::Brush(BrushOp::Effect(EffectKind::Blur)));
-    s.message.clear();
+    s.message_mut().clear();
     let across: Vec<(f64, f64)> = (0..=28).map(|i| (4.0 + 2.0 * i as f64, 32.0)).collect();
     run_stroke(&mut s, false, &across);
-    assert!(s.message.is_empty(), "{}", s.message);
+    assert!(s.message().is_empty(), "{}", s.message());
     let through = alpha_row(&s, 32);
     assert_eq!(
         &through[40..60],
@@ -594,10 +596,10 @@ fn headless_the_blur_brush_blurs_only_where_the_stencil_is_open() {
         &before[4..24],
         "通す側（白い左半分）はぼける"
     );
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     assert_eq!(alpha_row(&s, 32), before, "1 回の Undo で戻る");
     // 対照: ステンシルを外すと、右半分もぼける（ステンシルを無視する実装だと、上の確かめが落ちる）
-    s.apply(Action::Stencil(StencilOp::Clear));
+    s.act(Action::Stencil(StencilOp::Clear));
     run_stroke(&mut s, false, &across);
     let plain = alpha_row(&s, 32);
     assert_ne!(
@@ -613,7 +615,7 @@ fn headless_the_blur_brush_blurs_only_where_the_stencil_is_open() {
 fn headless_the_top_of_the_image_is_the_top_of_the_screen() {
     let dir = temp_dir("vertical");
     let mut s = AppState::new(64, 64);
-    s.stencil.size = 1.0;
+    s.stencil_mut().size = 1.0;
     // 上の半分が白（PNG の行 0〜31）、下の半分が黒
     let path = write_png(&dir, "top.png", 64, 64, |_, y| {
         if y < 32 {
@@ -622,7 +624,7 @@ fn headless_the_top_of_the_image_is_the_top_of_the_screen() {
             [0, 0, 0, 255]
         }
     });
-    s.apply(Action::Stencil(StencilOp::Load(path)));
+    s.act(Action::Stencil(StencilOp::Load(path)));
     let stencil = s.canvas_stencil(exact_rect()).unwrap().unwrap();
     // 画面の点（y は下向き）→ キャンバスの画素（y は上向き）
     let open =
@@ -644,10 +646,10 @@ fn headless_the_top_of_the_image_is_the_top_of_the_screen() {
 fn headless_a_color_stencil_paints_its_colors_and_masks_take_only_the_amount() {
     let dir = temp_dir("color");
     let mut s = AppState::new(64, 64);
-    s.stencil.size = 1.0;
-    s.brush.radius = 3.0;
-    s.brush.hardness = 1.0;
-    s.m2.random_seed = false;
+    s.stencil_mut().size = 1.0;
+    s.brush_mut().radius = 3.0;
+    s.brush_mut().hardness = 1.0;
+    s.m2_mut().random_seed = false;
     // 左が赤、右が緑（灰色でないので、自動は色）
     let path = write_png(&dir, "rg.png", 64, 64, |x, _| {
         if x < 32 {
@@ -656,37 +658,37 @@ fn headless_a_color_stencil_paints_its_colors_and_masks_take_only_the_amount() {
             [0, 255, 0, 255]
         }
     });
-    s.apply(Action::Stencil(StencilOp::Load(path)));
-    assert_eq!(s.stencil.resolved_mode(), Some(StencilMode::Color));
+    s.act(Action::Stencil(StencilOp::Load(path)));
+    assert_eq!(s.stencil().resolved_mode(), Some(StencilMode::Color));
     stencil_line(&mut s, 32.0);
-    assert_eq!(composite_pixel(&s.doc, 10, 32), [255, 0, 0, 255]);
-    assert_eq!(composite_pixel(&s.doc, 54, 32), [0, 255, 0, 255]);
-    s.apply(Action::Undo);
+    assert_eq!(composite_pixel(s.doc(), 10, 32), [255, 0, 0, 255]);
+    assert_eq!(composite_pixel(s.doc(), 54, 32), [0, 255, 0, 255]);
+    s.act(Action::Undo);
     // スカラーのチャンネル（ラフネス）は、輝度を塗る
     s.m2_ui(UiOp::PaintChannel(Channel::Roughness));
     stencil_line(&mut s, 32.0);
-    let red = s.doc.composite_pixel(Channel::Roughness, 10, 32).unwrap();
+    let red = s.doc().composite_pixel(Channel::Roughness, 10, 32).unwrap();
     assert_eq!((red.r, red.a), (54, 255), "赤の輝度（Rec. 709）");
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     // 量のモードにすると、色は塗らず量だけ（描画色で塗る）
     s.m2_ui(UiOp::PaintChannel(Channel::Color));
-    s.apply(Action::Stencil(StencilOp::Mode(StencilMode::Mask)));
+    s.act(Action::Stencil(StencilOp::Mode(StencilMode::Mask)));
     stencil_line(&mut s, 32.0);
     let (a, b) = (
-        composite_pixel(&s.doc, 10, 32),
-        composite_pixel(&s.doc, 54, 32),
+        composite_pixel(s.doc(), 10, 32),
+        composite_pixel(s.doc(), 54, 32),
     );
     assert_eq!(&a[0..3], &[0, 0, 0], "描画色");
     assert!(a[3] > 0 && b[3] > 0, "赤も緑も輝度があるので通る");
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     // マスクへは、色のモードでも量だけ
-    s.apply(Action::Stencil(StencilOp::Mode(StencilMode::Color)));
-    let id = s.selected_layer.unwrap();
-    s.apply(Action::M2(yolu_app::m2::Edit::AddMask(id)));
-    assert!(s.m2.edit_mask);
+    s.act(Action::Stencil(StencilOp::Mode(StencilMode::Color)));
+    let id = s.selected_layer().unwrap();
+    s.act(Action::M2(yolu_app::m2::Edit::AddMask(id)));
+    assert!(s.m2().edit_mask);
     assert!(s.canvas_stencil(exact_rect()).unwrap().is_some());
     stencil_line(&mut s, 32.0);
-    let mask = s.doc.layer(id).unwrap().mask().unwrap().surface();
+    let mask = s.doc().layer(id).unwrap().mask().unwrap().surface();
     let px = mask.pixel(10, 32).unwrap();
     assert_eq!((px.r, px.g, px.b), (0, 0, 0), "マスクの色は黒のまま");
     assert!(px.a > 0);
@@ -697,18 +699,18 @@ fn headless_a_color_stencil_paints_its_colors_and_masks_take_only_the_amount() {
 fn headless_the_stencil_is_app_state_and_is_not_saved_in_the_project() {
     let dir = temp_dir("saved");
     let mut s = half_state(&dir);
-    s.apply(Action::Stencil(StencilOp::Angle(33.0)));
+    s.act(Action::Stencil(StencilOp::Angle(33.0)));
     stencil_line(&mut s, 32.0);
     let path = dir.join("with.ylp");
-    s.apply(Action::SaveProjectAs(path.clone()));
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    s.act(Action::SaveProjectAs(path.clone()));
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
     // .ylp は zip（中の JSON は圧縮される）なので、生のバイト列ではなく、展開した中身で確かめる: 同じ文書をステンシル無しで保存した
     // .ylp と、エントリの名前も中身も（project.json・ylp.json・文書の正本を含めて全部）一致し、画像の名前はどのエントリにも出てこない
     let with = Archive::read(&std::fs::read(&path).unwrap()).unwrap();
-    s.apply(Action::Stencil(StencilOp::Clear));
+    s.act(Action::Stencil(StencilOp::Clear));
     let bare_path = dir.join("without.ylp");
-    s.apply(Action::SaveProjectAs(bare_path.clone()));
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    s.act(Action::SaveProjectAs(bare_path.clone()));
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
     let bare = Archive::read(&std::fs::read(&bare_path).unwrap()).unwrap();
     let names = |a: &Archive| a.entries().keys().cloned().collect::<Vec<_>>();
     assert_eq!(names(&with), names(&bare), "エントリの名前の並び");
@@ -724,25 +726,33 @@ fn headless_the_stencil_is_app_state_and_is_not_saved_in_the_project() {
         );
     }
     // 読み込み直したステンシルの置き場へ戻す（上で外したので、もう一度読んで、角度を戻す）
-    s.apply(Action::Stencil(StencilOp::Load(dir.join("half.png"))));
-    s.apply(Action::Stencil(StencilOp::Angle(33.0)));
+    s.act(Action::Stencil(StencilOp::Load(dir.join("half.png"))));
+    s.act(Action::Stencil(StencilOp::Angle(33.0)));
     // 別のプロジェクトを開いても、新しいプロジェクトにしても、ステンシルはそのまま（ウィンドウの状態）
-    s.apply(Action::NewProject);
-    assert!(s.stencil.image.is_some() && s.stencil.angle == 33.0);
-    s.apply(Action::OpenProject(path.clone()));
-    assert!(s.stencil.image.is_some() && s.stencil.angle == 33.0);
+    s.act(Action::NewProject);
+    assert!(s.stencil().image.is_some() && s.stencil().angle == 33.0);
+    s.act(Action::OpenProject(path.clone()));
+    assert!(s.stencil().image.is_some() && s.stencil().angle == 33.0);
     // 新しく立ち上げたアプリは、ステンシルを持たない
     let mut again = AppState::new(64, 64);
-    again.apply(Action::OpenProject(path));
-    assert!(again.stencil.image.is_none() && again.stencil.angle == 0.0);
+    again.act(Action::OpenProject(path));
+    assert!(again.stencil().image.is_none() && again.stencil().angle == 0.0);
     let _ = std::fs::remove_dir_all(dir);
 }
 
 // ───────── プロパティのタブ ─────────
 
 fn open_stencil_tab(h: &mut Harness<'_, YoluApp>) {
-    h.state_mut().state.ui.property_tab = 0;
+    h.ui_mut().property_tab = 0;
     h.run();
+}
+
+/// 出ている知らせが消えるまで時間を進める（知らせは状態の帯の左の端に出て、下の端のボタンに重なることがある）。
+fn wait_out_toast(h: &mut Harness<'_, YoluApp>) {
+    let frames = ((yolu_app::toast::LONG_SECONDS + 1.0) * 60.0) as usize;
+    for _ in 0..frames {
+        h.step();
+    }
 }
 
 #[test]
@@ -761,10 +771,7 @@ fn the_stencil_tab_loads_picks_and_edits_without_touching_the_document() {
     let at = popup_item(&h, "画像を読む…").center();
     click(&mut h, at);
     assert_eq!(popup_kind(&h), None);
-    assert_eq!(
-        h.state().state.dialog_request,
-        Some(DialogRequest::OpenStencil)
-    );
+    assert_eq!(*h.dialog_request(), Some(DialogRequest::OpenStencil));
     // 読んだ後: 箱に名前、設定の行が出る
     load(&mut h, &half_png(&dir, "half.png"));
     assert!(h.query_by_label("画像: half.png").is_some());
@@ -801,8 +808,11 @@ fn the_stencil_tab_loads_picks_and_edits_without_touching_the_document() {
             pos2(slider.left() + slider.width() * 0.5, slider.center().y),
         ],
     );
+    // 押した位置へ飛ばず、押し始めの値から横に動かした量だけ大きくなる
     let size = st(&h).size;
-    assert!((1.5..2.5).contains(&size), "{size}");
+    assert!((2.0..3.0).contains(&size), "{size}");
+    // 「置き場を戻す」の行は状態の帯に近く、ここまでの知らせ（帯の左の端）と重なる。時間を進めて知らせが消えてから押す
+    wait_out_toast(&mut h);
     h.get_by_label("置き場を戻す").click();
     h.run();
     assert_eq!(st(&h).size, DEFAULT_SIZE);
@@ -811,8 +821,8 @@ fn the_stencil_tab_loads_picks_and_edits_without_touching_the_document() {
     h.run();
     assert!(st(&h).image.is_none());
     assert!(h.query_by_label("画像: なし").is_some());
-    assert!(!h.state().state.doc.can_undo(), "どの操作も文書を変えない");
-    assert!(!h.state().state.modified);
+    assert!(!h.doc().can_undo(), "どの操作も文書を変えない");
+    assert!(!h.modified());
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -863,9 +873,7 @@ fn the_stencil_tab_speaks_both_languages() {
     open_stencil_tab(&mut h);
     load(&mut h, &color_png(&dir, "color.png"));
     assert!(h.query_by_label("読み方: 自動 (色)").is_some());
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Language(Lang::En)));
+    h.act(Action::M2Ui(UiOp::Language(Lang::En)));
     h.run();
     assert!(h.query_by_label("Image: color.png").is_some());
     assert!(h.query_by_label("Reads as: Auto (Color)").is_some());
@@ -890,17 +898,16 @@ fn snapshot_the_stencil_tab() {
     let dir = temp_dir("snap-tab");
     let mut h = app(1280.0, 1000.0, 128);
     open_stencil_tab(&mut h);
-    h.snapshot("stencil_tab_empty");
+    let rect = crate::common::shot::group(&h, yolu_app::Tab::Properties);
+    common::shot::region(&mut h, "stencil_tab_empty", rect);
     load(&mut h, &color_png(&dir, "gradient.png"));
-    h.state_mut().state.stencil.angle = 30.0;
+    h.stencil_mut().angle = 30.0;
     h.run();
-    h.snapshot_options("stencil_tab_color", &rotated_texture());
+    crate::common::shot::region_with(&mut h, "stencil_tab_color", rect, &rotated_texture());
     load(&mut h, &ring_png(&dir, "ring.png"));
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Language(Lang::En)));
+    h.act(Action::M2Ui(UiOp::Language(Lang::En)));
     h.run();
-    h.snapshot_options("stencil_tab_mask_english", &rotated_texture());
+    crate::common::shot::region_with(&mut h, "stencil_tab_mask_english", rect, &rotated_texture());
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -911,24 +918,24 @@ fn snapshot_the_overlay_on_the_canvas_with_y_held_and_tiled() {
     let dir = temp_dir("snap-canvas");
     let mut h = app(1280.0, 800.0, 256);
     load(&mut h, &ring_png(&dir, "ring.png"));
-    h.state_mut().state.stencil.opacity = 0.6;
+    h.stencil_mut().opacity = 0.6;
     small_brush(&mut h);
     line_across(&mut h, -120.0, 120.0); // 通して塗った後
     key_down(&mut h, Key::Y);
     h.run();
-    h.snapshot("stencil_canvas_overlay_held");
+    let rect = canvas_rect(&h);
+    common::shot::region(&mut h, "stencil_canvas_overlay_held", rect);
     key_up(&mut h, Key::Y);
-    h.state_mut()
-        .state
-        .apply(Action::Stencil(StencilOp::Tiling(StencilTiling::Both)));
-    h.state_mut()
-        .state
-        .apply(Action::Stencil(StencilOp::Size(0.3)));
-    h.state_mut()
-        .state
-        .apply(Action::Stencil(StencilOp::Angle(20.0)));
+    h.act(Action::Stencil(StencilOp::Tiling(StencilTiling::Both)));
+    h.act(Action::Stencil(StencilOp::Size(0.3)));
+    h.act(Action::Stencil(StencilOp::Angle(20.0)));
     h.run();
-    h.snapshot_options("stencil_canvas_overlay_tiled", &rotated_texture());
+    crate::common::shot::region_with(
+        &mut h,
+        "stencil_canvas_overlay_tiled",
+        rect,
+        &rotated_texture(),
+    );
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -938,16 +945,13 @@ fn n_held_hides_the_overlay_and_paints_without_the_stencil() {
     let mut h = app(1280.0, 800.0, 256);
     load(&mut h, &half_png(&dir, "half.png"));
     small_brush(&mut h);
-    h.state_mut().state.stencil.size = 0.5;
+    h.stencil_mut().size = 0.5;
     let c = canvas_rect(&h).center();
     // 画像の外（右の遠く）は、ステンシルがあると塗れない
     let far = pos2(c.x + 150.0, c.y);
     line_across(&mut h, 120.0, 180.0);
     assert_eq!(canvas_pixel(&h, far)[3], 0, "画像の外は塗らない");
-    assert!(
-        !h.state().state.doc.can_undo(),
-        "何も塗れなければ Undo の段も無い"
-    );
+    assert!(!h.doc().can_undo(), "何も塗れなければ Undo の段も無い");
     key_down(&mut h, Key::N);
     assert!(st(&h).ignore_held && !st(&h).shown() && !st(&h).applies());
     line_across(&mut h, 120.0, 180.0);
@@ -981,9 +985,9 @@ fn a_canvas_stroke_through_the_stencil_follows_the_screen_not_the_canvas_view() 
     load(&mut h, &half_png(&dir, "half.png"));
     small_brush(&mut h);
     {
-        let s = &mut h.state_mut().state;
-        s.view.zoom = 1.5;
-        s.view.set_angle(90.0);
+        let s = h.app_mut();
+        s.view_mut().zoom = 1.5;
+        s.view_mut().set_angle(90.0);
     }
     h.run();
     let r = canvas_rect(&h);
@@ -994,7 +998,7 @@ fn a_canvas_stroke_through_the_stencil_follows_the_screen_not_the_canvas_view() 
     assert_eq!(inside(&h, -0.15), 255, "画面の左の白い所");
     assert_eq!(inside(&h, 0.15), 0, "画面の右の黒い所");
     assert_eq!(inside(&h, -0.38), 0, "画像の外");
-    assert!(h.state().state.doc.can_undo());
+    assert!(h.doc().can_undo());
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
     assert_eq!(inside(&h, -0.15), 0, "1 回の Undo で戻る");
@@ -1084,15 +1088,15 @@ fn t_drag_turns_moves_and_resizes_the_stencil_and_never_paints() {
     release_at(&mut h, pos2(c.x + 30.0, c.y), PointerButton::Middle);
     assert!(st(&h).drag.is_none());
     // ここまで、描いていない・回していない・パンしていない
-    let s = &h.state().state;
-    assert!(!s.doc.can_undo() && !s.modified);
-    assert_eq!((s.view.angle, s.view.pan), (0.0, vec2(0.0, 0.0)));
+    let s = h.app();
+    assert!(!s.doc().can_undo() && !s.modified());
+    assert_eq!((s.view().angle, s.view().pan), (0.0, vec2(0.0, 0.0)));
     // Y を離したら、ふつうに描ける（ステンシルを通して）
     small_brush(&mut h);
-    h.state_mut().state.stencil.reset_placement();
+    h.stencil_mut().reset_placement();
     h.run();
     line_across(&mut h, -100.0, 100.0);
-    assert!(h.state().state.doc.can_undo());
+    assert!(h.doc().can_undo());
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -1115,10 +1119,10 @@ fn a_stencil_drag_ends_on_focus_loss_and_a_stroke_is_never_interrupted() {
     h.event(Event::WindowFocused(true));
     h.step();
     small_brush(&mut h);
-    h.state_mut().state.stencil.reset_placement();
+    h.stencil_mut().reset_placement();
     press(&h, pos2(c.x - 40.0, c.y), PointerButton::Primary);
     h.step();
-    assert!(h.state().state.is_stroking());
+    assert!(h.app().is_stroking());
     key_down(&mut h, Key::Y);
     press_with(
         &mut h,
@@ -1131,7 +1135,7 @@ fn a_stencil_drag_ends_on_focus_loss_and_a_stroke_is_never_interrupted() {
     release_at(&mut h, pos2(c.x - 40.0, c.y), PointerButton::Primary);
     key_up(&mut h, Key::Y);
     h.run();
-    assert!(!h.state().state.is_stroking());
+    assert!(!h.app().is_stroking());
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -1142,18 +1146,18 @@ fn t_drag_without_an_image_says_so_and_does_not_paint() {
     key_down(&mut h, Key::Y);
     press_with(&mut h, c, PointerButton::Primary, Modifiers::NONE);
     assert!(st(&h).drag.is_none());
-    assert_eq!(h.state().state.message, "ステンシルの画像がありません。");
+    assert_eq!(h.message(), "ステンシルの画像がありません。");
     release_at(&mut h, c, PointerButton::Primary);
-    assert!(!h.state().state.doc.can_undo());
+    assert!(!h.doc().can_undo());
 }
 
 // ───────── 3D のビュー ─────────
 
 fn cube_view(doc: u32) -> (Harness<'static, YoluApp>, Rect) {
     let mut h = app(1100.0, 760.0, doc);
-    h.state_mut().state.view3d.load_demo();
-    h.state_mut().state.view3d.camera.yaw = -40.0;
-    h.state_mut().state.view3d.camera.pitch = 15.0;
+    h.view3d_mut().load_demo();
+    h.view3d_mut().view.camera.yaw = -40.0;
+    h.view3d_mut().view.camera.pitch = 15.0;
     click_tab(&mut h, Tab::View3d);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
@@ -1162,12 +1166,7 @@ fn cube_view(doc: u32) -> (Harness<'static, YoluApp>, Rect) {
 
 /// モデルの空間の点の、ウィンドウの画面の点。
 fn cube_screen(h: &Harness<'_, YoluApp>, rect: Rect, p: yolu_core::glam::Vec3) -> Pos2 {
-    let view = h
-        .state()
-        .state
-        .view3d
-        .camera
-        .view(rect.width(), rect.height());
+    let view = h.view3d().view.camera.view(rect.width(), rect.height());
     let s = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + s.x, rect.top() + s.y)
 }
@@ -1203,7 +1202,7 @@ fn cube_line(h: &mut Harness<'_, YoluApp>, rect: Rect) {
 }
 
 fn painted(h: &Harness<'_, YoluApp>) -> BTreeSet<(u32, u32)> {
-    let doc = &h.state().state.doc;
+    let doc = h.doc();
     let mut out = BTreeSet::new();
     for y in 0..doc.height() {
         for x in 0..doc.width() {
@@ -1221,39 +1220,28 @@ fn a_3d_stroke_goes_through_the_stencil_laid_over_the_view_and_undoes_in_one_ste
     let path = half_png(&dir, "half.png");
     let plain = {
         let (mut h, rect) = cube_view(256);
-        h.state_mut().state.color.set_main([0.85, 0.15, 0.1, 1.0]);
+        h.color_mut().set_main([0.85, 0.15, 0.1, 1.0]);
         cube_line(&mut h, rect);
         painted(&h)
     };
     assert!(plain.len() > 300, "{}", plain.len());
     let (mut h, rect) = cube_view(256);
-    h.state_mut().state.color.set_main([0.85, 0.15, 0.1, 1.0]);
+    h.color_mut().set_main([0.85, 0.15, 0.1, 1.0]);
     load(&mut h, &path);
     // 画像は表示域の高さの 0.9 倍の正方形。白い左半分と黒い右半分の境が、線の真ん中を通るように貼る
     let mid = {
         use yolu_core::glam::Vec3;
-        let view = h
-            .state()
-            .state
-            .view3d
-            .camera
-            .view(rect.width(), rect.height());
+        let view = h.view3d().view.camera.view(rect.width(), rect.height());
         view.to_screen(Vec3::new(0.0, 0.1, -0.5))
             .expect("カメラの前")
     };
-    h.state_mut().state.stencil.size = 0.9;
-    h.state_mut()
-        .state
-        .stencil
+    h.stencil_mut().size = 0.9;
+    h.stencil_mut()
         .set_center(mid.x / rect.width(), mid.y / rect.height());
-    h.state_mut().state.message.clear();
+    h.message_mut().clear();
     h.run();
     cube_line(&mut h, rect);
-    assert!(
-        h.state().state.message.is_empty(),
-        "{}",
-        h.state().state.message
-    );
+    assert!(h.message().is_empty(), "{}", h.message());
     let through = painted(&h);
     let n = plain.len();
     assert!(
@@ -1265,14 +1253,12 @@ fn a_3d_stroke_goes_through_the_stencil_laid_over_the_view_and_undoes_in_one_ste
         through.is_subset(&plain),
         "通した画素は、通さないときに塗られる画素の一部"
     );
-    assert!(h.state().state.doc.can_undo());
+    assert!(h.doc().can_undo());
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
     assert!(painted(&h).is_empty(), "1 回の Undo で戻る");
     // 反転すると、残りの側が通る（境の滲みのほかは重ならず、合わせて全部）
-    h.state_mut()
-        .state
-        .apply(Action::Stencil(StencilOp::Invert(true)));
+    h.act(Action::Stencil(StencilOp::Invert(true)));
     h.run();
     cube_line(&mut h, rect);
     let inverted = painted(&h);
@@ -1347,7 +1333,7 @@ fn a_3d_stencil_opens_the_side_of_the_screen_it_covers_left_right_and_top_bottom
         }
     });
     let (mut h, rect) = cube_view(256);
-    h.state_mut().state.color.set_main([0.85, 0.15, 0.1, 1.0]);
+    h.color_mut().set_main([0.85, 0.15, 0.1, 1.0]);
     small_brush(&mut h);
     let v = |x: f32, y: f32| Vec3::new(x, y, -0.5);
     // 画像の真ん中（左右・上下の境）を、手前の面の中心に置く。画像は表示域の高さの 0.9 倍の正方形
@@ -1370,8 +1356,8 @@ fn a_3d_stencil_opens_the_side_of_the_screen_it_covers_left_right_and_top_bottom
     let (top, bottom) = (stroke_and_undo(&mut h, &p), stroke_and_undo(&mut h, &q));
     // 左右: 白い左半分を通すと左の画素だけ、反転すると右の画素だけ
     load(&mut h, &left_white);
-    h.state_mut().state.stencil.size = 0.9;
-    h.state_mut().state.stencil.set_center(
+    h.stencil_mut().size = 0.9;
+    h.stencil_mut().set_center(
         (center.x - rect.left()) / rect.width(),
         (center.y - rect.top()) / rect.height(),
     );
@@ -1379,23 +1365,17 @@ fn a_3d_stencil_opens_the_side_of_the_screen_it_covers_left_right_and_top_bottom
     let across = seg(&h, v(-0.45, 0.0), v(0.45, 0.0));
     let through = stroke_and_undo(&mut h, &across);
     assert_only_the_white_side(&through, &left, &right, "白が左");
-    h.state_mut()
-        .state
-        .apply(Action::Stencil(StencilOp::Invert(true)));
+    h.act(Action::Stencil(StencilOp::Invert(true)));
     let through = stroke_and_undo(&mut h, &across);
     assert_only_the_white_side(&through, &right, &left, "白が左を反転");
     // 上下: 白い上半分を通すと上の画素だけ、反転すると下の画素だけ
-    h.state_mut()
-        .state
-        .apply(Action::Stencil(StencilOp::Invert(false)));
+    h.act(Action::Stencil(StencilOp::Invert(false)));
     load(&mut h, &top_white);
     h.run();
     let down = seg(&h, v(0.0, 0.4), v(0.0, -0.4));
     let through = stroke_and_undo(&mut h, &down);
     assert_only_the_white_side(&through, &top, &bottom, "白が上");
-    h.state_mut()
-        .state
-        .apply(Action::Stencil(StencilOp::Invert(true)));
+    h.act(Action::Stencil(StencilOp::Invert(true)));
     let through = stroke_and_undo(&mut h, &down);
     assert_only_the_white_side(&through, &bottom, &top, "白が上を反転");
     let _ = std::fs::remove_dir_all(dir);
@@ -1429,9 +1409,9 @@ fn t_drag_works_over_the_3d_view_too_and_the_overlay_follows_the_screen() {
         pos2(c.x + 60.0, c.y + 20.0),
         PointerButton::Secondary,
     );
-    assert_ne!(h.state().state.view3d.camera.yaw, -40.0);
+    assert_ne!(h.view3d().view.camera.yaw, -40.0);
     assert_eq!((st(&h).center, st(&h).size, st(&h).angle), placement);
-    assert!(!h.state().state.doc.can_undo(), "ドラッグでは描かない");
+    assert!(!h.doc().can_undo(), "ドラッグでは描かない");
     assert!(st(&h).has_overlay_texture());
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -1441,14 +1421,15 @@ fn snapshot_the_overlay_over_the_3d_view() {
     let dir = temp_dir("snap-3d");
     let (mut h, rect) = cube_view(256);
     load(&mut h, &ring_png(&dir, "ring.png"));
-    h.state_mut().state.stencil.opacity = 0.55;
-    h.state_mut().state.stencil.size = 0.7;
-    h.state_mut().state.color.set_main([0.85, 0.15, 0.1, 1.0]);
+    h.stencil_mut().opacity = 0.55;
+    h.stencil_mut().size = 0.7;
+    h.color_mut().set_main([0.85, 0.15, 0.1, 1.0]);
     h.run();
     cube_line(&mut h, rect);
     key_down(&mut h, Key::Y);
     h.run();
-    h.snapshot("stencil_view3d_overlay");
+    // ステンシルの重ね表示を 3D ビューに出した形を見る、ウィンドウ全体の見本
+    common::shot::window(&mut h, "stencil_view3d_overlay");
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -1504,7 +1485,7 @@ fn a_second_button_during_a_stencil_drag_starts_nothing() {
     // 中ボタンで動かしている最中に左を押す: ストロークは始まらず、ドラッグは続く
     press_with(&mut h, c, PointerButton::Middle, Modifiers::NONE);
     press_with(&mut h, c, PointerButton::Primary, Modifiers::NONE);
-    assert!(!h.state().state.is_stroking(), "ストロークが始まった");
+    assert!(!h.app().is_stroking(), "ストロークが始まった");
     move_to(&h, moved);
     h.step();
     assert!(st(&h).center[0] > 0.5, "ドラッグは続く");
@@ -1513,11 +1494,11 @@ fn a_second_button_during_a_stencil_drag_starts_nothing() {
     release_at(&mut h, moved, PointerButton::Middle);
     assert!(st(&h).drag.is_none());
     {
-        let s = &h.state().state;
-        assert!(!s.doc.can_undo() && !s.modified && s.canvas.stroke.is_none());
+        let s = h.app();
+        assert!(!s.doc().can_undo() && !s.modified() && s.canvas().stroke.is_none());
     }
     // 左で回している最中に中を押す: パンは立たず、中を離したあと、ボタンを押さずに動かしてもキャンバスは動かない
-    let view_before = (h.state().state.view.angle, h.state().state.view.pan);
+    let view_before = (h.view().angle, h.view().pan);
     press_with(
         &mut h,
         pos2(c.x + 100.0, c.y),
@@ -1529,9 +1510,9 @@ fn a_second_button_during_a_stencil_drag_starts_nothing() {
         Some(yolu_app::stencil::DragKind::Rotate)
     );
     press_with(&mut h, c, PointerButton::Middle, Modifiers::NONE);
-    assert!(!h.state().state.canvas.panning, "パンが始まった");
+    assert!(!h.canvas().panning, "パンが始まった");
     release_at(&mut h, c, PointerButton::Middle);
-    assert!(!h.state().state.canvas.panning);
+    assert!(!h.canvas().panning);
     assert!(st(&h).drag.is_some(), "回すドラッグは続く");
     release_at(&mut h, c, PointerButton::Primary);
     assert!(st(&h).drag.is_none());
@@ -1539,16 +1520,16 @@ fn a_second_button_during_a_stencil_drag_starts_nothing() {
         move_to(&h, p);
         h.step();
     }
-    let s = &h.state().state;
+    let s = h.app();
     assert_eq!(
-        (s.view.angle, s.view.pan),
+        (s.view().angle, s.view().pan),
         view_before,
         "キャンバスは動かない"
     );
     // ドラッグの前から押していた中ボタン（パン）は、ドラッグの最中に離しても戻る
     key_up(&mut h, Key::Y);
     press_with(&mut h, c, PointerButton::Middle, Modifiers::NONE);
-    assert!(h.state().state.canvas.panning);
+    assert!(h.canvas().panning);
     key_down(&mut h, Key::Y);
     press_with(
         &mut h,
@@ -1558,7 +1539,7 @@ fn a_second_button_during_a_stencil_drag_starts_nothing() {
     );
     assert!(st(&h).drag.is_some());
     release_at(&mut h, c, PointerButton::Middle);
-    assert!(!h.state().state.canvas.panning, "離しはキャンバスへ届く");
+    assert!(!h.canvas().panning, "離しはキャンバスへ届く");
     release_at(&mut h, c, PointerButton::Primary);
     assert!(st(&h).drag.is_none());
     let _ = std::fs::remove_dir_all(dir);
@@ -1574,8 +1555,8 @@ fn a_second_button_during_a_stencil_drag_starts_nothing_over_the_3d_view_too() {
     // 中で動かしている最中に左を押す: ストロークは始まらない
     press_with(&mut h, c, PointerButton::Middle, Modifiers::NONE);
     press_with(&mut h, c, PointerButton::Primary, Modifiers::NONE);
-    assert!(!h.state().state.is_stroking(), "ストロークが始まった");
-    assert!(h.state().state.view3d.input.stroke.is_none());
+    assert!(!h.app().is_stroking(), "ストロークが始まった");
+    assert!(h.view3d().view.input.stroke.is_none());
     release_at(&mut h, c, PointerButton::Primary);
     release_at(&mut h, c, PointerButton::Middle);
     assert!(st(&h).drag.is_none());
@@ -1583,18 +1564,15 @@ fn a_second_button_during_a_stencil_drag_starts_nothing_over_the_3d_view_too() {
     press_with(&mut h, c, PointerButton::Primary, Modifiers::NONE);
     assert!(st(&h).drag.is_some());
     press_with(&mut h, c, PointerButton::Middle, Modifiers::NONE);
-    assert!(
-        h.state().state.view3d.input.nav.is_none(),
-        "カメラが動き出した"
-    );
-    let yaw = h.state().state.view3d.camera.yaw;
+    assert!(h.view3d().view.input.nav.is_none(), "カメラが動き出した");
+    let yaw = h.view3d().view.camera.yaw;
     move_to(&h, pos2(c.x + 30.0, c.y + 10.0));
     h.step();
-    assert_eq!(h.state().state.view3d.camera.yaw, yaw);
+    assert_eq!(h.view3d().view.camera.yaw, yaw);
     release_at(&mut h, c, PointerButton::Middle);
     release_at(&mut h, c, PointerButton::Primary);
     assert!(st(&h).drag.is_none());
-    assert!(!h.state().state.doc.can_undo() && !h.state().state.modified);
+    assert!(!h.doc().can_undo() && !h.modified());
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -1612,7 +1590,7 @@ fn a_pen_with_y_held_moves_the_stencil_and_does_not_paint() {
     h.state().pen().push(pen_sample(down, true));
     press_with(&mut h, down, PointerButton::Primary, Modifiers::NONE);
     assert!(st(&h).drag.is_some(), "ドラッグが始まらない");
-    assert!(!h.state().state.is_stroking(), "ペンが描き始めた");
+    assert!(!h.app().is_stroking(), "ペンが描き始めた");
     let to = pos2(c.x, c.y + 100.0);
     h.state().pen().push(pen_sample(to, true));
     move_to(&h, to);
@@ -1621,8 +1599,8 @@ fn a_pen_with_y_held_moves_the_stencil_and_does_not_paint() {
     h.state().pen().push(pen_sample(to, false));
     release_at(&mut h, to, PointerButton::Primary);
     assert!(st(&h).drag.is_none());
-    let s = &h.state().state;
-    assert!(!s.doc.can_undo() && !s.modified, "文書は変わらない");
+    let s = h.app();
+    assert!(!s.doc().can_undo() && !s.modified(), "文書は変わらない");
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -1646,11 +1624,11 @@ fn a_pen_stroke_goes_through_the_stencil_on_the_canvas_and_undoes_in_one_step() 
     assert_eq!(inside(&h, -0.15), 255, "画面の左の白い所");
     assert_eq!(inside(&h, 0.15), 0, "画面の右の黒い所");
     assert_eq!(inside(&h, -0.38), 0, "画像の外");
-    assert!(h.state().state.doc.can_undo());
+    assert!(h.doc().can_undo());
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
     assert_eq!(inside(&h, -0.15), 0, "1 回の Undo で戻る");
-    assert!(!h.state().state.doc.can_undo());
+    assert!(!h.doc().can_undo());
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -1661,31 +1639,24 @@ fn a_pen_over_the_3d_view_moves_the_stencil_with_y_and_paints_through_it_without
     let path = half_png(&dir, "half.png");
     let plain = {
         let (mut h, rect) = cube_view(256);
-        h.state_mut().state.color.set_main([0.85, 0.15, 0.1, 1.0]);
+        h.color_mut().set_main([0.85, 0.15, 0.1, 1.0]);
         let points = cube_points(&h, rect);
         pen_line(&mut h, &points);
         painted(&h)
     };
     assert!(plain.len() > 300, "{}", plain.len());
     let (mut h, rect) = cube_view(256);
-    h.state_mut().state.color.set_main([0.85, 0.15, 0.1, 1.0]);
+    h.color_mut().set_main([0.85, 0.15, 0.1, 1.0]);
     load(&mut h, &path);
     // 白い左半分と黒い右半分の境が、線の真ん中を通るように貼る（マウスの試験と同じ）
     let mid = {
         use yolu_core::glam::Vec3;
-        let view = h
-            .state()
-            .state
-            .view3d
-            .camera
-            .view(rect.width(), rect.height());
+        let view = h.view3d().view.camera.view(rect.width(), rect.height());
         view.to_screen(Vec3::new(0.0, 0.1, -0.5))
             .expect("カメラの前")
     };
-    h.state_mut().state.stencil.size = 0.9;
-    h.state_mut()
-        .state
-        .stencil
+    h.stencil_mut().size = 0.9;
+    h.stencil_mut()
         .set_center(mid.x / rect.width(), mid.y / rect.height());
     h.run();
     let points = cube_points(&h, rect);
@@ -1695,19 +1666,17 @@ fn a_pen_over_the_3d_view_moves_the_stencil_with_y_and_paints_through_it_without
     h.state().pen().push(pen_sample(points[2], true));
     press_with(&mut h, points[2], PointerButton::Middle, Modifiers::NONE);
     assert!(st(&h).drag.is_some(), "ドラッグが始まらない");
-    assert!(!h.state().state.is_stroking(), "ペンが描き始めた");
+    assert!(!h.app().is_stroking(), "ペンが描き始めた");
     h.state().pen().push(pen_sample(points[8], true));
     move_to(&h, points[8]);
     h.step();
     assert_ne!(st(&h).center, before, "置き場が動く");
     h.state().pen().push(pen_sample(points[8], false));
     release_at(&mut h, points[8], PointerButton::Middle);
-    assert!(painted(&h).is_empty() && !h.state().state.doc.can_undo());
+    assert!(painted(&h).is_empty() && !h.doc().can_undo());
     // 置き場を戻して、Y を離し、ペンで描く
     key_up(&mut h, Key::Y);
-    h.state_mut()
-        .state
-        .stencil
+    h.stencil_mut()
         .set_center(mid.x / rect.width(), mid.y / rect.height());
     h.run();
     pen_line(&mut h, &points);
@@ -1762,7 +1731,7 @@ fn a_stencil_drag_does_not_start_while_a_popup_is_open() {
 fn headless_each_blocker_alone_stops_a_stencil_drag_from_starting() {
     let dir = temp_dir("blockers");
     let mut s = half_state(&dir);
-    s.stencil.key_held = true;
+    s.stencil_mut().key_held = true;
     let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 300.0));
     let press = Event::PointerButton {
         pos: pos2(200.0, 150.0),
@@ -1776,32 +1745,32 @@ fn headless_each_blocker_alone_stops_a_stencil_drag_from_starting() {
         state: PopupState::new(&ctx, Rect::from_min_size(pos2(0.0, 0.0), vec2(10.0, 10.0))),
     };
     let try_start = |s: &mut AppState, over: bool| {
-        let taken = yolu_app::stencil::handle_event(s, &press, rect, over, &Modifiers::NONE);
-        (taken, s.stencil.drag.take().is_some())
+        let taken = yolu_app::stencil::handle_event(s, &press, rect, over, &Modifiers::NONE.into());
+        (taken, s.stencil_mut().drag.take().is_some())
     };
     // 何も邪魔が無ければ始まる（対照）
     assert_eq!(try_start(&mut s, true), (true, true));
     // 表示域の外
     assert_eq!(try_start(&mut s, false), (false, false), "表示域の外");
     // 開いているポップアップ
-    s.popup = Some(popup());
+    *s.popup_mut() = Some(popup());
     assert_eq!(try_start(&mut s, true), (false, false), "ポップアップ");
-    s.popup = None;
+    *s.popup_mut() = None;
     // 直前のフレームで開いていたポップアップ（このフレームの外のクリックで閉じたもの）
-    s.ui.popup_was_open = true;
+    s.ui_mut().popup_was_open = true;
     assert_eq!(
         try_start(&mut s, true),
         (false, false),
         "直前のポップアップ"
     );
-    s.ui.popup_was_open = false;
+    s.ui_mut().popup_was_open = false;
     // ストロークの最中
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let stroke = s.begin_paint_stroke_with(layer, false, None).unwrap();
-    s.stroke = Some(stroke);
+    *s.stroke_mut() = Some(stroke);
     assert_eq!(try_start(&mut s, true), (false, false), "ストローク");
-    s.stroke = None;
-    s.doc.cancel_active_stroke();
+    *s.stroke_mut() = None;
+    s.doc_mut().cancel_active_stroke();
     assert_eq!(try_start(&mut s, true), (true, true), "全部外すと始まる");
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -1855,7 +1824,7 @@ fn the_stencil_is_not_moved_or_shown_on_the_canvas_in_edit_and_pose_modes() {
     for mode in [EditorMode::Edit, EditorMode::Pose] {
         h.state_mut().apply(Action::Mode(ModeAction::Set(mode)));
         h.run();
-        assert_eq!(h.state().state.mode, mode, "{}", h.state().state.message);
+        assert_eq!(h.mode(), mode, "{}", h.message());
         if st(&h).image.is_none() {
             load(&mut h, &ring_png(&dir, "ring.png"));
         }
@@ -1874,7 +1843,7 @@ fn the_stencil_is_not_moved_or_shown_on_the_canvas_in_edit_and_pose_modes() {
         key_up(&mut h, Key::Y);
         assert_eq!((st(&h).center, st(&h).size, st(&h).angle), placement);
         assert!(!st(&h).has_overlay_texture());
-        assert!(!h.state().state.doc.can_undo(), "{mode:?}: 描かない");
+        assert!(!h.doc().can_undo(), "{mode:?}: 描かない");
     }
     // ペイントのモードへ戻ると、同じ操作でドラッグが始まり、重ね表示が出る
     h.state_mut()

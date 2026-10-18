@@ -177,7 +177,7 @@ fn workspace_version() -> Result<Version> {
         .args(["metadata", "--locked", "--no-deps", "--format-version", "1"])
         .output()?;
     if !output.status.success() {
-        return Err("版を取得できません".into());
+        return Err("バージョンを取得できません".into());
     }
     let metadata: serde_json::Value = serde_json::from_slice(&output.stdout)?;
     let package = metadata["packages"]
@@ -187,7 +187,9 @@ fn workspace_version() -> Result<Version> {
         .find(|p| p["name"] == "yolu-app")
         .ok_or("アプリがありません")?;
     Ok(Version::parse(
-        package["version"].as_str().ok_or("版がありません")?,
+        package["version"]
+            .as_str()
+            .ok_or("バージョンがありません")?,
     )?)
 }
 fn remove_if_present(path: &Path) -> Result<()> {
@@ -650,7 +652,7 @@ fn check_mcpb_archive(bytes: &[u8], version: &Version) -> Result<()> {
     for index in 0..zip.len() {
         let file = zip.by_index(index)?;
         if file.is_file() {
-            found.push(file.name().to_owned());
+            found.push(file.name()?.into_owned());
         }
     }
     found.sort();
@@ -739,7 +741,8 @@ fn mcpb(target: &str) -> Result<()> {
 /// NSIS が数字 4 つの版（各 0〜65535）しか受けないので、プレリリース識別子は落とす（文字列の版は別に渡す）。
 fn numeric_version(version: &Version) -> Result<String> {
     let part = |n: u64| {
-        u16::try_from(n).map_err(|_| "版の数字が 65535 を超えるのでインストーラーに入れられません")
+        u16::try_from(n)
+            .map_err(|_| "バージョンの数字が 65535 を超えるのでインストーラーに入れられません")
     };
     Ok(format!(
         "{}.{}.{}.0",
@@ -957,7 +960,7 @@ fn updater(
         }
         if name != format!("{UPDATER_FILE}.tmp") && !assets.iter().any(|a| a.name == name) {
             return Err(format!(
-                "予期しない配布物: {name}（この版の配布物だけを置いたフォルダが必要です）"
+                "予期しない配布物: {name}（このバージョンの配布物だけを置いたフォルダが必要です）"
             )
             .into());
         }
@@ -1029,7 +1032,7 @@ fn archive_names(target: &str, bytes: &[u8]) -> Result<Vec<String>> {
         for index in 0..zip.len() {
             let file = zip.by_index(index)?;
             if file.is_file() {
-                names.push(file.name().to_owned());
+                names.push(file.name()?.into_owned());
             }
         }
     } else {
@@ -1143,7 +1146,7 @@ fn verify(version: &Version, directory: &Path, public_key: [u8; 32]) -> Result<(
         let update = client
             .check(VERIFY_URL, &oldest, target, true)?
             .filter(|update| update.version() == version)
-            .ok_or("更新情報の版が --version と一致しません")?;
+            .ok_or("更新情報のバージョンが --version と一致しません")?;
         let name = update.asset().name.clone();
         let download = client.download(update.approve_download())?;
         // インストーラーの中は見られない（その段は同じ一覧から作り、試験が NSIS の一覧と突き合わせる）。
@@ -1207,7 +1210,7 @@ fn beta_channel(
     remove_if_present(&destination)?;
     if !is_beta_version(version) {
         return Err(format!(
-            "試験版の置き場に載せられない版です: {version}（プレリリース識別子は alpha.N・beta.N・rc.N の 1 つ）"
+            "ベータ版の置き場に載せられないバージョンです: {version}（プレリリース識別子は alpha.N・beta.N・rc.N の 1 つ）"
         )
         .into());
     }
@@ -1222,7 +1225,9 @@ fn beta_channel(
     }
     if let Some(held) = existing.and_then(held_version) {
         if held.cmp_precedence(version).is_ge() {
-            println!("置き場の版 {held} は今の版 {version} 以上なので、置き換えません");
+            println!(
+                "置き場のバージョン {held} は今のバージョン {version} 以上なので、置き換えません"
+            );
             return Ok(());
         }
     }
@@ -1230,7 +1235,7 @@ fn beta_channel(
     let temporary = output.join(format!("{UPDATER_FILE}.tmp"));
     fs::write(&temporary, &bytes)?;
     fs::rename(temporary, destination)?;
-    println!("試験版の置き場に {version} を置きます");
+    println!("ベータ版の置き場に {version} を置きます");
     Ok(())
 }
 fn keygen(output: &Path) -> Result<String> {
@@ -1932,7 +1937,10 @@ mod tests {
             fake_mcpb(&Version::new(9, 9, 9), &[], &[], None),
         )
         .unwrap();
-        assert!(verify_with(&d.0, &public).is_err(), "版の違う manifest");
+        assert!(
+            verify_with(&d.0, &public).is_err(),
+            "バージョンの違う manifest"
+        );
         fs::write(&extension, b"not a zip").unwrap();
         assert!(verify_with(&d.0, &public).is_err());
     }
@@ -2154,7 +2162,7 @@ mod tests {
     fn nsis_script_compiles_with_the_arguments_xtask_passes() {
         // makensis が無い環境（開発機・Windows の CI）では確かめない。CI の Linux は入れて走らせる。
         if makensis().arg("-VERSION").output().is_err() {
-            eprintln!("makensis が無いので、インストーラーのスクリプトの試験を飛ばす");
+            eprintln!("makensis が無いので、インストーラーのスクリプトのテストを飛ばす");
             return;
         }
         let d = Scratch::new();

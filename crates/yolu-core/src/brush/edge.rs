@@ -378,6 +378,85 @@ mod tests {
     }
 
     #[test]
+    fn ellipse_gradient_uses_the_scaled_direction_when_d_is_positive() {
+        // d > 0 のときは (u/radius, v/minor) の大きさを d で割る（中心の式ではない）
+        let g = ellipse_gradient(3.0, 4.0, 5.0, 5.0, 2.0);
+        let want = ((3.0f64 / 5.0).powi(2) + (4.0f64 / 2.0).powi(2)).sqrt() / 5.0;
+        assert!((g - want).abs() < 1e-12, "{g} {want}");
+        assert!((g - 0.5).abs() > 1e-3, "中心の式（1/minor）とは違う: {g}");
+        // 中心（d = 0）は短い軸の向き
+        assert_eq!(ellipse_gradient(0.0, 0.0, 0.0, 5.0, 2.0), 0.5);
+    }
+
+    #[test]
+    fn ellipse_gradient_divides_by_d_instead_of_multiplying() {
+        // d で割る（掛けない）: u=0, v=4, d=4, radius=4, minor=2 → (4/2)/4 = 0.5
+        let g = ellipse_gradient(0.0, 4.0, 4.0, 4.0, 2.0);
+        assert!((g - 0.5).abs() < 1e-12, "{g}");
+    }
+
+    #[test]
+    fn box_floor_measures_the_outside_distance_from_the_box() {
+        // 箱 (bu, bv) = (3, 1) の外の (5, 0): 外の距離は 5 − 3 = 2、mid=0.5, g=1 → 2.5
+        let f = box_floor(0.0, 1.0, 0.5, (5.0, 0.0), (3.0, 1.0));
+        assert!((f - 2.5).abs() < 1e-12, "{f}");
+        // 箱の中は外の距離 0 なので、値は d のまま
+        assert_eq!(box_floor(0.7, 1.0, 0.5, (1.0, 0.5), (3.0, 1.0)), 0.7);
+    }
+
+    #[test]
+    fn band_for_outer_inverts_bounds() {
+        // h=0.5, outer=1.2: mid=(1+h)/2=0.75、帯は 2×(1.2−0.75)=0.9
+        let b = band_for_outer(0.5, 1.2);
+        assert!((b - 0.9).abs() < 1e-12, "{b}");
+        // bounds の外の端が outer に戻る
+        let (_, hi) = bounds(0.5, b);
+        assert!((hi - 1.2).abs() < 1e-12, "{hi}");
+    }
+
+    #[test]
+    fn band_and_density_uses_the_half_cover_radius() {
+        // h=0.5 のとき覆いが半分になる半径は mid=(1+h)/2=0.75
+        let e = band_and_density(1.0, 0.5, 0.5, 0.5);
+        assert_eq!(e.band, 1.0);
+        // 短い軸 0.5×0.75=0.375 は rho=0.5 より細いので濃さは 0.375/0.5=0.75、二乗で 0.5625
+        assert!((e.density - 0.5625).abs() < 1e-12, "{}", e.density);
+    }
+
+    #[test]
+    fn a_density_below_one_scales_the_band_cover() {
+        // 濃さ 0.5 のダブは帯の式の覆いを 0.5 倍する（今の式の分岐には入らない）
+        let c = cover64_floored(0.5, 0.5, 0.5, 0.2, 0.5);
+        assert!((c - 0.5).abs() < 1e-12, "{c}");
+    }
+
+    #[test]
+    fn widen_axes_grows_axes_narrower_than_half_the_band() {
+        let e = Edge {
+            band: 1.0,
+            density: 1.0,
+        };
+        // h=0.5: 覆いが半分になる半径は t×0.75。t=0.5 は 0.375 < rho=0.5 なので 0.5/0.375 倍
+        let (fa, fb) = widen_axes(&e, 0.5, 0.5, 2.0);
+        assert!((fa - 0.5 / 0.375).abs() < 1e-12, "{fa}");
+        // 太い軸は広げない
+        assert_eq!(fb, 1.0);
+    }
+
+    #[test]
+    fn texel_length_uses_the_inverse_metric() {
+        // J·Jᵀ = [[1, 1], [1, 2]]（xy ≠ 0）, det = 1×2 − 1×1 = 1
+        let m = TexelMetric::from_columns((1.0, 1.0), (0.0, 1.0));
+        assert!(m.usable());
+        // v=(1,0): (1×2 − 0 + 0)/1 = 2 → √2
+        assert!((m.texel_length(1.0, 0.0) - 2.0f64.sqrt()).abs() < 1e-12);
+        // v=(0,1): (0 − 0 + 1×1)/1 = 1
+        assert!((m.texel_length(0.0, 1.0) - 1.0).abs() < 1e-12);
+        // v=(1,1): (2 − 2 + 1)/1 = 1（xy の交差項が効く）
+        assert!((m.texel_length(1.0, 1.0) - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
     fn the_metric_turns_frame_lengths_into_texels() {
         // テクセル 1 つが枠で x に 2、y に 0.5（軸に沿う）
         let m = TexelMetric::from_columns((2.0, 0.0), (0.0, 0.5));
@@ -392,5 +471,92 @@ mod tests {
             "{big} {small}"
         );
         assert!(!TexelMetric::from_columns((1.0, 1.0), (2.0, 2.0)).usable());
+    }
+
+    #[test]
+    fn is_off_only_without_a_band_at_full_density() {
+        // 帯なし・濃さ 1 だけが「今の式のまま」
+        assert!(Edge::OFF.is_off());
+        assert!(Edge {
+            band: 0.0,
+            density: 1.0
+        }
+        .is_off());
+        // 帯があるか濃さが 1 でなければ、今の式ではない
+        assert!(!Edge {
+            band: 0.1,
+            density: 1.0
+        }
+        .is_off());
+        assert!(!Edge {
+            band: 0.0,
+            density: 0.5
+        }
+        .is_off());
+    }
+
+    #[test]
+    fn band_and_density_picks_the_narrower_axis() {
+        // 細い線の広げは短い軸（a=0.5 < b=0.8）で決まる（帯は 1 まで）
+        let e = band_and_density(0.6, 1.0, 0.5, 0.8);
+        assert_eq!(e.band, 1.0, "広げは短い軸 0.5 で 1");
+        assert_eq!(e.density, 1.0);
+        // 短い軸が 2 番目でも同じ結果
+        let e2 = band_and_density(0.6, 1.0, 0.8, 0.5);
+        assert_eq!(e2.band, e.band);
+        assert_eq!(e2.density, e.density);
+    }
+
+    #[test]
+    fn above_is_strict() {
+        assert!(above(1.0, 0.0));
+        assert!(!above(0.0, 0.0), "等しいときは偽（否定して「以下」に使う）");
+        assert!(!above(-1.0, 0.0));
+    }
+
+    #[test]
+    fn band_for_outer_keeps_the_outer_edge_when_the_band_is_wide() {
+        // h=0.5: mid=0.75、2×mid=1.5。outer=2.0 はこれを超えるので、いちばん広い帯は outer のまま
+        assert_eq!(band_for_outer(0.5, 2.0), 2.0);
+    }
+
+    #[test]
+    fn ellipse_gradient_squares_the_minor_axis_term() {
+        // u=0, v=3, minor=1, d=3: 短い軸の項は (v/minor)² = 9 で、√9/3 = 1
+        let g = ellipse_gradient(0.0, 3.0, 3.0, 4.0, 1.0);
+        assert!((g - 1.0).abs() < 1e-12, "{g}");
+    }
+
+    #[test]
+    fn a_hard_dab_without_a_band_is_covered_at_its_radius() {
+        // 硬さ 1・帯なしの丸: 半径の上（d = 1）は覆い 1 のまま塗る（硬い縁）
+        assert_eq!(cover64(1.0, 1.0, 0.0, 1.0), 1.0);
+        assert_eq!(cover64_floored(1.0, 1.0, 1.0, 0.0, 1.0), 1.0);
+        // 半径の外は 0
+        assert_eq!(cover64(1.0 + 1e-9, 1.0, 0.0, 1.0), 0.0);
+    }
+
+    #[test]
+    fn texel_length_divides_by_the_determinant() {
+        // テクセルが X に 2・Y に 1 の長さの枠（J·Jᵀ = diag(4, 1)、det = 4）: 各軸のテクセル 1 つ分のベクトルは長さ 1
+        let m = TexelMetric {
+            xx: 4.0,
+            xy: 0.0,
+            yy: 1.0,
+        };
+        assert!((m.texel_length(2.0, 0.0) - 1.0).abs() < 1e-12);
+        assert!((m.texel_length(0.0, 1.0) - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn usable_compares_the_determinant_with_xx_times_yy() {
+        // 一方の軸だけがごく短くても、直交していれば潰れていない（det = xx·yy が 1e-12·xx·yy を超える）
+        let thin = |xx: f64, yy: f64| TexelMetric { xx, xy: 0.0, yy }.usable();
+        assert!(thin(1.0, 1e-9));
+        assert!(thin(1e-7, 1.0));
+        // 大きな計量でも、det が xx·yy の 1e-12 倍に届かなければ潰れている
+        let (xx, yy) = (1e6, 1e6);
+        let xy = (xx * yy - 0.5f64).sqrt();
+        assert!(!TexelMetric { xx, xy, yy }.usable());
     }
 }

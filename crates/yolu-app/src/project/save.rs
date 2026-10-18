@@ -23,11 +23,12 @@ use yolu_io::{BackupKeep, Project, SaveStage, SaveTarget};
 use super::capture::{
     build, capture, left_out_note, BuildError, BuildProgress, Capture, THREAD_STACK,
 };
-use super::{backup_text, reopen_note, same_file, ProjectFile};
+use super::{backup_text, reopen_note, ProjectFile};
 use crate::jobs::{JobCard, JobSpec};
 use crate::lang::Lang;
 use crate::notice::Source;
 use crate::state::AppState;
+use crate::userfiles::same_file;
 
 /// 保存の段の数（合成・組み立て、数える、書く、確かめる、置き換える）。
 const STAGES: usize = 1 + SaveStage::COUNT;
@@ -186,7 +187,7 @@ pub(crate) const JOB: JobSpec = JobSpec {
     card: Some(|app, lang| {
         let p = app.save_progress()?;
         Some(JobCard {
-            text: format!("{} — {}", lang.pick("保存しています", "Saving"), p.file),
+            text: format!("{} — {}", lang.t("project-saving"), p.file),
             fraction: Some(p.fraction),
             // 保存は途中で止めない（検証した一時ファイルからの 1 回の置換で確定させる）
             cancel: None,
@@ -200,23 +201,29 @@ pub(crate) const JOB: JobSpec = JobSpec {
 impl AppState {
     /// 保存の仕事が動いているか（裏のスレッド。終わりは `poll_save` が受ける）。
     pub fn is_saving(&self) -> bool {
-        self.save.job.is_some()
+        self.services.save.job.is_some()
     }
 
     /// 「変更あり」の印。保存の間は、保存の結果が出るまで、頼む前の印のまま見せる（保存の頼みは `modified` を下ろして、その後の編集を
     /// 見分けるので、見せる側はこちらを読む）。
     pub fn shows_modified(&self) -> bool {
-        self.modified || self.save.job.as_ref().is_some_and(|j| j.was_modified)
+        self.session.is_modified()
+            || self
+                .services
+                .save
+                .job
+                .as_ref()
+                .is_some_and(|j| j.was_modified)
     }
 
     /// 保存の進み具合（仕事の札・閉じるのを待つウィンドウ）。
     pub fn save_progress(&self) -> Option<SaveProgress> {
-        self.save.progress()
+        self.services.save.progress()
     }
 
     /// 終わった保存の仕事を受ける（フレームの初めに）。
     pub fn poll_save(&mut self) {
-        let Some(job) = &self.save.job else {
+        let Some(job) = &self.services.save.job else {
             return;
         };
         let finished = match job.rx.try_recv() {
@@ -224,7 +231,7 @@ impl AppState {
             Err(TryRecvError::Empty) => return,
             Err(TryRecvError::Disconnected) => stopped(self.lang),
         };
-        let job = self.save.job.take().expect("上で見た");
+        let job = self.services.save.job.take().expect("上で見た");
         // 操作の外で結果を書くので、操作と同じく新しい知らせとして出す
         let prior = self.message_begin();
         finish(self, job, finished);
@@ -238,7 +245,7 @@ impl AppState {
         crate::jobs::wait_until_idle(
             self,
             "保存の処理が終わらない（ハング検出上限）",
-            |s| s.save.job.is_some(),
+            |s| s.services.save.job.is_some(),
             Self::poll_save,
         );
     }
@@ -247,7 +254,7 @@ impl AppState {
 /// 結果を返さずに裏のスレッドが止まった。
 fn stopped(lang: Lang) -> Finished {
     Finished {
-        result: Err(lang.pick("処理が止まりました", "The save stopped").into()),
+        result: Err(lang.t("project-the-save-stopped").into()),
         target: None,
     }
 }
@@ -263,7 +270,7 @@ pub fn save_from(state: &mut AppState, path: &Path) {
 /// 外からの操作の保存の頼み: `save_from` と同じ道（裏のスレッド・書き直しの印・退避）で、結果は `SaveState::take_outcome` が渡す（メッセージだけに
 /// しない）。始められなければ理由の文（何も変えない）。試験の状態（`background` が false）は、頼みの中で終えるので、戻ってすぐ結果が取れる。
 pub fn save_for_ops(state: &mut AppState, path: &Path) -> Result<(), String> {
-    state.save.outcome = None;
+    state.services.save.outcome = None;
     start(state, path, true)
 }
 
@@ -273,7 +280,7 @@ fn start(state: &mut AppState, path: &Path, report: bool) -> Result<(), String> 
     if state.is_stroking() {
         return Err(crate::lang::refusals::during_stroke(lang).into());
     }
-    if state.save.job.is_some() {
+    if state.services.save.job.is_some() {
         return Err(crate::lang::refusals::saving(lang).into());
     }
     // 配布用に保存の写し（準備した写し・書いている途中）は、保存前のプロジェクトが開いている .ylp のハンドルから読む。普通は、保存で
@@ -281,16 +288,12 @@ fn start(state: &mut AppState, path: &Path, report: bool) -> Result<(), String> 
     // （FAT・exFAT・一部のネットワーク）は、開いているファイルを置き換えられないので、保存が置換のためにそのハンドルを手放し、写しの読みは
     // 断られる。その間は保存しない
     if state.distribute.is_busy() || state.distribute.is_open() {
-        return Err(lang
-            .pick(
-                "配布用に保存の途中は保存しません",
-                "Cannot save while saving for distribution",
-            )
-            .into());
+        return Err(lang.t("project-cannot-save-while-saving-for").into());
     }
     let capture = capture(state, path.to_path_buf())?;
     // 開いている .ylp と同じファイルへの保存なら、その保存先の印を引き継ぐ（複製を渡し、結果の印で置き換える）
     let reuse = state
+        .session
         .project
         .as_ref()
         .filter(|p| p.is_file() && same_file(&p.path, path))
@@ -323,14 +326,14 @@ fn start(state: &mut AppState, path: &Path, report: bool) -> Result<(), String> 
         },
         reopen_limits: yolu_io::Limits::from_layer_pixels(state.load_source_bytes()),
         thresholds: yolu_io::Thresholds::current(),
-        hold: state.save.hold.take(),
+        hold: state.services.save.hold.take(),
         shared: shared.clone(),
     };
     let file = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string());
-    let was_modified = state.modified;
+    let was_modified = state.session.is_modified();
     let shelf_was_changed = state.shelf.changed;
     let job = |rx| Job {
         path: path.to_path_buf(),
@@ -345,7 +348,7 @@ fn start(state: &mut AppState, path: &Path, report: bool) -> Result<(), String> 
         maps,
         left_out,
     };
-    if state.save.background {
+    if state.services.save.background {
         let (tx, rx) = channel();
         std::thread::Builder::new()
             .name("yolu-save".into())
@@ -355,9 +358,9 @@ fn start(state: &mut AppState, path: &Path, report: bool) -> Result<(), String> 
             })
             .map_err(|e| e.to_string())?;
         // 保存の間の編集を見分けるために下ろす（失敗したら戻す）。復旧の見張りは、保存の間は印を読まない
-        state.modified = false;
+        state.session.clear_modified();
         state.shelf.changed = false;
-        state.save.job = Some(job(rx));
+        state.services.save.job = Some(job(rx));
     } else {
         // 試験の状態: 呼び手のスレッドで終えて、すぐ受ける（止めておく頼みは、止めても手を離す側がいないので使わない）
         let (tx, rx) = channel();
@@ -365,7 +368,7 @@ fn start(state: &mut AppState, path: &Path, report: bool) -> Result<(), String> 
             hold: None,
             ..request
         }));
-        state.modified = false;
+        state.session.clear_modified();
         state.shelf.changed = false;
         let job = job(rx);
         let finished = job.rx.try_recv().unwrap_or_else(|_| stopped(lang));
@@ -405,7 +408,7 @@ fn work(request: Request) -> Finished {
     let built = match build(&capture, None, &shared.build) {
         Ok(b) => b,
         Err(BuildError::Message(text)) => return fail(text),
-        Err(BuildError::Canceled) => return fail(lang.pick("取り消しました", "Canceled").into()),
+        Err(BuildError::Canceled) => return fail(lang.t("project-canceled").into()),
     };
     let project = Arc::new(built.project);
     let overwrite = path.exists();
@@ -419,10 +422,7 @@ fn work(request: Request) -> Finished {
                     .map(|(_, t)| t)
                     .map_err(|e| {
                         lang.with_reason(
-                            lang.pick(
-                                "上書きする先を .ylp として読めません",
-                                "Invalid overwrite target",
-                            ),
+                            lang.t("project-invalid-overwrite-target"),
                             lang.io_error(&e),
                         )
                     })
@@ -460,17 +460,14 @@ fn work(request: Request) -> Finished {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string());
-    let mut text = lang.pick(format!("保存しました: {file}。"), format!("Saved: {file}."));
+    let mut text = lang.f("project-saved", &[("file", &file)]);
     if !capture.left_out.is_empty() {
         text += " ";
         text += &left_out_note(lang, &capture.left_out);
     }
     let map_total: usize = capture.maps.iter().map(|(_, _, m)| m.len()).sum();
     if map_total > 0 {
-        text += &lang.pick(
-            format!(" メッシュマップ {map_total} 枚を書きました。"),
-            format!(" Wrote {map_total} mesh map(s)."),
-        );
+        text += &lang.f("project-wrote-mesh-map-s", &[("map_total", &map_total)]);
     }
     // 開くときに読めなかった見た目の設定（新しい形式など）を、変えた見た目で上書きしたセット
     if !built.looks_overwritten.is_empty() {
@@ -487,11 +484,8 @@ fn work(request: Request) -> Finished {
             .collect();
         text += " ";
         text += &lang.with_reason(
-            lang.pick(
-                "読めなかった見た目の設定を上書きしました",
-                "Overwrote unreadable look settings",
-            ),
-            names.join(lang.pick("、", ", ")),
+            lang.t("project-overwrote-unreadable-look-settings"),
+            names.join(lang.t("project-text-3")),
         );
     }
     // 開くときに読めなかった、名前を付けて残した選択範囲の項目を、変えた並びで置き換えたセット
@@ -509,18 +503,12 @@ fn work(request: Request) -> Finished {
             .collect();
         text += " ";
         text += &lang.with_reason(
-            lang.pick(
-                "読めなかった覚えた選択範囲の項目を置き換えました",
-                "Replaced unreadable remembered selections",
-            ),
-            names.join(lang.pick("、", ", ")),
+            lang.t("project-replaced-unreadable-remembered-selections"),
+            names.join(lang.t("project-text-3")),
         );
     }
     if built.pose_overwritten {
-        text += &lang.pick(
-            " 読めなかったポーズを、今のポーズで置き換えました。".to_owned(),
-            " Replaced the unreadable pose with the current pose.".to_owned(),
-        );
+        text += lang.t("project-replaced-the-unreadable-pose-with");
     }
     let unsaved = crate::view3d::pose::stored::unsaved_note(lang, &capture.pose_unsaved);
     let caveat = !capture.left_out.is_empty()
@@ -554,21 +542,16 @@ fn finish(state: &mut AppState, job: Job, finished: Finished) {
     match finished.result {
         Ok(done) => {
             let Some(target) = finished.target else {
-                return fail(
-                    state,
-                    &job,
-                    lang.pick("処理が止まりました", "The save stopped").into(),
-                    None,
-                );
+                return fail(state, &job, lang.t("project-the-save-stopped").into(), None);
             };
-            match state.project.as_mut().filter(|_| job.reuse) {
+            match state.session.project.as_mut().filter(|_| job.reuse) {
                 Some(file) => {
                     file.target = Some(target);
                     file.original = done.project;
                     file.path = job.path.clone();
                 }
                 None => {
-                    state.project = Some(ProjectFile {
+                    state.session.project = Some(ProjectFile {
                         path: job.path.clone(),
                         target: Some(target),
                         original: done.project,
@@ -578,35 +561,38 @@ fn finish(state: &mut AppState, job: Job, finished: Finished) {
             // 保存済みの印は、写しを取った時点の文書（保存の間に描いた分は「変更あり」のまま）
             for (id, doc_id, revision) in &job.written {
                 if let Some(set) = state
+                    .session
                     .sets
                     .iter()
                     .position(|s| s.id == *id)
-                    .and_then(|i| state.sets.get_mut(i))
+                    .and_then(|i| state.session.sets.get_mut(i))
                 {
                     set.saved = Some((*doc_id, *revision));
                 }
             }
             for (id, maps) in &job.maps {
                 if let Some(set) = state
+                    .session
                     .sets
                     .iter()
                     .position(|s| s.id == *id)
-                    .and_then(|i| state.sets.get_mut(i))
+                    .and_then(|i| state.session.sets.get_mut(i))
                 {
                     set.mesh_maps.mark_saved(maps);
                 }
             }
-            state.save_folder = None;
-            state.project_name = job
+            state.session.save_folder = None;
+            state.recent_projects.add(&job.path);
+            state.session.project_name = job
                 .path
                 .file_stem()
                 .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| lang.pick("名称未設定", "Untitled").into());
-            state.rewritten_sets = job.written.len();
+                .unwrap_or_else(|| lang.t("project-untitled").into());
+            state.session.rewritten_sets = job.written.len();
             // 入れなかったセットは、画面にあってファイルに無い。「保存していない変更」のままにして、閉じる・開き直す・捨てるときに聞く
             // （次の保存でも同じ。知らせは保存の時点の 1 回だけで、あとの知らせに上書きされうるので、注意としてログにも残す）
             if !job.left_out.is_empty() {
-                state.modified = true;
+                state.session.mark_modified();
             }
             if done.caveat {
                 state.warn(Source::Save, done.text);
@@ -614,7 +600,7 @@ fn finish(state: &mut AppState, job: Job, finished: Finished) {
                 state.info(Source::Save, done.text);
             }
             if job.report {
-                state.save.outcome = Some(SaveOutcome {
+                state.services.save.outcome = Some(SaveOutcome {
                     path: job.path.clone(),
                     result: Ok(SavedFacts {
                         sets_written: job.written.iter().map(|(id, _, _)| id.clone()).collect(),
@@ -630,13 +616,15 @@ fn finish(state: &mut AppState, job: Job, finished: Finished) {
 
 /// 保存が済まなかった: 開いているファイルの保存先の印は更新があれば持ち帰り、保存の前の「変更あり」を戻して、理由を出す。
 fn fail(state: &mut AppState, job: &Job, text: String, target: Option<SaveTarget>) {
-    if let (Some(file), Some(target), true) = (state.project.as_mut(), target, job.reuse) {
+    if let (Some(file), Some(target), true) = (state.session.project.as_mut(), target, job.reuse) {
         file.target = Some(target);
     }
-    state.modified |= job.was_modified;
+    if job.was_modified {
+        state.session.mark_modified();
+    }
     state.shelf.changed |= job.shelf_was_changed;
     if job.report {
-        state.save.outcome = Some(SaveOutcome {
+        state.services.save.outcome = Some(SaveOutcome {
             path: job.path.clone(),
             result: Err(text.clone()),
         });
@@ -651,8 +639,5 @@ fn fail(state: &mut AppState, job: &Job, text: String, target: Option<SaveTarget
 /// 「「ファイル」に保存できません」（理由は `Lang::with_reason` で添える）。
 fn cannot_save(lang: Lang, path: &Path) -> String {
     let file = lang.quote(&path.display().to_string());
-    lang.pick(
-        format!("{file}に保存できません"),
-        format!("Cannot save to {file}"),
-    )
+    lang.f("project-cannot-save-to", &[("file", &file)])
 }

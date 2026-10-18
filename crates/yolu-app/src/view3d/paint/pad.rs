@@ -9,11 +9,11 @@ impl Paint {
         let source = source.filter(|_| self.pad_texels > 0);
         self.pad_want = source.as_ref().and_then(|uv| {
             let revision = uv.geometry.revision();
-            match self.pad_seen {
-                Some((r, m, shape)) if r == revision && m == uv.material => shape,
+            match &self.pad_seen {
+                Some((r, m, shape)) if *r == revision && *m == uv.material => *shape,
                 _ => {
-                    let shape = pad_shape(&uv.geometry, uv.material);
-                    self.pad_seen = Some((revision, uv.material, shape));
+                    let shape = pad_shape(&uv.geometry, &uv.material);
+                    self.pad_seen = Some((revision, uv.material.clone(), shape));
                     shape
                 }
             }
@@ -56,7 +56,7 @@ impl Paint {
                 .geometry
                 .triangles()
                 .iter()
-                .filter(|t| t.material == uv.material)
+                .filter(|t| uv.material.contains(t.material))
                 .map(|t| [at(t.uv_a), at(t.uv_b), at(t.uv_c)]);
             let rings = padding::coverage(size.0, size.1, triangles)
                 .ok()
@@ -74,14 +74,14 @@ impl Paint {
     }
 }
 
-/// マテリアルの三角形の UV の形の要約（UV の値のビットと三角形の並び）。三角形が無ければ None（塗り広げない）。
-pub(super) fn pad_shape(geometry: &SurfaceGeometry, material: i32) -> Option<PadShape> {
+/// マテリアルの組の三角形の UV の形の要約（UV の値のビットと三角形の並び）。三角形が無ければ None（塗り広げない）。
+pub(super) fn pad_shape(geometry: &SurfaceGeometry, material: &MaterialSet) -> Option<PadShape> {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     let mut triangles = 0usize;
     for t in geometry
         .triangles()
         .iter()
-        .filter(|t| t.material == material)
+        .filter(|t| material.contains(t.material))
     {
         for v in [t.uv_a, t.uv_b, t.uv_c] {
             v.x.to_bits().hash(&mut hasher);

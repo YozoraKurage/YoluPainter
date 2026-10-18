@@ -20,17 +20,17 @@ const RECT: Rect = Rect {
 fn cube() -> AppState {
     let mut app = AppState::new(64, 64);
     app.apply(Action::LoadDemoModel);
-    app.view3d.material = 0;
-    app.view3d.camera.yaw = 0.0;
-    app.view3d.camera.pitch = 0.0;
-    app.view3d.view_rect = Some(RECT);
+    app.view3d.material = yolu_core::geometry::MaterialSet::one(0);
+    app.view3d.view.camera.yaw = 0.0;
+    app.view3d.view.camera.pitch = 0.0;
+    app.view3d.view.view_rect = Some(RECT);
     app.view3d.visible = true;
     app
 }
 
 fn fill_layer(app: &mut AppState) -> LayerId {
     app.apply(Action::M2(crate::m2::Edit::NewFill));
-    app.selected_layer.expect("塗りつぶしレイヤー")
+    app.session.selected_layer.expect("塗りつぶしレイヤー")
 }
 
 /// 投影の箱（平面の投影。モデルの外形に合わせる）と、グラデーションデカール（色）・点のグラデーション（ラフネス）・フィルターの形を持つ
@@ -57,7 +57,7 @@ fn every_kind(app: &mut AppState) -> LayerId {
 }
 
 fn screen_of(app: &AppState, world: Vec3) -> Pos2 {
-    let v = app.view3d.camera.view(RECT.width(), RECT.height());
+    let v = app.view3d.view.camera.view(RECT.width(), RECT.height());
     let s = v.to_screen(world).expect("カメラの前");
     pos2(RECT.left() + s.x, RECT.top() + s.y)
 }
@@ -148,6 +148,7 @@ fn every_kind_of_object_on_visible_layers_gets_a_marker_and_hidden_layers_do_not
     assert_eq!(kinds(&app), ["投影", "デカール", "点", "点", "フィルター"]);
     // 点の印はその点、形の印は形の中心
     let g = app
+        .session
         .doc
         .layer(layer)
         .unwrap()
@@ -195,6 +196,7 @@ fn pressing_markers_selects_their_layer_cycles_overlaps_in_place_and_empty_space
         channel: Channel::Color,
     }));
     let mut g = app
+        .session
         .doc
         .layer(other)
         .unwrap()
@@ -222,7 +224,11 @@ fn pressing_markers_selects_their_layer_cycles_overlaps_in_place_and_empty_space
     assert!(overlapped.len() >= 2, "{overlapped:?}");
     assert!(press(&mut app, RECT, at, gizmo::Source::Mouse));
     let mut seen = vec![app.objects.selected.unwrap()];
-    assert_eq!(app.selected_layer, Some(first), "押した物のレイヤーを選ぶ");
+    assert_eq!(
+        app.session.selected_layer,
+        Some(first),
+        "押した物のレイヤーを選ぶ"
+    );
     // 同じ所でもう一度押すたびに、重なった次の物（一巡すると最初へ）
     for _ in 1..overlapped.len() {
         press(&mut app, RECT, at, gizmo::Source::Mouse);
@@ -240,7 +246,7 @@ fn pressing_markers_selects_their_layer_cycles_overlaps_in_place_and_empty_space
     let there = screen_of(&app, other_point.world);
     press(&mut app, RECT, there, gizmo::Source::Mouse);
     assert_eq!(app.objects.selected, Some(other_point.object));
-    assert_eq!(app.selected_layer, Some(other));
+    assert_eq!(app.session.selected_layer, Some(other));
     // 何も無い所: 選びを外す（レイヤーは替えない）
     press(
         &mut app,
@@ -249,7 +255,7 @@ fn pressing_markers_selects_their_layer_cycles_overlaps_in_place_and_empty_space
         gizmo::Source::Mouse,
     );
     assert_eq!(app.objects.selected, None);
-    assert_eq!(app.selected_layer, Some(other));
+    assert_eq!(app.session.selected_layer, Some(other));
     // ペイントのモードでは受けない
     assert!(app.set_mode(EditorMode::Paint));
     assert!(!press(&mut app, RECT, at, gizmo::Source::Mouse));
@@ -264,7 +270,7 @@ fn grab_moves_a_box_by_the_pointer_on_an_axis_and_by_a_typed_value_and_cancel_re
     let o = Object::Shape(Target::Projection(layer));
     select(&mut app, Some(o));
     let start = shape(&app, o);
-    let undo = app.doc.undo_count();
+    let undo = app.session.doc.undo_count();
     // ポインタで右へ（世界の +X。カメラに向いた面の中で動く）
     let from = begin(&mut app, Kind::Grab);
     assert!(crate::fillfx::dragging(&app), "途中は欄がまとめを終えない");
@@ -276,7 +282,7 @@ fn grab_moves_a_box_by_the_pointer_on_an_axis_and_by_a_typed_value_and_cancel_re
     assert!(moved.center[0] - start.center[0] > 0.05, "{moved:?}");
     assert!(near(moved.center[1], start.center[1]), "{moved:?}");
     assert!(near(moved.center[2], start.center[2]), "{moved:?}");
-    assert!(app.doc.is_coalescing(), "途中は続けて変える操作");
+    assert!(app.session.doc.is_coalescing(), "途中は続けて変える操作");
     // Y の軸: 右への動きは Y の量にならない
     step_keys(&mut app, &[key(Key::Y)]);
     let s = shape(&app, o);
@@ -288,8 +294,8 @@ fn grab_moves_a_box_by_the_pointer_on_an_axis_and_by_a_typed_value_and_cancel_re
     // Esc: 始める前へ戻し、履歴に残さない
     assert_eq!(step_keys(&mut app, &[key(Key::Escape)]), Step::Done);
     assert_eq!(shape(&app, o), start);
-    assert_eq!(app.doc.undo_count(), undo);
-    assert!(!app.doc.is_coalescing());
+    assert_eq!(app.session.doc.undo_count(), undo);
+    assert!(!app.session.doc.is_coalescing());
     assert!(!transforming(&app));
     assert!(!crate::fillfx::dragging(&app));
 }
@@ -302,7 +308,7 @@ fn snapping_follows_ctrl_and_the_always_snap_toggle_and_confirm_is_one_undo_step
     let o = Object::Shape(Target::Projection(layer));
     select(&mut app, Some(o));
     let start = shape(&app, o);
-    let undo = app.doc.undo_count();
+    let undo = app.session.doc.undo_count();
     let on_step = |d: f64| d.abs() > 0.05 && near((d / 0.1).round() * 0.1, d);
     // Ctrl を押している間は 0.1 の刻み
     let from = begin(&mut app, Kind::Grab);
@@ -324,7 +330,7 @@ fn snapping_follows_ctrl_and_the_always_snap_toggle_and_confirm_is_one_undo_step
         ),
         Step::Done
     );
-    assert_eq!(app.doc.undo_count(), undo + 1);
+    assert_eq!(app.session.doc.undo_count(), undo + 1);
     app.apply(Action::Undo);
     assert_eq!(shape(&app, o), start, "1 回で戻る");
     // Shift+Tab でスナップを常にする（そのときの Ctrl は逆）
@@ -482,7 +488,7 @@ fn a_gradient_point_only_moves_and_can_be_deleted_but_not_the_last_one() {
     };
     select(&mut app, Some(point(0)));
     let before = marker_of(&app, point(0)).unwrap();
-    let undo = app.doc.undo_count();
+    let undo = app.session.doc.undo_count();
     begin(&mut app, Kind::Grab);
     step_keys(&mut app, &[key(Key::Y)]);
     type_value(&mut app, "0.5");
@@ -492,7 +498,7 @@ fn a_gradient_point_only_moves_and_can_be_deleted_but_not_the_last_one() {
         "{after}"
     );
     step_keys(&mut app, &[key(Key::Enter)]);
-    assert_eq!(app.doc.undo_count(), undo + 1);
+    assert_eq!(app.session.doc.undo_count(), undo + 1);
     // 回転・拡縮は断る
     for kind in [Kind::Rotate, Kind::Scale] {
         app.apply(Action::Object(ObjectAction::Transform(kind)));
@@ -504,7 +510,8 @@ fn a_gradient_point_only_moves_and_can_be_deleted_but_not_the_last_one() {
     // 消す: 2 つのうち 1 つは消せる、最後の 1 つは断る
     app.apply(Action::Object(ObjectAction::Delete));
     let left = |app: &AppState| {
-        app.doc
+        app.session
+            .doc
             .layer(layer)
             .unwrap()
             .fill_points(Channel::Roughness)
@@ -513,7 +520,7 @@ fn a_gradient_point_only_moves_and_can_be_deleted_but_not_the_last_one() {
             .len()
     };
     assert_eq!(left(&app), 1);
-    assert_eq!(app.doc.undo_count(), undo + 2);
+    assert_eq!(app.session.doc.undo_count(), undo + 2);
     select(&mut app, Some(point(0)));
     app.apply(Action::Object(ObjectAction::Delete));
     assert_eq!(left(&app), 1);
@@ -537,16 +544,16 @@ fn reset_hide_and_delete_act_on_the_selected_shape() {
     }
     let changed = shape(&app, boxed);
     assert_ne!(changed.center, fitted.center);
-    let undo = app.doc.undo_count();
+    let undo = app.session.doc.undo_count();
     app.apply(Action::Object(ObjectAction::Reset(Kind::Grab)));
     let s = shape(&app, boxed);
     assert_eq!(s.center, fitted.center);
     assert_eq!(s.rotation, changed.rotation, "回転はそのまま");
-    assert_eq!(app.doc.undo_count(), undo + 1);
+    assert_eq!(app.session.doc.undo_count(), undo + 1);
     app.apply(Action::Object(ObjectAction::Reset(Kind::Rotate)));
     app.apply(Action::Object(ObjectAction::Reset(Kind::Scale)));
     assert_eq!(shape(&app, boxed), fitted);
-    assert_eq!(app.doc.undo_count(), undo + 3);
+    assert_eq!(app.session.doc.undo_count(), undo + 3);
     // 投影の置き場は消せない
     app.apply(Action::Object(ObjectAction::Delete));
     assert!(app.message.contains("投影"), "{}", app.message);
@@ -557,7 +564,7 @@ fn reset_hide_and_delete_act_on_the_selected_shape() {
     assert!(!markers(&app).iter().any(|m| m.object == boxed));
     app.apply(Action::Object(ObjectAction::Reveal));
     assert!(markers(&app).iter().any(|m| m.object == boxed));
-    assert_eq!(app.doc.undo_count(), undo + 3);
+    assert_eq!(app.session.doc.undo_count(), undo + 3);
     // グラデーションデカールとフィルターの形は消せる（1 回の取り消し）
     let filter = markers(&app)
         .into_iter()
@@ -569,10 +576,10 @@ fn reset_hide_and_delete_act_on_the_selected_shape() {
         filter,
     ] {
         select(&mut app, Some(o));
-        let undo = app.doc.undo_count();
+        let undo = app.session.doc.undo_count();
         app.apply(Action::Object(ObjectAction::Delete));
         assert!(marker_of(&app, o).is_none(), "{o:?}: {}", app.message);
-        assert_eq!(app.doc.undo_count(), undo + 1);
+        assert_eq!(app.session.doc.undo_count(), undo + 1);
         assert_eq!(app.objects.selected, None);
     }
     // 選んでいなければ断る
@@ -592,8 +599,8 @@ fn path_on_front(app: &mut AppState) -> (LayerId, u128) {
         crate::pathtool::surface::press(app, RECT, at, StrokeSource::Mouse);
         crate::pathtool::surface::release(app, RECT, at, StrokeSource::Mouse);
     }
-    let layer = app.selected_layer.unwrap();
-    let id = app.doc.layer(layer).unwrap().paths()[0].path.id();
+    let layer = app.session.selected_layer.unwrap();
+    let id = app.session.doc.layer(layer).unwrap().paths()[0].path.id();
     (layer, id)
 }
 
@@ -607,12 +614,12 @@ fn a_3d_path_moves_as_an_overlay_lands_on_the_surface_when_confirmed_and_refuses
     let o = Object::Path { layer, id };
     assert!(markers(&app).iter().any(|m| m.object == o));
     select(&mut app, Some(o));
-    let undo = app.doc.undo_count();
+    let undo = app.session.doc.undo_count();
     // X に 0.1: 途中は重ねて見せるだけ（文書は変えない）
     begin(&mut app, Kind::Grab);
     step_keys(&mut app, &[key(Key::X)]);
     type_value(&mut app, "0.1");
-    assert_eq!(app.doc.undo_count(), undo);
+    assert_eq!(app.session.doc.undo_count(), undo);
     assert_eq!(path_points(&app, layer, id).unwrap(), before);
     let preview = transform_state(&app).path_preview().unwrap();
     assert!((preview[0] - (before[0] + Vec3::X * 0.1)).length() < 1e-5);
@@ -627,7 +634,7 @@ fn a_3d_path_moves_as_an_overlay_lands_on_the_surface_when_confirmed_and_refuses
     for (a, b) in after.iter().zip(&before) {
         assert!((*a - (*b + Vec3::X * 0.1)).length() < 1e-3, "{a} {b}");
     }
-    assert_eq!(app.doc.undo_count(), undo + 1);
+    assert_eq!(app.session.doc.undo_count(), undo + 1);
     app.apply(Action::Undo);
     assert_eq!(path_points(&app, layer, id).unwrap(), before);
     // 面から遠く（Z に −5）: 決めるのを断り、続けられる。Esc でやめると元のまま
@@ -639,18 +646,18 @@ fn a_3d_path_moves_as_an_overlay_lands_on_the_surface_when_confirmed_and_refuses
     assert!(transforming(&app));
     assert_eq!(step_keys(&mut app, &[key(Key::Escape)]), Step::Done);
     assert_eq!(path_points(&app, layer, id).unwrap(), before);
-    assert_eq!(app.doc.undo_count(), undo);
+    assert_eq!(app.session.doc.undo_count(), undo);
     // 消す（1 回の取り消し）
     app.apply(Action::Object(ObjectAction::Delete));
     assert!(path_points(&app, layer, id).is_none(), "{}", app.message);
-    assert_eq!(app.doc.undo_count(), undo + 1);
+    assert_eq!(app.session.doc.undo_count(), undo + 1);
 }
 
 fn figure() -> AppState {
     let mut app = AppState::new(64, 64);
     app.apply(Action::Pose(PoseAction::LoadFigure));
     assert!(app.view3d.pose.session.is_some(), "{}", app.message);
-    app.view3d.view_rect = Some(RECT);
+    app.view3d.view.view_rect = Some(RECT);
     app.view3d.visible = true;
     app
 }
@@ -765,7 +772,7 @@ fn transforms_are_refused_while_dragging_and_finish_when_the_mode_changes() {
         grab: yolu_core::glam::Vec2::ZERO,
         target: Target::Projection(layer),
         source: gizmo::Source::Mouse,
-        doc_id: app.doc.id(),
+        doc_id: app.session.doc.id(),
     });
     app.apply(Action::Object(ObjectAction::Transform(Kind::Grab)));
     assert!(app.objects.request.is_none());
@@ -781,7 +788,7 @@ fn transforms_are_refused_while_dragging_and_finish_when_the_mode_changes() {
     app.objects.request = None;
     // 途中は G/R/S をもう一度頼めない（キーの繰り返しで始め直さない）
     let start = shape(&app, o);
-    let undo = app.doc.undo_count();
+    let undo = app.session.doc.undo_count();
     begin(&mut app, Kind::Grab);
     app.apply(Action::Object(ObjectAction::Transform(Kind::Rotate)));
     assert!(app.objects.request.is_none());
@@ -794,9 +801,9 @@ fn transforms_are_refused_while_dragging_and_finish_when_the_mode_changes() {
     type_value(&mut app, "1");
     assert!(app.set_mode(EditorMode::Paint));
     assert!(!transforming(&app));
-    assert!(!app.doc.is_coalescing());
+    assert!(!app.session.doc.is_coalescing());
     assert!(near(shape(&app, o).center[0], start.center[0] + 1.0));
-    assert_eq!(app.doc.undo_count(), undo + 1);
+    assert_eq!(app.session.doc.undo_count(), undo + 1);
     // ペイントのモードでは断る
     app.apply(Action::Object(ObjectAction::Transform(Kind::Grab)));
     assert!(app.objects.request.is_none());
@@ -816,16 +823,16 @@ fn a_transform_left_open_by_a_closed_popup_or_a_new_document_does_not_linger() {
     let o = Object::Shape(Target::Projection(layer));
     select(&mut app, Some(o));
     let start = shape(&app, o);
-    let undo = app.doc.undo_count();
+    let undo = app.session.doc.undo_count();
     // ポップアップ無しで残った G/R/S は、フレームの初めにそこまでで決める
     begin(&mut app, Kind::Grab);
     step_keys(&mut app, &[key(Key::X)]);
     type_value(&mut app, "0.5");
     transform::settle(&mut app);
     assert!(!transforming(&app));
-    assert!(!app.doc.is_coalescing());
+    assert!(!app.session.doc.is_coalescing());
     assert!(near(shape(&app, o).center[0], start.center[0] + 0.5));
-    assert_eq!(app.doc.undo_count(), undo + 1);
+    assert_eq!(app.session.doc.undo_count(), undo + 1);
     // 物が無くなったら、何も当てずに終える
     begin(&mut app, Kind::Grab);
     app.objects.selected = None;
@@ -843,6 +850,7 @@ fn deleting_a_point_clears_the_selection_renumbers_hidden_points_and_undo_brings
     let layer = every_kind(&mut app);
     // 3 つ目の点を加える
     let mut g = app
+        .session
         .doc
         .layer(layer)
         .unwrap()
@@ -869,9 +877,9 @@ fn deleting_a_point_clears_the_selection_renumbers_hidden_points_and_undo_brings
     select(&mut app, Some(point(2)));
     app.apply(Action::Object(ObjectAction::Hide));
     select(&mut app, Some(point(0)));
-    let undo = app.doc.undo_count();
+    let undo = app.session.doc.undo_count();
     app.apply(Action::Object(ObjectAction::Delete));
-    assert_eq!(app.doc.undo_count(), undo + 1);
+    assert_eq!(app.session.doc.undo_count(), undo + 1);
     assert_eq!(app.objects.selected, None, "隣の点へ選びが移らない");
     // 隠した点は番号が詰まっても同じ点（印は出ない）
     assert_eq!(app.objects.hidden, vec![point(1)]);
@@ -879,7 +887,7 @@ fn deleting_a_point_clears_the_selection_renumbers_hidden_points_and_undo_brings
     assert!(!markers(&app).iter().any(|m| m.object == point(1)));
     // もう一度 Delete: 何も消さない
     app.apply(Action::Object(ObjectAction::Delete));
-    assert_eq!(app.doc.undo_count(), undo + 1);
+    assert_eq!(app.session.doc.undo_count(), undo + 1);
     assert!(
         app.message.contains("選んだ物がありません"),
         "{}",
@@ -888,6 +896,7 @@ fn deleting_a_point_clears_the_selection_renumbers_hidden_points_and_undo_brings
     // 取り消しで戻る
     app.apply(Action::Undo);
     let back = app
+        .session
         .doc
         .layer(layer)
         .unwrap()
@@ -910,7 +919,7 @@ fn objects_on_a_hidden_layer_or_in_a_hidden_group_cannot_be_selected_moved_or_de
         assert_eq!(app.objects.selected, None, "隠したら選びを外す");
         assert!(!selectable(app, decal));
         assert_eq!(gizmo_target(app), None, "取っ手も枠も出さない");
-        let undo = app.doc.undo_count();
+        let undo = app.session.doc.undo_count();
         // 選んだままにしても（外から選んでも）、G・Alt+G・Delete は何もしない
         app.objects.selected = Some(decal);
         app.apply(Action::Object(ObjectAction::Transform(Kind::Grab)));
@@ -918,8 +927,9 @@ fn objects_on_a_hidden_layer_or_in_a_hidden_group_cannot_be_selected_moved_or_de
         assert!(transform::begin(app, Kind::Grab, RECT.center(), 0).is_err());
         app.apply(Action::Object(ObjectAction::Reset(Kind::Grab)));
         app.apply(Action::Object(ObjectAction::Delete));
-        assert_eq!(app.doc.undo_count(), undo);
+        assert_eq!(app.session.doc.undo_count(), undo);
         assert!(app
+            .session
             .doc
             .layer(layer)
             .unwrap()
@@ -937,6 +947,7 @@ fn objects_on_a_hidden_layer_or_in_a_hidden_group_cannot_be_selected_moved_or_de
     app.select_single_layer(layer);
     app.apply(Action::M2(crate::m2::Edit::GroupSelected));
     let group = app
+        .session
         .doc
         .layer(layer)
         .unwrap()
@@ -1036,10 +1047,10 @@ fn thin_plate() -> crate::view3d::model::ViewModel {
 fn a_path_turned_on_a_thin_plate_stays_on_the_face_it_was_drawn_on() {
     let mut app = AppState::new(64, 64);
     app.view3d.set_model(thin_plate());
-    app.view3d.material = 0;
-    app.view3d.camera.yaw = 0.0;
-    app.view3d.camera.pitch = 0.0;
-    app.view3d.view_rect = Some(RECT);
+    app.view3d.material = yolu_core::geometry::MaterialSet::one(0);
+    app.view3d.view.camera.yaw = 0.0;
+    app.view3d.view.camera.pitch = 0.0;
+    app.view3d.view.view_rect = Some(RECT);
     app.view3d.visible = true;
     app.apply(Action::SelectTool(Tool::Path));
     for x in [-0.1f32, 0.1] {
@@ -1047,8 +1058,8 @@ fn a_path_turned_on_a_thin_plate_stays_on_the_face_it_was_drawn_on() {
         crate::pathtool::surface::press(&mut app, RECT, at, StrokeSource::Mouse);
         crate::pathtool::surface::release(&mut app, RECT, at, StrokeSource::Mouse);
     }
-    let layer = app.selected_layer.unwrap();
-    let id = app.doc.layer(layer).unwrap().paths()[0].path.id();
+    let layer = app.session.selected_layer.unwrap();
+    let id = app.session.doc.layer(layer).unwrap().paths()[0].path.id();
     let normals = |app: &AppState| -> Vec<Vec3> {
         path_points_with_normals(app, layer, id)
             .unwrap()
@@ -1131,13 +1142,13 @@ fn a_3d_path_turns_and_scales_on_its_face_and_deleting_it_leaves_no_path_being_e
         assert!((*a - wanted).length() < 1e-3, "{a} {wanted}");
     }
     // 消す: 編集中のパス・選んだ点を外す。取り消しで戻る
-    let undo = app.doc.undo_count();
+    let undo = app.session.doc.undo_count();
     app.apply(Action::Object(ObjectAction::Delete));
     assert!(path_points(&app, layer, id).is_none());
     assert!(app.path.active.is_none() && app.path.selected.is_none());
     assert_eq!(app.objects.selected, None);
     app.apply(Action::Undo);
-    assert_eq!(app.doc.undo_count(), undo);
+    assert_eq!(app.session.doc.undo_count(), undo);
     assert!(path_points(&app, layer, id).is_some());
 }
 
@@ -1157,7 +1168,7 @@ fn gradient_decals_and_filter_shapes_move_turn_and_scale_with_one_undo_step_each
     ] {
         select(&mut app, Some(o));
         let start = shape(&app, o);
-        let undo = app.doc.undo_count();
+        let undo = app.session.doc.undo_count();
         begin(&mut app, Kind::Grab);
         step_keys(&mut app, &[key(Key::X)]);
         type_value(&mut app, "0.2");
@@ -1184,7 +1195,7 @@ fn gradient_decals_and_filter_shapes_move_turn_and_scale_with_one_undo_step_each
             "{o:?} {:?}",
             s.size
         );
-        assert_eq!(app.doc.undo_count(), undo + 3, "{o:?}");
+        assert_eq!(app.session.doc.undo_count(), undo + 3, "{o:?}");
         // 消して、取り消しで戻る
         app.apply(Action::Object(ObjectAction::Delete));
         assert!(marker_of(&app, o).is_none());
@@ -1202,7 +1213,7 @@ fn a_plane_move_keeps_the_excluded_axis_and_a_typed_value_goes_along_the_next_ax
     select(&mut app, Some(o));
     let start = shape(&app, o);
     // 上から見下ろす（XZ の面がポインタの動きを受ける）
-    app.view3d.camera.pitch = 40.0;
+    app.view3d.view.camera.pitch = 40.0;
     // Shift+Y: Y を除いた面（XZ）。ポインタを右上へ動かしても Y は変わらない
     let from = begin(&mut app, Kind::Grab);
     step_keys(&mut app, &[(Key::Y, Modifiers::SHIFT)]);
@@ -1267,7 +1278,7 @@ fn the_move_tool_starts_a_drag_from_a_marker_that_ends_on_release_and_lights_its
     let (kind, from, source) = app.objects.drag_request.take().expect("ドラッグを始める");
     assert_eq!((kind, source), (Kind::Grab, gizmo::Source::Mouse));
     let start = shape(&app, o);
-    let undo = app.doc.undo_count();
+    let undo = app.session.doc.undo_count();
     transform::begin_with(&mut app, kind, from, 0, Some(source)).unwrap();
     // 動かす。押しの印（primary）では決めず、離して決める
     transform::step(
@@ -1292,7 +1303,7 @@ fn the_move_tool_starts_a_drag_from_a_marker_that_ends_on_release_and_lights_its
         ),
         Step::Done
     );
-    assert_eq!(app.doc.undo_count(), undo + 1);
+    assert_eq!(app.session.doc.undo_count(), undo + 1);
     // 点は回転のツールでは回らない（選ぶだけで、理由を出す）
     app.apply(Action::Mode(crate::mode::ModeAction::Tool(
         EditTool::Rotate,

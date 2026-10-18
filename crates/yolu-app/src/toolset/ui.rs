@@ -59,8 +59,6 @@ pub struct ToolsetUi {
     /// 右クリックのメニューの対象（ツールの列の空いた所なら None）。
     pub context_slot: Option<SlotId>,
     pub context_group: Option<GroupId>,
-    /// 前のフレームのツールの列のボタンの矩形（名前の欄・アイコンの格子を、その右に出す）。
-    pub slot_rects: Vec<(SlotId, Rect)>,
     /// ツールの列が入りきらないときのスクロール。
     pub strip_scroll: f32,
 }
@@ -289,7 +287,7 @@ pub fn strip(ui: &mut Ui, app: &mut AppState, r: Rect, bottom: f32) {
         let tip = if key.is_empty() {
             name.clone()
         } else {
-            lang.pick(format!("{name}（{key}）"), format!("{name} ({key})"))
+            lang.f("toolset-text-tip", &[("name", &name), ("key", &key)])
         };
         let response = slot_button(
             ui,
@@ -303,7 +301,7 @@ pub fn strip(ui: &mut Ui, app: &mut AppState, r: Rect, bottom: f32) {
         if response.clicked() {
             app.apply(Action::Tools(ToolsetAction::Select(*slot)));
         }
-        if response.drag_started() {
+        if response.drag_started_by(egui::PointerButton::Primary) {
             app.toolset.ui.start_drag(Dragged::Slot(*slot));
         }
         if response.secondary_clicked() {
@@ -348,6 +346,23 @@ pub fn strip(ui: &mut Ui, app: &mut AppState, r: Rect, bottom: f32) {
             }
         }
         y += step;
+    }
+    // 右ボタンを帯で押し始めて動かしたら、ポインタの下のツールを選ぶ（帯の外・ツールの間では選ばない。戻れば選ぶ）。ポインタの下の
+    // ツールが替わった時だけ選ぶ。描いている最中は選ばない
+    {
+        let id = ui.make_persistent_id("tool.strip.right");
+        let drag = crate::ui::right_drag::drag(ui, id, area.intersect(ui.clip_rect()));
+        let under = drag
+            .filter(|_| !app.is_stroking())
+            .map(|d| d.pos)
+            .filter(|pos| area.contains(*pos))
+            .and_then(|pos| rects.iter().find(|(_, at)| at.contains(pos)))
+            .map(|(slot, _)| *slot);
+        if let Some(slot) = crate::ui::right_drag::entered(ui, id, under) {
+            if app.toolset.set.active() != Some(slot) {
+                app.apply(Action::Tools(ToolsetAction::Select(slot)));
+            }
+        }
     }
     gap_marks.push((None, y - 1.0));
     // ツールを列の最後より下へ落とす
@@ -396,7 +411,7 @@ pub fn strip(ui: &mut Ui, app: &mut AppState, r: Rect, bottom: f32) {
         _ => {}
     }
     ui.set_clip_rect(outer);
-    app.toolset.ui.slot_rects = rects;
+    app.ui.toolset_slot_rects = rects;
     rename_overlay(ui.ctx(), app);
     icon_picker(ui.ctx(), app);
 }
@@ -407,9 +422,8 @@ fn rename_overlay(ctx: &egui::Context, app: &mut AppState) {
         return;
     };
     let Some(button) = app
-        .toolset
         .ui
-        .slot_rects
+        .toolset_slot_rects
         .iter()
         .find(|(s, _)| *s == slot)
         .map(|(_, r)| *r)
@@ -462,9 +476,8 @@ fn icon_picker(ctx: &egui::Context, app: &mut AppState) {
         return;
     };
     let Some(button) = app
-        .toolset
         .ui
-        .slot_rects
+        .toolset_slot_rects
         .iter()
         .find(|(s, _)| *s == slot)
         .map(|(_, r)| *r)
@@ -529,7 +542,7 @@ fn icon_picker(ctx: &egui::Context, app: &mut AppState) {
                     if on { Color32::WHITE } else { t::TEXT },
                     18.0,
                 );
-                let label = lang.pick(format!("アイコン {}", i + 1), format!("Icon {}", i + 1));
+                let label = lang.f("toolset-icon", &[("i", &(i + 1))]);
                 response.widget_info(|| {
                     WidgetInfo::selected(WidgetType::SelectableLabel, true, on, &label)
                 });
@@ -555,7 +568,7 @@ pub fn strip_menu(app: &AppState) -> Vec<crate::ui::menu::Entry<Action>> {
     let after = slot.map(|s| s.id);
     let mut add = vec![
         Entry::item(
-            lang.pick("ブラシ", "Brush"),
+            lang.t("toolset-brush"),
             Action::Tools(ToolsetAction::Add {
                 tool: Tool::Brush,
                 after,
@@ -563,7 +576,7 @@ pub fn strip_menu(app: &AppState) -> Vec<crate::ui::menu::Entry<Action>> {
         )
         .enabled(free),
         Entry::item(
-            lang.pick("消しゴム", "Eraser"),
+            lang.t("toolset-eraser"),
             Action::Tools(ToolsetAction::Add {
                 tool: Tool::Eraser,
                 after,
@@ -584,13 +597,12 @@ pub fn strip_menu(app: &AppState) -> Vec<crate::ui::menu::Entry<Action>> {
             );
         }
     }
-    let mut entries =
-        vec![Entry::submenu(lang.pick("ツールを追加", "Add Tool"), add).enabled(free)];
+    let mut entries = vec![Entry::submenu(lang.t("toolset-add-tool"), add).enabled(free)];
     if let Some(slot) = slot {
         let last_of_kind =
             slot.holds_brushes() && set.slots().iter().filter(|s| s.tool == slot.tool).count() <= 1;
         let mut remove = Entry::item(
-            lang.pick("このツールを削除", "Delete This Tool"),
+            lang.t("toolset-delete-this-tool"),
             Action::Tools(ToolsetAction::Remove(slot.id)),
         )
         .enabled(free && !last_of_kind);
@@ -599,17 +611,17 @@ pub fn strip_menu(app: &AppState) -> Vec<crate::ui::menu::Entry<Action>> {
         }
         entries.extend([
             Entry::item(
-                lang.pick("名前を変更", "Rename"),
+                lang.t("toolset-rename"),
                 Action::Tools(ToolsetAction::StartRename(slot.id)),
             )
             .enabled(free),
             Entry::item(
-                lang.pick("アイコンを変更", "Change Icon"),
+                lang.t("toolset-change-icon"),
                 Action::Tools(ToolsetAction::PickIcon(Some(slot.id))),
             )
             .enabled(free),
             Entry::item(
-                lang.pick("前に区切り", "Separator Before"),
+                lang.t("toolset-separator-before"),
                 Action::Tools(ToolsetAction::ToggleGap(slot.id)),
             )
             .checked(slot.gap)
@@ -621,7 +633,7 @@ pub fn strip_menu(app: &AppState) -> Vec<crate::ui::menu::Entry<Action>> {
     entries.push(Entry::Separator);
     entries.push(
         Entry::item(
-            lang.pick("最初の並びに戻す…", "Reset Tool Layout…"),
+            lang.t("toolset-reset-tool-layout"),
             Action::Tools(ToolsetAction::ResetDialog),
         )
         .enabled(free),
@@ -640,23 +652,23 @@ pub fn group_menu(app: &AppState) -> Vec<crate::ui::menu::Entry<Action>> {
     };
     vec![
         Entry::item(
-            lang.pick("グループを追加", "Add Group"),
+            lang.t("toolset-add-group"),
             Action::Tools(ToolsetAction::AddGroup(slot.id)),
         )
         .enabled(free),
         Entry::item(
-            lang.pick("名前を変更", "Rename"),
+            lang.t("toolset-rename"),
             Action::Tools(ToolsetAction::StartRenameGroup(group.id)),
         )
         .enabled(free),
         Entry::item(
-            lang.pick("複製", "Duplicate"),
+            lang.t("toolset-duplicate"),
             Action::Tools(ToolsetAction::DuplicateGroup(group.id)),
         )
         .enabled(free),
         Entry::Separator,
         Entry::item(
-            lang.pick("削除", "Delete"),
+            lang.t("toolset-delete"),
             Action::Tools(ToolsetAction::RemoveGroup(group.id)),
         )
         .enabled(free),
@@ -693,10 +705,11 @@ pub fn brush_menu(app: &AppState) -> Vec<crate::ui::menu::Entry<Action>> {
         .is_stroking()
         .then(|| crate::lang::refusals::during_stroke(lang).to_owned());
     let locked = set.lock_refusal().map(|r| r.describe(lang));
-    let importing = app.brushes.import.is_busy().then(|| {
-        lang.pick("ブラシを取り込み中です。", "Importing brushes.")
-            .to_owned()
-    });
+    let importing = app
+        .brushes
+        .import
+        .is_busy()
+        .then(|| lang.t("toolset-importing-brushes").to_owned());
     let reason = |layout: bool, changes: bool| -> Option<String> {
         stroking
             .clone()
@@ -715,7 +728,7 @@ pub fn brush_menu(app: &AppState) -> Vec<crate::ui::menu::Entry<Action>> {
     let mut entries = vec![
         gate(
             Entry::item(
-                lang.pick("ブラシの設定…", "Brush Settings…"),
+                lang.t("toolset-brush-settings"),
                 Action::Brush(BrushAction::OpenDetail(key)),
             ),
             true,
@@ -724,7 +737,7 @@ pub fn brush_menu(app: &AppState) -> Vec<crate::ui::menu::Entry<Action>> {
         // 組み込みも、名前を変える・登録するとその場でファイルの写しになる
         gate(
             Entry::item(
-                lang.pick("名前を変更", "Rename"),
+                lang.t("toolset-rename"),
                 Action::Brush(BrushAction::StartRename(key)),
             ),
             user || layout,
@@ -732,7 +745,7 @@ pub fn brush_menu(app: &AppState) -> Vec<crate::ui::menu::Entry<Action>> {
         ),
         gate(
             Entry::item(
-                lang.pick("複製", "Duplicate"),
+                lang.t("toolset-duplicate"),
                 Action::Brush(BrushAction::Duplicate(key)),
             ),
             set.locked.is_none(),
@@ -746,7 +759,7 @@ pub fn brush_menu(app: &AppState) -> Vec<crate::ui::menu::Entry<Action>> {
         Entry::Separator,
         gate(
             Entry::item(
-                lang.pick("この設定で登録", "Register These Settings"),
+                lang.t("toolset-register-these-settings"),
                 Action::Brush(BrushAction::Register(key)),
             ),
             (user || layout) && modified,
@@ -754,7 +767,7 @@ pub fn brush_menu(app: &AppState) -> Vec<crate::ui::menu::Entry<Action>> {
         ),
         gate(
             Entry::item(
-                lang.pick("元に戻す", "Revert"),
+                lang.t("toolset-revert"),
                 Action::Brush(BrushAction::Revert(key)),
             ),
             modified,
@@ -763,7 +776,7 @@ pub fn brush_menu(app: &AppState) -> Vec<crate::ui::menu::Entry<Action>> {
         Entry::Separator,
         gate(
             Entry::item(
-                lang.pick("削除", "Delete"),
+                lang.t("toolset-delete"),
                 Action::Brush(BrushAction::Delete(key)),
             ),
             layout,
@@ -824,7 +837,7 @@ fn move_menu(
         }
         entries.push(Entry::submenu(slot.name_in(lang), groups(slot)));
     }
-    let menu = Entry::submenu(lang.pick("グループへ移す", "Move to Group"), entries);
+    let menu = Entry::submenu(lang.t("toolset-move-to-group"), entries);
     Some(match why_not {
         Some(why) => menu.enabled(false).tooltip(why),
         None => menu,

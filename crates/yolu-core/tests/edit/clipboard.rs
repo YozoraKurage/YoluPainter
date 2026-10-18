@@ -5,6 +5,8 @@
 // 画素の格子を (x, y) の添字で見比べる試験なので、添字の範囲の繰り返しの方が読みやすい。
 #![allow(clippy::needless_range_loop)]
 
+use yolu_core::Reason;
+
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use yolu_core::glam::DVec2;
@@ -478,11 +480,11 @@ fn copy_cut_and_paste_refuse_with_a_reason_and_change_nothing() {
     );
     assert_eq!(
         d.copy_pixels(empty, Channel::Color, true, MAX),
-        Err(CoreError::Unsupported("レイヤーにマスクが無い"))
+        Err(CoreError::Unsupported(Reason::LayerHasNoMask))
     );
     assert_eq!(
         d.cut_pixels(empty, Channel::Roughness, false, MAX),
-        Err(CoreError::Unsupported("無効のチャンネルは切り取れない"))
+        Err(CoreError::Unsupported(Reason::CannotCutDisabledChannel))
     );
     assert_eq!(
         d.copy_pixels(painted, Channel::from_index(40).unwrap(), false, MAX),
@@ -846,7 +848,7 @@ fn a_disabled_channel_can_be_copied_but_not_cut() {
     assert_eq!(copied.pixel(1, 1).unwrap(), Rgba8::new(90, 90, 90, 255));
     assert_eq!(
         d.cut_pixels(l, Channel::Roughness, false, MAX),
-        Err(CoreError::Unsupported("無効のチャンネルは切り取れない"))
+        Err(CoreError::Unsupported(Reason::CannotCutDisabledChannel))
     );
     assert_eq!(state(&d), before);
 }
@@ -938,7 +940,7 @@ fn a_mask_is_cut_under_the_image_lock_but_not_under_lock_all() {
     d.set_layer_locks(bare, LayerLocks::NONE).unwrap();
     assert_eq!(
         d.cut_pixels(bare, Channel::Color, true, MAX),
-        Err(CoreError::Unsupported("レイヤーにマスクが無い"))
+        Err(CoreError::Unsupported(Reason::LayerHasNoMask))
     );
 }
 
@@ -1052,7 +1054,9 @@ fn replace_pixels_refuses_wrong_sizes_and_layers_without_pixels() {
     let image = vec![0u8; 64 * 64 * 4];
     assert_eq!(
         d.replace_pixels(layer, Channel::Color, &[0; 16], true),
-        Err(CoreError::InvalidArgument("画像の大きさがキャンバスと違う"))
+        Err(CoreError::InvalidArgument(
+            Reason::ImageSizeDiffersFromCanvas
+        ))
     );
     assert!(matches!(
         d.replace_pixels(group, Channel::Color, &image, true),
@@ -1064,7 +1068,7 @@ fn replace_pixels_refuses_wrong_sizes_and_layers_without_pixels() {
     ));
     assert_eq!(
         d.replace_pixels(layer, Channel::Roughness, &image, true),
-        Err(CoreError::Unsupported("無効のチャンネルは置き換えられない"))
+        Err(CoreError::Unsupported(Reason::CannotReplaceDisabledChannel))
     );
     assert_eq!(
         d.replace_pixels(LayerId(5), Channel::Color, &image, true),
@@ -1248,9 +1252,9 @@ fn a_failing_batch_leaves_the_document_and_history_as_before() {
             false,
         )?;
         d.add_layer("Doomed")?;
-        Err(CoreError::InvalidArgument("boom"))
+        Err(CoreError::Cancelled)
     });
-    assert_eq!(result, Err(CoreError::InvalidArgument("boom")));
+    assert_eq!(result, Err(CoreError::Cancelled));
     assert_eq!(d.layers().len(), 1);
     assert_eq!(d.composite(d.bounds()).unwrap(), before, "画素は元に戻る");
     assert_eq!(d.history_bytes(), history);
@@ -1307,7 +1311,7 @@ fn undoing_an_enabled_channel_leaves_the_document_as_before() {
     let after_undo = content(&d);
     let result: Result<(), CoreError> = d.batch(|d| {
         d.set_channel_enabled(layer, Channel::Metallic, true)?;
-        Err(CoreError::InvalidArgument("x"))
+        Err(CoreError::InvalidArgument(Reason::X))
     });
     assert!(result.is_err());
     assert_eq!(content(&d), after_undo);
@@ -1327,7 +1331,7 @@ fn batches_refuse_nesting_strokes_undo_and_direct_writes() {
     assert_eq!(
         d.begin_triangle_fill(layer, Channel::Roughness, color, 1.0, false)
             .map(drop),
-        Err(CoreError::Unsupported("無効のチャンネルには塗れない"))
+        Err(CoreError::Unsupported(Reason::CannotFillDisabledChannel))
     );
     assert_eq!(
         d.begin_triangle_fill(layer, Channel::from_index(40).unwrap(), color, 1.0, false)
@@ -1446,7 +1450,7 @@ fn history_is_trimmed_only_after_the_batch_so_a_failure_can_still_undo_everythin
             )?;
         }
         assert_eq!(d.undo_count(), 5);
-        Err(CoreError::InvalidArgument("x"))
+        Err(CoreError::InvalidArgument(Reason::X))
     });
     assert!(result.is_err());
     assert_eq!(

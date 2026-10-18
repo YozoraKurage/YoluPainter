@@ -829,14 +829,14 @@ fn every_setting_is_accepted_or_refused_per_value_type() {
     // 拒否の文は理由だけで、使い方の指示（〜してください）にしない
     assert!(!messages.is_empty());
     for m in &messages {
-        assert!(!m.contains("ください"), "{m}");
+        assert!(!m.ja().contains("ください"), "{m}");
     }
 }
 #[test]
 fn setting_ranges_accept_their_limits_and_refuse_just_beyond() {
     let ok = |s: Settings| assert!(s.validate(ValueType::Color).is_ok(), "{s:?}");
     let ng = |s: Settings| match s.validate(ValueType::Color) {
-        Err(Error::Invalid(m)) => assert!(!m.contains("ください"), "{m}"),
+        Err(Error::Invalid(m)) => assert!(!m.ja().contains("ください"), "{m}"),
         other => panic!("{s:?}: {other:?}"),
     };
     let blur = |radius| Settings::GaussianBlur { radius };

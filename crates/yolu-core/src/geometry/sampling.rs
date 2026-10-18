@@ -238,6 +238,11 @@ impl<'g> SamplingChart<'g> {
         self.ordered.len() as i64 * SAMPLING_CHART_TRIANGLE_BYTES
     }
 
+    /// 図の三角形の番号と、図の上の 3 頂点（A・B・C の順。図に入れた順）。
+    pub(crate) fn flat_triangles(&self) -> impl Iterator<Item = (u32, [Vec2; 3])> + '_ {
+        self.ordered.iter().map(|e| (e.triangle, [e.a, e.b, e.c]))
+    }
+
     /// 当たりの位置の、図の上の座標。この図の三角形でなければ None。
     pub fn coordinates(&self, hit: &SurfaceHit) -> Option<Vec2> {
         if hit.revision != self.owner.revision {

@@ -1,23 +1,38 @@
 //! 画面の状態（文書・選んでいるレイヤー・ツール・ブラシ・色・表示）と操作（`Action`）。メニュー・キー・ボタンは同じ `Action` を
 //! 通す（試験も同じ道で叩く）。計算は core（`engine`）に任せ、ここは選ぶ・渡す・覚えるだけ。
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use egui::{Pos2, Vec2};
 
 use crate::canvas::view::{ViewState, ROTATE_STEP};
-use crate::engine::{AntiAlias, BlendMode, BrushSettings, Document, LayerId, Rgba8, Stroke};
+use crate::engine::unit_f32_to_byte;
+use crate::engine::{
+    AntiAlias, BlendMode, BrushSettings, Channel, CoreError, Document, Layer, LayerId, LayerKind,
+    LayerSetId, Rgba8,
+};
 use crate::lang::Lang;
-use crate::livelink::{LinkRequest, LinkView};
-use crate::m2::{Edit, LayerDrag, M2State, UiOp};
-use crate::model::SceneModel;
+use crate::livelink::LinkRequest;
+use crate::m2::{Edit, M2State, UiOp};
 use crate::notice::Source;
-use crate::project::ProjectFile;
 use crate::sets::TextureSets;
 use crate::shelf::{ShelfOp, ShelfState};
 use crate::ui::menu::PopupState;
 use crate::view3d::View3dState;
+
+pub mod canvas_bar;
+pub mod key;
+mod outbox;
+mod services;
+mod ui_slot;
+mod ui_state;
+pub mod ui_store;
+mod waker;
+pub use outbox::Outbox;
+pub use services::Services;
+pub use ui_slot::UiSlot;
+pub use ui_state::UiState;
+pub use waker::Waker;
 
 /// straight の RGBA（0〜1）。
 pub type Rgba = [f32; 4];
@@ -107,9 +122,8 @@ pub struct BrushState {
     pub spacing: f32,
     pub opacity: f32,
     pub flow: f32,
-    pub pressure_size: bool,
-    pub pressure_opacity: bool,
-    pub pressure_flow: bool,
+    /// 筆圧で大きさ・不透明度・流量を変えるか（全部入りのブラシでは影響元の筆圧の切り替え）。
+    pub pressure: crate::engine::PressureSwitches,
     /// 丸い筆先の縁のアンチエイリアス（core の既定は なし。アプリの既定は 中）。
     pub anti_alias: AntiAlias,
 }
@@ -122,9 +136,7 @@ impl Default for BrushState {
             spacing: 0.15,
             opacity: 1.0,
             flow: 1.0,
-            pressure_size: true,
-            pressure_opacity: true,
-            pressure_flow: false,
+            pressure: crate::engine::PressureSwitches::default(),
             anti_alias: AntiAlias::Medium,
         }
     }
@@ -142,22 +154,15 @@ impl BrushState {
             opacity: self.opacity as f64,
             flow: self.flow as f64,
             color: Rgba8::new(
-                to_byte(color[0]),
-                to_byte(color[1]),
-                to_byte(color[2]),
-                to_byte(color[3]),
+                unit_f32_to_byte(color[0]),
+                unit_f32_to_byte(color[1]),
+                unit_f32_to_byte(color[2]),
+                unit_f32_to_byte(color[3]),
             ),
-            pressure_size: self.pressure_size,
-            pressure_opacity: self.pressure_opacity,
-            pressure_flow: self.pressure_flow,
             erase,
             anti_alias: self.anti_alias,
         }
     }
-}
-
-pub fn to_byte(v: f32) -> u8 {
-    (v.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
 /// Unity の `Color.RGBToHSV`（色相は 0〜1）。
@@ -209,9 +214,9 @@ pub fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
 pub fn to_hex(c: Rgba) -> String {
     format!(
         "{:02X}{:02X}{:02X}",
-        to_byte(c[0]),
-        to_byte(c[1]),
-        to_byte(c[2])
+        unit_f32_to_byte(c[0]),
+        unit_f32_to_byte(c[1]),
+        unit_f32_to_byte(c[2])
     )
 }
 
@@ -361,7 +366,7 @@ pub struct CanvasInput {
     /// ペンの今の押し（触れてから離すまで。行き先は触れた最初の点で決める）。ペンの `contact` は押している間ずっと続くので、これが
     /// 押し直さない印も兼ねる（押した瞬間に終わるバケツ・ID の色で選択を、押しっぱなしの次の点でまた押さない）。離した点・ウィンドウが
     /// フォーカスを失ったときに下ろす。
-    pub pen_press: Option<crate::pen::PenPress>,
+    pub pen_press: Option<crate::input::Press>,
     /// Ctrl+Space の拡縮のドラッグ（押した点が中心）。
     pub zooming: Option<crate::gesture::ZoomDrag>,
     /// egui の Touch の筆圧（winit が出したとき）。
@@ -369,9 +374,10 @@ pub struct CanvasInput {
     pub panning: bool,
     pub rotating: Option<RotateDrag>,
     /// 表示の回す・パン・拡縮を始めたボタン（そのボタンを離したら終える）。
-    pub nav_button: Option<egui::PointerButton>,
-    /// 描く・選択などのツールの押しを始めたボタン（そのボタンを離したらツールが終える。無ければ左ボタン）。
-    pub tool_button: Option<egui::PointerButton>,
+    pub nav_button: Option<key::PointerButton>,
+    /// マウスのツールの押し（描く・選択などのツールが受けた押し。始めたボタンを離したらツールが終える。無ければ左ボタン）。ビューを動かす押しは
+    /// `nav_button`、スポイトは `eyedrop` が持つ。
+    pub mouse_press: Option<crate::input::Press>,
     /// 右ボタン（ペンのサイドボタン）でスポイトを始めている（押したまま動かすと見本が付いてくる。離して決める）。
     pub eyedrop: Option<crate::eyedrop::RightPress>,
     pub rotate_key_held: bool,
@@ -381,6 +387,8 @@ pub struct CanvasInput {
     pub stroke_points: usize,
     /// ストロークの最後の入力の時刻（秒。戻さない）。
     pub stroke_time: Option<f64>,
+    /// 描いている 2D ストロークの最後の点（連続吹き付けのブラシで、点が来ないフレームに同じ点を渡す。`crate::input::held`）。
+    pub held: Option<crate::input::HeldPoint>,
     /// 確定した 2D ストロークの終点（文書座標）。
     pub previous_end: Option<(f64, f64)>,
     /// 描いている 2D ストロークの今の終点（文書座標）。確定すると `previous_end` になる。
@@ -390,7 +398,7 @@ pub struct CanvasInput {
     pub ruler_constraint: Option<crate::drafting::Constraint>,
     /// クローンの元を決める組み合わせ（既定は Alt + 左）で押した点とボタン（画面の点。動かさずに離したらクローンの元にする。動かしたら
     /// ドラッグの操作だけ）。
-    pub clone_press: Option<(Pos2, egui::PointerButton)>,
+    pub clone_press: Option<(Pos2, key::PointerButton)>,
     /// 描いているクローンのストロークが使う offset（文書の座標の、描く点から元までのずれ。元の印が今写している点へ動くのに使う）。
     pub clone_offset: Option<yolu_core::glam::DVec2>,
 }
@@ -458,6 +466,9 @@ pub enum PopupKind {
     Shelf,
     /// 3D ビューの表示のドロップダウン（マテリアル・中立・チャンネルだけ）。
     View3dShading,
+    /// 3D ビューの左下のシェルフの、ハイドのプリセットとポーズのプリセットのドロップダウン（そのビュー）。
+    HidePreset(crate::view3d::ViewId),
+    PosePreset(crate::view3d::ViewId),
     /// メニューバーの右端の Live Link の入口（状態・Unity・モデルの名前と、待つ／切る）。
     LiveLink,
     /// 重なった UV のベイクのアイランドのメニュー（セット・アイランドの代表の三角形・ベイクのウィンドウの見取り図からか・3D ビューの右クリックからか）。
@@ -543,12 +554,16 @@ pub enum Action {
     RotateRight,
     ResetRotation,
     FlipView,
+    /// UI を隠す・戻す（`UiState::hide_ui`）。
+    ToggleUi,
     ResetLayout,
     SelectTool(Tool),
     SwapColors,
     DefaultColors,
     BrushSmaller,
     BrushLarger,
+    /// 消すモードを入れる・切る（入っている間は、今のブラシの形のまま消す。ブラシには保存しない）。
+    ToggleEraseMode,
     ToggleColorWheel,
     /// 3D ビューに試しの立方体を読む（3D ビューの空の状態のボタンと試験の口。メニューには置かない）。
     LoadDemoModel,
@@ -573,6 +588,10 @@ pub enum Action {
     /// .ylp を選んで開く（ファイルのウィンドウ）。
     OpenProjectDialog,
     OpenProject(PathBuf),
+    /// 最近開いたプロジェクトから開く（無いファイルは断って一覧から外す。保存していない変更は「開く」と同じ流れで聞く）。
+    OpenRecent(PathBuf),
+    /// 最近開いたプロジェクトの一覧を消す。
+    ClearRecent,
     /// 開いた .ylp に上書きで保存する（まだ無ければ別名で）。
     SaveProject,
     SaveProjectAsDialog,
@@ -615,8 +634,25 @@ pub enum Action {
     View3dNav(crate::view3d::navigation::NavOp),
     /// 編集・ポーズのモードの物（選ぶ・G/R/S・戻す・隠す・消す）。
     Object(crate::objects::ObjectAction),
+    /// ハイドのモード（UV アイランドを選ぶ・隠す・すべて表示・ビューごとの隠し方とポーズ。画面だけ: 保存も取り消しもしない）。
+    Hide(crate::view3d::hide::HideAction),
     /// ツールのキーの動き方を替える（ショートカットの設定。操作の ID と動き方。キーの設定を保存する）。
     ToolKeyMode(&'static str, crate::toolkeys::ToolKeyMode),
+    /// ヒストリーの行へ移る（文書の履歴の位置。保持された一番古い段の前が 0）。取り消し・やり直しを続けて当てる（ポーズの取り消しと
+    /// 多角形の点は見ない）。
+    HistoryGoTo(usize),
+    /// キーの設定とパイメニューを変える（ショートカットの設定。キーの設定を保存する）。
+    Keys(crate::keyconfig::KeyEdit),
+    /// レイヤーの名前を変える（名前の欄で決めた、前後の空白を除いた空でない名前）。
+    RenameLayer(LayerId, String),
+    /// テクスチャセットの名前を変える（uid と名前の欄の文字）。
+    RenameSet(u32, String),
+    /// 自由・遠近・格子の変形とゆがみのドラッグを確定する（1 回の Undo）。
+    Warp(crate::transform::advanced::WarpCommit),
+    /// 図形のツール（2D のキャンバスで離したときの図形を描く。1 回の Undo）。
+    Draft(crate::drafting::DraftOp),
+    /// ファイルの取り込みのウィンドウ（落とした PSD・画像の入れ先を選んで取り込む）。
+    DropIn(crate::dropin::DropOp),
 }
 
 impl Action {
@@ -660,12 +696,14 @@ impl Action {
             Self::RotateRight => "RotateRight",
             Self::ResetRotation => "ResetRotation",
             Self::FlipView => "FlipView",
+            Self::ToggleUi => "ToggleUi",
             Self::ResetLayout => "ResetLayout",
             Self::SelectTool(..) => "SelectTool",
             Self::SwapColors => "SwapColors",
             Self::DefaultColors => "DefaultColors",
             Self::BrushSmaller => "BrushSmaller",
             Self::BrushLarger => "BrushLarger",
+            Self::ToggleEraseMode => "ToggleEraseMode",
             Self::ToggleColorWheel => "ToggleColorWheel",
             Self::LoadDemoModel => "LoadDemoModel",
             Self::FrameModel => "FrameModel",
@@ -680,6 +718,8 @@ impl Action {
             Self::NewProject => "NewProject",
             Self::OpenProjectDialog => "OpenProjectDialog",
             Self::OpenProject(..) => "OpenProject",
+            Self::OpenRecent(..) => "OpenRecent",
+            Self::ClearRecent => "ClearRecent",
             Self::SaveProject => "SaveProject",
             Self::SaveProjectAsDialog => "SaveProjectAsDialog",
             Self::SaveProjectAs(..) => "SaveProjectAs",
@@ -702,7 +742,15 @@ impl Action {
             Self::Pie(..) => "Pie",
             Self::View3dNav(..) => "View3dNav",
             Self::Object(..) => "Object",
+            Self::Hide(..) => "Hide",
             Self::ToolKeyMode(..) => "ToolKeyMode",
+            Self::HistoryGoTo(..) => "HistoryGoTo",
+            Self::Keys(..) => "Keys",
+            Self::RenameLayer(..) => "RenameLayer",
+            Self::RenameSet(..) => "RenameSet",
+            Self::Warp(..) => "Warp",
+            Self::Draft(..) => "Draft",
+            Self::DropIn(..) => "DropIn",
         }
     }
 
@@ -732,6 +780,13 @@ impl Action {
                 | Action::ToggleVisible(_)
                 | Action::SetBlend(..)
                 | Action::StartRename(_)
+                | Action::HistoryGoTo(_)
+                | Action::RenameLayer(..)
+                | Action::Warp(_)
+                | Action::Region(crate::region::RegionAction::UndoCandidate)
+                | Action::Region(crate::region::RegionAction::Bucket(_))
+                | Action::Region(crate::region::RegionAction::Polygon { .. })
+                | Action::Draft(_)
         ) || matches!(self, Action::Ruler(op) if op.edits_document())
             || matches!(self, Action::Fill(op) if op.edits_document())
             || matches!(self, Action::Sel(crate::selection::SelAction::Saved(op)) if op.edits_document())
@@ -742,50 +797,9 @@ impl Action {
     }
 }
 
-/// 画面の一時の状態（前のフレームの結果・入力の途中。保存しない）。文書を替えると、前の文書を指す物（名前の変更・レイヤーのドラッグ）は
-/// `AppState::install_document` が戻す。
-#[derive(Debug, Default)]
-pub struct UiTemp {
-    /// 名前を変えているレイヤー。
-    pub renaming: Option<LayerId>,
-    /// 名前の入力欄がフォーカスを取った後か（外れたら名前の変更を終える）。
-    pub rename_started: bool,
-    /// レイヤーの欄のスクロール。
-    pub layer_scroll: f32,
-    /// レイヤーのドラッグの並べ替え（ドラッグ中のレイヤーと、落とす先の隙間 0..=n、上から）。
-    pub layer_drag: Option<LayerDrag>,
-    /// 名前を変えているテクスチャセット（uid）と、入力欄がフォーカスを取った後か。
-    pub renaming_set: Option<u32>,
-    pub rename_set_started: bool,
-    /// テクスチャセットの欄のスクロール。
-    pub set_scroll: f32,
-    /// 最後に描いたキャンバスの表示域（画面の点。試験と別ウィンドウの位置合わせ用）。
-    pub canvas_rect: Option<egui::Rect>,
-    /// キャンバスのタブが画面に出ているか（前のフレームの結果。`canvas_drawn` はこのフレームで描いたか）。ドックを分けると、
-    /// キャンバスと 3D ビューが同時に出る。プロパティの欄が、描く先が 3D だけのときに限って 2D の設定を無効にする。
-    pub canvas_visible: bool,
-    pub canvas_drawn: bool,
-    /// 最後にキャンバスのタブを描いたフレームの番号（メインウィンドウの `Context::cumulative_frame_nr_for`。キャンバスを別ウィンドウへ出しても、メインウィンドウの番号）。
-    /// タブが後ろにあるあいだは進まない。
-    pub canvas_frame: Option<u64>,
-    /// ドックのタブの見出しをつかんで動かしている（前のフレームと、その前のフレーム。離した直後のフレームも入る）。つかんでいる間と
-    /// 離した直後は、キャンバスと 3D ビューが描き始め・回し始めない。`YoluApp::frame` がタブの見出しの押しから毎フレーム入れる。
-    pub dock_grab: [bool; 2],
-    /// 前のフレームでポップアップが開いていた（このフレームの押下はキャンバスへ渡さない）。
-    pub popup_was_open: bool,
-    /// 見出しの開閉（キー → 開いているか）。
-    pub sections: HashMap<&'static str, bool>,
-    /// プロパティの欄のタブ（ステンシル・レイヤー）の番号。
-    pub property_tab: usize,
-    /// タブのありか（メインウィンドウ・別ウィンドウ。メニューの「ウィンドウ」とタブの右クリックが読む。`YoluApp` が毎フレーム入れる）。
-    pub panels: crate::detach::PanelIndex,
-    /// ドックの操作の頼み（メニュー・タブの右クリックから。`YoluApp` が同じフレームのうちに当てる）。
-    pub dock_ops: Vec<crate::detach::DockOp>,
-}
-
 /// 画面の状態の全部。
 pub struct AppState {
-    /// 画面の言語（文言は `lang.pick("日本語", "English")`）。
+    /// 画面の言語（文言は `lang.t("キー")`・引数のある文は `lang.f("キー", …)` で、`locales/<言語>/*.ftl` から引く）。
     pub lang: Lang,
     /// M2 の画面の状態（レイヤーの種類・チャンネル・全部入りのブラシ）。
     pub m2: M2State,
@@ -797,14 +811,8 @@ pub struct AppState {
     pub subtools: crate::subtool::SubToolState,
     /// グラデーションセット（グラデーションマップ・塗りつぶしのグラデーションのランプの見本の一覧。利用者の組は設定のフォルダに保存。.ylp には入れない）。
     pub ramp_sets: crate::rampsets::RampSets,
-    pub doc: Document,
-    /// 文書を別のものに替えた回数（開く・新しく作る・PSD を読み込む・テクスチャセットを切り替える）。キャンバスの表示は、文書 ID が
-    /// 同じでも（.ylp や PSD を読み直すと保存した ID が戻る）これが変わったら、前の文書の合成を捨てて作り直す。文書を丸ごと
-    /// 置き換える口は [`AppState::document_replaced`] を呼ぶこと。
-    pub(crate) doc_epoch: u64,
-    /// 描いているストロークの札（core の `Stroke`。文書を借りないのでフレームをまたいで持つ）。
-    pub stroke: Option<Stroke>,
-    pub selected_layer: Option<LayerId>,
+    /// 開いているプロジェクトの状態（今の文書・テクスチャセット・モデル・ファイルとの結び付き・変更の印）。
+    pub session: crate::project::Session,
     pub tool: Tool,
     pub brush: BrushState,
     pub color: ColorState,
@@ -817,53 +825,18 @@ pub struct AppState {
     pub last_notice: Option<crate::notice::Notice>,
     /// 起動してからの注意と失敗（ログのウィンドウが読む）。
     pub notice_log: crate::notice::NoticeLog,
-    /// ログのウィンドウの画面の状態（絞り・選んだ行）。
-    pub log_view: crate::panels::log::LogView,
-    /// 小さな知らせの出し方の状態（どの文をいつから出したか・消したか）。
-    pub toast: crate::toast::Toast,
-    /// 状態の帯の右端の版・ビルドと使っているメモリ。
-    pub usage: crate::usage::Usage,
-    /// 画面の一時の状態（名前の変更・レイヤーの欄のスクロールとドラッグ・キャンバスの表示域・見出しの開閉など。保存しない）。
-    pub ui: UiTemp,
+    /// 画面の一時の状態（名前の変更・レイヤーの欄のスクロールとドラッグ・キャンバスの表示域・開いているポップアップなど。保存しない）。
+    pub ui: UiState,
+    /// 裏で動く仕事の状態（保存・復旧の書き置き・Live Link・外からの操作・更新・クラッシュの報告・使っているメモリ。egui の型を持たない）。
+    pub services: Services,
+    /// 状態の側から画面への頼み（ファイルのウィンドウを開く・パネルの並びを戻す・小さな知らせ。egui の型を持たない）。
+    pub outbox: Outbox,
     pub canvas: CanvasInput,
-    pub popup: Option<OpenPopup>,
-    pub project_name: String,
-    /// 次に名前を付けて保存のウィンドウを開く場所（退避を開いたときの、元の .ylp のフォルダー。保存したら外す。無ければ OS の既定）。
-    pub save_folder: Option<std::path::PathBuf>,
     /// ファイルを選ぶウィンドウを、入り口の種類ごとに前に使った場所から開くための覚え（`dialog::places`。試験の状態は設定のフォルダに書かない）。
     pub places: crate::dialog::places::Places,
-    /// 開いた・保存した後に変えたか（メニューバーの右の「•」。新規・開くの前に捨ててよいかを聞く）。
-    pub modified: bool,
-    /// 直前の保存で書き直したテクスチャセット（正本）の数。画面には出さない（試験が、変えていないセットを書き直さないことを確かめる）。
-    #[doc(hidden)]
-    pub rewritten_sets: usize,
-    pub reset_layout: bool,
+    /// 最近開いたプロジェクト（ファイルのメニュー。実際のウィンドウは起動で `recent.conf` から読む）。
+    pub recent_projects: crate::recent::Recent,
     pub quit: bool,
-    /// テクスチャセット（今のセットの文書は `doc`）。
-    pub sets: TextureSets,
-    /// 読み込んだモデル（Live Link で受けたもの。3D ビューが読む）。
-    pub model: Option<SceneModel>,
-    /// Live Link の様子（毎フレーム `LiveLink` から写す。状態の帯とメニューが読む）。
-    pub link: LinkView,
-    /// Live Link を始める・やめる頼み（`YoluApp` が次に当てる）。
-    pub link_request: Option<LinkRequest>,
-    /// 今の文書の Live Link の相手（当てた頼み・まとめた Rig との対応。保存・送り直し・書き出しの返事が読む）。
-    pub link_target: Option<crate::livelink::LinkTarget>,
-    /// 開いた .ylp に残っていた Live Link の相手（`livelink.json`）。`LiveLink` が次のフレームで開き直す。
-    pub link_reopen: Option<yolu_protocol::files::Request>,
-    /// プロジェクトを替えた回数（新規・開く・作る。`np_project_replaced` が進める）。Live Link の裏の仕事が、始めた時のプロジェクトへだけ入るための目印。
-    pub project_epoch: u64,
-    /// 外からの操作（MCP のクライアント・コマンドライン）を受けている様子（毎フレーム `McpServer` から写す。状態の帯の印が読む）。
-    pub ops: crate::mcp_server::OpsView,
-    /// Live Link で入れた「元の絵」のレイヤーの印（レイヤーの欄が読む。保存しない）。
-    pub link_originals: crate::livelink::OriginalMarks,
-    /// 新規プロジェクトのウィンドウで、利用者が解像度を選んで作ったプロジェクトか（Live Link の元の絵が、最初のセットを元の絵の大きさで作り直してよいかを
-    /// 決める。選んだ大きさは元の絵で上書きしない）。起動時の既定・ファイルの「新規」・開いたプロジェクトでは false。
-    pub resolution_chosen: bool,
-    /// 開いた .ylp（保存先と、保存で残す元の中身）。
-    pub project: Option<ProjectFile>,
-    /// ファイルのウィンドウを開く頼み（`YoluApp` が開く。試験では開かない）。
-    pub dialog_request: Option<DialogRequest>,
     /// 3D ビュー（モデル・カメラ・描くテクスチャセット・入力）。
     pub view3d: View3dState,
     /// クローンの元と設定（2D のキャンバスと 3D ビューで共有する。元は 2D が文書の点、3D が面の点を別々に持つ）。
@@ -882,8 +855,6 @@ pub struct AppState {
     pub psd: crate::psd::PsdState,
     /// 配布用に保存（準備した写し・ウィンドウの選び・走っている仕事）。
     pub distribute: crate::distribute::DistributeState,
-    /// .ylp の保存（裏のスレッドの仕事と進み具合。画面のスレッドは頼みと結果の受けだけ）。
-    pub save: crate::project::SaveState,
     /// ステンシル（画面に重ねた画像を通して塗る。アプリの状態で、.ylp には入れない）。
     pub stencil: crate::stencil::StencilState,
     /// 効果のレイヤー（選んでいる効果の行・効果の入力の覚え）。
@@ -905,26 +876,18 @@ pub struct AppState {
     pub drafting: crate::drafting::Drafting,
     /// 定規の画面の状態（これから作る定規の設定・スナップの入り切り・選んでいる定規・ドラッグの途中）。定規そのものはレイヤーが持つ。
     pub rulers: crate::rulers::RulerState,
-    /// 自動更新（公開鍵を組み込んだビルドだけで動く。聞かずに通信しない）。
-    pub update: crate::update::UpdateState,
     /// 設定（メモリの予算・CPU のスレッド・棚の場所など）と設定のウィンドウ。
     pub prefs: crate::prefs::PrefsState,
     pub uv_wireframe: crate::uv_wireframe::Wireframe,
     /// 重なった UV の図（表示と塗りの知らせ）。
     pub uv_overlap: crate::uv_wireframe::overlap::OverlapState,
-    pub shortcuts: crate::shortcuts::ShortcutWindow,
-    /// 筆圧の調整（設定の「ペン」。枠で描いた線と開いたときの調整。調整そのものは `prefs.settings.pressure`）。
-    pub pressure: crate::pen::window::PressureWindow,
     /// 今描いているウィンドウのペンの点のうち、OS に押しを奪われて補った離し（本物の離しではない）のポインタの番号。ウィンドウごとのパスの始めに、そのウィンドウの
-    /// ペンの受け口（`PenInput::drain_with_lost`）から入れる。2D と 3D の入力は `pen_release_lost` で見る。アプリの状態で、.ylp には入れない。
+    /// ペンの受け口から `AppState::take_pen_samples` が入れる。2D と 3D の入力は `pen_release_lost` で見る。アプリの状態で、.ylp には入れない。
     pub pen_lost: Vec<u32>,
     /// クリップボード（アプリの中の写しと、OS のクリップボードとの口。アプリの状態で、.ylp には入れない）。
     pub clip: crate::clipboard::ClipState,
     /// ブラシの一覧（組み込みと利用者のブラシ・ツールごとの覚え・見本・詳細のウィンドウ）。アプリの状態で、.ylp には入れない。
     pub brushes: crate::brushes::BrushesState,
-    /// 復旧用の世代の書き置きと復旧のウィンドウ（`recovery`。動かすまでは何もしない）。
-    pub crash: crate::crash::window::Report,
-    pub recovery: crate::recovery::RecoveryState,
     /// ツールの並び（ツールの列とブラシのグループ。設定のフォルダの tools.json。.ylp には入れない）。
     pub toolset: crate::toolset::ToolsetState,
     /// アクション（操作の記録と再生。置き場は設定のフォルダの actions/。.ylp には入れない）。
@@ -945,6 +908,8 @@ pub struct AppState {
     pub temp_tool: crate::toolkeys::TempTool,
     /// ツールを替えた回数（`switch_to` が替えるたびに増える。押している間の切り替えが、別の手段で選ばれたかを見る）。
     pub(crate) tool_epoch: u64,
+    /// ファイルの取り込みのウィンドウ（落とした PSD・画像の行・入れ先・裏の読み込み）。
+    pub dropin: crate::dropin::DropInState,
 }
 
 /// ファイルのウィンドウの頼み。
@@ -952,6 +917,8 @@ pub struct AppState {
 pub enum DialogRequest {
     New,
     Open,
+    /// このプロジェクトを開く（保存していない変更は先に聞く。最近開いたプロジェクトから）。
+    OpenPath(PathBuf),
     SaveAs,
     /// 3D ビューに開くモデル（FBX）を選ぶ。
     OpenModel,
@@ -1010,13 +977,134 @@ pub fn blank_document(width: u32, height: u32) -> (Document, Option<LayerId>) {
 
 /// `blank_document`の、最初のレイヤーの名前を言語に合わせたもの（新しいレイヤーの名前と同じ言い方）。
 pub fn blank_document_in(width: u32, height: u32, lang: Lang) -> (Document, Option<LayerId>) {
+    blank_document_with(width, height, lang, false)
+}
+
+/// 新しい文書の初めの形: 一番下に白の単色、その上に空の「レイヤー 1」（選ぶのはこの空のレイヤー）。履歴は空。文書に Color のチャンネルが
+/// 無ければ白の単色は作らず、空のレイヤーだけ（`blank_document_in` と同じ）。
+pub fn starter_document_in(width: u32, height: u32, lang: Lang) -> (Document, Option<LayerId>) {
+    blank_document_with(width, height, lang, true)
+}
+
+fn blank_document_with(
+    width: u32,
+    height: u32,
+    lang: Lang,
+    white: bool,
+) -> (Document, Option<LayerId>) {
     let mut doc = Document::new(width, height).expect("文書の大きさ");
-    let first = doc
-        .add_layer(&format!("{} 1", lang.pick("レイヤー", "Layer")))
-        .ok();
+    if white {
+        let _ = add_starter_white(&mut doc, lang, None);
+    }
+    let first = doc.add_layer(&format!("{} 1", lang.t("state-layer"))).ok();
     let _ = doc.clear_history(); // 最初のレイヤーを足したことは取り消せない（空の文書に戻せても意味が無い）
     crate::look::apply_new_set_look(&mut doc);
     (doc, first)
+}
+
+/// 初めの形の白の単色の値（Color だけに持つ。不透明な白）。
+const STARTER_WHITE: Rgba8 = Rgba8 {
+    r: 255,
+    g: 255,
+    b: 255,
+    a: 255,
+};
+
+/// 白の単色の名前（新しい単色の名前と同じ言い方の「塗りつぶし 1」）。
+fn starter_white_name(lang: Lang) -> String {
+    format!("{} 1", crate::m2::layer_kind_label(lang, LayerKind::Fill))
+}
+
+/// 初めの形の下の半分: 白の単色（Color だけ）を足す。`set` が Some ならそのレイヤーセットの一番上の段へ（空のレイヤーセットへ入れる口が
+/// ラスターにしか無いので、最初のレイヤーセットへ足してから移す。呼ぶ側の 1 つの編集にまとめる）。Color は標準のチャンネルで文書から
+/// 消せないので、分けるのは「文書のレイヤーが使うチャンネル（`newproject::used_channels`。レイヤーが無い文書は Color）」に Color が
+/// あるか。無ければ（Color を使わないレイヤーセットだけの文書）足さず None。履歴には入るので、新しい文書を作る側が `clear_history` する。
+pub(crate) fn add_starter_white(
+    doc: &mut Document,
+    lang: Lang,
+    set: Option<LayerSetId>,
+) -> Result<Option<LayerId>, CoreError> {
+    if !crate::newproject::used_channels(doc).contains(&Channel::Color) {
+        return Ok(None);
+    }
+    let id = doc.add_fill_layer(
+        &starter_white_name(lang),
+        &[(Channel::Color, STARTER_WHITE)],
+        None,
+    )?;
+    if let Some(set) = set {
+        doc.move_layers_to_set(&[id], set)?;
+    }
+    Ok(Some(id))
+}
+
+/// 初めの形のまま（`is_starter_shape`）の文書の、白の単色のレイヤー。
+pub(crate) fn starter_white_of(doc: &Document) -> Option<LayerId> {
+    is_starter_shape(doc).then(|| doc.layers()[0].id())
+}
+
+/// 文書が、初めの形のまま（下から [白の単色（Color だけ）, 画素の無いラスター]、履歴が空で Redo も無い）か。2 枚とも名前が既定の
+/// （どの言語でも）まま、表示・不透明度 1・Normal の合成・マスク無し・効果無し・ロック無し。
+pub fn is_starter_shape(doc: &Document) -> bool {
+    let [fill, layer] = doc.layers() else {
+        return false;
+    };
+    let named = |l: &Layer, names: &dyn Fn(Lang) -> String| {
+        [Lang::Ja, Lang::En]
+            .into_iter()
+            .any(|lang| l.name() == names(lang))
+    };
+    let plain = |l: &Layer| {
+        l.visible()
+            && l.opacity() == 1.0
+            && l.blend_mode() == BlendMode::Normal
+            && l.channel_blends().next().is_none()
+            && l.mask().is_none()
+            && l.filters().is_empty()
+            && l.locks() == Default::default()
+    };
+    !doc.can_undo()
+        && !doc.can_redo()
+        && fill.kind() == LayerKind::Fill
+        && fill.fill_values().eq([(Channel::Color, STARTER_WHITE)])
+        && named(fill, &starter_white_name)
+        && plain(fill)
+        && layer.kind() == LayerKind::Raster
+        && named(layer, &|l| format!("{} 1", l.t("state-layer")))
+        && plain(layer)
+        && !crate::engine::layer_has_pixels(layer)
+}
+
+/// まだ編集していない文書（1 枚の形か初めの形。履歴が空で Redo も無い）の既定の名前のレイヤーを、新しい言語の名前にする。付けた名前・
+/// 描いた文書は変えない。Redo の段がある（描いて Undo した）文書は、名前を替えて履歴を消すと Redo が消えるので、名前を替えない。
+fn retitle_untouched_layers(doc: &mut Document, old: Lang, new: Lang) {
+    let layer = |l: Lang| format!("{} 1", l.t("state-layer"));
+    if doc.can_undo() || doc.can_redo() {
+        return;
+    }
+    let starter = is_starter_shape(doc);
+    if !starter && doc.layers().len() != 1 {
+        return;
+    }
+    let renames: Vec<_> = doc
+        .layers()
+        .iter()
+        .filter_map(|l| {
+            let (from, to) = match l.kind() {
+                LayerKind::Fill if starter => (starter_white_name(old), starter_white_name(new)),
+                _ => (layer(old), layer(new)),
+            };
+            (l.name() == from).then(|| (l.id(), to))
+        })
+        .collect();
+    let mut renamed = false;
+    for (id, name) in renames {
+        renamed |= doc.set_layer_name(id, &name).is_ok();
+    }
+    if renamed {
+        // 最初のレイヤーを足したことと同じく、名前の付け直しも取り消せない履歴にしない
+        let _ = doc.clear_history();
+    }
 }
 
 /// 新しい文書の既定の大きさ。
@@ -1024,34 +1112,26 @@ pub const DEFAULT_DOCUMENT_SIZE: u32 = 2048;
 
 impl AppState {
     /// 表示の言語を替える。既定の名前のまま（利用者が付けていない。復旧から開いて、まだ保存していない名前を含む）のプロジェクト名・最初のテクスチャセット・
-    /// まだ編集していない文書の最初のレイヤーは、新しい言語の名前にする（付けた名前・開いたファイルの名前・編集した文書は変えない）。
+    /// まだ編集していない文書の最初のレイヤー（初めの形なら白の単色も）は、新しい言語の名前にする（付けた名前・開いたファイルの名前・編集した文書は変えない）。
     pub fn set_language(&mut self, lang: Lang) {
         let old = self.lang;
         if old == lang {
             return;
         }
         self.lang = lang;
-        let untitled = |l: Lang| l.pick("名称未設定", "Untitled");
-        if self.project.is_none() && self.project_name == untitled(old) {
-            self.project_name = untitled(lang).into();
+        let untitled = |l: Lang| l.t("state-untitled");
+        if self.session.project.is_none() && self.session.project_name == untitled(old) {
+            self.session.project_name = untitled(lang).into();
         }
         // 復旧から開いた文書（保存先がまだ無い）の既定の名前も、言語に追従する
-        if self.project.as_ref().is_some_and(|p| !p.is_file())
-            && self.project_name == crate::recovery::recovered_name(old)
+        if self.session.project.as_ref().is_some_and(|p| !p.is_file())
+            && self.session.project_name == crate::recovery::recovered_name(old)
         {
-            self.project_name = crate::recovery::recovered_name(lang).into();
+            self.session.project_name = crate::recovery::recovered_name(lang).into();
         }
-        self.sets.retitle_defaults(old, lang);
-        let first_layer = |l: Lang| format!("{} 1", l.pick("レイヤー", "Layer"));
-        if self.project.is_none() && !self.doc.can_undo() && self.doc.layers().len() == 1 {
-            let layer = &self.doc.layers()[0];
-            if layer.name() == first_layer(old) {
-                let id = layer.id();
-                // 最初のレイヤーを足したことと同じく、名前の付け直しも取り消せない履歴にしない
-                if self.doc.set_layer_name(id, &first_layer(lang)).is_ok() {
-                    let _ = self.doc.clear_history();
-                }
-            }
+        self.session.sets.retitle_defaults(old, lang);
+        if self.session.project.is_none() {
+            retitle_untouched_layers(&mut self.session.doc, old, lang);
         }
     }
 
@@ -1062,6 +1142,17 @@ impl AppState {
     /// 言語を決めて作る（最初のレイヤー・テクスチャセット・プロジェクトの名前がその言語になる）。
     pub fn new_in(width: u32, height: u32, lang: Lang) -> AppState {
         let (doc, first) = blank_document_in(width, height, lang);
+        Self::from_document(doc, first, lang)
+    }
+
+    /// 起動の文書: 既定の大きさの、初めの形（白の単色の上に空のレイヤー。`starter_document_in`）。`new_in` はテストの土台が使うので
+    /// 1 枚の形のまま残し、アプリの起動はこちらを呼ぶ。
+    pub fn starter_in(lang: Lang) -> AppState {
+        let (doc, first) = starter_document_in(DEFAULT_DOCUMENT_SIZE, DEFAULT_DOCUMENT_SIZE, lang);
+        Self::from_document(doc, first, lang)
+    }
+
+    fn from_document(doc: Document, first: Option<LayerId>, lang: Lang) -> AppState {
         let sets = TextureSets::first_in(&doc, lang);
         AppState {
             lang,
@@ -1070,10 +1161,12 @@ impl AppState {
             region: Default::default(),
             subtools: Default::default(),
             ramp_sets: Default::default(),
-            doc,
-            doc_epoch: 0,
-            stroke: None,
-            selected_layer: first,
+            session: crate::project::Session::new(
+                doc,
+                first,
+                sets,
+                lang.t("state-untitled").into(),
+            ),
             tool: Tool::Brush,
             brush: BrushState::default(),
             color: ColorState::default(),
@@ -1082,31 +1175,16 @@ impl AppState {
             message: String::new(),
             last_notice: None,
             notice_log: Default::default(),
-            log_view: Default::default(),
-            toast: crate::toast::Toast::default(),
-            usage: crate::usage::Usage::default(),
-            ui: UiTemp::default(),
+            ui: UiState {
+                property_tab: crate::panels::properties::TAB_LAYER,
+                ..UiState::default()
+            },
+            services: Services::default(),
+            outbox: Outbox::default(),
             canvas: CanvasInput::default(),
-            popup: None,
-            project_name: lang.pick("名称未設定", "Untitled").into(),
-            save_folder: None,
             places: Default::default(),
-            modified: false,
-            rewritten_sets: 0,
-            reset_layout: false,
+            recent_projects: Default::default(),
             quit: false,
-            sets,
-            model: None,
-            link: LinkView::default(),
-            link_request: None,
-            link_target: None,
-            link_reopen: None,
-            project_epoch: 0,
-            ops: Default::default(),
-            link_originals: Default::default(),
-            resolution_chosen: false,
-            project: None,
-            dialog_request: None,
             view3d: View3dState::default(),
             clone: Default::default(),
             shelf: ShelfState::default(),
@@ -1116,7 +1194,6 @@ impl AppState {
             export: Default::default(),
             psd: Default::default(),
             distribute: Default::default(),
-            save: Default::default(),
             stencil: crate::stencil::StencilState::default(),
             fx: crate::fx::FxState::default(),
             np: Default::default(),
@@ -1128,17 +1205,12 @@ impl AppState {
             gradient: Default::default(),
             drafting: Default::default(),
             rulers: Default::default(),
-            update: crate::update::UpdateState::detect(),
             prefs: crate::prefs::PrefsState::default(),
             uv_wireframe: crate::uv_wireframe::Wireframe::default(),
             uv_overlap: Default::default(),
-            shortcuts: crate::shortcuts::ShortcutWindow::default(),
-            pressure: crate::pen::window::PressureWindow::default(),
             pen_lost: Vec::new(),
             clip: crate::clipboard::ClipState::default(),
             brushes: crate::brushes::BrushesState::default(),
-            crash: Default::default(),
-            recovery: Default::default(),
             toolset: Default::default(),
             automation: Default::default(),
             text: Default::default(),
@@ -1149,6 +1221,7 @@ impl AppState {
             keys: Default::default(),
             temp_tool: Default::default(),
             tool_epoch: 0,
+            dropin: Default::default(),
         }
     }
 
@@ -1164,22 +1237,54 @@ impl AppState {
         true
     }
 
+    /// .ylp を開く（描いている最中は断る）。
+    fn open_project(&mut self, path: PathBuf) {
+        if self.is_stroking() {
+            let text = crate::lang::refusals::during_stroke(self.lang);
+            return self.refuse(Source::Edit, text);
+        }
+        crate::project::open_into(self, &path);
+    }
+
+    /// 最近開いたプロジェクトから開く。ファイルが無ければ開かずに断って一覧から外し、あれば（保存していない変更を聞いてから開くよう）頼みを残す。
+    fn open_recent(&mut self, path: PathBuf) {
+        if self.is_stroking() {
+            let text = crate::lang::refusals::during_stroke(self.lang);
+            return self.refuse(Source::Edit, text);
+        }
+        if self.refuse_while_saving(self.lang.t("state-cannot-open-a-project")) {
+            return;
+        }
+        if !path.is_file() {
+            let lang = self.lang;
+            self.recent_projects.remove(&path);
+            self.refuse(
+                crate::notice::Source::Open,
+                lang.with_reason(
+                    crate::project::cannot_open(lang, &path),
+                    crate::lang::refusals::file_missing(lang),
+                ),
+            );
+            return;
+        }
+        self.outbox.dialog_request = Some(DialogRequest::OpenPath(path));
+    }
+
+    /// UI を隠す・戻す（`UiState::hide_ui`）。描いている間は切り替えない。
+    fn toggle_ui(&mut self) {
+        if self.is_stroking() {
+            self.refuse(
+                Source::Canvas,
+                crate::lang::refusals::during_stroke(self.lang),
+            );
+            return;
+        }
+        self.ui.hide_ui = !self.ui.hide_ui;
+    }
+
     /// 描いている最中か（ストロークと移動・変形のドラッグ。ほかの編集・取り消し・保存を断る）。
     pub fn is_stroking(&self) -> bool {
-        self.canvas.stroke.is_some()
-            || self.view3d.input.cover.is_some()
-            || self.doc.has_active_stroke()
-            || self.transform.drag.is_some()
-            || self.region.job.is_some()
-            || self.region.leftover_drag.is_some()
-            || self.path.drag.is_some()
-            || self.drafting.drag.is_some()
-            || self.rulers.drag.is_some()
-            || self
-                .view3d
-                .input
-                .draft
-                .is_some_and(|d| d.kind != crate::view3d::draft::DraftKind::Gradient)
+        self.session.doc.has_active_stroke() || crate::features::stroking(self)
     }
 
     /// パネルの部品の見た目を描き始める前のまま保つ間か（描いている間と、3D ビューでポーズのギズモをドラッグしている間）。
@@ -1219,22 +1324,23 @@ impl AppState {
         if tool != self.tool {
             // 今のツールの設定を覚え、入るツールの今のサブツールの設定を今の設定にする（ブラシと消しゴムは `brush_for_tool` が済ませた）
             self.subtool_leave(self.tool);
-            self.sel_tool_changed();
             if !keep_effect {
                 self.fx.selected = None; // 選んだ効果の欄はツールを替えたら閉じる
                 self.fx.id_pick = None;
             }
-            self.transform_cancel_drag();
-            self.path_tool_changed();
-            self.gradient_cancel_drag();
-            self.drafting_cancel();
-            self.text_commit();
-            self.text.press = None;
+            // 機能ごとの途中の形・ドラッグを捨てる（効果の欄の 2 つは、どの機能の片づけも読み書きしない）
+            crate::features::tool_left(self);
             self.subtool_enter(tool);
         }
+        self.put_tool(tool);
+        true
+    }
+
+    /// ツールの値を書く口（替えた印の `tool_epoch` も進める）。離れるツールの設定を覚える・途中の形を捨てるのは呼ぶ側で、普段は
+    /// `switch_to` を通す。
+    pub(crate) fn put_tool(&mut self, tool: Tool) {
         self.tool = tool;
         self.tool_epoch += 1;
-        true
     }
 
     /// 描ける先が 3D の面だけか（3D のタブが出ていてモデルがあり、キャンバスのタブは出ていない）。ドックを分けて両方が出ているあいだは、
@@ -1250,44 +1356,129 @@ impl AppState {
         }
         match &self.view3d.pose.session {
             Some(s) if crate::view3d::pose::owns_undo(self) => s.can_undo(),
-            _ => self.doc.can_undo(),
+            _ => self.session.doc.can_undo(),
         }
     }
 
     pub fn can_redo(&self) -> bool {
         match &self.view3d.pose.session {
             Some(s) if crate::view3d::pose::owns_undo(self) => s.can_redo(),
-            _ => self.doc.can_redo(),
+            _ => self.session.doc.can_redo(),
         }
+    }
+
+    /// ヒストリーの行へ移る（`Action::HistoryGoTo`）: 文書の保持された位置 `target` まで、取り消し・やり直しを続けて当てる。ポーズの
+    /// 取り消しと打っている多角形の点は見ない（いつも文書の履歴）。移るときは、打っている文字を取り消しと同じく先に打ち終える。位置が
+    /// 履歴の外なら何もしない。
+    fn history_go_to(&mut self, target: usize, stroking: bool) {
+        if stroking {
+            let text = crate::lang::refusals::during_stroke(self.lang);
+            return self.refuse(Source::Edit, text);
+        }
+        let doc = &self.session.doc;
+        if target > doc.undo_count() + doc.redo_count() {
+            return;
+        }
+        if target != doc.undo_count() {
+            self.text_commit();
+        }
+        while target != self.session.doc.undo_count() {
+            let result = if target < self.session.doc.undo_count() {
+                self.session.doc.undo()
+            } else {
+                self.session.doc.redo()
+            };
+            match result {
+                Ok(true) => self.session.mark_content_modified(),
+                Ok(false) => break,
+                Err(e) => {
+                    let text = self.lang.core_error(&e);
+                    self.notify(crate::notice::Kind::of_core(&e), Source::Edit, text);
+                    break;
+                }
+            }
+        }
+        self.ensure_selection();
     }
 
     pub fn section_open(&self, key: &'static str, default: bool) -> bool {
         *self.ui.sections.get(key).unwrap_or(&default)
     }
 
-    /// 選んでいるレイヤー（消えていれば一番上を選び直す）。
+    /// 選んでいるレイヤー 1 つ（グループは中身ごと）を消し、同じレイヤーセットの、消したまとまりのすぐ下のレイヤー（無ければ一番下）を選ぶ。
+    /// レイヤーセットのレイヤーが無くなったら選ばない。何も残らなくなる削除は断る。
+    fn delete_single_layer(&mut self, id: LayerId) {
+        // グループは中身ごと消える。何も残らなくなる削除は断る
+        let size = crate::m2::subtree_len(&self.session.doc, id);
+        if self.session.doc.layers().len() <= size {
+            self.refuse(
+                Source::Layer,
+                self.lang.t("state-cannot-delete-the-last-layer"),
+            );
+            return;
+        }
+        // 消したあとに選ぶのは、同じレイヤーセットの、消したまとまりのすぐ下のレイヤー（無ければ一番下）。レイヤーセットのレイヤーが
+        // 無くなったら選ばない
+        let set = self.layer_set();
+        let in_set = |doc: &Document| -> Vec<LayerId> {
+            doc.layers()
+                .iter()
+                .filter(|l| l.layer_set() == set)
+                .map(|l| l.id())
+                .collect()
+        };
+        let start = self.session.doc.layer_index(id).and_then(|i| {
+            let first = self.session.doc.layers()[(i + 1).saturating_sub(size)].id();
+            in_set(&self.session.doc).iter().position(|l| *l == first)
+        });
+        match self.session.doc.remove_layer(id) {
+            Ok(()) => {
+                let left = in_set(&self.session.doc);
+                self.session.selected_layer = start.and_then(|i| {
+                    left.get(i.saturating_sub(1).min(left.len().saturating_sub(1)))
+                        .copied()
+                });
+                self.session.layer_set = Some(set);
+                self.set_edit_mask(false);
+                self.session.mark_content_modified();
+            }
+            Err(e) => self.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::Layer,
+                self.lang.core_error(&e),
+            ),
+        }
+    }
+
+    /// 選んでいるレイヤー（消えていれば、今のレイヤーセットの一番上を選び直す。空のレイヤーセットなら選ばない）。
     pub fn ensure_selection(&mut self) {
         self.ensure_m2_selection();
         let alive = self
+            .session
             .selected_layer
-            .is_some_and(|id| self.doc.layer(id).is_some());
+            .is_some_and(|id| self.session.doc.layer(id).is_some());
         if !alive {
-            self.selected_layer = self.doc.layers().last().map(|l| l.id());
+            let set = self.layer_set();
+            self.session.selected_layer =
+                crate::m2::layersets::top_layer_of(&self.session.doc, set);
         }
+        self.remember_layer_set();
     }
 
     pub fn layer_name_for_new(&self) -> String {
         format!(
             "{} {}",
-            self.lang.pick("レイヤー", "Layer"),
-            self.doc.layers().len() + 1
+            self.lang.t("state-layer"),
+            self.session.doc.layers().len() + 1
         )
     }
 
     /// 今のツールで描くブラシの設定（ペンの消しゴムの端なら消す）。
     pub fn stroke_settings(&self, pen_eraser: bool) -> BrushSettings {
-        self.brush
-            .settings(self.color.main, self.tool.erases() || pen_eraser)
+        self.brush.settings(
+            self.color.main,
+            self.tool.erases() || pen_eraser || self.m2.erase_mode,
+        )
     }
 
     /// 操作を当てる（`message` に書かれた文は、前と同じ文でも新しい知らせとして出る）。描いている最中は、表示と色の操作のほかは断る（離した後の残りを塗っている間は、先に確定する）。
@@ -1303,24 +1494,33 @@ impl AppState {
         self.message_end(prior);
     }
 
+    /// 読むだけのセットで文書を変える操作を断った（断りを知らせた）か。ポーズのモードの取り消し・やり直しは文書を変えない
+    /// （ポーズの並びを戻す）ので、読むだけのセットでも断らない。描いている最中は、その操作の側で断る。
+    fn refused_as_read_only(&mut self, action: &Action, stroking: bool) -> bool {
+        let pose_undo =
+            matches!(action, Action::Undo | Action::Redo) && crate::view3d::pose::owns_undo(self);
+        if !action.edits_document() || stroking || pose_undo {
+            return false;
+        }
+        let Some(reason) = self.read_only_reason() else {
+            return false;
+        };
+        let text = crate::lang::refusals::read_only_set(self.lang, reason);
+        self.refuse(Source::Edit, text);
+        true
+    }
+
     fn apply_action(&mut self, action: Action) {
         crate::crash::action(action.kind_name());
         let stroking = self.is_stroking();
         let refuse =
             |s: &mut AppState| s.refuse(Source::Edit, crate::lang::refusals::during_stroke(s.lang));
-        // ポーズのモードの取り消し・やり直しは文書を変えない（ポーズの並びを戻す）ので、読むだけのセットでも断らない
-        let pose_undo =
-            matches!(action, Action::Undo | Action::Redo) && crate::view3d::pose::owns_undo(self);
-        if action.edits_document() && !stroking && !pose_undo {
-            if let Some(reason) = self.read_only_reason() {
-                let text = crate::lang::refusals::read_only_set(self.lang, reason);
-                self.refuse(Source::Edit, text);
-                return;
-            }
+        if self.refused_as_read_only(&action, stroking) {
+            return;
         }
         match action {
             Action::OpenLogFolder => {
-                self.crash.request = Some(crate::crash::window::Request::Folder)
+                self.services.crash.request = Some(crate::crash::window::Request::Folder)
             }
             Action::ToggleUvWireframe => {
                 self.prefs.settings.uv_wireframe = !self.prefs.settings.uv_wireframe
@@ -1368,10 +1568,10 @@ impl AppState {
                 if crate::view3d::pose::owns_undo(self) {
                     return self.apply(Action::Pose(crate::view3d::pose::PoseAction::Undo));
                 }
-                match self.doc.undo() {
+                match self.session.doc.undo() {
                     Ok(true) => {
-                        self.info(Source::Edit, self.lang.pick("取り消しました。", "Undone."));
-                        self.modified = true;
+                        self.info(Source::Edit, self.lang.t("state-undone"));
+                        self.session.mark_content_modified();
                     }
                     Ok(false) => {}
                     Err(e) => self.notify(
@@ -1390,10 +1590,10 @@ impl AppState {
                 if crate::view3d::pose::owns_undo(self) {
                     return self.apply(Action::Pose(crate::view3d::pose::PoseAction::Redo));
                 }
-                match self.doc.redo() {
+                match self.session.doc.redo() {
                     Ok(true) => {
-                        self.info(Source::Edit, self.lang.pick("やり直しました。", "Redone."));
-                        self.modified = true;
+                        self.info(Source::Edit, self.lang.t("state-redone"));
+                        self.session.mark_content_modified();
                     }
                     Ok(false) => {}
                     Err(e) => self.notify(
@@ -1409,9 +1609,11 @@ impl AppState {
                     return refuse(self);
                 }
                 let name = self.layer_name_for_new();
-                if let Ok(id) = self.doc.add_layer_above(&name, self.selected_layer) {
-                    self.selected_layer = Some(id);
-                    self.modified = true;
+                // 今のレイヤーセットに足す（選んでいるレイヤーのすぐ上。空のレイヤーセットなら、その一番上）
+                if let Ok(id) = self.add_in_current_set(|d, above| d.add_layer_above(&name, above))
+                {
+                    self.session.selected_layer = Some(id);
+                    self.session.mark_content_modified();
                 }
             }
             Action::DeleteLayer => {
@@ -1419,7 +1621,7 @@ impl AppState {
                     return refuse(self);
                 }
                 if self.has_multiple_layers_selected() {
-                    let revision = self.doc.revision();
+                    let revision = self.session.doc.revision();
                     if let Err(e) = self.delete_selected_layers() {
                         self.notify(
                             crate::notice::Kind::of_core(&e),
@@ -1427,43 +1629,12 @@ impl AppState {
                             self.lang.core_error(&e),
                         );
                     }
-                    if self.doc.revision() != revision {
-                        self.modified = true;
-                    }
+                    self.session.mark_content_modified_if_changed(revision);
                     self.ensure_selection();
                     return;
                 }
-                if let Some(id) = self.selected_layer {
-                    // グループは中身ごと消える。何も残らなくなる削除は断る
-                    let size = crate::m2::subtree_len(&self.doc, id);
-                    if self.doc.layers().len() <= size {
-                        self.refuse(
-                            Source::Layer,
-                            self.lang.pick(
-                                "最後のレイヤーは消せません。",
-                                "Cannot delete the last layer.",
-                            ),
-                        );
-                        return;
-                    }
-                    let start = self
-                        .doc
-                        .layer_index(id)
-                        .map(|i| (i + 1).saturating_sub(size));
-                    match self.doc.remove_layer(id) {
-                        Ok(()) => {
-                            let layers = self.doc.layers();
-                            self.selected_layer = start
-                                .map(|i| layers[i.saturating_sub(1).min(layers.len() - 1)].id());
-                            self.set_edit_mask(false);
-                            self.modified = true;
-                        }
-                        Err(e) => self.notify(
-                            crate::notice::Kind::of_core(&e),
-                            Source::Layer,
-                            self.lang.core_error(&e),
-                        ),
-                    }
+                if let Some(id) = self.session.selected_layer {
+                    self.delete_single_layer(id);
                 }
             }
             Action::LayerUp | Action::LayerDown => {
@@ -1473,21 +1644,29 @@ impl AppState {
                 if self.has_multiple_layers_selected() {
                     // 選んだレイヤーをまとめて 1 段（それぞれの兄弟の中で。選んだレイヤーどうしは追い越さない）
                     let ids = self.selected_layers();
-                    if let Ok(true) = self.doc.step_layers(&ids, action == Action::LayerUp) {
-                        self.modified = true;
+                    if let Ok(true) = self
+                        .session
+                        .doc
+                        .step_layers(&ids, action == Action::LayerUp)
+                    {
+                        self.session.mark_content_modified();
                     }
                     return;
                 }
-                if let Some(id) = self.selected_layer {
+                if let Some(id) = self.session.selected_layer {
                     // 同じグループの兄弟の中で動かす（グループの外へは出さない）
-                    let parent = self.doc.layer(id).and_then(|l| l.parent());
-                    let siblings = self.doc.children_of(parent).unwrap_or_default();
+                    let layer = self.session.doc.layer(id);
+                    let parent = layer.and_then(|l| l.parent());
+                    // 位置はレイヤーセットの中で数える（`move_layer` と同じ数え方）
+                    let siblings = layer
+                        .and_then(|l| self.session.doc.children_in_set(l.layer_set(), parent).ok())
+                        .unwrap_or_default();
                     if let Some(i) = siblings.iter().position(|v| *v == id) {
                         let up = action == Action::LayerUp;
                         let to = if up { i + 1 } else { i.wrapping_sub(1) };
                         if to < siblings.len() {
-                            let _ = self.doc.move_layer(id, to);
-                            self.modified = true;
+                            let _ = self.session.doc.move_layer(id, to);
+                            self.session.mark_content_modified();
                         }
                     }
                 }
@@ -1496,16 +1675,16 @@ impl AppState {
                 if stroking {
                     return refuse(self);
                 }
-                if let Some(visible) = self.doc.layer(id).map(|l| l.visible()) {
-                    let _ = self.doc.set_layer_visible(id, !visible);
-                    self.modified = true;
+                if let Some(visible) = self.session.doc.layer(id).map(|l| l.visible()) {
+                    let _ = self.session.doc.set_layer_visible(id, !visible);
+                    self.session.mark_content_modified();
                 }
             }
             Action::SetBlend(id, mode) => {
                 if stroking {
                     return refuse(self);
                 }
-                if let Err(e) = self.doc.set_layer_blend_mode(id, mode) {
+                if let Err(e) = self.session.doc.set_layer_blend_mode(id, mode) {
                     self.notify(
                         crate::notice::Kind::of_core(&e),
                         Source::Layer,
@@ -1513,7 +1692,7 @@ impl AppState {
                     );
                     return;
                 }
-                self.modified = true;
+                self.session.mark_content_modified();
             }
             Action::StartRename(id) => {
                 self.ui.renaming = Some(id);
@@ -1545,16 +1724,16 @@ impl AppState {
                     _ => self.view.flip_horizontally(),
                 }
             }
+            Action::ToggleUi => self.toggle_ui(),
             Action::ScreenPick(mode) => crate::screen_pick::request(self, mode),
-            Action::ResetLayout => self.reset_layout = true,
-            Action::SelectTool(tool) => {
-                // 描くツールを選んだら、ペイントのモードへ（`switch_to`）
-                self.switch_tool(tool, false);
-            }
+            Action::ResetLayout => self.outbox.reset_layout = true,
+            // 描くツールを選んだら、ペイントのモードへ（`switch_to`）
+            Action::SelectTool(tool) => _ = self.switch_tool(tool, false),
             Action::SwapColors => self.color.swap(),
             Action::DefaultColors => self.color.defaults(),
             Action::BrushSmaller => self.brush.radius = (self.brush.radius / 1.15).max(0.5),
             Action::BrushLarger => self.brush.radius = (self.brush.radius * 1.15).min(MAX_RADIUS),
+            Action::ToggleEraseMode => self.m2.erase_mode = !self.m2.erase_mode,
             Action::ToggleColorWheel => self.color.wheel = !self.color.wheel,
             Action::LoadDemoModel => {
                 if stroking {
@@ -1563,13 +1742,7 @@ impl AppState {
                 self.view3d.load_demo();
                 // 試しの立方体はファイルのモデルではない（プロジェクトのモデルの参照は外す）
                 self.np.model_file = None;
-                self.info(
-                    Source::View3d,
-                    self.lang.pick(
-                        "3D ビューに試しの立方体を読みました。",
-                        "Test cube loaded in the 3D View.",
-                    ),
-                );
+                self.info(Source::View3d, self.lang.t("state-test-cube-loaded-in-the"));
             }
             Action::FrameModel => {
                 if stroking {
@@ -1578,7 +1751,7 @@ impl AppState {
                 self.view3d.frame_model();
             }
             Action::Pose(a) => crate::view3d::pose::apply_action(self, a),
-            Action::View3d(op) => self.view3d.display.apply(op),
+            Action::View3d(op) => crate::view3d::display::apply_display(self, op),
             Action::About => {
                 self.info(
                     Source::Edit,
@@ -1586,14 +1759,14 @@ impl AppState {
                 );
             }
             Action::SelectSet(uid) => {
-                if let Some(i) = self.sets.index_of(uid) {
+                if let Some(i) = self.session.sets.index_of(uid) {
                     if let Err(e) = self.switch_set(i) {
                         self.refuse(Source::TextureSet, e);
                     }
                 }
             }
             Action::ToggleSetVisible(uid) => self.toggle_set_visible(uid),
-            Action::StartRenameSet(uid) => match self.sets.by_uid(uid) {
+            Action::StartRenameSet(uid) => match self.session.sets.by_uid(uid) {
                 Some(set) if set.read_only.is_some() => {
                     let reason = set.read_only.as_deref().unwrap_or_default();
                     let text = crate::lang::refusals::read_only_set(self.lang, reason);
@@ -1606,7 +1779,7 @@ impl AppState {
                 None => {}
             },
             Action::ToggleLiveLink => {
-                self.link_request = Some(if self.link.is_on() {
+                self.services.link_request = Some(if self.services.link.is_on() {
                     LinkRequest::Stop
                 } else {
                     LinkRequest::Start
@@ -1617,13 +1790,10 @@ impl AppState {
                     return refuse(self);
                 }
                 // 保存の間は、選んでから断るのではなく、ウィンドウを開く前に断る
-                if self.refuse_while_saving(self.lang.pick(
-                    "新しいプロジェクトを作れません",
-                    "Cannot create a new project",
-                )) {
+                if self.refuse_while_saving(self.lang.t("state-cannot-create-a-new-project")) {
                     return;
                 }
-                self.dialog_request = Some(DialogRequest::New)
+                self.outbox.dialog_request = Some(DialogRequest::New)
             }
             Action::NewProject => {
                 if stroking {
@@ -1635,51 +1805,40 @@ impl AppState {
                 if stroking {
                     return refuse(self);
                 }
-                if self.refuse_while_saving(
-                    self.lang
-                        .pick("プロジェクトを開けません", "Cannot open a project"),
-                ) {
+                if self.refuse_while_saving(self.lang.t("state-cannot-open-a-project")) {
                     return;
                 }
-                self.dialog_request = Some(DialogRequest::Open)
+                self.outbox.dialog_request = Some(DialogRequest::Open)
             }
             Action::SaveProjectAsDialog => {
                 if stroking {
                     return refuse(self);
                 }
-                if self.refuse_while_saving(
-                    self.lang
-                        .pick("プロジェクトを保存できません", "Cannot save the project"),
-                ) {
+                if self.refuse_while_saving(self.lang.t("state-cannot-save-the-project")) {
                     return;
                 }
-                self.dialog_request = Some(DialogRequest::SaveAs)
+                self.outbox.dialog_request = Some(DialogRequest::SaveAs)
             }
-            Action::OpenProject(path) => {
-                if stroking {
-                    return refuse(self);
-                }
-                crate::project::open_into(self, &path);
-            }
+            Action::OpenProject(path) => self.open_project(path),
+            Action::OpenRecent(path) => self.open_recent(path),
+            Action::ClearRecent => self.recent_projects.clear(),
             Action::SaveProject => {
                 if stroking {
                     return refuse(self);
                 }
                 // 保存の間は、保存先を選ぶウィンドウ（まだファイルが無いプロジェクト）も開かずに断る
-                if self.refuse_while_saving(
-                    self.lang
-                        .pick("プロジェクトを保存できません", "Cannot save the project"),
-                ) {
+                if self.refuse_while_saving(self.lang.t("state-cannot-save-the-project")) {
                     return;
                 }
                 match self
+                    .session
                     .project
                     .as_ref()
                     .filter(|p| p.is_file())
                     .map(|p| p.path().to_path_buf())
                 {
                     Some(path) => crate::project::save_from(self, &path),
-                    None => self.dialog_request = Some(DialogRequest::SaveAs),
+                    None => self.outbox.dialog_request = Some(DialogRequest::SaveAs),
                 }
             }
             Action::SaveProjectAs(path) => {
@@ -1702,10 +1861,15 @@ impl AppState {
             Action::Pie(op) => self.pie_apply(op),
             Action::View3dNav(op) => crate::view3d::navigation::apply(self, op),
             Action::Object(op) => self.objects_apply(op),
-            Action::ToolKeyMode(command, mode) => {
-                self.keys.set_tool_mode(command, mode);
-                self.keys_changed();
-            }
+            Action::Hide(op) => crate::view3d::hide::apply(self, op),
+            Action::ToolKeyMode(command, mode) => self.keys_tool_mode(command, mode),
+            Action::HistoryGoTo(target) => self.history_go_to(target, stroking),
+            Action::Keys(edit) => self.keys_apply(edit),
+            Action::RenameLayer(id, name) => self.rename_layer(id, &name),
+            Action::RenameSet(uid, name) => self.rename_set_apply(uid, &name),
+            Action::Warp(commit) => self.warp_apply(commit),
+            Action::Draft(op) => self.draft_apply(op),
+            Action::DropIn(op) => self.dropin_apply(op),
         }
     }
 }
@@ -1829,20 +1993,20 @@ mod tests {
     #[test]
     fn layer_actions() {
         let mut s = AppState::new(64, 64);
-        let first = s.selected_layer.unwrap();
+        let first = s.session.selected_layer.unwrap();
         s.apply(Action::NewLayer);
-        let second = s.selected_layer.unwrap();
+        let second = s.session.selected_layer.unwrap();
         assert_ne!(first, second);
-        assert_eq!(s.doc.layers().len(), 2);
+        assert_eq!(s.session.doc.layers().len(), 2);
         s.apply(Action::LayerDown);
-        assert_eq!(s.doc.layers()[0].id(), second);
+        assert_eq!(s.session.doc.layers()[0].id(), second);
         s.apply(Action::DeleteLayer);
-        assert_eq!(s.doc.layers().len(), 1);
-        assert_eq!(s.selected_layer, Some(first));
+        assert_eq!(s.session.doc.layers().len(), 1);
+        assert_eq!(s.session.selected_layer, Some(first));
         s.apply(Action::DeleteLayer);
-        assert_eq!(s.doc.layers().len(), 1, "最後のレイヤーは消さない");
+        assert_eq!(s.session.doc.layers().len(), 1, "最後のレイヤーは消さない");
         s.apply(Action::Undo);
-        assert_eq!(s.doc.layers().len(), 2);
+        assert_eq!(s.session.doc.layers().len(), 2);
     }
 
     #[test]

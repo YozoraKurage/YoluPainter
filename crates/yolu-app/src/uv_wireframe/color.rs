@@ -27,7 +27,7 @@ pub fn overlap_window_target() -> egui::Id {
 pub fn settings_row(ui: &mut Ui, rows: &mut w::Rows, app: &mut AppState) -> bool {
     let row = rows.row(t::ROW_HEIGHT, crate::prefs::GAP);
     let lang = app.lang;
-    let name = lang.pick("UV ワイヤーフレーム", "UV Wireframe");
+    let name = lang.t("uv_wireframe-uv-wireframe");
     w::text(
         ui.painter(),
         Rect::from_min_max(
@@ -52,21 +52,15 @@ pub fn settings_row(ui: &mut Ui, rows: &mut w::Rows, app: &mut AppState) -> bool
         window_target(),
         name,
         &mut app.prefs.settings.uv_wireframe_color,
-        lang.pick(
-            "UV ワイヤーフレームの色と不透明度",
-            "UV wireframe color and opacity",
-        ),
+        lang.t("uv_wireframe-uv-wireframe-color-and-opacity-tip"),
     );
     swatch(
         ui,
         overlap,
         overlap_window_target(),
-        lang.pick("重なった UV", "Overlapping UV"),
+        lang.t("uv_wireframe-overlapping-uv"),
         &mut app.prefs.settings.uv_overlap_color,
-        lang.pick(
-            "重なった UV の色と不透明度",
-            "Overlapping UV color and opacity",
-        ),
+        lang.t("uv_wireframe-overlapping-uv-color-and-opacity-tip"),
     );
     color_window::dragging(ui.ctx(), window_target())
         || color_window::dragging(ui.ctx(), overlap_window_target())

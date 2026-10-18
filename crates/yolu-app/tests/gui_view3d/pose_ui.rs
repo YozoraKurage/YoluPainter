@@ -3,12 +3,13 @@
 //! 取り消しの段・描いている間は断る）、BlendShape の戻し、ボーンの影響で面を隠す（ボタン・描かれず当たらない・項目の外し・保存したプリセットを
 //! 入れる/外す・消す・合わないボーンの理由）。試験のモデルは試しの人形（ユーザーの FBX は使わない）。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::accesskit::Role;
 use egui::{epaint::Shape, pos2, vec2, Event, Key, Modifiers, Pos2, Rect};
 use egui_kittest::kittest::{NodeT, Queryable};
-use egui_kittest::{Harness, SnapshotResults};
+use egui_kittest::Harness;
 use yolu_app::lang::Lang;
 use yolu_app::pen::PenInput;
 use yolu_app::state::{Action, AppState};
@@ -31,21 +32,29 @@ fn figure(doc: u32) -> H {
     h
 }
 
+/// ポーズのタブを外すときに渡す矩形（egui_dock は外したウィンドウの大きさをこの 0.8 倍にする）。
+fn float_rect() -> Rect {
+    Rect::from_min_size(pos2(8.0, 40.0), vec2(400.0, 980.0))
+}
+
+/// `float_pose_tab` で浮かせたポーズのウィンドウの範囲（余白つき）。
+fn pose_window() -> Rect {
+    let r = float_rect();
+    Rect::from_min_size(r.min, r.size() * 0.8).expand(6.0)
+}
+
 /// ポーズのタブをドックから外して、左の上に浮いたウィンドウにする（egui_dock は外したウィンドウの大きさを渡した矩形の 0.8 倍にする。ドックの隅の狭い場所では節がスクロールになるので、欄が広く見えるように）。
 fn float_pose_tab(h: &mut H) {
     {
         let dock = &mut h.state_mut().dock;
         let path = dock.find_tab(&Tab::Pose).expect("ポーズのタブ");
-        dock.detach_tab(
-            path,
-            Rect::from_min_size(pos2(8.0, 40.0), vec2(400.0, 980.0)),
-        );
+        dock.detach_tab(path, float_rect());
     }
     h.run();
 }
 
 fn session(h: &H) -> &pose::PoseSession {
-    h.state().state.view3d.pose.session.as_ref().unwrap()
+    h.view3d().pose.session.as_ref().unwrap()
 }
 
 fn bone(h: &H, name: &str) -> usize {
@@ -61,7 +70,7 @@ fn bone(h: &H, name: &str) -> usize {
 fn select(h: &mut H, name: &str) -> usize {
     let b = bone(h, name);
     {
-        let s = h.state_mut().state.view3d.pose.session.as_mut().unwrap();
+        let s = h.view3d_mut().pose.session.as_mut().unwrap();
         s.selected = Some(b);
         yolu_app::view3d::gizmo::reveal(s, b);
     }
@@ -82,22 +91,11 @@ fn undo_len(h: &H) -> usize {
 }
 
 fn full(h: &H) -> usize {
-    h.state()
-        .state
-        .view3d
-        .full_model()
-        .unwrap()
-        .triangle_count()
+    h.view3d().full_model().unwrap().triangle_count()
 }
 
 fn shown(h: &H) -> usize {
-    h.state()
-        .state
-        .view3d
-        .model
-        .as_ref()
-        .unwrap()
-        .triangle_count()
+    h.view3d().model.as_ref().unwrap().triangle_count()
 }
 
 fn disabled(h: &H, label: &str) -> bool {
@@ -170,7 +168,7 @@ fn the_pose_tab_joins_properties_when_a_skinned_model_loads_and_stays_after_the_
     assert!(disabled(&h, "取り消し") && disabled(&h, "やり直し"));
     assert!(!disabled(&h, "FBX を開く"));
     // 英語
-    h.state_mut().state.lang = Lang::En;
+    h.set_lang(Lang::En);
     h.run();
     assert_eq!(Tab::Pose.title_in(Lang::En), "Pose");
     assert_eq!(Tab::Pose.title_in(Lang::Ja), "ポーズ");
@@ -194,7 +192,7 @@ fn the_pose_tab_is_added_back_after_the_layout_is_reset() {
     assert!(h.state().dock.find_tab(&Tab::Pose).is_some());
     // 浮かせたあと、配置を初めに戻すと、ポーズのタブがドックの隅へ戻る（足し直される）
     float_pose_tab(&mut h);
-    h.state_mut().state.reset_layout = true;
+    h.set_reset_layout(true);
     h.run();
     h.run();
     let dock = &h.state().dock;
@@ -218,7 +216,7 @@ fn the_pose_tab_floats_in_its_own_window_and_keeps_working() {
     }
     let hand = bone(&h, "右手");
     {
-        let s = h.state_mut().state.view3d.pose.session.as_mut().unwrap();
+        let s = h.view3d_mut().pose.session.as_mut().unwrap();
         s.selected = Some(hand);
         yolu_app::view3d::gizmo::reveal(s, hand);
     }
@@ -243,7 +241,7 @@ fn sections_open_and_close_and_the_choice_is_remembered() {
     // ボーンの節を閉じる: 木が消える
     h.get_by_label("ボーン").click();
     h.run();
-    assert_eq!(h.state().state.ui.sections.get("pose.bones"), Some(&false));
+    assert_eq!(h.ui().sections.get("pose.bones"), Some(&false));
     assert!(h.query_by_label("腰").is_none(), "閉じたら木は出ない");
     assert!(h.query_by_label("面を隠す").is_some(), "ほかの節はそのまま");
     h.get_by_label("ボーン").click();
@@ -254,7 +252,7 @@ fn sections_open_and_close_and_the_choice_is_remembered() {
     h.get_by_label("BlendShape").click();
     h.run();
     assert!(h.query_by_label("おなか").is_none());
-    assert_eq!(h.state().state.ui.sections.get("pose.shapes"), Some(&false));
+    assert_eq!(h.ui().sections.get("pose.shapes"), Some(&false));
     // 面を隠すの節
     assert!(h.query_by_label("選んだボーンの面を隠す").is_some());
     h.get_by_label("面を隠す").click();
@@ -272,7 +270,7 @@ fn sections_open_and_close_and_the_choice_is_remembered() {
 #[test]
 fn the_inspector_edits_a_bone_by_numbers_and_each_change_is_one_pose_undo_step() {
     let mut h = figure(256);
-    h.state_mut().state.ui.sections.insert("pose.hide", false);
+    h.ui_mut().sections.insert("pose.hide", false);
     float_pose_tab(&mut h);
     let upper = select(&mut h, "右上腕");
     let steps = undo_len(&h);
@@ -333,7 +331,7 @@ fn the_inspector_edits_a_bone_by_numbers_and_each_change_is_one_pose_undo_step()
 #[test]
 fn dragging_a_field_and_pressing_escape_puts_the_value_back_without_an_undo_step() {
     let mut h = figure(256);
-    h.state_mut().state.ui.sections.insert("pose.hide", false);
+    h.ui_mut().sections.insert("pose.hide", false);
     float_pose_tab(&mut h);
     let upper = select(&mut h, "右上腕");
     let before = local(&h, upper);
@@ -361,7 +359,7 @@ fn dragging_a_field_and_pressing_escape_puts_the_value_back_without_an_undo_step
 #[test]
 fn losing_focus_in_the_middle_of_a_field_drag_commits_what_was_dragged() {
     let mut h = figure(256);
-    h.state_mut().state.ui.sections.insert("pose.hide", false);
+    h.ui_mut().sections.insert("pose.hide", false);
     float_pose_tab(&mut h);
     let upper = select(&mut h, "右上腕");
     let before = local(&h, upper).translation;
@@ -383,7 +381,7 @@ fn losing_focus_in_the_middle_of_a_field_drag_commits_what_was_dragged() {
 #[test]
 fn the_reset_buttons_restore_a_part_a_bone_its_children_and_everything_in_one_step_each() {
     let mut h = figure(256);
-    h.state_mut().state.ui.sections.insert("pose.hide", false);
+    h.ui_mut().sections.insert("pose.hide", false);
     float_pose_tab(&mut h);
     let (upper, lower, hand) = (bone(&h, "右上腕"), bone(&h, "右前腕"), bone(&h, "右手"));
     select(&mut h, "右上腕");
@@ -393,7 +391,7 @@ fn the_reset_buttons_restore_a_part_a_bone_its_children_and_everything_in_one_st
         p.locals[b].rotation = Quat::from_rotation_z(0.5);
         p.locals[b].scale = Vec3::new(1.0, 1.2, 1.0);
     }
-    pose::set_pose(&mut h.state_mut().state.view3d, p).unwrap();
+    pose::set_pose(h.view3d_mut(), p).unwrap();
     h.run();
     let steps = undo_len(&h);
     // 項目ごと（欄の横の小さなボタン）
@@ -439,7 +437,7 @@ fn the_reset_buttons_restore_a_part_a_bone_its_children_and_everything_in_one_st
     let all = "すべてのボーンを戻す（BlendShape はそのまま）";
     let mut p = session(&h).pose().clone();
     p.blend_weights[0][0] = 40.0;
-    pose::set_pose(&mut h.state_mut().state.view3d, p).unwrap();
+    pose::set_pose(h.view3d_mut(), p).unwrap();
     h.run();
     h.get_by_label(all).click();
     h.run();
@@ -457,13 +455,13 @@ fn the_reset_buttons_restore_a_part_a_bone_its_children_and_everything_in_one_st
 #[test]
 fn blend_shapes_reset_one_by_one_and_all_at_once() {
     let mut h = figure(256);
-    h.state_mut().state.ui.sections.insert("pose.hide", false);
-    h.state_mut().state.ui.sections.insert("pose.bones", false);
+    h.ui_mut().sections.insert("pose.hide", false);
+    h.ui_mut().sections.insert("pose.bones", false);
     float_pose_tab(&mut h);
     let mut p = session(&h).pose().clone();
     p.blend_weights[0][0] = 70.0;
     p.blend_weights[5][0] = 30.0;
-    pose::set_pose(&mut h.state_mut().state.view3d, p).unwrap();
+    pose::set_pose(h.view3d_mut(), p).unwrap();
     h.run();
     let steps = undo_len(&h);
     let one = "この BlendShape を戻す";
@@ -485,7 +483,7 @@ fn blend_shapes_reset_one_by_one_and_all_at_once() {
     let upper = bone(&h, "右上腕");
     let mut p = session(&h).pose().clone();
     p.locals[upper].rotation = Quat::from_rotation_z(0.4);
-    pose::set_pose(&mut h.state_mut().state.view3d, p).unwrap();
+    pose::set_pose(h.view3d_mut(), p).unwrap();
     h.run();
     h.get_by_label("すべての BlendShape を戻す（ボーンはそのまま）")
         .click();
@@ -504,13 +502,13 @@ fn blend_shapes_reset_one_by_one_and_all_at_once() {
 #[test]
 fn nothing_in_the_pose_tab_changes_while_stroking() {
     let mut h = figure(256);
-    h.state_mut().state.ui.sections.insert("pose.hide", false);
+    h.ui_mut().sections.insert("pose.hide", false);
     float_pose_tab(&mut h);
     select(&mut h, "右上腕");
     // 胴に描き始める（本物のポインタで）
     let rect = h.state().view3d_rect().unwrap();
-    let model = h.state().state.view3d.model.clone().unwrap();
-    let cam = h.state().state.view3d.camera.position();
+    let model = h.view3d().model.clone().unwrap();
+    let cam = h.view3d().view.camera.position();
     let n = session(&h).rig.meshes()[0].mesh.triangle_count();
     let t = model.geometry.triangles()[..n]
         .iter()
@@ -525,7 +523,7 @@ fn nothing_in_the_pose_tab_changes_while_stroking() {
     h.step();
     move_to(&h, at + vec2(6.0, 0.0));
     h.step();
-    assert!(h.state().state.is_stroking());
+    assert!(h.app().is_stroking());
     h.run();
     for label in [ROTATION_X, POSITION_X, SCALE_Y] {
         assert!(disabled(&h, label), "{label}: 描いている間は欄を使えない");
@@ -543,7 +541,7 @@ fn nothing_in_the_pose_tab_changes_while_stroking() {
     h.step();
     release(&h, at, egui::PointerButton::Primary);
     h.run();
-    assert!(!h.state().state.is_stroking());
+    assert!(!h.app().is_stroking());
     assert!(!disabled(&h, ROTATION_X));
 }
 
@@ -551,16 +549,9 @@ fn nothing_in_the_pose_tab_changes_while_stroking() {
 fn a_hide_sets_delete_button_waits_for_the_stroke_and_the_file_stays() {
     let dir = temp_dir("delete-while-stroking");
     let mut h = figure(256);
-    h.state_mut()
-        .state
-        .view3d
-        .pose
-        .hide_presets
-        .attach(dir.clone());
+    h.view3d_mut().pose.hide_presets.attach(dir.clone());
     let id = h
-        .state_mut()
-        .state
-        .view3d
+        .view3d_mut()
         .pose
         .hide_presets
         .add(
@@ -576,16 +567,16 @@ fn a_hide_sets_delete_button_waits_for_the_stroke_and_the_file_stays() {
     assert!(!disabled(&h, "この隠し方を消す"));
     // 描いている最中は押せず、ファイルも一覧もそのまま
     {
-        let app = &mut h.state_mut().state;
-        let layer = app.selected_layer.unwrap();
+        let app = h.app_mut();
+        let layer = app.selected_layer().unwrap();
         let settings = app.stroke_settings(false);
-        app.stroke = Some(app.doc.begin_stroke(layer, &settings).unwrap());
+        *app.stroke_mut() = Some(app.doc_mut().begin_stroke(layer, &settings).unwrap());
     }
     h.run();
-    assert!(h.state().state.is_stroking());
+    assert!(h.app().is_stroking());
     assert!(disabled(&h, "この隠し方を消す"));
-    hide::delete_preset(&mut h.state_mut().state, id);
-    assert!(h.state().state.view3d.pose.hide_presets.get(id).is_some());
+    hide::delete_preset(h.app_mut(), id);
+    assert!(h.view3d().pose.hide_presets.get(id).is_some());
     assert!(dir.join(format!("hide-{id}.ylhide")).exists());
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -593,24 +584,19 @@ fn a_hide_sets_delete_button_waits_for_the_stroke_and_the_file_stays() {
 // ───────── 面を隠す ─────────
 
 fn screen_of(h: &H, rect: Rect, p: Vec3) -> Pos2 {
-    let view = h
-        .state()
-        .state
-        .view3d
-        .camera
-        .view(rect.width(), rect.height());
+    let view = h.view3d().view.camera.view(rect.width(), rect.height());
     let s = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + s.x, rect.top() + s.y)
 }
 
 /// 右腕の筒（メッシュ 1）の、カメラに向いた三角形の真ん中の画面の点。
 fn arm_point(h: &H, rect: Rect) -> Pos2 {
-    let app = &h.state().state;
+    let app = h.app();
     let s = session(h);
-    let model = app.view3d.model.as_ref().unwrap();
+    let model = app.view3d().model.as_ref().unwrap();
     let first = s.rig.meshes()[0].mesh.triangle_count();
     let count = s.rig.meshes()[1].mesh.triangle_count();
-    let cam = app.view3d.camera.position();
+    let cam = app.view3d().view.camera.position();
     for i in first..first + count {
         let t = &model.geometry.triangles()[i];
         let c = (t.a + t.b + t.c) / 3.0;
@@ -624,21 +610,17 @@ fn arm_point(h: &H, rect: Rect) -> Pos2 {
 #[test]
 fn hiding_a_bones_surfaces_removes_them_from_the_view_and_from_painting() {
     let mut h = figure(512);
-    h.state_mut().state.color.set_main([0.9, 0.1, 0.1, 1.0]);
-    h.state_mut().state.brush.radius = 4.0;
+    h.color_mut().set_main([0.9, 0.1, 0.1, 1.0]);
+    h.brush_mut().radius = 4.0;
     float_pose_tab(&mut h);
     let rect = h.state().view3d_rect().unwrap();
     let at = arm_point(&h, rect);
     // 隠す前は、腕に描ける
     click(&mut h, at);
-    assert!(
-        h.state().state.doc.can_undo(),
-        "{}",
-        h.state().state.message
-    );
-    h.state_mut().state.apply(Action::Undo);
+    assert!(h.doc().can_undo(), "{}", h.message());
+    h.act(Action::Undo);
     h.run();
-    assert!(!h.state().state.doc.can_undo());
+    assert!(!h.doc().can_undo());
     let total = full(&h);
     // 右上腕を選んで、子を含めて隠す（既定: しきい値 50%・子を含める）
     select(&mut h, "右上腕");
@@ -647,7 +629,7 @@ fn hiding_a_bones_surfaces_removes_them_from_the_view_and_from_painting() {
     h.run();
     assert!(shown(&h) < total, "腕の面が消えた");
     assert_eq!(full(&h), total);
-    let entries = &session(&h).hide.entries;
+    let entries = &h.view3d().view.hide.bones.entries;
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].threshold, DEFAULT_THRESHOLD);
     assert!(entries[0].children);
@@ -655,51 +637,47 @@ fn hiding_a_bones_surfaces_removes_them_from_the_view_and_from_painting() {
     assert!(h.query_by_label("この項目を外す").is_some());
     // 隠した面は当たらない: 当たりの幾何にも、スポイトにも無く、そこをなぞっても描かれない
     {
-        let app = &h.state().state;
-        let view = app.view3d.camera.view(rect.width(), rect.height());
+        let app = h.app();
+        let view = app.view3d().view.camera.view(rect.width(), rect.height());
         let local = yolu_core::glam::Vec2::new(at.x - rect.left(), at.y - rect.top());
         let shown_hit =
-            yolu_core::geometry::pick(&app.view3d.model.as_ref().unwrap().geometry, &view, local);
+            yolu_core::geometry::pick(&app.view3d().model.as_ref().unwrap().geometry, &view, local);
         let full_hit =
-            yolu_core::geometry::pick(&app.view3d.full_model().unwrap().geometry, &view, local);
+            yolu_core::geometry::pick(&app.view3d().full_model().unwrap().geometry, &view, local);
         assert!(shown_hit.is_none(), "見せる形に腕の面は無い: {shown_hit:?}");
         assert!(full_hit.is_some(), "受けたままの形には腕がある");
     }
-    h.state_mut().state.message.clear();
-    assert!(!yolu_app::eyedrop::pick_surface(
-        &mut h.state_mut().state,
-        rect,
-        at
-    ));
+    h.message_mut().clear();
+    assert!(!yolu_app::eyedrop::pick_surface(h.app_mut(), rect, at));
     assert_eq!(
-        h.state().state.message,
+        h.message(),
         "ポインタの下にモデルがありません",
         "スポイトは隠した面を読まない"
     );
     click(&mut h, at);
-    assert!(!h.state().state.doc.can_undo(), "隠した面には描かない");
-    assert!(!h.state().state.is_stroking());
+    assert!(!h.doc().can_undo(), "隠した面には描かない");
+    assert!(!h.app().is_stroking());
     // 外すと元へ（描ける）
     h.get_by_label("この項目を外す").click();
     h.run();
     assert_eq!(shown(&h), total);
     assert!(h.query_by_label("この項目を外す").is_none());
     click(&mut h, at);
-    assert!(h.state().state.doc.can_undo(), "外したらまた描ける");
+    assert!(h.doc().can_undo(), "外したらまた描ける");
 }
 
 /// 人形のメッシュ（0 胴・1 右腕・2 左腕・3 右脚・4 左脚・5 頭）の、カメラに向いた三角形のうち真ん中が `keep` を満たす最初のものの、
 /// 画面の点と受けたままの形の番号。
 fn mesh_point(h: &H, rect: Rect, mesh: usize, keep: impl Fn(Vec3) -> bool) -> (Pos2, u32) {
-    let app = &h.state().state;
+    let app = h.app();
     let s = session(h);
-    let full = app.view3d.full_model().unwrap();
+    let full = app.view3d().full_model().unwrap();
     let first: usize = s.rig.meshes()[..mesh]
         .iter()
         .map(|m| m.mesh.triangle_count())
         .sum();
     let count = s.rig.meshes()[mesh].mesh.triangle_count();
-    let cam = app.view3d.camera.position();
+    let cam = app.view3d().view.camera.position();
     for i in first..first + count {
         let t = &full.geometry.triangles()[i];
         let c = (t.a + t.b + t.c) / 3.0;
@@ -718,9 +696,7 @@ fn selected(h: &H) -> Option<usize> {
 fn pressing_a_hidden_bones_surface_does_not_pick_it_and_the_shifted_faces_pick_the_right_bone() {
     let mut h = figure(256);
     let rect = h.state().view3d_rect().unwrap();
-    h.state_mut()
-        .state
-        .apply(Action::Pose(PoseAction::ToggleMode));
+    h.act(Action::Pose(PoseAction::ToggleMode));
     h.run();
     let far = select(&mut h, "左足");
     let (arm, arm_face) = mesh_point(&h, rect, 1, |c| c.x > 0.25 && c.x < 0.4);
@@ -731,17 +707,14 @@ fn pressing_a_hidden_bones_surface_does_not_pick_it_and_the_shifted_faces_pick_t
     // 右腕を（子まで）隠す: そこの面は当たらないので、押してもボーンは替わらない
     select(&mut h, "左足");
     let upper = bone(&h, "右上腕");
-    hide::hide_bone(&mut h.state_mut().state, upper);
+    hide::hide_bone(h.app_mut(), upper);
     h.run();
-    assert!(
-        h.state().state.view3d.is_face_hidden(arm_face),
-        "腕の面は隠れた"
-    );
+    assert!(h.view3d().is_face_hidden(arm_face), "腕の面は隠れた");
     assert_eq!(selected(&h), Some(far));
     click(&mut h, arm);
     assert_eq!(selected(&h), Some(far), "隠した面は選べない");
     // 右腕の分だけ番号がずれた左腕の面は、受けたままの形の番号へ直されて、左上腕が選ばれる
-    let state = &h.state().state.view3d;
+    let state = h.view3d();
     let removed = full(&h) - shown(&h);
     assert!(removed > 0);
     let shifted = (0..shown(&h) as u32)
@@ -760,27 +733,23 @@ fn pressing_a_hidden_bones_surface_does_not_pick_it_and_the_shifted_faces_pick_t
 fn with_a_material_hidden_the_shown_face_numbers_are_mapped_back_before_picking_the_bone() {
     let mut h = figure(256);
     let rect = h.state().view3d_rect().unwrap();
-    h.state_mut()
-        .state
-        .apply(Action::Pose(PoseAction::ToggleMode));
+    h.act(Action::Pose(PoseAction::ToggleMode));
     h.run();
     let far = select(&mut h, "左足");
     let (arm, arm_face) = mesh_point(&h, rect, 1, |c| c.x > 0.25 && c.x < 0.4);
     let (head, head_face) = mesh_point(&h, rect, 5, |_| true);
     // 「肌」のマテリアル（胴・腕・脚）のテクスチャセットの目を閉じる: 顔の球だけが残る
     let skin = h
-        .state()
-        .state
-        .sets
+        .sets()
         .iter()
-        .find(|s| s.bound == Some(0))
+        .find(|s| s.bound == [0])
         .map(|s| s.uid)
         .expect("肌のマテリアルのセット");
-    h.state_mut().state.toggle_set_visible(skin);
+    h.app_mut().toggle_set_visible(skin);
     h.run();
     let sphere = session(&h).rig.meshes()[5].mesh.triangle_count();
     assert_eq!(shown(&h), sphere, "顔の球だけが残る");
-    let first_shown = h.state().state.view3d.full_triangle(0).unwrap();
+    let first_shown = h.view3d().full_triangle(0).unwrap();
     assert_eq!(
         first_shown as usize,
         full(&h) - sphere,
@@ -791,14 +760,14 @@ fn with_a_material_hidden_the_shown_face_numbers_are_mapped_back_before_picking_
     click(&mut h, arm);
     assert_eq!(selected(&h), Some(far));
     assert!(
-        !h.state().state.view3d.is_face_hidden(arm_face),
+        !h.view3d().is_face_hidden(arm_face),
         "面の印ではなくマテリアルで隠している"
     );
     // 顔の球の面を押すと、番号を直して頭が選ばれる（直さなければ、番号の小さい胴のボーンになる）
     click(&mut h, head);
     assert_eq!(selected(&h), Some(bone(&h, "頭")));
     // 目を開けると、腕も選べる（頭の輪が腕の近くにあるので、遠いボーンを選び直してから押す）
-    h.state_mut().state.toggle_set_visible(skin);
+    h.app_mut().toggle_set_visible(skin);
     h.run();
     assert_eq!(shown(&h), full(&h));
     select(&mut h, "左足");
@@ -816,42 +785,42 @@ fn children_and_the_threshold_are_taken_from_the_fields_for_the_next_entry() {
     h.get_by_role_and_label(Role::CheckBox, "子を含める")
         .click();
     h.run();
-    assert!(!session(&h).hide.children);
+    assert!(!h.view3d().view.hide.bones.children);
     h.get_by_label("選んだボーンの面を隠す").click();
     h.run();
     let alone = total - shown(&h);
-    assert!(!session(&h).hide.entries[0].children);
+    assert!(!h.view3d().view.hide.bones.entries[0].children);
     // 子を含める（同じボーンへ足し直すと入れ替わる）
     h.get_by_role_and_label(Role::CheckBox, "子を含める")
         .click();
     h.run();
     h.get_by_label("選んだボーンの面を隠す").click();
     h.run();
-    assert_eq!(session(&h).hide.entries.len(), 1, "同じボーンは 1 項目");
+    assert_eq!(
+        h.view3d().view.hide.bones.entries.len(),
+        1,
+        "同じボーンは 1 項目"
+    );
     assert!(total - shown(&h) > alone);
     // しきい値の欄（スライダー）の値は次の項目に使われる
-    hide::set_next(&mut h.state_mut().state, 0.9, true);
+    hide::set_next(h.app_mut(), 0.9, true);
     h.run();
     assert!(h.query_by_label("しきい値").is_some());
-    assert!((session(&h).hide.threshold - 0.9).abs() < 1e-6);
+    assert!((h.view3d().view.hide.bones.threshold - 0.9).abs() < 1e-6);
     // 全部が隠れる隠し方は断る（根・子を含める・しきい値 0）
     select(&mut h, "腰");
-    hide::set_next(&mut h.state_mut().state, 0.0, true);
+    hide::set_next(h.app_mut(), 0.0, true);
     let before = shown(&h);
     h.get_by_label("選んだボーンの面を隠す").click();
     h.run();
     assert_eq!(shown(&h), before, "全部は隠さない");
-    assert!(
-        h.state().state.message.contains("すべての面"),
-        "{}",
-        h.state().state.message
-    );
-    assert_eq!(session(&h).hide.entries.len(), 1);
+    assert!(h.message().contains("すべての面"), "{}", h.message());
+    assert_eq!(h.view3d().view.hide.bones.entries.len(), 1);
     // 見出しの「すべて表示する」
     h.get_by_label("すべて表示する").click();
     h.run();
     assert_eq!(shown(&h), total);
-    assert!(session(&h).hide.is_clear());
+    assert!(h.view3d().view.hide.bones.is_clear());
 }
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {
@@ -865,12 +834,7 @@ fn temp_dir(tag: &str) -> std::path::PathBuf {
 fn presets_save_apply_combine_and_delete_from_the_tab_and_survive_a_restart() {
     let dir = temp_dir("presets");
     let mut h = figure(256);
-    h.state_mut()
-        .state
-        .view3d
-        .pose
-        .hide_presets
-        .attach(dir.clone());
+    h.view3d_mut().pose.hide_presets.attach(dir.clone());
     float_pose_tab(&mut h);
     let total = full(&h);
     // 頭を隠して、名前をつけて保存
@@ -882,10 +846,10 @@ fn presets_save_apply_combine_and_delete_from_the_tab_and_survive_a_restart() {
     assert!(!disabled(&h, "保存"));
     let save = h.get_by_label("保存").rect();
     type_over(&mut h, pos2(save.left() - 80.0, save.center().y), "頭だけ");
-    assert_eq!(h.state().state.view3d.pose.hide_name, "頭だけ");
+    assert_eq!(h.view3d().pose.hide_name, "頭だけ");
     h.get_by_label("保存").click();
     h.run();
-    let presets = &h.state().state.view3d.pose.hide_presets;
+    let presets = &h.view3d().pose.hide_presets;
     assert_eq!(presets.items().len(), 1);
     assert_eq!(presets.items()[0].name, "頭だけ");
     assert_eq!(
@@ -896,7 +860,7 @@ fn presets_save_apply_combine_and_delete_from_the_tab_and_survive_a_restart() {
         Some("頭")
     );
     assert!(
-        h.state().state.view3d.pose.hide_name.is_empty(),
+        h.view3d().pose.hide_name.is_empty(),
         "保存したら名前の欄は空へ"
     );
     assert!(
@@ -913,9 +877,7 @@ fn presets_save_apply_combine_and_delete_from_the_tab_and_survive_a_restart() {
     h.get_by_label("保存").click();
     h.run();
     let names: Vec<String> = h
-        .state()
-        .state
-        .view3d
+        .view3d()
         .pose
         .hide_presets
         .items()
@@ -945,7 +907,7 @@ fn presets_save_apply_combine_and_delete_from_the_tab_and_survive_a_restart() {
         .center();
     click(&mut h, second);
     assert!(total - shown(&h) > head_hidden, "全部の和");
-    assert_eq!(session(&h).hide.presets.len(), 2);
+    assert_eq!(h.view3d().view.hide.bones.presets.len(), 2);
     // 外す
     click(&mut h, second);
     assert_eq!(total - shown(&h), head_hidden);
@@ -955,10 +917,10 @@ fn presets_save_apply_combine_and_delete_from_the_tab_and_survive_a_restart() {
         AppState::new(64, 64),
         PenInput::detached(),
     );
-    again.state.view3d.pose.hide_presets.attach(dir.clone());
+    again.view3d_mut().pose.hide_presets.attach(dir.clone());
     assert_eq!(
-        again.state.view3d.pose.hide_presets.items(),
-        h.state().state.view3d.pose.hide_presets.items()
+        again.view3d().pose.hide_presets.items(),
+        h.view3d().pose.hide_presets.items()
     );
     // 消す（入れているものは外れる）
     let delete: Vec<Rect> = h
@@ -967,7 +929,7 @@ fn presets_save_apply_combine_and_delete_from_the_tab_and_survive_a_restart() {
         .collect();
     assert_eq!(delete.len(), 2);
     click(&mut h, delete[0].center());
-    assert_eq!(h.state().state.view3d.pose.hide_presets.items().len(), 1);
+    assert_eq!(h.view3d().pose.hide_presets.items().len(), 1);
     assert_eq!(
         shown(&h),
         total,
@@ -992,9 +954,7 @@ fn a_preset_whose_bones_do_not_fit_is_skipped_with_a_reason_shown_as_a_notice() 
     let mut h = figure(256);
     float_pose_tab(&mut h);
     let total = full(&h);
-    h.state_mut()
-        .state
-        .view3d
+    h.view3d_mut()
         .pose
         .hide_presets
         .add(
@@ -1020,7 +980,7 @@ fn a_preset_whose_bones_do_not_fit_is_skipped_with_a_reason_shown_as_a_notice() 
         .center();
     click(&mut h, at);
     assert!(shown(&h) < total, "合う項目は効く");
-    let skipped = &session(&h).hide.skipped;
+    let skipped = &h.view3d().view.hide.bones.skipped;
     assert_eq!(skipped.len(), 1);
     assert_eq!(skipped[0].path, "別の根/頭");
     assert!(skipped[0].describe(Lang::Ja).contains("ボーンがありません"));
@@ -1041,7 +1001,7 @@ fn bend_arm(h: &mut H) {
     p.locals[arm].rotation = Quat::from_euler(yolu_core::glam::EulerRot::XYZ, 0.2, 0.4, -0.9);
     p.locals[arm].translation += Vec3::new(0.02, 0.01, -0.03);
     p.locals[head].rotation = Quat::from_rotation_z(0.3);
-    pose::set_pose(&mut h.state_mut().state.view3d, p).unwrap();
+    pose::set_pose(h.view3d_mut(), p).unwrap();
     h.run();
 }
 
@@ -1065,12 +1025,7 @@ fn pose_preset_files(dir: &std::path::Path) -> usize {
 fn pose_presets_save_apply_mirror_overwrite_rename_and_delete_from_the_tab() {
     let dir = temp_dir("pose-presets");
     let mut h = figure(256);
-    h.state_mut()
-        .state
-        .view3d
-        .pose
-        .pose_presets
-        .attach(dir.clone());
+    h.view3d_mut().pose.pose_presets.attach(dir.clone());
     float_pose_tab(&mut h);
     let (arm, left_arm, head) = (bone(&h, "右上腕"), bone(&h, "左上腕"), bone(&h, "頭"));
     // 休みの形では保存できない（保存するものが無い）
@@ -1081,11 +1036,11 @@ fn pose_presets_save_apply_mirror_overwrite_rename_and_delete_from_the_tab() {
     // 名前を付けて保存
     let save = h.get_by_label("ポーズを保存").rect();
     type_over(&mut h, pos2(save.left() - 60.0, save.center().y), "構え");
-    assert_eq!(h.state().state.view3d.pose.preset_name, "構え");
+    assert_eq!(h.view3d().pose.preset_name, "構え");
     h.get_by_label("ポーズを保存").click();
     h.run();
     let id = {
-        let presets = &h.state().state.view3d.pose.pose_presets;
+        let presets = &h.view3d().pose.pose_presets;
         assert_eq!(presets.items().len(), 1);
         assert_eq!(presets.items()[0].name, "構え");
         assert_eq!(presets.items()[0].entries.len(), 2, "動かした骨の 2 本だけ");
@@ -1093,16 +1048,13 @@ fn pose_presets_save_apply_mirror_overwrite_rename_and_delete_from_the_tab() {
     };
     assert_eq!(pose_preset_files(&dir), 1, "個人の設定のフォルダに書いた");
     assert!(
-        h.state().state.view3d.pose.preset_name.is_empty(),
+        h.view3d().pose.preset_name.is_empty(),
         "保存したら名前の欄は空へ"
     );
     // 名前の欄が空なら既定の名前
     h.get_by_label("ポーズを保存").click();
     h.run();
-    assert_eq!(
-        h.state().state.view3d.pose.pose_presets.items()[1].name,
-        "ポーズ"
-    );
+    assert_eq!(h.view3d().pose.pose_presets.items()[1].name, "ポーズ");
     // 休みの形へ戻して、名前を押して当てる: 取り消しの 1 段
     h.get_by_label("ポーズを戻す（ファイルのポーズへ）").click();
     h.run();
@@ -1117,7 +1069,7 @@ fn pose_presets_save_apply_mirror_overwrite_rename_and_delete_from_the_tab() {
     drop(rest_overwrites);
     click(&mut h, at);
     {
-        let presets = &h.state().state.view3d.pose.pose_presets;
+        let presets = &h.view3d().pose.pose_presets;
         assert_eq!(
             presets.items()[0].entries.len(),
             2,
@@ -1138,11 +1090,7 @@ fn pose_presets_save_apply_mirror_overwrite_rename_and_delete_from_the_tab() {
     {
         assert!(near(a, b), "骨 {i}");
     }
-    assert!(
-        h.state().state.message.contains("構え"),
-        "{}",
-        h.state().state.message
-    );
+    assert!(h.message().contains("構え"), "{}", h.message());
     h.get_by_label("取り消し").click();
     h.run();
     assert!(!session(&h).is_posed(), "取り消すと当てる前");
@@ -1166,11 +1114,7 @@ fn pose_presets_save_apply_mirror_overwrite_rename_and_delete_from_the_tab() {
         near(&session(&h).pose().locals[head], &bent.locals[head]),
         "対にならない頭はそのまま"
     );
-    assert!(
-        h.state().state.message.contains("左右反転"),
-        "{}",
-        h.state().state.message
-    );
+    assert!(h.message().contains("左右反転"), "{}", h.message());
     // 今のポーズで上書き（名前はそのまま・ほかは変わらない）。左右を反転して当てたあとは休みの形と違うので押せる
     assert!(h
         .get_all_by_label("今のポーズで上書き")
@@ -1182,7 +1126,7 @@ fn pose_presets_save_apply_mirror_overwrite_rename_and_delete_from_the_tab() {
         .unwrap();
     click(&mut h, overwrite.center());
     {
-        let presets = &h.state().state.view3d.pose.pose_presets;
+        let presets = &h.view3d().pose.pose_presets;
         assert_eq!(presets.get(id).unwrap().name, "構え");
         let paths: Vec<String> = presets
             .get(id)
@@ -1204,7 +1148,7 @@ fn pose_presets_save_apply_mirror_overwrite_rename_and_delete_from_the_tab() {
         .unwrap();
     click(&mut h, edit_button.center());
     h.run();
-    assert_eq!(h.state().state.view3d.pose.preset_rename, Some(id));
+    assert_eq!(h.view3d().pose.preset_rename, Some(id));
     key(&h, Key::A, Modifiers::COMMAND);
     h.step();
     h.event(Event::Text("左を曲げる".to_owned()));
@@ -1213,18 +1157,11 @@ fn pose_presets_save_apply_mirror_overwrite_rename_and_delete_from_the_tab() {
     h.run();
     h.run();
     assert_eq!(
-        h.state()
-            .state
-            .view3d
-            .pose
-            .pose_presets
-            .get(id)
-            .unwrap()
-            .name,
+        h.view3d().pose.pose_presets.get(id).unwrap().name,
         "左を曲げる"
     );
     assert_eq!(
-        h.state().state.view3d.pose.preset_rename,
+        h.view3d().pose.preset_rename,
         None,
         "決めたら欄は元の名前の表示へ"
     );
@@ -1232,10 +1169,7 @@ fn pose_presets_save_apply_mirror_overwrite_rename_and_delete_from_the_tab() {
     // 読み直しても同じ（名前の変更も上書きもファイルに入っている）
     let mut again = pose_presets_in(&dir);
     assert!(again.problems.is_empty());
-    assert_eq!(
-        again.items(),
-        h.state().state.view3d.pose.pose_presets.items()
-    );
+    assert_eq!(again.items(), h.view3d().pose.pose_presets.items());
     // 消す: 選んだ 1 つだけ
     let delete = h
         .get_all_by_label("このポーズを消す")
@@ -1243,8 +1177,8 @@ fn pose_presets_save_apply_mirror_overwrite_rename_and_delete_from_the_tab() {
         .next()
         .unwrap();
     click(&mut h, delete.center());
-    assert!(h.state().state.view3d.pose.pose_presets.get(id).is_none());
-    assert_eq!(h.state().state.view3d.pose.pose_presets.items().len(), 1);
+    assert!(h.view3d().pose.pose_presets.get(id).is_none());
+    assert_eq!(h.view3d().pose.pose_presets.items().len(), 1);
     assert_eq!(pose_preset_files(&dir), 1);
     assert!(h.query_by_label("左を曲げる").is_none());
     again.attach(dir.clone());
@@ -1262,16 +1196,11 @@ fn pose_presets_in(dir: &std::path::Path) -> presets::store::Presets {
 fn pose_preset_buttons_wait_for_the_stroke_and_nothing_is_applied_or_written() {
     let dir = temp_dir("pose-presets-stroking");
     let mut h = figure(256);
-    h.state_mut()
-        .state
-        .view3d
-        .pose
-        .pose_presets
-        .attach(dir.clone());
+    h.view3d_mut().pose.pose_presets.attach(dir.clone());
     float_pose_tab(&mut h);
     bend_arm(&mut h);
-    let id = presets::save_preset(&mut h.state_mut().state, "構え").unwrap();
-    pose::reset(&mut h.state_mut().state.view3d).unwrap();
+    let id = presets::save_preset(h.app_mut(), "構え").unwrap();
+    pose::reset(h.view3d_mut()).unwrap();
     h.run();
     for label in ["左右を反転して当てる", "名前を変える", "このポーズを消す"]
     {
@@ -1283,32 +1212,32 @@ fn pose_preset_buttons_wait_for_the_stroke_and_nothing_is_applied_or_written() {
     );
     // 描いている最中は、保存も当てるのも消すのも押せない
     {
-        let app = &mut h.state_mut().state;
-        let layer = app.selected_layer.unwrap();
+        let app = h.app_mut();
+        let layer = app.selected_layer().unwrap();
         let settings = app.stroke_settings(false);
-        app.stroke = Some(app.doc.begin_stroke(layer, &settings).unwrap());
+        *app.stroke_mut() = Some(app.doc_mut().begin_stroke(layer, &settings).unwrap());
     }
     h.run();
-    assert!(h.state().state.is_stroking());
+    assert!(h.app().is_stroking());
     for label in ["左右を反転して当てる", "名前を変える", "このポーズを消す"]
     {
         assert!(disabled(&h, label), "{label}");
     }
     assert!(disabled(&h, "構え"), "名前のボタンも押せない");
     let steps = undo_len(&h);
-    assert!(!presets::apply_preset(&mut h.state_mut().state, id, false));
+    assert!(!presets::apply_preset(h.app_mut(), id, false));
     assert_eq!(undo_len(&h), steps);
     assert!(!session(&h).is_posed());
     assert_eq!(
-        h.state().state.message,
+        h.message(),
         yolu_app::view3d::model::ViewError::Stroking.to_string()
     );
     assert_eq!(pose_preset_files(&dir), 1);
     // 終わると使える
     {
-        let app = &mut h.state_mut().state;
-        let stroke = app.stroke.take().unwrap();
-        app.doc.cancel_stroke(stroke);
+        let app = h.app_mut();
+        let stroke = app.stroke_mut().take().unwrap();
+        app.doc_mut().cancel_stroke(stroke);
     }
     h.run();
     assert!(!disabled(&h, "左右を反転して当てる"));
@@ -1320,18 +1249,18 @@ fn pose_preset_buttons_wait_for_the_stroke_and_nothing_is_applied_or_written() {
     assert!(!disabled(&h, "今のポーズで上書き"));
     assert!(!disabled(&h, "ポーズを保存"));
     {
-        let app = &mut h.state_mut().state;
-        let layer = app.selected_layer.unwrap();
+        let app = h.app_mut();
+        let layer = app.selected_layer().unwrap();
         let settings = app.stroke_settings(false);
-        app.stroke = Some(app.doc.begin_stroke(layer, &settings).unwrap());
+        *app.stroke_mut() = Some(app.doc_mut().begin_stroke(layer, &settings).unwrap());
     }
     h.run();
     assert!(disabled(&h, "今のポーズで上書き"));
     assert!(disabled(&h, "ポーズを保存"));
     {
-        let app = &mut h.state_mut().state;
-        let stroke = app.stroke.take().unwrap();
-        app.doc.cancel_stroke(stroke);
+        let app = h.app_mut();
+        let stroke = app.stroke_mut().take().unwrap();
+        app.doc_mut().cancel_stroke(stroke);
     }
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -1347,9 +1276,7 @@ fn a_pose_preset_whose_bones_do_not_fit_applies_what_fits_and_shows_the_reasons_
         rotation: Quat::from_rotation_y(0.5),
         scale: Vec3::ONE,
     };
-    h.state_mut()
-        .state
-        .view3d
+    h.view3d_mut()
         .pose
         .pose_presets
         .add(
@@ -1382,36 +1309,25 @@ fn a_pose_preset_whose_bones_do_not_fit_applies_what_fits_and_shows_the_reasons_
         texts(&h)
     );
     assert!(
-        h.state().state.message.contains("飛ばしたボーン 1 件"),
+        h.message().contains("飛ばしたボーン 1 件"),
         "{}",
-        h.state().state.message
+        h.message()
     );
     // 1 つも合わないものは、ポーズを変えない
     let before = session(&h).pose().clone();
     let none = h
-        .state_mut()
-        .state
-        .view3d
+        .view3d_mut()
         .pose
         .pose_presets
         .add("全部合わない", vec![entry(&["別の根"])])
         .unwrap();
-    assert!(!presets::apply_preset(
-        &mut h.state_mut().state,
-        none,
-        false
-    ));
+    assert!(!presets::apply_preset(h.app_mut(), none, false));
     assert_eq!(session(&h).pose(), &before);
     // 読めなかったファイルも、同じ印で知らせる
     let dir = temp_dir("pose-presets-broken");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("pose-1.ylpose"), "壊れた").unwrap();
-    h.state_mut()
-        .state
-        .view3d
-        .pose
-        .pose_presets
-        .attach(dir.clone());
+    h.view3d_mut().pose.pose_presets.attach(dir.clone());
     h.run();
     assert!(
         texts(&h).iter().any(|t| t == "知らせ 2 件"),
@@ -1428,10 +1344,10 @@ fn the_app_keeps_pose_presets_in_the_folder_next_to_its_settings_and_reads_them_
     let ctx = egui::Context::default();
     let mut app =
         YoluApp::for_context_with_settings(&ctx, Some(settings.clone()), PenInput::detached());
-    app.state.apply(Action::Pose(PoseAction::LoadFigure));
+    app.act(Action::Pose(PoseAction::LoadFigure));
     let mut p = app
         .state
-        .view3d
+        .view3d()
         .pose
         .session
         .as_ref()
@@ -1440,7 +1356,7 @@ fn the_app_keeps_pose_presets_in_the_folder_next_to_its_settings_and_reads_them_
         .clone();
     let arm = app
         .state
-        .view3d
+        .view3d()
         .pose
         .session
         .as_ref()
@@ -1451,8 +1367,8 @@ fn the_app_keeps_pose_presets_in_the_folder_next_to_its_settings_and_reads_them_
         .position(|b| b.name == "右上腕")
         .unwrap();
     p.locals[arm].rotation = Quat::from_rotation_z(-0.8);
-    pose::set_pose(&mut app.state.view3d, p).unwrap();
-    let id = presets::save_preset(&mut app.state, "構え").unwrap();
+    pose::set_pose(app.view3d_mut(), p).unwrap();
+    let id = presets::save_preset(app.app_mut(), "構え").unwrap();
     assert!(dir
         .join("pose_presets")
         .join(format!("pose-{id}.ylpose"))
@@ -1460,23 +1376,23 @@ fn the_app_keeps_pose_presets_in_the_folder_next_to_its_settings_and_reads_them_
     // 次の起動で、同じポーズのプリセットが一覧にある（隠し方のフォルダとは別）
     let again =
         YoluApp::for_context_with_settings(&ctx, Some(settings.clone()), PenInput::detached());
-    assert_eq!(again.state.view3d.pose.pose_presets.items().len(), 1);
-    assert_eq!(again.state.view3d.pose.pose_presets.items()[0].name, "構え");
-    assert!(again.state.view3d.pose.hide_presets.items().is_empty());
+    assert_eq!(again.view3d().pose.pose_presets.items().len(), 1);
+    assert_eq!(again.view3d().pose.pose_presets.items()[0].name, "構え");
+    assert!(again.view3d().pose.hide_presets.items().is_empty());
     // 壊れたファイルは読み飛ばして理由を残し、ほかは読む
     std::fs::write(dir.join("pose_presets").join("pose-9.ylpose"), "x").unwrap();
     let broken = YoluApp::for_context_with_settings(&ctx, Some(settings), PenInput::detached());
-    assert_eq!(broken.state.view3d.pose.pose_presets.items().len(), 1);
-    assert_eq!(broken.state.view3d.pose.pose_presets.problems.len(), 1);
+    assert_eq!(broken.view3d().pose.pose_presets.items().len(), 1);
+    assert_eq!(broken.view3d().pose.pose_presets.problems.len(), 1);
     assert_eq!(
-        broken.state.view3d.pose.pose_presets.problems[0].file,
+        broken.view3d().pose.pose_presets.problems[0].file,
         "pose-9.ylpose"
     );
     // 設定が無ければ、この起動の間だけ
     let mut none = YoluApp::for_context_with_settings(&ctx, None, PenInput::detached());
-    assert!(none.state.view3d.pose.pose_presets.dir().is_none());
-    none.state.apply(Action::Pose(PoseAction::LoadFigure));
-    assert!(presets::save_preset(&mut none.state, "メモリ").is_some());
+    assert!(none.view3d().pose.pose_presets.dir().is_none());
+    none.act(Action::Pose(PoseAction::LoadFigure));
+    assert!(presets::save_preset(none.app_mut(), "メモリ").is_some());
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -1552,15 +1468,15 @@ fn app_in(width: f32, height: f32, lang: Lang) -> H {
 fn scan(h: &mut H, what: &str, visit: &mut dyn FnMut(&mut H, &str)) {
     let mut offset = 0.0;
     loop {
-        h.state_mut().state.view3d.pose.panel_scroll = offset;
+        h.view3d_mut().pose.panel_scroll = offset;
         h.run();
         visit(h, &format!("{what} @{offset}"));
-        if offset > h.state().state.view3d.pose.panel_content {
+        if offset > h.view3d().pose.panel_content {
             break;
         }
         offset += 120.0;
     }
-    h.state_mut().state.view3d.pose.panel_scroll = 0.0;
+    h.view3d_mut().pose.panel_scroll = 0.0;
     h.run();
 }
 
@@ -1574,17 +1490,17 @@ fn pose_states(h: &mut H, visit: &mut dyn FnMut(&mut H, &str)) {
     scan(h, "inspector", visit);
     // 隠す: 1 項目、保存したプリセット、合わない項目の知らせ
     {
-        let app = &mut h.state_mut().state;
+        let app = h.app_mut();
         hide::set_next(app, 0.5, true);
         hide::hide_bone(app, upper);
     }
     h.run();
     scan(h, "hide entry", visit);
     {
-        let app = &mut h.state_mut().state;
+        let app = h.app_mut();
         let id = hide::save_preset(app, "").expect("保存できる");
         let other = app
-            .view3d
+            .view3d_mut()
             .pose
             .hide_presets
             .add(
@@ -1604,10 +1520,10 @@ fn pose_states(h: &mut H, visit: &mut dyn FnMut(&mut H, &str)) {
     // ポーズのプリセット: 保存した名前（既定の名前）・飛ばしたボーンの知らせ
     bend_arm(h);
     {
-        let app = &mut h.state_mut().state;
+        let app = h.app_mut();
         let id = presets::save_preset(app, "").expect("保存できる");
         let other = app
-            .view3d
+            .view3d_mut()
             .pose
             .pose_presets
             .add(
@@ -1675,7 +1591,7 @@ fn the_pose_tab_fits_at_ordinary_window_sizes_in_both_languages_and_english_has_
             });
             // 英語に日本語が無い見張りが働いていること: 日本語に替えると日本語が見つかる
             if lang == Lang::En {
-                h.state_mut().state.lang = Lang::Ja;
+                h.set_lang(Lang::Ja);
                 h.run();
                 assert!(texts(&h)
                     .iter()
@@ -1707,54 +1623,54 @@ fn the_floating_pose_window_fits_too() {
 
 #[test]
 fn pose_tab_snapshots() {
-    let mut snapshots = SnapshotResults::new();
     let mut h = figure(256);
-    h.state_mut().state.ui.sections.insert("pose.shapes", false);
+    h.ui_mut().sections.insert("pose.shapes", false);
     float_pose_tab(&mut h);
     select(&mut h, "右上腕");
     let mut p = session(&h).pose().clone();
     let upper = bone(&h, "右上腕");
     p.locals[upper].rotation = Quat::from_euler(yolu_core::glam::EulerRot::YXZ, 0.3, 0.2, -0.6);
-    pose::set_pose(&mut h.state_mut().state.view3d, p).unwrap();
+    pose::set_pose(h.view3d_mut(), p).unwrap();
     h.run();
-    snapshots.add(h.try_snapshot("pose_tab_inspector"));
+    // 浮かせたポーズのタブと、ポーズを当てた人形（ポーズのタブの並びを見る、ウィンドウ全体の見本）
+    crate::common::shot::window(&mut h, "pose_tab_inspector");
     // 隠す: 項目とプリセット
-    hide::set_next(&mut h.state_mut().state, 0.5, true);
-    hide::hide_bone(&mut h.state_mut().state, upper);
-    let app = &mut h.state_mut().state;
+    hide::set_next(h.app_mut(), 0.5, true);
+    hide::hide_bone(h.app_mut(), upper);
+    let app = h.app_mut();
     hide::save_preset(app, "右腕").unwrap();
-    h.state_mut().state.ui.sections.insert("pose.bones", false);
+    h.ui_mut().sections.insert("pose.bones", false);
     h.run();
-    snapshots.add(h.try_snapshot("pose_tab_hide"));
+    let rect = pose_window();
+    crate::common::shot::region(&mut h, "pose_tab_hide", rect);
 }
 
 /// ドックの隅（右の列の下。既定の置き場）のまま使うときの見え方。
 #[test]
 fn pose_tab_docked_snapshot() {
-    let mut snapshots = SnapshotResults::new();
     let mut h = figure(256);
     click_tab(&mut h, Tab::Pose);
     select(&mut h, "右上腕");
-    snapshots.add(h.try_snapshot("pose_tab_docked"));
+    // ドックの隅に置いたポーズのタブの並びを見る、ウィンドウ全体の見本
+    crate::common::shot::window(&mut h, "pose_tab_docked");
 }
 
 /// ポーズのプリセットの節: 保存した名前の一覧（左右反転・上書き・名前を変える・消すの印）と、飛ばしたボーンの知らせ。
 #[test]
 fn pose_presets_snapshot() {
     use yolu_app::view3d::pose::presets::store::PoseEntry;
-    let mut snapshots = SnapshotResults::new();
     let mut h = figure(256);
     float_pose_tab(&mut h);
     for section in ["pose.bones", "pose.hide", "pose.shapes"] {
-        h.state_mut().state.ui.sections.insert(section, false);
+        h.ui_mut().sections.insert(section, false);
     }
     bend_arm(&mut h);
     {
-        let app = &mut h.state_mut().state;
+        let app = h.app_mut();
         presets::save_preset(app, "右を曲げる").unwrap();
         presets::save_preset(app, "").unwrap();
         let other = app
-            .view3d
+            .view3d_mut()
             .pose
             .pose_presets
             .add(
@@ -1770,13 +1686,14 @@ fn pose_presets_snapshot() {
         presets::apply_preset(app, other, false);
     }
     h.run();
-    snapshots.add(h.try_snapshot("pose_tab_presets"));
+    let rect = pose_window();
+    crate::common::shot::region(&mut h, "pose_tab_presets", rect);
 }
 
 #[test]
 fn a_pose_edit_through_the_inspector_survives_the_undo_redo_buttons() {
     let mut h = figure(256);
-    h.state_mut().state.ui.sections.insert("pose.hide", false);
+    h.ui_mut().sections.insert("pose.hide", false);
     float_pose_tab(&mut h);
     let upper = select(&mut h, "右上腕");
     let at = center_of(&h, ROTATION_Z);
@@ -1804,7 +1721,7 @@ fn a_pose_edit_through_the_inspector_survives_the_undo_redo_buttons() {
 fn the_panel_shows_a_loading_row_with_progress_and_a_cancel_button() {
     for lang in Lang::ALL {
         let mut h = figure(64);
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         click_tab(&mut h, Tab::Pose);
         h.state_mut().apply(Action::LoadDemoModel);
         h.run();
@@ -1824,7 +1741,7 @@ fn the_panel_shows_a_loading_row_with_progress_and_a_cancel_button() {
         };
         // 割合がまだ分からない間: 名前だけ
         // 読み込み中は描き直しを頼み続けるので、`run` ではなく数フレームだけ回す
-        let hold = pose::park_loading(&mut h.state_mut().state.view3d, "新.fbx", None);
+        let hold = pose::park_loading(h.view3d_mut(), "新.fbx", None);
         h.run_steps(3);
         assert!(
             texts(&h).iter().any(|t| t == loading),
@@ -1834,7 +1751,7 @@ fn the_panel_shows_a_loading_row_with_progress_and_a_cancel_button() {
         assert!(h.query_by_label(cancel_label).is_some(), "{lang:?}");
         // 割合が分かったら添える
         drop(hold);
-        let _hold = pose::park_loading(&mut h.state_mut().state.view3d, "新.fbx", Some(0.42));
+        let _hold = pose::park_loading(h.view3d_mut(), "新.fbx", Some(0.42));
         h.run_steps(3);
         assert!(
             texts(&h).iter().any(|t| *t == format!("{loading} 42%")),
@@ -1845,8 +1762,8 @@ fn the_panel_shows_a_loading_row_with_progress_and_a_cancel_button() {
         // 取り消すと、読み込み中でなくなる
         h.get_by_label(cancel_label).click();
         h.run_steps(3);
-        assert!(!h.state().state.view3d.pose.is_loading(), "{lang:?}");
-        assert_eq!(h.state().state.message, done);
+        assert!(!h.view3d().pose.is_loading(), "{lang:?}");
+        assert_eq!(h.message(), done);
         assert!(
             !texts(&h).iter().any(|t| t.starts_with(loading)),
             "{lang:?}"

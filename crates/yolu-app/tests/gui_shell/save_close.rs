@@ -2,6 +2,7 @@
 //! 保存していない変更の確認は、保存の後の状態で聞く。画面のスレッドは回し続ける（待つあいだも 1 フレームずつ返る）。
 //! 保存の仕事そのものは `headless/save_background.rs`。
 use crate::common;
+use crate::common::drive::Drive;
 
 use std::cell::Cell;
 use std::path::PathBuf;
@@ -64,24 +65,24 @@ fn window_in(lang: Lang) -> H {
                 cc.wgpu_render_state.as_ref(),
             )
         });
-    h.state_mut().state.bake.backend = yolu_app::bake::BakeBackend::Cpu;
+    h.bake_mut().backend = yolu_app::bake::BakeBackend::Cpu;
     // 中央は 1 つの組（`common::app` と同じ並び）
     h.state_mut().dock = common::tabbed_center_dock(900.0);
     h.run();
-    let s = &mut h.state_mut().state;
-    s.save.background = true;
+    let s = h.app_mut();
+    s.save_mut().background = true;
     paint(s, 20.0);
     h
 }
 fn paint(s: &mut AppState, x: f64) {
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let brush = s.stroke_settings(false);
-    let mut stroke = s.doc.begin_stroke(layer, &brush).unwrap();
+    let mut stroke = s.doc_mut().begin_stroke(layer, &brush).unwrap();
     stroke
-        .add_point(&mut s.doc, x, 20.0, 1.0, DVec2::ZERO)
+        .add_point(s.doc_mut(), x, 20.0, 1.0, DVec2::ZERO)
         .unwrap();
-    s.doc.end_stroke(stroke).unwrap();
-    s.modified = true;
+    s.doc_mut().end_stroke(stroke).unwrap();
+    s.set_modified(true);
 }
 /// 直前のフレームがウィンドウの外へ出した「閉じる」の頼み（`Close`・`CancelClose`）。
 fn close_commands(h: &H) -> Vec<&'static str> {
@@ -114,7 +115,7 @@ fn press_window_close(h: &mut H) {
 fn step_until_saved(h: &mut H) -> Vec<&'static str> {
     let start = Instant::now();
     let mut all = Vec::new();
-    while h.state().state.is_saving() {
+    while h.app().is_saving() {
         h.step();
         all.extend(close_commands(h));
         assert!(
@@ -143,13 +144,11 @@ fn quitting_during_a_save_waits_for_the_save_and_then_closes() {
         seen.set(seen.get() + 1);
         true
     });
-    let hold = h.state_mut().state.save.hold_next();
-    h.state_mut()
-        .state
-        .apply(Action::SaveProjectAs(path.clone()));
-    assert!(h.state().state.is_saving());
+    let hold = h.save_mut().hold_next();
+    h.act(Action::SaveProjectAs(path.clone()));
+    assert!(h.app().is_saving());
     // 終了を頼む。保存の間は、閉じない・聞かない・小さなウィンドウを出す。フレームは返り続ける
-    h.state_mut().state.apply(Action::Quit);
+    h.act(Action::Quit);
     for _ in 0..5 {
         h.step();
         assert!(
@@ -160,18 +159,14 @@ fn quitting_during_a_save_waits_for_the_save_and_then_closes() {
     }
     assert!(!h.state().is_closing());
     assert_eq!(asked.get(), 0, "保存の途中には聞かない");
-    assert!(h.state().state.quit, "終了の頼みは覚えている");
+    assert!(h.quit(), "終了の頼みは覚えている");
     assert!(
         yolu_app::windows::saving_window_rect(&h.ctx).is_some(),
         "「保存しています」の小さなウィンドウ"
     );
     hold.release();
     let commands = step_until_saved(&mut h);
-    assert!(
-        h.state().state.message.starts_with("保存しました"),
-        "{}",
-        h.state().state.message
-    );
+    assert!(h.message().starts_with("保存しました"), "{}", h.message());
     assert!(path.exists(), "保存は捨てずに終わらせてから閉じる");
     assert!(h.state().is_closing());
     assert!(
@@ -186,10 +181,8 @@ fn the_window_close_button_during_a_save_is_held_back_and_closes_after_the_save(
     let dir = TempDir::new("x");
     let path = dir.file("作品.ylp");
     let mut h = window();
-    let hold = h.state_mut().state.save.hold_next();
-    h.state_mut()
-        .state
-        .apply(Action::SaveProjectAs(path.clone()));
+    let hold = h.save_mut().hold_next();
+    h.act(Action::SaveProjectAs(path.clone()));
     press_window_close(&mut h);
     h.step();
     assert_eq!(
@@ -198,7 +191,7 @@ fn the_window_close_button_during_a_save_is_held_back_and_closes_after_the_save(
         "ウィンドウの閉じるは止める"
     );
     assert!(
-        h.state().state.quit && !h.state().is_closing(),
+        h.quit() && !h.state().is_closing(),
         "止めた頼みは覚えている"
     );
     for _ in 0..3 {
@@ -219,10 +212,8 @@ fn a_hidden_window_also_holds_back_the_close_during_a_save() {
     let dir = TempDir::new("hidden");
     let path = dir.file("作品.ylp");
     let mut h = window();
-    let hold = h.state_mut().state.save.hold_next();
-    h.state_mut()
-        .state
-        .apply(Action::SaveProjectAs(path.clone()));
+    let hold = h.save_mut().hold_next();
+    h.act(Action::SaveProjectAs(path.clone()));
     h.input_mut()
         .viewports
         .get_mut(&ViewportId::ROOT)
@@ -235,7 +226,7 @@ fn a_hidden_window_also_holds_back_the_close_during_a_save() {
         "{:?}",
         close_commands(&h)
     );
-    assert!(h.state().state.quit && !h.state().is_closing());
+    assert!(h.quit() && !h.state().is_closing());
     hold.release();
     let commands = step_until_saved(&mut h);
     assert!(path.exists());
@@ -258,20 +249,18 @@ fn the_shutdown_mark_follows_a_save_that_starts_while_the_window_gets_hidden() {
     let dir = TempDir::new("markstart");
     let mut h = window();
     assert!(!h.state().saving_marked());
-    let hold = h.state_mut().state.save.hold_next();
-    h.state_mut()
-        .state
-        .apply(Action::SaveProjectAs(dir.file("作品.ylp")));
+    let hold = h.save_mut().hold_next();
+    h.act(Action::SaveProjectAs(dir.file("作品.ylp")));
     // 次の `ui` のフレームが来る前に最小化した: 隠れたウィンドウの 1 回だけが回る
     hidden_tick(&mut h);
-    assert!(h.state().state.is_saving());
+    assert!(h.app().is_saving());
     assert!(
         h.state().saving_marked(),
         "隠れたウィンドウでも、保存の間は OS の終了を待たせる印を付ける"
     );
     hold.release();
     let start = Instant::now();
-    while h.state().state.is_saving() {
+    while h.app().is_saving() {
         hidden_tick(&mut h);
         assert!(
             start.elapsed() < Duration::from_secs(60),
@@ -286,17 +275,15 @@ fn the_shutdown_mark_follows_a_save_that_starts_while_the_window_gets_hidden() {
 fn the_shutdown_mark_goes_when_a_save_ends_while_the_window_is_hidden() {
     let dir = TempDir::new("markend");
     let mut h = window();
-    let hold = h.state_mut().state.save.hold_next();
-    h.state_mut()
-        .state
-        .apply(Action::SaveProjectAs(dir.file("作品.ylp")));
+    let hold = h.save_mut().hold_next();
+    h.act(Action::SaveProjectAs(dir.file("作品.ylp")));
     h.step();
     assert!(h.state().saving_marked(), "見えている間の `ui` が付ける");
     hidden_tick(&mut h);
-    assert!(h.state().saving_marked() && h.state().state.is_saving());
+    assert!(h.state().saving_marked() && h.app().is_saving());
     hold.release();
     let start = Instant::now();
-    while h.state().state.is_saving() {
+    while h.app().is_saving() {
         hidden_tick(&mut h);
         assert!(
             start.elapsed() < Duration::from_secs(60),
@@ -304,11 +291,7 @@ fn the_shutdown_mark_goes_when_a_save_ends_while_the_window_is_hidden() {
         );
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert!(
-        h.state().state.message.starts_with("保存しました"),
-        "{}",
-        h.state().state.message
-    );
+    assert!(h.message().starts_with("保存しました"), "{}", h.message());
     assert!(
         !h.state().saving_marked(),
         "隠れたまま保存が終わったら、印も消える"
@@ -322,31 +305,29 @@ fn what_is_drawn_during_the_save_is_asked_about_after_it() {
     let (asked, answer) = counter();
     let (seen, reply) = (asked.clone(), answer.clone());
     h.state_mut().answer_close_question(move |s: &AppState| {
-        assert!(s.modified, "問われるのは、保存の後も変更が残っているとき");
+        assert!(s.modified(), "問われるのは、保存の後も変更が残っているとき");
         seen.set(seen.get() + 1);
         reply.get()
     });
-    let hold = h.state_mut().state.save.hold_next();
-    h.state_mut()
-        .state
-        .apply(Action::SaveProjectAs(dir.file("作品.ylp")));
-    h.state_mut().state.apply(Action::Quit);
+    let hold = h.save_mut().hold_next();
+    h.act(Action::SaveProjectAs(dir.file("作品.ylp")));
+    h.act(Action::Quit);
     h.step();
     // 保存の間に描く（保存に入らない分は、保存の後も「変更あり」）
-    paint(&mut h.state_mut().state, 60.0);
+    paint(h.app_mut(), 60.0);
     hold.release();
     answer.set(false);
     let commands = step_until_saved(&mut h);
     assert_eq!(asked.get(), 1, "保存が終わってから、1 度だけ聞く");
     assert!(
-        !h.state().is_closing() && !h.state().state.quit,
+        !h.state().is_closing() && !h.quit(),
         "続けると答えたので、終わらない"
     );
     assert!(!commands.contains(&"Close"), "{commands:?}");
-    assert!(h.state().state.modified);
+    assert!(h.modified());
     // もう 1 度終了を頼んで、捨てて終わると答える
     answer.set(true);
-    h.state_mut().state.apply(Action::Quit);
+    h.act(Action::Quit);
     h.step();
     assert_eq!(asked.get(), 2);
     assert!(h.state().is_closing());
@@ -358,9 +339,9 @@ fn add_never_saved_unreadable_set(h: &mut H, cache: &std::path::Path) {
     use yolu_app::engine::Channel;
     use yolu_app::newproject::NpAction;
     use yolu_core::tile_cache::{self, CacheSettings};
-    let s = &mut h.state_mut().state;
-    s.apply(Action::Project(NpAction::AddSet));
-    assert_eq!(s.sets.len(), 2, "{}", s.message);
+    let s = h.app_mut();
+    s.act(Action::Project(NpAction::AddSet));
+    assert_eq!(s.sets().len(), 2, "{}", s.message());
     s.switch_set(1).unwrap();
     s.ensure_selection();
     paint(s, 40.0);
@@ -379,7 +360,11 @@ fn add_never_saved_unreadable_set(h: &mut H, cache: &std::path::Path) {
     }
     assert!(s.set_doc(1).composite(s.set_doc(1).bounds()).is_err());
     s.check_tile_cache();
-    assert!(s.sets.get(1).unwrap().read_only.is_some(), "{}", s.message);
+    assert!(
+        s.sets().get(1).unwrap().read_only.is_some(),
+        "{}",
+        s.message()
+    );
 }
 
 /// 読めないため保存に入れなかったセットは、画面にあってファイルに無い。保存が済んだあとも「保存していない変更」のままで、閉じるときに聞く
@@ -393,16 +378,14 @@ fn a_set_left_out_of_the_save_is_still_asked_about_when_closing() {
     let (asked, answer) = counter();
     let (seen, reply) = (asked.clone(), answer.clone());
     h.state_mut().answer_close_question(move |s: &AppState| {
-        assert!(s.modified, "入れなかったセットがあるので、変更は残る");
+        assert!(s.modified(), "入れなかったセットがあるので、変更は残る");
         seen.set(seen.get() + 1);
         reply.get()
     });
     let path = dir.file("作品.ylp");
-    let hold = h.state_mut().state.save.hold_next();
-    h.state_mut()
-        .state
-        .apply(Action::SaveProjectAs(path.clone()));
-    h.state_mut().state.apply(Action::Quit);
+    let hold = h.save_mut().hold_next();
+    h.act(Action::SaveProjectAs(path.clone()));
+    h.act(Action::Quit);
     h.step();
     hold.release();
     answer.set(false);
@@ -410,20 +393,20 @@ fn a_set_left_out_of_the_save_is_still_asked_about_when_closing() {
     assert!(path.exists());
     assert_eq!(asked.get(), 1, "保存が終わってから、1 度だけ聞く");
     assert!(
-        !h.state().is_closing() && !h.state().state.quit,
+        !h.state().is_closing() && !h.quit(),
         "続けると答えたので、終わらない"
     );
     assert!(!commands.contains(&"Close"), "{commands:?}");
     assert!(
-        h.state().state.shows_modified(),
+        h.app().shows_modified(),
         "開き直す・捨てるときの問い（confirm_discard）も、この印で聞く"
     );
     // もう 1 度保存しても、また入れずに印は残る。捨てて終わると答えれば閉じる
-    h.state_mut().state.apply(Action::SaveProject);
-    h.state_mut().state.wait_save();
-    assert!(h.state().state.modified);
+    h.act(Action::SaveProject);
+    h.app_mut().wait_save();
+    assert!(h.modified());
     answer.set(true);
-    h.state_mut().state.apply(Action::Quit);
+    h.act(Action::Quit);
     h.step();
     assert_eq!(asked.get(), 2);
     assert!(h.state().is_closing());
@@ -440,34 +423,32 @@ fn a_failed_save_gives_its_reason_and_goes_back_to_the_question() {
     let (asked, answer) = counter();
     let (seen, reply) = (asked.clone(), answer.clone());
     h.state_mut().answer_close_question(move |s: &AppState| {
-        assert!(s.modified, "失敗した保存は、保存の前の「変更あり」を戻す");
+        assert!(s.modified(), "失敗した保存は、保存の前の「変更あり」を戻す");
         if seen.get() == 0 {
             assert!(
-                s.message.contains("保存できません"),
+                s.message().contains("保存できません"),
                 "理由を出してから聞く: {}",
-                s.message
+                s.message()
             );
         }
         seen.set(seen.get() + 1);
         reply.get()
     });
-    let hold = h.state_mut().state.save.hold_next();
-    h.state_mut()
-        .state
-        .apply(Action::SaveProjectAs(target.clone()));
-    h.state_mut().state.apply(Action::Quit);
+    let hold = h.save_mut().hold_next();
+    h.act(Action::SaveProjectAs(target.clone()));
+    h.act(Action::Quit);
     h.step();
     assert!(!h.state().is_closing());
     hold.release();
     answer.set(false);
     let commands = step_until_saved(&mut h);
     assert_eq!(asked.get(), 1);
-    assert!(!h.state().is_closing() && !h.state().state.quit);
+    assert!(!h.state().is_closing() && !h.quit());
     assert!(!commands.contains(&"Close"), "{commands:?}");
     assert!(!target.exists());
     // 捨てて終わると答えれば閉じる
     answer.set(true);
-    h.state_mut().state.apply(Action::Quit);
+    h.act(Action::Quit);
     h.step();
     assert!(h.state().is_closing());
 }
@@ -481,7 +462,7 @@ fn closing_without_a_save_is_as_before() {
         seen.set(seen.get() + 1);
         reply.get()
     });
-    h.state_mut().state.apply(Action::Quit);
+    h.act(Action::Quit);
     h.step();
     assert_eq!(
         asked.get(),
@@ -502,10 +483,10 @@ fn stopping_jobs_before_quitting_neither_cancels_nor_waits_for_a_save() {
     let dir = TempDir::new("stop");
     let path = dir.file("作品.ylp");
     let mut state = AppState::new(128, 128);
-    state.save.background = true;
+    state.save_mut().background = true;
     paint(&mut state, 20.0);
-    let hold = state.save.hold_next();
-    state.apply(Action::SaveProjectAs(path.clone()));
+    let hold = state.save_mut().hold_next();
+    state.act(Action::SaveProjectAs(path.clone()));
     assert!(state.is_saving());
     let t = Instant::now();
     yolu_app::windows::stop_jobs(&mut state, Duration::from_secs(3));
@@ -518,31 +499,28 @@ fn stopping_jobs_before_quitting_neither_cancels_nor_waits_for_a_save() {
     hold.release();
     state.wait_save();
     assert!(
-        state.message.starts_with("保存しました"),
+        state.message().starts_with("保存しました"),
         "{}",
-        state.message
+        state.message()
     );
     assert!(path.exists());
 }
 
 // ───────── 画面（進み具合の札・待つウィンドウ） ─────────
 
-/// 保存の間のウィンドウの全体（右下の札に「保存しています」と進み。取消のボタンは無い。メニューバーの右の名前に、保存の結果が出るまで「•」）。
+/// 保存の間の絵（日本語はウィンドウの全体、英語は札だけ。右下の札に「保存しています」と進み。取消のボタンは無い。メニューバーの右の名前に、保存の結果が出るまで「•」）。
 #[test]
 fn the_job_card_shows_saving_with_the_name_and_no_cancel_button() {
-    let mut snapshots = egui_kittest::SnapshotResults::new();
     for lang in [Lang::Ja, Lang::En] {
         let dir = TempDir::new("card");
         let mut h = window_in(lang);
-        let hold = h.state_mut().state.save.hold_next();
-        h.state_mut()
-            .state
-            .apply(Action::SaveProjectAs(dir.file("work.ylp")));
+        let hold = h.save_mut().hold_next();
+        h.act(Action::SaveProjectAs(dir.file("work.ylp")));
         h.event(egui::Event::PointerGone);
         h.step();
         h.step();
         assert!(
-            h.state().state.shows_modified(),
+            h.app().shows_modified(),
             "保存の結果が出るまで、保存していない印を見せる"
         );
         let cancels: Vec<_> = h
@@ -552,12 +530,23 @@ fn the_job_card_shows_saving_with_the_name_and_no_cancel_button() {
             cancels.is_empty(),
             "保存は取り消せない（取消のボタンが無い）"
         );
-        h.snapshot(format!("save_card_{}", lang.pick("ja", "en")));
-        snapshots.extend_harness(&mut h);
+        // 日本語は画面全体（右下の札と、メニューバーの右の名前の印）、英語は札だけ
+        if lang == Lang::Ja {
+            common::shot::window(&mut h, "save_card_ja");
+        } else {
+            // 札は右下の隅（状態の帯の上）に出る。文字は描いた物で読み上げの節が無いので、隅の範囲で撮る
+            let screen = h.ctx.content_rect();
+            let bar = yolu_app::ui::theme::STATUS_BAR_HEIGHT;
+            let corner = egui::Rect::from_min_max(
+                egui::pos2(screen.right() - 380.0, screen.bottom() - bar - 80.0),
+                egui::pos2(screen.right(), screen.bottom() - bar),
+            );
+            common::shot::region(&mut h, "save_card_en", corner);
+        }
         hold.release();
-        h.state_mut().state.wait_save();
+        h.app_mut().wait_save();
         h.step();
-        assert!(h.state().state.save_progress().is_none());
+        assert!(h.app().save_progress().is_none());
     }
 }
 
@@ -567,11 +556,9 @@ fn the_waiting_window_before_closing_has_no_cancel_button() {
     for lang in [Lang::Ja, Lang::En] {
         let dir = TempDir::new("wait");
         let mut h = window_in(lang);
-        let hold = h.state_mut().state.save.hold_next();
-        h.state_mut()
-            .state
-            .apply(Action::SaveProjectAs(dir.file("work.ylp")));
-        h.state_mut().state.apply(Action::Quit);
+        let hold = h.save_mut().hold_next();
+        h.act(Action::SaveProjectAs(dir.file("work.ylp")));
+        h.act(Action::Quit);
         h.event(egui::Event::PointerGone);
         h.step();
         h.step();
@@ -584,18 +571,13 @@ fn the_waiting_window_before_closing_has_no_cancel_button() {
             .query_all_by_label_contains(lang.pick("取消", "Cancel"))
             .collect();
         assert!(cancels.is_empty());
-        let image = h.render().expect("描画");
-        let cropped = image::imageops::crop_imm(
-            &image,
-            rect.left().floor() as u32,
-            rect.top().floor() as u32,
-            rect.width().ceil() as u32,
-            rect.height().ceil() as u32,
-        )
-        .to_image();
-        egui_kittest::image_snapshot(&cropped, format!("save_closing_{}", lang.pick("ja", "en")));
+        common::shot::region(
+            &mut h,
+            &format!("save_closing_{}", lang.pick("ja", "en")),
+            rect,
+        );
         hold.release();
-        h.state_mut().state.wait_save();
+        h.app_mut().wait_save();
         h.step();
         h.step();
         assert!(h.state().is_closing());

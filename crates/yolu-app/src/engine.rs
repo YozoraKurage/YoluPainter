@@ -5,6 +5,7 @@
 
 pub use yolu_core::glam::DVec2;
 pub use yolu_core::selection::{DEFAULT_WORKING_BUDGET_BYTES, MAX_MODIFY_RADIUS};
+pub use yolu_core::unit_f32_to_byte;
 pub use yolu_core::DEFAULT_SOURCE_BUDGET_BYTES;
 pub use yolu_core::{
     AdjustmentSettings, AdjustmentType, BalanceRange, BlendMode, BrightnessContrast, Brush,
@@ -13,11 +14,18 @@ pub use yolu_core::{
     ClipboardSource, ColorAdjust, ColorBalance, ColorDynamics, ColorSpace, CompositedTile,
     Controls, CoreError, Document, DualBrush, DualBrushMode, GradientMap, HeightEdgeMode, Jitter,
     Layer, LayerId, LayerKind, NormalSettings, NormalYDirection, PaperTexture, PixelClipboard,
-    Posterize, PreparedResize, PressureResponse, PressureResponses, Rect, Rgba8, RowOrder,
-    SelectionCombine, SelectionMask, Stroke, StrokeAssist, SymmetryMode, TextureMode, Threshold,
-    TileCoord, TipShape, ToneChannel, ToneCurves,
+    Posterize, PreparedResize, Rect, Rgba8, RowOrder, SelectionCombine, SelectionMask, Stroke,
+    StrokeAssist, SymmetryMode, TaperTargets, TextureMode, Threshold, TileCoord, TipShape,
+    ToneChannel, ToneCurves,
 };
 pub use yolu_core::{AntiAlias, ColorMix, MixGround, MixMode};
+pub use yolu_core::{ColorItem, ColorTarget, StrokeColorChange, TipColorChange};
+pub use yolu_core::{ExpandMode, ReferenceLines};
+pub use yolu_core::{Influence, Influences, InputResponse, InputUse, PressureSwitches};
+pub use yolu_core::{LayerSetId, LayerSetInfo};
+pub use yolu_core::{MaskCopy, MaskPasteResult};
+pub use yolu_core::{MixBlur, MixSpace};
+pub use yolu_core::{PostCorrection, StabilizerSpeed};
 
 /// ペンの傾き（度。Windows の POINTER_PEN_INFO の tiltX・tiltY と同じく −90〜90）。
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

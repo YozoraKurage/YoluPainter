@@ -1,10 +1,11 @@
-use super::{endpoints, outline, Drag, Figure};
+use super::{endpoints, outline, DraftOp, Drag, Figure};
 use crate::notice::Source;
 use crate::{
     canvas::view::CanvasView,
-    state::{AppState, StrokeSource, Tool},
+    state::key::Modifiers,
+    state::{Action, AppState, StrokeSource, Tool},
 };
-use egui::{Color32, Modifiers, Painter, Pos2, Rect, Shape, Stroke};
+use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke};
 use yolu_core::{glam::DVec2, BrushSample, SelectionMask};
 
 pub fn press(app: &mut AppState, view: &CanvasView, pos: Pos2, source: StrokeSource, m: Modifiers) {
@@ -15,7 +16,7 @@ pub fn press(app: &mut AppState, view: &CanvasView, pos: Pos2, source: StrokeSou
         crate::rulers::canvas::press(app, view, pos, source, m);
         return;
     }
-    if let Err(reason) = crate::region::tools::paint_gate(app) {
+    if let Err(reason) = crate::stroke_gate::paint(app) {
         app.refuse(Source::Ruler, reason);
         return;
     }
@@ -60,12 +61,25 @@ pub fn release(
     }
 }
 
-/// 離したときだけ画素を変更する。範囲は既存の選択量と core で乗算される。
+/// 離したときだけ画素を変更する（ほかの操作と同じ入口、`AppState::apply` の `DraftOp::Figure` から）。範囲は既存の選択量と core で乗算される。
+/// 読むだけのセットは、ここで図形の出どころで断る（通した後は `apply` の読むだけの断りも通る）。
 pub fn paint(app: &mut AppState, a: DVec2, b: DVec2, rect: Rect) {
     if app.is_stroking() {
         return;
     }
-    let layer = match crate::region::tools::paint_gate(app) {
+    if let Err(reason) = crate::stroke_gate::read_only(app) {
+        app.refuse(Source::Ruler, reason);
+        return;
+    }
+    app.apply(Action::Draft(DraftOp::Figure { a, b, rect }));
+}
+
+/// `DraftOp::Figure` を当てる: 向かい合う角 a・b の図形を、塗るか輪郭のストロークで描く（1 回の Undo）。
+pub(crate) fn figure(app: &mut AppState, a: DVec2, b: DVec2, rect: Rect) {
+    if app.is_stroking() {
+        return;
+    }
+    let layer = match crate::stroke_gate::paint(app) {
         Ok(id) => id,
         Err(e) => {
             app.refuse(Source::Ruler, e);
@@ -74,10 +88,10 @@ pub fn paint(app: &mut AppState, a: DVec2, b: DVec2, rect: Rect) {
     };
     let figure = app.drafting.figure;
     let points = outline(figure, a, b, app.drafting.corner as f64);
-    let before = app.doc.revision();
-    app.doc.end_coalescing();
+    let before = app.session.doc.revision();
+    app.session.doc.end_coalescing();
     let result = if app.drafting.fill && figure != Figure::Line {
-        SelectionMask::polygon(&app.doc, &points)
+        SelectionMask::polygon(&app.session.doc, &points)
             .and_then(|mask| fill_region(app, layer, &mask))
             .map(|_| ())
     } else {
@@ -88,12 +102,12 @@ pub fn paint(app: &mut AppState, a: DVec2, b: DVec2, rect: Rect) {
                 // 速さの制御（サイズ・不透明度・流量）を入れたブラシでも頂点の間隔で線が細く・薄くならない。
                 for p in &points {
                     let sample = BrushSample::new(p.x, p.y, 1.0, 0.0, DVec2::ZERO)?;
-                    if let Err(e) = stroke.add_sample(&mut app.doc, sample) {
-                        app.doc.cancel_stroke(stroke);
+                    if let Err(e) = stroke.add_sample(&mut app.session.doc, sample) {
+                        app.session.doc.cancel_stroke(stroke);
                         return Err(e);
                     }
                 }
-                app.doc.end_stroke(stroke).map(|_| ())
+                app.session.doc.end_stroke(stroke).map(|_| ())
             })
     };
     finish_paint(app, result, before);
@@ -107,12 +121,13 @@ pub(crate) fn fill_region(
     mask: &SelectionMask,
 ) -> Result<bool, yolu_core::CoreError> {
     if app.m2.edit_mask {
-        let reveal = crate::region::tools::mask_reveals(app, layer, false);
-        app.doc
+        let reveal = crate::m2::mask_reveals(app, layer, false);
+        app.session
+            .doc
             .fill_mask(layer, app.brush.opacity as f64, Some(mask), reveal)
     } else {
         let channels = app.paint_channels();
-        app.doc.fill_material(
+        app.session.doc.fill_material(
             layer,
             &channels,
             app.brush.opacity as f64,
@@ -129,15 +144,15 @@ pub(crate) fn finish_paint(
     before: u64,
 ) {
     if let Err(e) = result {
-        app.doc.cancel_active_stroke();
+        app.session.doc.cancel_active_stroke();
         app.notify(
             crate::notice::Kind::of_core(&e),
             Source::Ruler,
             app.lang.core_error(&e),
         );
     }
-    if app.doc.revision() != before {
-        app.modified = true;
+    if app.session.doc.revision() != before {
+        app.session.mark_modified();
         app.color.remember();
     }
 }

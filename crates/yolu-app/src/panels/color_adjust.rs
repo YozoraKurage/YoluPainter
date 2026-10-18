@@ -131,12 +131,9 @@ fn gradient_map_rows(
         ui,
         rows,
         "ca.gm.reverse",
-        lang.pick("逆向き", "Reverse"),
+        lang.t("panels-reverse"),
         reverse,
-        Some(lang.pick(
-            "暗い所と明るい所の色を入れ替える",
-            "Swap the colours of dark and bright areas",
-        )),
+        Some(lang.t("panels-swap-the-colours-of-dark-tip")),
         p.enabled,
     ) {
         reverse = on;
@@ -223,28 +220,10 @@ fn tone_curve_rows(
     let lang = p.lang;
     let (channel_id, channel) = remembered(ui, p, "tone.channel", ToneChannel::Composite);
     let labels = [
-        ("RGB", lang.pick("すべての色", "All channels")),
-        (
-            "R",
-            lang.pick(
-                "赤（スカラーのチャンネルには効きません）",
-                "Red (no effect on scalar channels)",
-            ),
-        ),
-        (
-            "G",
-            lang.pick(
-                "緑（スカラーのチャンネルには効きません）",
-                "Green (no effect on scalar channels)",
-            ),
-        ),
-        (
-            "B",
-            lang.pick(
-                "青（スカラーのチャンネルには効きません）",
-                "Blue (no effect on scalar channels)",
-            ),
-        ),
+        ("RGB", lang.t("panels-all-channels")),
+        ("R", lang.t("panels-red-no-effect-on-scalar")),
+        ("G", lang.t("panels-green-no-effect-on-scalar")),
+        ("B", lang.t("panels-blue-no-effect-on-scalar")),
     ];
     let current = ToneChannel::ALL
         .iter()
@@ -269,10 +248,7 @@ fn tone_curve_rows(
         (p.key, "tone.curve", channel),
         curves.curve(channel),
         &style,
-        lang.pick(
-            "横が入力、縦が出力。何も無い所を押すと点を追加し、ドラッグで動かし、右クリックか枠の外へ離すと消す。Esc でドラッグをやめる",
-            "Input across, output up. Click to add a point, drag to move, right-click or drag outside to remove. Escape cancels a drag",
-        ),
+        lang.t("panels-input-across-output-up-click-tip"),
         p.enabled,
     ) {
         result = Some(Change {
@@ -282,22 +258,14 @@ fn tone_curve_rows(
     }
     // よく使う形（選んでいる曲線へ）
     let presets = [
-        (lang.pick("線形", "Linear"), 0),
-        (lang.pick("やわらかい", "Soft"), 1),
-        (lang.pick("かたい", "Hard"), 2),
-        (lang.pick("S 字", "S-curve"), 3),
+        (lang.t("panels-linear"), 0),
+        (lang.t("panels-soft"), 1),
+        (lang.t("panels-hard"), 2),
+        (lang.t("panels-s-curve"), 3),
     ];
     let labels: Vec<(&str, &str)> = presets
         .iter()
-        .map(|(name, _)| {
-            (
-                *name,
-                lang.pick(
-                    "選んでいる曲線をこの形にする",
-                    "Set the selected curve to this shape",
-                ),
-            )
-        })
+        .map(|(name, _)| (*name, lang.t("panels-set-the-selected-curve-to")))
         .collect();
     if let Some(i) = choice_buttons(ui, rows, p, "tone.preset", &labels, usize::MAX) {
         if let Some(shape) = curve::ops::preset(presets[i].1) {
@@ -321,18 +289,12 @@ fn color_balance_rows(
     let lang = p.lang;
     let (range_id, range) = remembered(ui, p, "balance.range", BalanceRange::Midtones);
     let labels = [
+        (lang.t("panels-shadows"), lang.t("panels-dark-areas")),
         (
-            lang.pick("シャドウ", "Shadows"),
-            lang.pick("暗い所", "Dark areas"),
+            lang.t("panels-midtones"),
+            lang.t("panels-middle-brightness"),
         ),
-        (
-            lang.pick("中間", "Midtones"),
-            lang.pick("中間の明るさ", "Middle brightness"),
-        ),
-        (
-            lang.pick("ハイライト", "Highlights"),
-            lang.pick("明るい所", "Bright areas"),
-        ),
+        (lang.t("panels-highlights"), lang.t("panels-bright-areas")),
     ];
     let current = BalanceRange::ALL
         .iter()
@@ -346,12 +308,9 @@ fn color_balance_rows(
     let mut values = balance.values(range);
     let mut changed = false;
     let axes = [
-        ("ca.cb.cr", lang.pick("シアン — レッド", "Cyan — Red")),
-        (
-            "ca.cb.mg",
-            lang.pick("マゼンタ — グリーン", "Magenta — Green"),
-        ),
-        ("ca.cb.yb", lang.pick("イエロー — ブルー", "Yellow — Blue")),
+        ("ca.cb.cr", lang.t("panels-cyan-red")),
+        ("ca.cb.mg", lang.t("panels-magenta-green")),
+        ("ca.cb.yb", lang.t("panels-yellow-blue")),
     ];
     for (k, (id, label)) in axes.iter().enumerate() {
         if let Some(v) = slider_row(
@@ -382,12 +341,9 @@ fn color_balance_rows(
         ui,
         rows,
         "ca.cb.luminosity",
-        lang.pick("輝度を保つ", "Preserve Luminosity"),
+        lang.t("panels-preserve-luminosity"),
         balance.preserve_luminosity(),
-        Some(lang.pick(
-            "色を動かしても明るさを元に戻す",
-            "Restore the brightness after the colours are moved",
-        )),
+        Some(lang.t("panels-restore-the-brightness-after-the-tip")),
         p.enabled,
     ) {
         result = Some(Change {
@@ -413,14 +369,12 @@ fn brightness_contrast_rows(
         ui,
         rows,
         "ca.bc.brightness",
-        lang.pick("明るさ", "Brightness"),
+        lang.t("panels-brightness"),
         brightness as f32,
         (-150.0, 150.0),
         int_format(),
-        p.why.or(Some(lang.pick(
-            "中間を持ち上げる・沈める（黒と白は動かない）",
-            "Lift or sink the midtones (black and white stay put)",
-        ))),
+        p.why
+            .or(Some(lang.t("panels-lift-or-sink-the-midtones-tip"))),
         p.enabled,
     ) {
         brightness = f64::from(v.round().clamp(-150.0, 150.0));
@@ -430,14 +384,12 @@ fn brightness_contrast_rows(
         ui,
         rows,
         "ca.bc.contrast",
-        lang.pick("コントラスト", "Contrast"),
+        lang.t("panels-contrast"),
         contrast as f32,
         (-50.0, 100.0),
         int_format(),
-        p.why.or(Some(lang.pick(
-            "中間の明るさを中心に、明暗の差を広げる・縮める",
-            "Widen or narrow the difference between dark and bright around the middle",
-        ))),
+        p.why
+            .or(Some(lang.t("panels-widen-or-narrow-the-difference-tip"))),
         p.enabled,
     ) {
         contrast = f64::from(v.round().clamp(-50.0, 100.0));
@@ -465,14 +417,12 @@ fn threshold_rows(
         ui,
         rows,
         "ca.threshold",
-        lang.pick("しきい値", "Threshold"),
+        lang.t("panels-threshold"),
         value.level() as f32,
         (1.0, 255.0),
         int_format(),
-        p.why.or(Some(lang.pick(
-            "この明るさ以上は白、未満は黒",
-            "At or above this brightness becomes white, below it black",
-        ))),
+        p.why
+            .or(Some(lang.t("panels-at-or-above-this-brightness-tip"))),
         p.enabled,
     )
     .and_then(|v| Threshold::new(v.round().clamp(1.0, 255.0) as u32).ok())
@@ -493,13 +443,12 @@ fn posterize_rows(
         ui,
         rows,
         "ca.posterize",
-        lang.pick("階調", "Levels"),
+        lang.t("panels-levels"),
         value.levels() as f32,
         (2.0, 255.0),
         int_format(),
-        p.why.or(Some(
-            lang.pick("色ごとの段の数", "Number of steps per colour"),
-        )),
+        p.why
+            .or(Some(lang.t("panels-number-of-steps-per-colour-tip"))),
         p.enabled,
     )
     .and_then(|v| Posterize::new(v.round().clamp(2.0, 255.0) as u32).ok())

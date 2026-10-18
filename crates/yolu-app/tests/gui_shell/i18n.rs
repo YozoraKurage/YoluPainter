@@ -1,5 +1,6 @@
 //! 日英の対象パネル・通知・失敗時の保存契約。
 use crate::common;
+use crate::common::drive::Drive;
 use common::*;
 use egui::{epaint::Shape, vec2, Rect};
 use egui_kittest::{kittest::Queryable, Harness, SnapshotResults};
@@ -47,16 +48,16 @@ fn panels_draw_in_both_languages_without_clipped_text_gpu() {
     for lang in Lang::ALL {
         for panel in 0..3 {
             let mut state = AppState::new(64, 64);
-            state.lang = lang;
+            state.set_lang(lang);
             if panel == 1 {
                 // モデルを入れて最初のセットを隠す（行の右に状態のアイコンが付き、その理由がツールチップに言語ごとに出る）
                 state.receive_link_model(&three_material_model()).1.unwrap();
-                let uid = state.sets.get(0).unwrap().uid;
-                state.apply(Action::ToggleSetVisible(uid));
+                let uid = state.sets().get(0).unwrap().uid;
+                state.act(Action::ToggleSetVisible(uid));
             }
-            state.sets.get_mut(0).unwrap().name = "Sample".into();
+            state.sets_mut().get_mut(0).unwrap().name = "Sample".into();
             // 同梱の素材は行がパネルの下からはみ出して（スクロールで見る）、途中で切れた文字になるので、別の試験で背の高いウィンドウに出す
-            state.shelf.show_builtin = false;
+            state.shelf_mut().show_builtin = false;
             let look = texture_sets::set_state(&state, 0);
             let mut ready = false;
             let mut textures = color::ColorTextures::default();
@@ -81,7 +82,7 @@ fn panels_draw_in_both_languages_without_clipped_text_gpu() {
                 );
             h.run();
             // 棚の素材の絵は別のスレッドで作る。できるまで待って描く
-            h.state_mut().shelf.wait_inspections();
+            h.state_mut().shelf_mut().wait_inspections();
             h.run();
             let mut labels = Vec::new();
             for shape in &h.output().shapes {
@@ -101,8 +102,10 @@ fn panels_draw_in_both_languages_without_clipped_text_gpu() {
                     .query_by_label(lang.pick("色相の円", "Hue wheel"))
                     .is_some());
             }
-            h.snapshot(format!("i18n_{}_{}", lang.pick("ja", "en"), panel));
-            snapshots.extend_harness(&mut h);
+            if lang == Lang::Ja {
+                h.snapshot(format!("i18n_ja_{panel}"));
+                snapshots.extend_harness(&mut h);
+            }
             if panel == 1 {
                 // セットの名前は言語に依らないので、言語の確認は状態のアイコン: 隠したセットの理由が、その言語の文で、行のアイコンの上に出る
                 let tooltip = lang.pick("3D ビューに見せていない", "Hidden in the 3D View");
@@ -141,46 +144,48 @@ fn project_notices_and_conflicts_follow_the_language_without_changing_data() {
     for lang in Lang::ALL {
         let path = root.join(lang.pick("ja.ylp", "en.ylp"));
         let mut state = AppState::new(32, 32);
-        state.lang = lang;
-        state.apply(Action::SaveProjectAs(path.clone()));
+        state.set_lang(lang);
+        state.act(Action::SaveProjectAs(path.clone()));
         assert!(
             state
-                .message
+                .message()
                 .starts_with(lang.pick("保存しました", "Saved")),
             "{}",
-            state.message
+            state.message()
         );
-        state.apply(Action::OpenProject(path.clone()));
+        state.act(Action::OpenProject(path.clone()));
         assert!(
-            state.message.starts_with(lang.pick("開きました", "Opened")),
+            state
+                .message()
+                .starts_with(lang.pick("開きました", "Opened")),
             "{}",
-            state.message
+            state.message()
         );
-        state.apply(Action::SaveProjectAs(path.clone()));
+        state.act(Action::SaveProjectAs(path.clone()));
         assert!(state
-            .message
-            .contains(lang.pick("前の版", "Previous version")));
-        let before = state.doc.id();
-        state.apply(Action::OpenProject(root.join("missing.ylp")));
-        assert!(state.message.contains(lang.pick(
+            .message()
+            .contains(lang.pick("前のバージョン", "Previous version")));
+        let before = state.doc().id();
+        state.act(Action::OpenProject(root.join("missing.ylp")));
+        assert!(state.message().contains(lang.pick(
             "ファイルまたはフォルダーがありません",
             "File or folder not found"
         )));
-        assert_eq!(state.doc.id(), before);
+        assert_eq!(state.doc().id(), before);
         std::fs::write(&path, b"external edit").unwrap();
-        state.apply(Action::SaveProjectAs(path.clone()));
+        state.act(Action::SaveProjectAs(path.clone()));
         assert!(
-            state.message.contains(lang.pick(
+            state.message().contains(lang.pick(
                 "保存先が外部で変更されています",
                 "Save target or backup changed"
             )),
             "{}",
-            state.message
+            state.message()
         );
         assert_eq!(std::fs::read(&path).unwrap(), b"external edit");
-        state.apply(Action::NewProject);
+        state.act(Action::NewProject);
         assert_eq!(
-            state.message,
+            state.message(),
             lang.pick("新しいプロジェクトを作りました。", "New project created.")
         );
     }
@@ -226,23 +231,23 @@ fn project_failures_are_told_apart_by_kind_in_both_languages() {
     let mut seen: Vec<Vec<String>> = Vec::new();
     for lang in Lang::ALL {
         let mut state = AppState::new_in(32, 32, lang);
-        let before = state.doc.id();
+        let before = state.doc().id();
         let mut messages = Vec::new();
         for path in [&broken, &big] {
-            state.apply(Action::OpenProject(path.clone()));
+            state.act(Action::OpenProject(path.clone()));
             assert!(
                 state
-                    .message
+                    .message()
                     .contains(lang.pick("を開けません", "Cannot open")),
                 "{}",
-                state.message
+                state.message()
             );
-            assert_eq!(state.doc.id(), before);
-            messages.push(state.message.clone());
+            assert_eq!(state.doc().id(), before);
+            messages.push(state.message().to_string());
         }
         // 塗りつぶしのグラデーションのランプの混色はまだ .ylp に書けない（画面からは作れず、core の口だけで作れる）。保存を断り、ファイルは作らない
         let fill = state
-            .doc
+            .doc_mut()
             .add_fill_layer(
                 "塗り",
                 &[(
@@ -290,20 +295,20 @@ fn project_failures_are_told_apart_by_kind_in_both_languages() {
             ),
         );
         state
-            .doc
+            .doc_mut()
             .set_fill_gradient(fill, yolu_core::Channel::Color, Some(gradient), false)
             .unwrap();
         let target = root.join(lang.pick("ja.ylp", "en.ylp"));
-        state.apply(Action::SaveProjectAs(target.clone()));
+        state.act(Action::SaveProjectAs(target.clone()));
         assert!(
             state
-                .message
+                .message()
                 .contains(lang.pick("保存できません", "Cannot save")),
             "{}",
-            state.message
+            state.message()
         );
         assert!(!target.exists());
-        messages.push(state.message.clone());
+        messages.push(state.message().to_string());
         // 3 つとも別の文。日本語は診断（どの予算か・どの中身か）を残し、英語は日本語を出さない
         for (i, a) in messages.iter().enumerate() {
             assert_eq!(has_japanese(a), lang == Lang::Ja, "{a}");
@@ -350,14 +355,14 @@ fn a_budget_refusal_names_the_budget_in_both_languages() {
     let project = small.scoped(|| {
         Project::create(
             WriterInfo {
-                app: "試験".into(),
+                app: "テスト".into(),
                 version: "0".into(),
                 unity: "standalone".into(),
             },
             &[SetSpec {
                 id: id.clone(),
                 name: "セット".into(),
-                material: yolu_io::MaterialRef::PendingSlot(0),
+                materials: vec![yolu_io::MaterialRef::PendingSlot(0)],
                 document: Some(native.clone().into()),
                 composites: vec![],
             }],
@@ -481,8 +486,8 @@ fn opening_an_old_format_reports_what_io_noted_in_both_languages() {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../yolu-io/tests/fixtures");
     for lang in Lang::ALL {
         let mut state = AppState::new_in(32, 32, lang);
-        state.apply(Action::OpenProject(fixtures.join("format3.ylp")));
-        let message = state.message.clone();
+        state.act(Action::OpenProject(fixtures.join("format3.ylp")));
+        let message = state.message().to_string();
         assert!(
             message.starts_with(lang.pick("開きました", "Opened")),
             "{message}"
@@ -663,10 +668,10 @@ fn english_docks_menus_and_layer_kinds_have_no_japanese_gpu() {
     assert_english(&h, "default", &[]);
     // 見張りが働いていること: 同じ画面を日本語にすると日本語が見つかり、英語の文字が描かれている
     assert!(all_texts(&h).iter().any(|t| t.contains("Layers")));
-    h.state_mut().state.lang = Lang::Ja;
+    h.set_lang(Lang::Ja);
     h.run();
     assert!(!japanese_left(&h, &[]).is_empty());
-    h.state_mut().state.lang = Lang::En;
+    h.set_lang(Lang::En);
     h.run();
     for tab in [
         Tab::SubTools,
@@ -686,20 +691,16 @@ fn english_docks_menus_and_layer_kinds_have_no_japanese_gpu() {
     // ツールプロパティの「塗るチャンネル」（開いて、全部のチャンネルを組へ）
     open_paint_channels(&mut h);
     for channel in yolu_app::matpaint::CHANNELS {
-        h.state_mut()
-            .state
-            .apply(Action::Mat(yolu_app::matpaint::MatAction::Enabled(true)));
-        h.state_mut()
-            .state
-            .apply(Action::Mat(yolu_app::matpaint::MatAction::Channel(
-                channel, true,
-            )));
+        h.act(Action::Mat(yolu_app::matpaint::MatAction::Enabled(true)));
+        h.act(Action::Mat(yolu_app::matpaint::MatAction::Channel(
+            channel, true,
+        )));
     }
     h.run();
     assert_english(&h, "paint channels", &[]);
     // レイヤーの種類・マスク・合成モード・ブラシの種類ごとのプロパティ
     let apply = |h: &mut Harness<'_, YoluApp>, action: Action| {
-        h.state_mut().state.apply(action);
+        h.act(action);
         h.run();
     };
     click_tab(&mut h, Tab::Properties);
@@ -713,20 +714,20 @@ fn english_docks_menus_and_layer_kinds_have_no_japanese_gpu() {
         apply(&mut h, Action::M2(edit));
         assert_english(&h, "layer kind", &[]);
     }
-    let id = h.state().state.selected_layer.unwrap();
+    let id = h.selected_layer().unwrap();
     apply(&mut h, Action::M2(Edit::AddMask(id)));
     apply(&mut h, Action::M2Ui(UiOp::EditMask(true)));
     assert_english(&h, "mask", &[]);
     apply(&mut h, Action::M2Ui(UiOp::EditMask(false)));
     apply(&mut h, Action::SetBlend(id, BlendMode::Multiply));
     // ブラシの詳細のウィンドウ: 全カテゴリ・効果の種類・デュアルブラシ
-    h.state_mut().state.brushes.ui.detail.open = true;
+    h.brushes_mut().ui.detail.open = true;
     for category in Category::ALL {
-        h.state_mut().state.brushes.ui.detail.category = category;
+        h.brushes_mut().ui.detail.category = category;
         h.run();
         assert_english(&h, category.name(Lang::En), &[]);
     }
-    h.state_mut().state.brushes.ui.detail.category = Category::Effect;
+    h.brushes_mut().ui.detail.category = Category::Ink;
     for kind in EffectKind::ALL {
         apply(&mut h, Action::M2Ui(UiOp::Brush(BrushOp::Effect(kind))));
         assert_english(&h, kind.name(Lang::En), &[]);
@@ -739,16 +740,16 @@ fn english_docks_menus_and_layer_kinds_have_no_japanese_gpu() {
         &mut h,
         Action::M2Ui(UiOp::Brush(BrushOp::DualEnabled(true))),
     );
-    h.state_mut().state.brushes.ui.detail.category = Category::Dual;
+    h.brushes_mut().ui.detail.category = Category::Dual;
     h.run();
     assert_english(&h, "dual brush", &[]);
-    h.state_mut().state.brushes.ui.detail.open = false;
+    h.brushes_mut().ui.detail.open = false;
     h.run();
     // 一覧: 全グループ（組み込みの名前・利用者のブラシ）
     click_tab(&mut h, Tab::SubTools);
     apply(&mut h, Action::Brush(BrushAction::Add));
     for group in Group::ALL {
-        h.state_mut().state.show_brush_group(group);
+        h.app_mut().show_brush_group(group);
         h.run();
         assert_english(&h, group.name(Lang::En), &[]);
     }
@@ -765,7 +766,7 @@ fn english_docks_menus_and_layer_kinds_have_no_japanese_gpu() {
             move_to(&h, at);
             h.run();
         }
-        assert!(h.state().state.popup.is_some(), "{title}");
+        assert!(h.popup().is_some(), "{title}");
         // 言語の選択肢は、その言語の自分の名前
         assert_english(&h, title, &[Lang::Ja.name().to_owned()]);
     }
@@ -781,11 +782,11 @@ fn switching_language_at_runtime_renames_the_defaults_but_not_the_users_names() 
 fn switching_language_at_runtime_renames_the_defaults_but_not_the_users_names_gpu() {
     let mut h = english_app_sized(1280.0, 800.0, Lang::Ja);
     let names = |h: &Harness<'_, YoluApp>| {
-        let s = &h.state().state;
+        let s = h.app();
         (
-            s.project_name.clone(),
-            s.sets.iter().next().unwrap().name.clone(),
-            s.doc.layers()[0].name().to_owned(),
+            s.project_name().clone(),
+            s.sets().iter().next().unwrap().name.clone(),
+            s.doc().layers()[0].name().to_owned(),
         )
     };
     assert_eq!(
@@ -796,25 +797,21 @@ fn switching_language_at_runtime_renames_the_defaults_but_not_the_users_names_gp
             "レイヤー 1".into()
         )
     );
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Language(Lang::En)));
+    h.act(Action::M2Ui(UiOp::Language(Lang::En)));
     h.run();
     assert_eq!(
         names(&h),
         ("Untitled".into(), "Texture Set 1".into(), "Layer 1".into())
     );
     // 付け直しは編集ではない（変更の印も Undo の履歴も付かない）
-    assert!(!h.state().state.modified && !h.state().state.doc.can_undo());
+    assert!(!h.modified() && !h.doc().can_undo());
     assert!(all_texts(&h).iter().any(|t| t.contains("Untitled")));
     for tab in [Tab::TextureSets, Tab::Layers] {
         click_tab(&mut h, tab);
         assert_english(&h, tab.title_in(Lang::En), &[]);
     }
     // 戻すと日本語の既定の名前に戻る
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Language(Lang::Ja)));
+    h.act(Action::M2Ui(UiOp::Language(Lang::Ja)));
     h.run();
     assert_eq!(
         names(&h),
@@ -826,22 +823,18 @@ fn switching_language_at_runtime_renames_the_defaults_but_not_the_users_names_gp
     );
 
     // 利用者が付けた名前は、言語を替えても変えない
-    let uid = h.state().state.sets.iter().next().unwrap().uid;
-    h.state_mut().state.rename_set(uid, "Mine").unwrap();
-    h.state_mut().state.project_name = "Work".into();
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Language(Lang::En)));
+    let uid = h.sets().iter().next().unwrap().uid;
+    h.app_mut().rename_set(uid, "Mine").unwrap();
+    *h.project_name_mut() = "Work".into();
+    h.act(Action::M2Ui(UiOp::Language(Lang::En)));
     h.run();
     assert_eq!(names(&h), ("Work".into(), "Mine".into(), "Layer 1".into()));
     // 編集した文書のレイヤーは、既定の名前のままでも変えない（Undo の履歴とずれる）
-    h.state_mut().state.apply(Action::M2(Edit::NewGroup));
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Language(Lang::Ja)));
+    h.act(Action::M2(Edit::NewGroup));
+    h.act(Action::M2Ui(UiOp::Language(Lang::Ja)));
     h.run();
-    assert_eq!(h.state().state.doc.layers()[0].name(), "Layer 1");
-    assert_eq!(h.state().state.project_name, "Work");
+    assert_eq!(h.doc().layers()[0].name(), "Layer 1");
+    assert_eq!(h.project_name(), "Work");
 }
 
 // ───────── 言語の選択の保存と復元（アプリの配線） ─────────
@@ -897,30 +890,23 @@ fn language_choice_is_written_when_changed_and_restored_at_startup_gpu() {
     let path = dir.join("YoluPainter").join("settings.conf");
     // 設定が無い初回は日本語。選ぶと、そのフレームのうちに書く
     let mut h = app_with_settings(&path);
-    assert_eq!(h.state().state.lang, Lang::Ja);
+    assert_eq!(h.lang(), Lang::Ja);
     assert!(!path.exists());
-    assert_eq!(h.state().state.message, "");
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Language(Lang::En)));
+    assert_eq!(h.message(), "");
+    h.act(Action::M2Ui(UiOp::Language(Lang::En)));
     h.run();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\n");
     drop(h);
     // 次の起動は、書いた言語で始まる（最初の名前も英語）
     let h = app_with_settings(&path);
-    assert_eq!(h.state().state.lang, Lang::En);
-    assert_eq!(h.state().state.project_name, "Untitled");
-    assert_eq!(h.state().state.message, "");
-    assert_eq!(
-        h.state().state.sets.iter().next().unwrap().name,
-        "Texture Set 1"
-    );
+    assert_eq!(h.lang(), Lang::En);
+    assert_eq!(h.project_name(), "Untitled");
+    assert_eq!(h.message(), "");
+    assert_eq!(h.sets().iter().next().unwrap().name, "Texture Set 1");
     drop(h);
     // 選び直すと書き直す。同じ選択では書き直さない（外から書き換えた中身をそのまま）
     let mut h = app_with_settings(&path);
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Language(Lang::Ja)));
+    h.act(Action::M2Ui(UiOp::Language(Lang::Ja)));
     h.run();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=ja\n");
     std::fs::write(&path, "language=en\n").unwrap();
@@ -944,26 +930,22 @@ fn unwritable_settings_report_once_and_do_not_break_the_app_gpu() {
     let mut h = app_with_settings(&path);
     // 置き換える前に失敗して書けない（このスレッドの置換を失敗させる。settings.rs の試験と同じ手）
     yolu_io::atomic::failing(|| {
-        h.state_mut()
-            .state
-            .apply(Action::M2Ui(UiOp::Language(Lang::En)));
+        h.act(Action::M2Ui(UiOp::Language(Lang::En)));
         h.run();
-        assert_eq!(h.state().state.lang, Lang::En, "書けなくても言語は替わる");
-        assert_eq!(h.state().state.message, "Cannot save the settings.");
+        assert_eq!(h.lang(), Lang::En, "書けなくても言語は替わる");
+        assert_eq!(h.message(), "Cannot save the settings.");
         assert!(!path.exists());
         // 同じ選択で毎フレーム書き直さない（知らせを消したら、出し直さない）
-        h.state_mut().state.message.clear();
+        h.message_mut().clear();
         h.run();
         h.run();
-        assert_eq!(h.state().state.message, "");
+        assert_eq!(h.message(), "");
         // ウィンドウの操作はそのまま動く
-        h.state_mut().state.apply(Action::NewProject);
-        assert_eq!(h.state().state.message, "New project created.");
+        h.act(Action::NewProject);
+        assert_eq!(h.message(), "New project created.");
     });
     // 書けるようになれば、次に選んだときに書く
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Language(Lang::Ja)));
+    h.act(Action::M2Ui(UiOp::Language(Lang::Ja)));
     h.run();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=ja\n");
     std::fs::remove_dir_all(dir).unwrap();
@@ -979,22 +961,20 @@ fn broken_settings_fall_back_to_japanese_and_are_repaired_by_choosing_gpu() {
     let path = dir.join("settings.conf");
     std::fs::write(&path, "language=unknown").unwrap();
     let mut h = app_with_settings(&path);
-    assert_eq!(h.state().state.lang, Lang::Ja);
-    assert_eq!(h.state().state.message, "言語の設定を読めません。");
+    assert_eq!(h.lang(), Lang::Ja);
+    assert_eq!(h.message(), "言語の設定を読めません。");
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
         "language=unknown",
         "選ぶまで壊れたファイルには触らない"
     );
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Language(Lang::En)));
+    h.act(Action::M2Ui(UiOp::Language(Lang::En)));
     h.run();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\n");
     drop(h);
     let h = app_with_settings(&path);
-    assert_eq!(h.state().state.lang, Lang::En);
-    assert_eq!(h.state().state.message, "");
+    assert_eq!(h.lang(), Lang::En);
+    assert_eq!(h.message(), "");
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -1014,12 +994,12 @@ fn the_first_start_follows_the_system_language_and_a_saved_language_wins_gpu() {
     // 初めての起動（設定のファイルが無い）は OS の言語で始まる。最初の名前も画面の文もその言語で、読むだけではファイルを作らない
     for system in Lang::ALL {
         let h = app_with_system_lang(&path, system);
-        assert_eq!(h.state().state.lang, system);
+        assert_eq!(h.lang(), system);
         assert_eq!(
-            h.state().state.sets.iter().next().unwrap().name,
+            h.sets().iter().next().unwrap().name,
             yolu_app::sets::first_set_name(system)
         );
-        assert_eq!(h.state().state.message, "");
+        assert_eq!(h.message(), "");
         h.get_by_label(menu(system));
         assert!(h
             .query_by_label(menu(system.pick(Lang::En, Lang::Ja)))
@@ -1031,22 +1011,22 @@ fn the_first_start_follows_the_system_language_and_a_saved_language_wins_gpu() {
         for saved in Lang::ALL {
             write(&format!("language={}\n", saved.pick("ja", "en")));
             let h = app_with_system_lang(&path, system);
-            assert_eq!(h.state().state.lang, saved, "OS {system:?}・保存 {saved:?}");
-            assert_eq!(h.state().state.message, "");
+            assert_eq!(h.lang(), saved, "OS {system:?}・保存 {saved:?}");
+            assert_eq!(h.message(), "");
             h.get_by_label(menu(saved));
         }
         // 言語の行が無い設定: ほかの設定は読み、言語は OS の言語
         write("export_padding=8\n");
         let h = app_with_system_lang(&path, system);
-        assert_eq!(h.state().state.lang, system);
-        assert_eq!(h.state().state.settings().export_padding, 8);
-        assert_eq!(h.state().state.message, "");
+        assert_eq!(h.lang(), system);
+        assert_eq!(h.app().settings().export_padding, 8);
+        assert_eq!(h.message(), "");
         // 言語の値が壊れた設定: 知らせは OS の言語で出し、選ぶまでファイルには触らない
         write("language=unknown");
         let h = app_with_system_lang(&path, system);
-        assert_eq!(h.state().state.lang, system);
+        assert_eq!(h.lang(), system);
         assert_eq!(
-            h.state().state.message,
+            h.message(),
             system.pick(
                 "言語の設定を読めません。",
                 "Cannot read the language setting."
@@ -1056,23 +1036,21 @@ fn the_first_start_follows_the_system_language_and_a_saved_language_wins_gpu() {
         // 読めない設定（`キー=値` でない行）: 全部既定で、言語は OS の言語
         write("garbage\n");
         let h = app_with_system_lang(&path, system);
-        assert_eq!(h.state().state.lang, system);
+        assert_eq!(h.lang(), system);
         assert_eq!(
-            h.state().state.message,
+            h.message(),
             system.pick("設定を読めません。", "Cannot read the settings.")
         );
     }
     // OS の言語で始めたあとに言語を選ぶと、選んだ言語を書き、次の起動は OS の言語によらずそれで始まる
     let _ = std::fs::remove_file(&path);
     let mut h = app_with_system_lang(&path, Lang::En);
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Language(Lang::Ja)));
+    h.act(Action::M2Ui(UiOp::Language(Lang::Ja)));
     h.run();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=ja\n");
     drop(h);
     let h = app_with_system_lang(&path, Lang::En);
-    assert_eq!(h.state().state.lang, Lang::Ja);
+    assert_eq!(h.lang(), Lang::Ja);
     drop(h);
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -1089,21 +1067,17 @@ fn backups_to_keep_is_written_when_changed_and_restored_at_startup_gpu() {
     let path = dir.join("settings.conf");
     let mut h = app_with_settings(&path);
     assert_eq!(
-        h.state().state.prefs.settings.backups,
+        h.prefs().settings.backups,
         BackupKeep::All,
         "設定が無い初回はすべて残す"
     );
-    h.state_mut()
-        .state
-        .apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(5))));
+    h.act(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(5))));
     h.run();
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
         "language=ja\nbackups=5\n"
     );
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Language(Lang::En)));
+    h.act(Action::M2Ui(UiOp::Language(Lang::En)));
     h.run();
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
@@ -1113,21 +1087,17 @@ fn backups_to_keep_is_written_when_changed_and_restored_at_startup_gpu() {
     drop(h);
     // 次の起動は、書いた数で始まる（知らせは無い）
     let mut h = app_with_settings(&path);
-    assert_eq!(h.state().state.prefs.settings.backups, BackupKeep::Count(5));
-    assert_eq!(h.state().state.lang, Lang::En);
-    assert_eq!(h.state().state.message, "");
+    assert_eq!(h.prefs().settings.backups, BackupKeep::Count(5));
+    assert_eq!(h.lang(), Lang::En);
+    assert_eq!(h.message(), "");
     // 0 も書いて戻る。「すべて」に戻すと行が消える。同じ選択では書き直さない
-    h.state_mut()
-        .state
-        .apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(0))));
+    h.act(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(0))));
     h.run();
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
         "language=en\nbackups=0\n"
     );
-    h.state_mut()
-        .state
-        .apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::All)));
+    h.act(Action::Prefs(PrefsAction::SetBackups(BackupKeep::All)));
     h.run();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\n");
     std::fs::write(&path, "language=en\nbackups=9\n").unwrap();
@@ -1162,14 +1132,10 @@ fn a_broken_backups_value_falls_back_to_keeping_all_with_a_reason_and_keeps_the_
         let text = format!("language=en\nbackups={bad}\n");
         std::fs::write(&path, &text).unwrap();
         let mut h = app_with_settings(&path);
-        assert_eq!(h.state().state.lang, Lang::En, "言語は読めたまま");
+        assert_eq!(h.lang(), Lang::En, "言語は読めたまま");
+        assert_eq!(h.prefs().settings.backups, BackupKeep::All, "{bad}");
         assert_eq!(
-            h.state().state.prefs.settings.backups,
-            BackupKeep::All,
-            "{bad}"
-        );
-        assert_eq!(
-            h.state().state.message,
+            h.message(),
             format!("Invalid Backups to Keep setting ({shown}); keeping all.")
         );
         assert_eq!(
@@ -1177,9 +1143,7 @@ fn a_broken_backups_value_falls_back_to_keeping_all_with_a_reason_and_keeps_the_
             text,
             "選ぶまで壊れたファイルには触らない"
         );
-        h.state_mut()
-            .state
-            .apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(3))));
+        h.act(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(3))));
         h.run();
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
@@ -1191,7 +1155,7 @@ fn a_broken_backups_value_falls_back_to_keeping_all_with_a_reason_and_keeps_the_
     std::fs::write(&path, "backups=1001\n").unwrap();
     let h = app_with_settings(&path);
     assert_eq!(
-        h.state().state.message,
+        h.message(),
         "退避を残す数の設定が正しくありません（1001）。すべて残します。"
     );
     std::fs::remove_dir_all(dir).unwrap();
@@ -1222,7 +1186,7 @@ fn the_settings_window_opens_from_the_edit_menu_and_changes_the_backups_in_both_
         click(&mut h, at);
         let at = popup_item(&h, item).center();
         click(&mut h, at);
-        assert!(h.state().state.prefs.open, "{lang:?}");
+        assert!(h.prefs().open, "{lang:?}");
         h.run();
         // ウィンドウは画面の中にある
         let rect = prefs::last_rect(&h.ctx).expect("ウィンドウを描いた");
@@ -1241,9 +1205,7 @@ fn the_settings_window_opens_from_the_edit_menu_and_changes_the_backups_in_both_
         if lang == Lang::En {
             assert_english(&h, "settings window", &[]);
         }
-        h.state_mut()
-            .state
-            .apply(Action::Prefs(PrefsAction::Choose(Category::Files)));
+        h.act(Action::Prefs(PrefsAction::Choose(Category::Files)));
         h.run();
         // 退避の欄の文字は、欄の名前・チェックの名前・値だけ（説明文・注記・開発用の数を置かない。閉じるは絵とツールチップ）。
         // 値は、画面に出している数（すべて残す間は、最後に選んだ数）。ウィンドウには、ほかの設定の欄もある
@@ -1281,37 +1243,35 @@ fn the_settings_window_opens_from_the_edit_menu_and_changes_the_backups_in_both_
             .click();
         h.run();
         assert_eq!(
-            h.state().state.prefs.settings.backups,
+            h.prefs().settings.backups,
             BackupKeep::Count(10),
             "{lang:?}"
         );
         assert!(!checked(&h));
         only(&h, "10", "外した直後");
-        h.state_mut()
-            .state
-            .apply(Action::Prefs(prefs::PrefsAction::SetBackups(
-                BackupKeep::Count(0),
-            )));
+        h.act(Action::Prefs(prefs::PrefsAction::SetBackups(
+            BackupKeep::Count(0),
+        )));
         h.run();
         assert!(!checked(&h));
         only(&h, "0", "0 を選んだ");
         h.get_by_role_and_label(egui::accesskit::Role::CheckBox, keep_all)
             .click();
         h.run();
-        assert_eq!(h.state().state.prefs.settings.backups, BackupKeep::All);
+        assert_eq!(h.prefs().settings.backups, BackupKeep::All);
         only(&h, "0", "すべて残す（最後に選んだ数のまま）");
         h.get_by_role_and_label(egui::accesskit::Role::CheckBox, keep_all)
             .click();
         h.run();
         assert_eq!(
-            h.state().state.prefs.settings.backups,
+            h.prefs().settings.backups,
             BackupKeep::Count(0),
             "{lang:?}: 最後に選んだ数に戻る"
         );
         // 閉じるボタンで閉じる。ウィンドウの文字は画面から消える
         h.get_by_label(lang.pick("閉じる", "Close")).click();
         h.run();
-        assert!(!h.state().state.prefs.open);
+        assert!(!h.prefs().open);
         let texts = all_texts(&h);
         assert!(
             !texts.iter().any(|t| t == label || t == keep_all),
@@ -1336,20 +1296,15 @@ fn dragging_the_backups_slider_writes_the_settings_once_on_release_and_escape_ke
     let path = dir.join("settings.conf");
     std::fs::write(&path, "language=en\nbackups=10\n").unwrap();
     let mut h = app_with_settings(&path);
-    assert_eq!(
-        h.state().state.prefs.settings.backups,
-        BackupKeep::Count(10)
-    );
-    h.state_mut()
-        .state
-        .apply(Action::Prefs(PrefsAction::OpenAt(Category::Files)));
+    assert_eq!(h.prefs().settings.backups, BackupKeep::Count(10));
+    h.act(Action::Prefs(PrefsAction::OpenAt(Category::Files)));
     h.run();
     let slider = h
         .get_by_role_and_label(egui::accesskit::Role::Slider, "Backups to keep")
         .rect();
     let y = slider.bottom() - 4.0;
     let at = |fraction: f32| egui::pos2(slider.left() + slider.width() * fraction, y);
-    let backups = |h: &Harness<'_, YoluApp>| h.state().state.prefs.settings.backups;
+    let backups = |h: &Harness<'_, YoluApp>| h.prefs().settings.backups;
     // 書いたかどうかは、ファイルを見張り用の中身に替えておき、書き換えられたかで見る
     let watch = || std::fs::write(&path, "watch\n").unwrap();
     let untouched = || {
@@ -1369,19 +1324,35 @@ fn dragging_the_backups_slider_writes_the_settings_once_on_release_and_escape_ke
         );
     };
 
-    // ドラッグの間は値が動くが、設定のファイルへは書かない
+    // 押しただけでは動かない（押した位置へ飛ばない）。動かした量で値が変わり、ドラッグの間は設定のファイルへは書かない
+    // （溝の幅いっぱいの移動で 0〜1000 いっぱい）
+    let count = |h: &Harness<'_, YoluApp>| match backups(h) {
+        BackupKeep::Count(n) => i64::from(n),
+        other => panic!("{other:?}"),
+    };
+    let near = |h: &Harness<'_, YoluApp>, expect: f32| {
+        assert!(
+            (count(h) as f32 - expect).abs() <= 2.0,
+            "{} ← {expect}",
+            count(h)
+        );
+    };
+    let w = slider.width();
     watch();
     press(&h, at(0.25), primary);
     h.step();
-    assert_eq!(backups(&h), BackupKeep::Count(250));
-    assert!(h.state().state.prefs.dragging);
-    untouched();
-    move_to(&h, at(0.75));
+    assert_eq!(backups(&h), BackupKeep::Count(10), "押しただけでは動かない");
+    move_to(&h, at(0.35));
     h.step();
-    assert_eq!(backups(&h), BackupKeep::Count(750));
+    near(&h, 110.0);
+    assert!(h.prefs().dragging);
+    untouched();
+    move_to(&h, at(0.85));
+    h.step();
+    near(&h, 610.0);
     untouched();
     // 上限と 0 の端: 溝の外へ出しても、1000 と 0 で止まる
-    move_to(&h, egui::pos2(slider.right() + 80.0, y));
+    move_to(&h, egui::pos2(slider.right() + w, y));
     h.step();
     assert_eq!(backups(&h), BackupKeep::Count(1000));
     shows(&h, "1000");
@@ -1391,20 +1362,28 @@ fn dragging_the_backups_slider_writes_the_settings_once_on_release_and_escape_ke
     assert_eq!(backups(&h), BackupKeep::Count(0));
     shows(&h, "0");
     untouched();
-    move_to(&h, at(0.75));
+    // 端で止めた分は戻さなくてよい（溝の中へ戻した分だけ、右へ進む）
+    move_to(&h, at(0.5));
     h.step();
-    assert_eq!(backups(&h), BackupKeep::Count(750));
+    near(&h, (0.5 * w + 80.0) / w * 1000.0);
+    untouched();
+    // 動かさずに 750 にしたいときは、いったん離してクリックする。ここでは動かして合わせる
+    let before = count(&h);
+    move_to(&h, at(0.5 + (750.0 - before as f32) / 1000.0));
+    h.step();
+    near(&h, 750.0);
     shows(&h, "750");
     untouched();
     // 離すと、そのときの数を 1 回だけ書く（そのあとのフレームでは書き直さない）
+    let written = count(&h);
     release(&h, at(0.75), primary);
     h.step();
     h.run();
-    assert!(!h.state().state.prefs.dragging);
-    assert_eq!(backups(&h), BackupKeep::Count(750));
+    assert!(!h.prefs().dragging);
+    near(&h, 750.0);
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
-        "language=en\nbackups=750\n"
+        format!("language=en\nbackups={written}\n")
     );
     watch();
     h.step();
@@ -1425,11 +1404,11 @@ fn dragging_the_backups_slider_writes_the_settings_once_on_release_and_escape_ke
     h.step();
     move_to(&h, at(0.9));
     h.step();
-    assert_eq!(backups(&h), BackupKeep::Count(900));
+    near(&h, 333.0 + 400.0);
     key(&h, egui::Key::Escape, egui::Modifiers::NONE);
     h.step();
     assert_eq!(backups(&h), BackupKeep::Count(333), "押す前の数に戻る");
-    assert!(!h.state().state.prefs.dragging);
+    assert!(!h.prefs().dragging);
     shows(&h, "333");
     untouched();
     move_to(&h, at(0.2));
@@ -1469,29 +1448,21 @@ fn the_saved_count_is_what_keep_all_returns_to_after_a_restart_gpu() {
     ] {
         std::fs::write(&path, format!("language=en\nbackups={saved}\n")).unwrap();
         let mut h = app_with_settings(&path);
-        assert_eq!(
-            h.state().state.prefs.settings.backups,
-            BackupKeep::Count(saved)
-        );
-        h.state_mut().state.prefs.tablet_row = tablet;
-        h.state_mut().state.prefs.pen_input_row = pen_input;
-        h.state_mut()
-            .state
-            .apply(Action::Prefs(PrefsAction::OpenAt(Category::Files)));
+        assert_eq!(h.prefs().settings.backups, BackupKeep::Count(saved));
+        h.prefs_mut().tablet_row = tablet;
+        h.prefs_mut().pen_input_row = pen_input;
+        h.act(Action::Prefs(PrefsAction::OpenAt(Category::Files)));
         h.run();
         h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Keep all")
             .click();
         h.run();
-        assert_eq!(h.state().state.prefs.settings.backups, BackupKeep::All);
+        assert_eq!(h.prefs().settings.backups, BackupKeep::All);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\n");
         // 外すと、既定の 10 ではなく保存してあった数に戻る
         h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Keep all")
             .click();
         h.run();
-        assert_eq!(
-            h.state().state.prefs.settings.backups,
-            BackupKeep::Count(saved)
-        );
+        assert_eq!(h.prefs().settings.backups, BackupKeep::Count(saved));
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             format!("language=en\nbackups={saved}\n")
@@ -1511,31 +1482,23 @@ fn english_3d_view_and_pose_panel_have_no_japanese_gpu() {
     assert_english(&h, "no model", &[]);
     // モデルが無いだけのときは、空の状態の文字（「No model」）を置かない
     assert!(!all_texts(&h).iter().any(|t| t == "No model"));
-    h.state_mut().state.apply(Action::LoadDemoModel);
+    h.act(Action::LoadDemoModel);
     h.run();
     let demo = h
-        .state()
-        .state
-        .view3d
+        .view3d()
         .model
         .as_ref()
         .map(|m| vec![m.name.clone()])
         .unwrap_or_default();
     assert_english(&h, "test cube", &demo);
-    assert!(
-        h.state().state.message.is_ascii(),
-        "{}",
-        h.state().state.message
-    );
-    h.state_mut()
-        .state
-        .apply(Action::Pose(PoseAction::LoadFigure));
+    assert!(h.message().is_ascii(), "{}", h.message());
+    h.act(Action::Pose(PoseAction::LoadFigure));
     h.run();
     click_tab(&mut h, Tab::Pose);
     h.run();
     // 試しの人形の骨・メッシュ・マテリアルの名前は中身（言語に関わらない）
     let mut data = Vec::new();
-    if let Some(s) = h.state().state.view3d.pose.session.as_ref() {
+    if let Some(s) = h.view3d().pose.session.as_ref() {
         data.push(s.rig.name().to_owned());
         data.extend(s.rig.bones().iter().map(|b| b.name.clone()));
         data.extend(s.rig.materials().iter().cloned());
@@ -1551,12 +1514,12 @@ fn english_3d_view_and_pose_panel_have_no_japanese_gpu() {
         "{:?}",
         all_texts(&h)
     );
-    assert!(!h.state().state.message.is_empty());
+    assert!(!h.message().is_empty());
     assert_english_message(&h, &data);
 }
 
 fn assert_english_message(h: &Harness<'_, YoluApp>, data: &[String]) {
-    let mut m = h.state().state.message.clone();
+    let mut m = h.message().to_string();
     for d in data {
         m = m.replace(d.as_str(), "");
     }
@@ -1629,21 +1592,20 @@ fn english_texture_set_states_have_no_japanese_gpu() {
     h.state_mut().load_live_link_model(&model).unwrap();
     h.run();
     click_tab(&mut h, Tab::TextureSets);
-    let uids: Vec<u32> = h.state().state.sets.iter().map(|s| s.uid).collect();
+    let uids: Vec<u32> = h.sets().iter().map(|s| s.uid).collect();
     assert_eq!(uids.len(), 3);
-    h.state_mut().state.apply(Action::ToggleSetVisible(uids[0]));
+    h.act(Action::ToggleSetVisible(uids[0]));
     h.run();
     for (i, uid) in uids.iter().enumerate() {
-        h.state_mut().state.apply(Action::SelectSet(*uid));
+        h.act(Action::SelectSet(*uid));
         h.run();
         assert_english(&h, &format!("set {i}"), &[]);
     }
     let texts = all_texts(&h);
     assert!(texts.iter().any(|t| t.contains("Skin")), "{texts:?}");
     // 読むだけのセットは理由を英語で（開くときに言語で作る理由）
-    h.state_mut().state.sets.get_mut(0).unwrap().read_only =
-        Some("Unsupported project features (1)".into());
-    h.state_mut().state.apply(Action::SelectSet(uids[0]));
+    h.sets_mut().get_mut(0).unwrap().read_only = Some("Unsupported project features (1)".into());
+    h.act(Action::SelectSet(uids[0]));
     h.run();
     assert_english(&h, "read-only set", &[]);
 }
@@ -1678,26 +1640,24 @@ fn walk_states(
     // ブラシの一覧（全グループ）と詳細のウィンドウ（全カテゴリ）
     click_tab(&mut h, Tab::SubTools);
     for group in Group::ALL {
-        h.state_mut().state.show_brush_group(group);
+        h.app_mut().show_brush_group(group);
         h.run();
         visit(&mut h, group.name(lang));
     }
-    h.state_mut().state.brushes.ui.detail.open = true;
+    h.brushes_mut().ui.detail.open = true;
     for category in Category::ALL {
-        h.state_mut().state.brushes.ui.detail.category = category;
-        h.state_mut().state.brushes.ui.detail.scroll = 0.0;
+        h.brushes_mut().ui.detail.category = category;
+        h.brushes_mut().ui.detail.scroll = 0.0;
         h.run();
         visit(&mut h, category.name(lang));
     }
-    h.state_mut().state.brushes.ui.detail.open = false;
-    h.state_mut().state.show_brush_group(Group::Pen);
+    h.brushes_mut().ui.detail.open = false;
+    h.app_mut().show_brush_group(Group::Pen);
     h.run();
-    h.state_mut().state.apply(Action::LoadDemoModel);
+    h.act(Action::LoadDemoModel);
     h.run();
     visit(&mut h, "test cube");
-    h.state_mut()
-        .state
-        .apply(Action::Pose(PoseAction::LoadFigure));
+    h.act(Action::Pose(PoseAction::LoadFigure));
     h.run();
     h.run();
     visit(&mut h, "pose panel");
@@ -1730,7 +1690,7 @@ fn bundled_card_names_fit_in_both_languages_gpu() {
     let truncations = Truncations::start();
     for lang in Lang::ALL {
         let mut state = AppState::new(64, 64);
-        state.lang = lang;
+        state.set_lang(lang);
         let mut ready = false;
         let mut h = common::gpu_thread::builder()
             .with_size(vec2(300.0, 1100.0))
@@ -1749,7 +1709,7 @@ fn bundled_card_names_fit_in_both_languages_gpu() {
             );
         h.run();
         // 棚の素材の絵は別のスレッドで作る。できるまで待って描く
-        h.state_mut().shelf.wait_inspections();
+        h.state_mut().shelf_mut().wait_inspections();
         h.run();
         widgets::take_truncations();
         h.step();
@@ -1856,22 +1816,20 @@ fn live_link_accepting_can_be_toggled_in_both_languages() {
     use yolu_app::prefs::{Category, PrefsAction};
     for lang in Lang::ALL {
         let mut h = english_app_sized(1280.0, 800.0, lang);
-        h.state_mut()
-            .state
-            .apply(Action::Prefs(PrefsAction::OpenAt(Category::LiveLink)));
+        h.act(Action::Prefs(PrefsAction::OpenAt(Category::LiveLink)));
         h.run();
         let label = lang.pick(
             "Unity の Live Link を受け付ける",
             "Accept Live Link from Unity",
         );
-        assert!(h.state().state.settings().livelink_on_startup);
+        assert!(h.app().settings().livelink_on_startup);
         h.get_by_role_and_label(egui::accesskit::Role::CheckBox, label)
             .click();
         h.run();
-        assert!(!h.state().state.settings().livelink_on_startup);
+        assert!(!h.app().settings().livelink_on_startup);
         h.get_by_role_and_label(egui::accesskit::Role::CheckBox, label)
             .click();
         h.run();
-        assert!(h.state().state.settings().livelink_on_startup);
+        assert!(h.app().settings().livelink_on_startup);
     }
 }

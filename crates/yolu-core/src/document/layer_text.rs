@@ -5,6 +5,7 @@
 //! 消えるので断る（`refuse_path_layer`）。値を外す（[`Document::rasterize`]）と今の画素だけが残り、普通に塗れる。パスと文字の値は
 //! 同じレイヤーに両方は持てない。
 
+use crate::Reason;
 use std::collections::BTreeSet;
 
 use super::material::MaterialCommand;
@@ -138,7 +139,7 @@ impl Document {
         let old = self.layers[index]
             .text
             .clone()
-            .ok_or(CoreError::Unsupported("テキストレイヤーではない"))?;
+            .ok_or(CoreError::Unsupported(Reason::NotTextLayer))?;
         if old == text {
             return Ok(());
         }
@@ -234,7 +235,7 @@ impl Document {
                 let old = m
                     .old
                     .clone()
-                    .ok_or(CoreError::Unsupported("テキストレイヤーではない"))?;
+                    .ok_or(CoreError::Unsupported(Reason::NotTextLayer))?;
                 let cost = changed_cost(&old, &text, &list);
                 Some((list, cost))
             }
@@ -245,7 +246,7 @@ impl Document {
             }) if *i == index => None,
             _ => {
                 self.end_coalescing();
-                return Err(CoreError::Unsupported("まとめるテキストの段が無い"));
+                return Err(CoreError::Unsupported(Reason::NoTextStepToMergeInto));
             }
         };
         let delta = MaterialCommand {
@@ -274,7 +275,7 @@ impl Document {
         let top = self.undo.last_mut().expect("確かめた");
         self.history_bytes = self.history_bytes - top.cost + cost;
         top.cost = cost;
-        self.revision += 1;
+        self.merge_bump();
         Ok(())
     }
 
@@ -308,12 +309,10 @@ impl Document {
         let index = self.index_of(layer)?;
         let l = &self.layers[index];
         if l.kind != LayerKind::Raster || l.has_paths() || l.text.is_some() {
-            return Err(CoreError::Unsupported(
-                "テキストの値を付けられるのはパスとテキストの無いラスターのレイヤーだけ",
-            ));
+            return Err(CoreError::Unsupported(Reason::TextNeedsPlainRasterLayer));
         }
         if l.surface(Channel::Color).is_none() || !l.is_channel_enabled(Channel::Color) {
-            return Err(CoreError::Unsupported("テキストレイヤーの Color が無い"));
+            return Err(CoreError::Unsupported(Reason::TextLayerHasNoColor));
         }
         self.layers[index].text = Some(text);
         self.external_mutation();

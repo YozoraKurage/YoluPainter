@@ -18,7 +18,7 @@ use yolu_io::smart::SmartFile;
 use super::image as png;
 use super::{PendingWrite, REFUSAL_PNG, REFUSAL_PNG_SIZE, REFUSAL_UNSUPPORTED};
 use crate::engine::{LayerId, LayerKind};
-use crate::lang::Lang;
+use crate::lang::{Count, Lang};
 use crate::notice::{Kind as NoticeKind, Source};
 use crate::shelf::{
     image_as_material, is_builtin, smart_material_from, stage_library_file, stage_library_image,
@@ -97,25 +97,19 @@ fn put_note(lang: Lang, rel: &str, existed: bool) -> String {
 fn count_note(lang: Lang, added: usize, existing: usize) -> String {
     let mut parts = Vec::new();
     if added > 0 {
-        parts.push(lang.pick(
-            format!("{added} 件をライブラリに入れました。"),
-            format!("Added {added} to the library."),
-        ));
+        parts.push(lang.f("library-added-to-the-library", &[("added", &added)]));
     }
     if existing > 0 {
-        parts.push(lang.pick(
-            format!("{existing} 件はすでにライブラリにありました。"),
-            format!(
-                "{existing} {} already in the library.",
-                if existing == 1 { "was" } else { "were" }
-            ),
+        parts.push(lang.f(
+            "library-were-already-in-the-library",
+            &[("existing", &Count(existing))],
         ));
     }
-    parts.join(lang.pick("", " "))
+    parts.join(lang.t("library-text"))
 }
 
 fn no_location(lang: Lang) -> &'static str {
-    lang.pick("ライブラリの場所がありません", "No library location")
+    lang.t("library-no-library-location")
 }
 
 fn kind_of_extension(path: &Path) -> Option<files::Kind> {
@@ -169,7 +163,7 @@ impl AppState {
         let cancel = Arc::new(AtomicBool::new(false));
         let flag = cancel.clone();
         let running = Running::start(&self.library.running);
-        let repaint = self.shelf.context.clone();
+        let repaint = self.shelf.waker.clone();
         let hold = self.library.hold.clone();
         std::thread::spawn(move || {
             while hold.load(Ordering::SeqCst) {
@@ -178,16 +172,13 @@ impl AppState {
             let done = job(&flag, lang);
             drop(running);
             let _ = tx.send(done);
-            if let Some(ctx) = repaint {
-                ctx.request_repaint();
+            if let Some(waker) = repaint {
+                waker.wake();
             }
         });
         self.info(
             Source::Library,
-            format!(
-                "{}: {name}",
-                lang.pick("ライブラリへ書き込み中", "Writing to the library")
-            ),
+            format!("{}: {name}", lang.t("library-writing-to-the-library")),
         );
         self.library.write = Some(PendingWrite {
             name,
@@ -253,10 +244,10 @@ impl AppState {
                         },
                     );
                 } else {
-                    let mut text = refused.join(lang.pick("", " "));
+                    let mut text = refused.join(lang.t("library-text"));
                     if new + old > 0 {
                         // 一部は入った: 気をつけること。全部断ったなら失敗
-                        text += lang.pick("", " ");
+                        text += lang.t("library-text");
                         text += &count_note(lang, new, old);
                         self.warn(Source::Library, text);
                     } else {
@@ -265,7 +256,7 @@ impl AppState {
                 }
             }
             None => {
-                let why = lang.pick("書き込みが途中で止まりました", "The write stopped midway");
+                let why = lang.t("library-the-write-stopped-midway");
                 self.cannot(NoticeKind::Error, Source::Library, attempt, None, why);
             }
         }
@@ -280,13 +271,7 @@ impl AppState {
             return;
         };
         if is_builtin(id) {
-            return self.refuse(
-                Source::Library,
-                lang.pick(
-                    "組み込みはライブラリへ入れられません。",
-                    "Built-in items cannot be added to the library.",
-                ),
-            );
+            return self.refuse(Source::Library, lang.t("library-built-in-items-cannot-be"));
         }
         let Some(kind) = ItemKind::of(&res.kind) else {
             return;
@@ -356,8 +341,8 @@ impl AppState {
     /// 「同じバイト列は書かない」には当たらない。正本への変換と書き込みは別のスレッドで、やめられる。文書とプロジェクトのアセットは変えない。
     pub(crate) fn library_save_material(&mut self, id: LayerId) {
         let lang = self.lang;
-        let Some(layer) = self.doc.layer(id) else {
-            let reason = lang.pick("レイヤーがありません", "Layer not found");
+        let Some(layer) = self.session.doc.layer(id) else {
+            let reason = lang.t("library-layer-not-found");
             return self.refuse_material(None, reason);
         };
         let name = layer.name().to_owned();
@@ -370,7 +355,7 @@ impl AppState {
         if let Some(reason) = self.library.busy_reason(lang) {
             return self.refuse_material(Some(&name), reason);
         }
-        let material = match self.doc.capture_material(id, &name) {
+        let material = match self.session.doc.capture_material(id, &name) {
             Ok(m) => m,
             Err(e) => {
                 return self.cannot(
@@ -614,12 +599,12 @@ impl AppState {
         };
         match made {
             Ok(material) => {
-                let steps = self.doc.undo_count();
+                let steps = self.session.doc.undo_count();
                 self.place_material(&name, material, target, false);
                 // 16 ビットの PNG は 8 ビットへ丸めて置く。置けたときだけ知らせる
                 if kind == files::Kind::Image
                     && png::rounds_to_8_bit(&bytes)
-                    && self.doc.undo_count() > steps
+                    && self.session.doc.undo_count() > steps
                 {
                     // 置いた知らせに、8 ビットへ丸めた但し書きを添える（気をつけること）
                     self.amend(
@@ -646,7 +631,7 @@ impl AppState {
     pub(crate) fn library_ask_remove(&mut self, rel: &str) {
         if self.library.entry(rel).is_some() {
             self.library.pending_remove = Some(rel.to_owned());
-            self.dialog_request = Some(DialogRequest::LibraryRemove);
+            self.outbox.dialog_request = Some(DialogRequest::LibraryRemove);
         }
     }
 
@@ -674,10 +659,7 @@ impl AppState {
                 }
                 self.info(
                     Source::Library,
-                    format!(
-                        "{}: {name}",
-                        lang.pick("ライブラリから消しました", "Removed from the library")
-                    ),
+                    format!("{}: {name}", lang.t("library-removed-from-the-library")),
                 );
             }
             Err(e) => self.cannot(
@@ -695,9 +677,9 @@ impl AppState {
 /// 入れると、今は置けない素材になる。画像の ID だけを持たせると、ほかのプロジェクトでは指す画像が無い）。
 pub(crate) fn material_refusal(lang: Lang, layer: &crate::engine::Layer) -> Option<&'static str> {
     if layer.kind() != LayerKind::Fill {
-        Some(lang.pick("塗りつぶしのレイヤーではありません", "Not a fill layer"))
+        Some(lang.t("library-not-a-fill-layer"))
     } else if layer.fill_images().next().is_some() {
-        Some(lang.pick("画像を使っています", "It uses images"))
+        Some(lang.t("library-it-uses-images"))
     } else {
         None
     }

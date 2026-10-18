@@ -15,7 +15,6 @@ use std::time::{Duration, Instant};
 
 use crate::lang::Lang;
 use crate::state::{Action, AppState};
-use crate::windows::CloseJob;
 
 /// 仕事の中から見る取り消しの旗。
 #[derive(Clone, Debug)]
@@ -210,6 +209,7 @@ pub const JOBS: &[JobSpec] = &[
     crate::view3d::pose::JOB,
     crate::uv_wireframe::overlap::JOB,
     crate::textlayer::JOB,
+    crate::dropin::JOB,
 ];
 
 /// 動いている間は描き直し続ける仕事が動いている。
@@ -229,7 +229,46 @@ pub fn cards(app: &AppState, lang: Lang) -> Vec<(&'static str, JobCard)> {
         .collect()
 }
 
-/// 閉じると取り消される、走っている仕事（表の順）。
+/// 閉じる前に知らせる仕事（走っていて、利用者が結果を待っている物）。閉じると取り消される。
+/// 保存は含まない（保存は閉じる流れが終わるまで待つ。`YoluApp::close_flow`）。画面に出ない裏の仕事（サムネイル・一覧の読み込み・
+/// 更新の確かめ）は、結果を待っていないので含まない。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloseJob {
+    Bake,
+    Export,
+    PsdImport,
+    PsdExport,
+    Distribute,
+    UpdateDownload,
+    BrushImport,
+    /// ライブラリのフォルダへの書き込み（ライブラリへ入れる・ファイルを足す）。
+    LibraryWrite,
+    /// レイヤーの素材（スマートマテリアル・マスク）の保存。
+    ShelfSave,
+    /// 個人のライブラリのファイルのプロジェクトへの取り込み。
+    ShelfImport,
+}
+
+impl CloseJob {
+    /// 確かめの文に出す名前（仕事の札・メニューの名前と同じ言い方）。
+    pub fn label(self, lang: Lang) -> &'static str {
+        match self {
+            CloseJob::Bake => lang.t("jobs-bake"),
+            CloseJob::Export => lang.t("jobs-export"),
+            CloseJob::PsdImport => lang.t("jobs-psd-import"),
+            CloseJob::PsdExport => lang.t("jobs-psd-export"),
+            CloseJob::Distribute => lang.t("jobs-save-for-distribution"),
+            CloseJob::UpdateDownload => lang.t("jobs-update-download"),
+            CloseJob::BrushImport => lang.t("jobs-brush-import"),
+            CloseJob::LibraryWrite => lang.t("jobs-writing-to-the-library"),
+            CloseJob::ShelfSave => lang.t("jobs-saving-a-material"),
+            CloseJob::ShelfImport => lang.t("jobs-importing-a-material"),
+        }
+    }
+}
+
+/// 閉じると取り消される、走っている仕事（仕事の表 `JOBS` の順）。保存は含まない。更新のために終わるとき（更新のダウンロードは
+/// 済んでいる）も、走っている物は挙げる（呼び手が、更新の流れでは聞かない）。
 pub fn close_jobs(app: &AppState) -> Vec<CloseJob> {
     JOBS.iter().filter_map(|j| j.close?(app)).collect()
 }
@@ -372,7 +411,7 @@ mod tests {
             || app.psd.is_busy()
             || app.distribute.is_busy()
             || app.np_is_busy()
-            || app.update.is_busy()
+            || app.services.update.is_busy()
             || app.brushes.import.is_busy()
             || app.is_saving()
             || app.brushes.csp.is_busy()
@@ -387,10 +426,10 @@ mod tests {
             || app.psd.import_check.is_some()
             || app.distribute.window_visible()
             || app.distribute.replace.is_some()
-            || app.update.window_open()
+            || app.services.update.window_open()
             || app
-                .recovery
-                .window
+                .ui
+                .recovery_window
                 .as_ref()
                 .is_some_and(|w| w.confirm.is_some())
             || app.np.window.is_some()
@@ -400,7 +439,7 @@ mod tests {
             || (app.quit && app.is_saving())
     }
 
-    /// 表に寄せる前の `windows::close_jobs`。
+    /// 表に寄せる前の `close_jobs`。
     fn before_close_jobs(app: &AppState) -> Vec<CloseJob> {
         let mut jobs = Vec::new();
         if app.bake.is_baking() {
@@ -419,7 +458,7 @@ mod tests {
         if app.distribute.is_busy() {
             jobs.push(CloseJob::Distribute);
         }
-        if app.update.progress().is_some() {
+        if app.services.update.progress().is_some() {
             jobs.push(CloseJob::UpdateDownload);
         }
         if app.brushes.import.is_busy() {
@@ -460,7 +499,7 @@ mod tests {
         if app.np.reopening.is_some() {
             ids.push("model");
         }
-        if app.update.progress().is_some() {
+        if app.services.update.progress().is_some() {
             ids.push("update");
         }
         ids
@@ -563,16 +602,16 @@ mod tests {
             }),
             ("save", |dir| {
                 let mut s = AppState::new(32, 32);
-                s.save.background = true;
-                let hold = s.save.hold_next();
+                s.services.save.background = true;
+                let hold = s.services.save.hold_next();
                 crate::project::save_from(&mut s, &dir.join("a.ylp"));
                 assert!(s.is_saving(), "{}", s.message);
                 (s, Some(hold))
             }),
             ("save.quit", |dir| {
                 let mut s = AppState::new(32, 32);
-                s.save.background = true;
-                let hold = s.save.hold_next();
+                s.services.save.background = true;
+                let hold = s.services.save.hold_next();
                 crate::project::save_from(&mut s, &dir.join("a.ylp"));
                 assert!(s.is_saving(), "{}", s.message);
                 s.quit = true;
@@ -618,7 +657,7 @@ mod tests {
             }),
             ("recovery", |dir| {
                 let mut s = AppState::new(32, 32);
-                s.recovery.window = Some(crate::recovery::window::WindowState {
+                s.ui.recovery_window = Some(crate::recovery::window::WindowState {
                     confirm: Some(crate::recovery::Row {
                         pool: dir.to_path_buf(),
                         id: "1".into(),
@@ -648,7 +687,7 @@ mod tests {
                 s.library.hold_writes(true);
                 let id = s
                     .shelf
-                    .add_image(Lang::Ja, "試験の画像", &[1, 2, 3, 255], 1, 1)
+                    .add_image(Lang::Ja, "テストの画像", &[1, 2, 3, 255], 1, 1)
                     .unwrap();
                 s.apply(Action::Shelf(ShelfOp::ToLibrary(id)));
                 assert!(s.library.writing_name().is_some(), "{}", s.message);
@@ -656,7 +695,7 @@ mod tests {
             }),
             ("shelf", |_| {
                 let mut s = AppState::new(32, 32);
-                let layer = s.selected_layer.unwrap();
+                let layer = s.session.selected_layer.unwrap();
                 s.shelf.async_bytes = 0;
                 s.shelf.hold_saves(true);
                 s.apply(Action::Shelf(ShelfOp::SaveMaterial(layer)));

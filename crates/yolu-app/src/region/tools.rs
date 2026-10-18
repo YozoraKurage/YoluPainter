@@ -12,9 +12,10 @@ use yolu_core::{CoreError, Document, LayerId, SelectionMask, TriangleFill};
 
 use super::kind_name;
 use crate::canvas::view::CanvasView;
-use crate::lang::Lang;
+use crate::m2::mask_reveals;
 use crate::notice::Source;
-use crate::state::{AppState, StrokeSource, Tool};
+use crate::state::{Action, AppState, StrokeSource, Tool};
+use crate::stroke_gate::other_set_face;
 
 /// ポインタを置いた画面（座標の変換が違う）。
 #[derive(Clone, Copy)]
@@ -132,7 +133,7 @@ pub(crate) fn cycle_index(
         }
         return (0, false);
     }
-    let stamp = (app.doc.id(), app.doc.revision());
+    let stamp = (app.session.doc.id(), app.session.doc.revision());
     let previous = app
         .region
         .cycle
@@ -155,9 +156,21 @@ pub(crate) fn cycle_index(
     (index, undo)
 }
 
+/// 前の候補の段を取り消す（`RegionAction::UndoCandidate`）。取り消せなければ、続けて押したときの控えを捨てて知らせる。
+pub(crate) fn undo_candidate(app: &mut AppState) {
+    match app.session.doc.undo() {
+        Ok(_) => app.session.mark_modified(),
+        Err(e) => {
+            app.region.cycle = None;
+            let text = app.lang.core_error(&e);
+            app.notify(crate::notice::Kind::of_core(&e), Source::Fill, text);
+        }
+    }
+}
+
 /// 選び替えの候補を当て終えた（`changed` なら文書に段が積まれた）。次に同じ所を押したとき、文書が変わっていなければこの段を取り消す。
 pub(crate) fn cycle_applied(app: &mut AppState, kind: CycleKind, changed: bool) {
-    let stamp = (app.doc.id(), app.doc.revision());
+    let stamp = (app.session.doc.id(), app.session.doc.revision());
     if let Some(c) = app.region.cycle.as_mut().filter(|c| c.kind == kind) {
         c.stamp = changed.then_some(stamp);
     }
@@ -166,7 +179,10 @@ pub(crate) fn cycle_applied(app: &mut AppState, kind: CycleKind, changed: bool) 
 /// 2D の点の下の今のセットの三角形（見せる形の番号の昇順。重なった UV では 2 つ以上）。
 pub(crate) fn canvas_triangles(app: &mut AppState, view: &CanvasView, at: Pos2) -> Vec<u32> {
     let (x, y) = view.to_canvas(at);
-    let (cw, ch) = (app.doc.width() as f64, app.doc.height() as f64);
+    let (cw, ch) = (
+        app.session.doc.width() as f64,
+        app.session.doc.height() as f64,
+    );
     if !(0.0..cw).contains(&x) || !(0.0..ch).contains(&y) {
         return Vec::new();
     }
@@ -183,9 +199,10 @@ fn fill_candidates(app: &mut AppState, view: &CanvasView, at: Pos2) -> Vec<(u64,
     let Some(index) = app.region_index().filter(|_| !triangles.is_empty()) else {
         return Vec::new();
     };
+    let set = app.view3d.material.clone();
     let mut out: Vec<(u64, u32)> = Vec::new();
     for t in triangles {
-        let key = index.key(t, kind);
+        let key = index.key_in(t, kind, &set);
         if !out.iter().any(|(k, _)| *k == key) {
             out.push((key, t));
         }
@@ -220,9 +237,9 @@ pub fn under(app: &mut AppState, w: Where, at: Pos2) -> Under {
     };
     match w {
         Where::Surface(rect) => {
-            let view = app.view3d.camera.view(rect.width(), rect.height());
+            let view = app.view3d.view.camera.view(rect.width(), rect.height());
             match pick(&model.geometry, &view, local(rect, at)) {
-                Some(hit) if hit.material == material => Under::Triangle(hit.triangle),
+                Some(hit) if material.contains(hit.material) => Under::Triangle(hit.triangle),
                 Some(hit) => Under::OtherSet(model.material_name(hit.material as usize, app.lang)),
                 None => Under::Nothing,
             }
@@ -236,7 +253,10 @@ pub fn under(app: &mut AppState, w: Where, at: Pos2) -> Under {
 
 /// 2D のキャンバスの点（キャンバスの座標）の下の三角形。
 fn under_canvas(app: &mut AppState, x: f64, y: f64) -> Under {
-    let (cw, ch) = (app.doc.width() as f64, app.doc.height() as f64);
+    let (cw, ch) = (
+        app.session.doc.width() as f64,
+        app.session.doc.height() as f64,
+    );
     if !(0.0..cw).contains(&x) || !(0.0..ch).contains(&y) {
         return Under::Nothing;
     }
@@ -265,16 +285,16 @@ pub(crate) fn surface_point(app: &mut AppState, rect: Rect, at: Pos2) -> Result<
     let Some((model, material)) = app.region_model() else {
         return Err(Miss::Nothing);
     };
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     let Some(hit) = pick(&model.geometry, &view, local(rect, at)) else {
         return Err(Miss::Nothing);
     };
-    if hit.material != material {
+    if !material.contains(hit.material) {
         return Err(Miss::OtherSet(
             model.material_name(hit.material as usize, app.lang),
         ));
     }
-    let (w, h) = (app.doc.width(), app.doc.height());
+    let (w, h) = (app.session.doc.width(), app.session.doc.height());
     crate::eyedrop::texel_of(hit.uv, w, h).ok_or(Miss::OutsideUv)?;
     // 最後の列・行（u = 1・v = 1）は、画素の中へ収める
     let inside = |v: f32, n: u32| (v as f64 * n as f64).min(n as f64 - 1e-6);
@@ -289,55 +309,10 @@ pub(crate) fn refuse_miss(app: &mut AppState, miss: Miss) {
 /// `refuse_miss` の、断りの出どころを選べる版（自動選択は選択範囲の出どころ）。
 pub(crate) fn refuse_miss_as(app: &mut AppState, miss: Miss, source: Source) {
     match miss {
-        Miss::Nothing => app.refuse(
-            source,
-            app.lang.pick(
-                "ポインタの下にこのテクスチャセットの三角形がありません",
-                "No triangle of this texture set under the pointer",
-            ),
-        ),
+        Miss::Nothing => app.refuse(source, app.lang.t("region-no-triangle-of-this-texture")),
         Miss::OtherSet(name) => app.refuse(source, other_set_face(app.lang, &name)),
-        Miss::OutsideUv => app.refuse(
-            source,
-            app.lang.pick(
-                "この面の UV はテクスチャの外です",
-                "This surface's UV is outside the texture",
-            ),
-        ),
+        Miss::OutsideUv => app.refuse(source, app.lang.t("region-this-surface-s-uv-is")),
     }
-}
-
-/// 読むだけのテクスチャセットなら、その短い理由（文書を変えるツールの入口で断る文。ステータスバーへ）。
-pub(super) fn read_only_message(app: &AppState) -> Option<String> {
-    app.read_only_reason()
-        .map(|reason| crate::lang::refusals::read_only_set(app.lang, reason))
-}
-
-/// 塗る・消すの前に確かめること（描けないときは短い理由）。返すのは塗るレイヤー。
-pub(crate) fn paint_gate(app: &AppState) -> Result<LayerId, String> {
-    let lang = app.lang;
-    if let Some(message) = read_only_message(app) {
-        return Err(message);
-    }
-    let Some(layer) = app.selected_layer.filter(|id| app.doc.layer(*id).is_some()) else {
-        return Err(lang
-            .pick("塗るレイヤーがありません", "No layer to paint")
-            .into());
-    };
-    if let Some(reason) = app.paint_blocker() {
-        return Err(reason);
-    }
-    Ok(layer)
-}
-
-/// マスクの「塗る」は白（見せる）、「消す」は黒（隠す）。白・黒はマスクのサムネイルの色なので、反転したマスクでは書く値を逆にする。
-pub(crate) fn mask_reveals(app: &AppState, layer: LayerId, erase: bool) -> bool {
-    let inverted = app
-        .doc
-        .layer(layer)
-        .and_then(|l| l.mask())
-        .is_some_and(|m| m.inverted());
-    erase == inverted
 }
 
 /// 範囲の画素を塗る（今の選択範囲の内側だけ。マスクの編集中はマスク、マテリアルがオンなら組の全部）。画素が変わったか。
@@ -346,10 +321,14 @@ fn fill_with(app: &mut AppState, layer: LayerId, mask: &SelectionMask) -> Result
     let erase = app.region.erase;
     if app.m2.edit_mask {
         let reveal = mask_reveals(app, layer, erase);
-        return app.doc.fill_mask(layer, opacity, Some(mask), reveal);
+        return app
+            .session
+            .doc
+            .fill_mask(layer, opacity, Some(mask), reveal);
     }
     let channels = app.paint_channels();
-    app.doc
+    app.session
+        .doc
         .fill_material(layer, &channels, opacity, Some(mask), erase)
 }
 
@@ -361,21 +340,12 @@ fn other_set(app: &mut AppState, name: &str) {
     app.refuse(Source::Fill, other_set_face(app.lang, name));
 }
 
-/// ポインタの下の面がほかのテクスチャセット（`name`）のものだという断り。
-pub(crate) fn other_set_face(lang: Lang, name: &str) -> String {
-    let name = lang.quote(name);
-    lang.pick(
-        format!("ほかのテクスチャセット{name}の面です。"),
-        format!("This face belongs to another texture set, {name}."),
-    )
-}
-
 // ───────── バケツ ─────────
 
 /// バケツ: 押した所の範囲を（今の選択範囲の内側だけ）塗る。1 回の Undo。
 pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
     let lang = app.lang;
-    let layer = match paint_gate(app) {
+    let layer = match crate::stroke_gate::paint(app) {
         Ok(l) => l,
         Err(m) => {
             app.refuse(Source::Fill, m);
@@ -387,7 +357,10 @@ pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
     let canvas_seeds = match w {
         Where::Canvas(view) => {
             let p = view.to_canvas(at);
-            let (cw, ch) = (app.doc.width() as f64, app.doc.height() as f64);
+            let (cw, ch) = (
+                app.session.doc.width() as f64,
+                app.session.doc.height() as f64,
+            );
             if (0.0..cw).contains(&p.0) && (0.0..ch).contains(&p.1) {
                 Some(app.symmetry_seeds(p, app.region.snap_symmetry))
             } else {
@@ -433,35 +406,29 @@ pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
             },
         };
         if hits.is_empty() {
-            app.refuse(
-                Source::Fill,
-                lang.pick(
-                    "ポインタの下にこのテクスチャセットの三角形がありません",
-                    "No triangle of this texture set under the pointer",
-                ),
-            );
+            app.refuse(Source::Fill, lang.t("region-no-triangle-of-this-texture"));
             return;
         }
         let kind = app.region.kind;
-        let (Some(index), Some((model, _))) = (app.region_index(), app.region_model()) else {
+        let (Some(index), Some((model, set))) = (app.region_index(), app.region_model()) else {
             return needs_model(app);
         };
         // 種ごとの範囲の和（同じ三角形は 1 回）を 1 つの範囲にする
         let mut region: Vec<u32> = hits
             .iter()
-            .flat_map(|&t| index.region(t, kind).iter().copied())
+            .flat_map(|&t| index.region_in(t, kind, &set).into_owned())
             .collect();
         region.sort_unstable();
         region.dedup();
-        let triangles = pixel_triangles(&app.doc, &model.geometry, &region);
+        let triangles = pixel_triangles(&app.session.doc, &model.geometry, &region);
         (
-            SelectionMask::from_triangles(&app.doc, &triangles),
+            SelectionMask::from_triangles(&app.session.doc, &triangles),
             kind_name(lang, kind),
         )
     };
     let mask = mask.and_then(|mask| {
         let margin = app.region.color.margin;
-        let budget = app.doc.source_budget_bytes();
+        let budget = app.session.doc.source_budget_bytes();
         if margin > 0 {
             mask.grow(margin as u32, budget)
         } else if margin < 0 {
@@ -484,7 +451,7 @@ pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
     let erase = app.region.erase;
     match fill_with(app, layer, &mask) {
         Ok(true) => {
-            app.modified = true;
+            app.session.mark_modified();
             if !erase && !app.m2.edit_mask {
                 app.color.remember();
             }
@@ -493,17 +460,14 @@ pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
                 format!(
                     "{what}{}",
                     if erase {
-                        lang.pick("を消しました。", " erased.")
+                        lang.t("region-erased")
                     } else {
-                        lang.pick("を塗りました。", " filled.")
+                        lang.t("region-filled-2")
                     }
                 ),
             );
         }
-        Ok(false) => app.refuse(
-            Source::Fill,
-            lang.pick("そこには塗るものがありません。", "Nothing to fill there."),
-        ),
+        Ok(false) => app.refuse(Source::Fill, lang.t("region-nothing-to-fill-there")),
         Err(e) => app.notify(
             crate::notice::Kind::of_core(&e),
             Source::Fill,
@@ -522,23 +486,30 @@ pub(super) fn samples(from: Pos2, to: Pos2) -> Vec<Pos2> {
         .collect()
 }
 
-/// ポリゴン塗りつぶしを始める。始めたら true（以後 `drag_to` で範囲を足し、`finish_drag` で確定する）。
+/// ポリゴン塗りつぶしを始める。始めたら true（以後 `drag_to` で範囲を足し、`finish_drag` で確定する）。押した所の確かめ（モデル・読むだけ・
+/// 描くレイヤー・ほかのセットの面）と 2D の候補の選び替えはここで済ませ、塗り始めはほかの操作と同じ入口（`AppState::apply` の
+/// `RegionAction::Polygon`）から。
 pub fn begin_polygon(app: &mut AppState, w: Where, at: Pos2) -> bool {
-    let lang = app.lang;
     if app.region.drag.is_some() {
+        return false;
+    }
+    // 断りは、2D の候補の控え（`cycle_index`）を進める前に（断った押しで控えを書き換えると、次の押しが前の候補を取り消さずに重ねて塗る）。
+    // バケツの仕事の間はバケツと同じ文、ほかの描いている最中は `region_apply` と同じ文
+    if super::bucket::refuse_busy(app) {
+        return false;
+    }
+    if app.is_stroking() {
+        app.refuse(Source::Fill, crate::lang::refusals::during_stroke(app.lang));
         return false;
     }
     if app.region_model().is_none() {
         needs_model(app);
         return false;
     }
-    let layer = match paint_gate(app) {
-        Ok(l) => l,
-        Err(m) => {
-            app.refuse(Source::Fill, m);
-            return false;
-        }
-    };
+    if let Err(m) = crate::stroke_gate::paint(app) {
+        app.refuse(Source::Fill, m);
+        return false;
+    }
     if let Under::OtherSet(name) = under(app, w, at) {
         other_set(app, &name);
         return false;
@@ -550,30 +521,54 @@ pub fn begin_polygon(app: &mut AppState, w: Where, at: Pos2) -> bool {
         let keys: Vec<u64> = candidates.iter().map(|(k, _)| *k).collect();
         let (index, undo) = cycle_index(app, CycleKind::Fill, at, &keys, true);
         if undo {
-            match app.doc.undo() {
-                Ok(_) => app.modified = true,
-                Err(e) => {
-                    app.region.cycle = None;
-                    app.notify(
-                        crate::notice::Kind::of_core(&e),
-                        Source::Fill,
-                        lang.core_error(&e),
-                    );
-                    return false;
-                }
+            app.apply(Action::Region(super::RegionAction::UndoCandidate));
+            // 取り消せなかった（控えを捨てた）: 塗り始めない
+            if app.region.cycle.is_none() {
+                return false;
             }
         }
         first = candidates.get(index).map(|(_, t)| *t);
     } else {
         app.region.cycle = None;
     }
+    // 候補が無ければ、点の下の今のセットの三角形
+    let first = first.or_else(|| match under(app, w, at) {
+        Under::Triangle(t) => Some(t),
+        _ => None,
+    });
+    app.apply(Action::Region(super::RegionAction::Polygon {
+        first,
+        on_surface: w.is_surface(),
+        at,
+    }));
+    // 最初の範囲で予算を超えたときは、`add_region` が札を手放している（始まっていない）
+    app.region.drag.is_some()
+}
+
+/// `RegionAction::Polygon` を当てる: ポリゴン塗りつぶしの札を取り（ドラッグの間は描いている最中）、最初の範囲 `first` を塗る。続きの範囲の
+/// 追加（`add_region`）と確定・取消（`finish_drag`）は、札を持つドラッグの持ち主だけがする（描いている最中なので `apply` は通らない）。
+pub(super) fn start_polygon(app: &mut AppState, first: Option<u32>, on_surface: bool, at: Pos2) {
+    let lang = app.lang;
+    if app.region.drag.is_some() {
+        return;
+    }
+    let layer = match crate::stroke_gate::paint(app) {
+        Ok(l) => l,
+        Err(m) => {
+            app.refuse(Source::Fill, m);
+            return;
+        }
+    };
     let (opacity, erase, mask) = (app.brush.opacity as f64, app.region.erase, app.m2.edit_mask);
     let fill = if mask {
         let reveal = mask_reveals(app, layer, erase);
-        app.doc.begin_mask_triangle_fill(layer, opacity, reveal)
+        app.session
+            .doc
+            .begin_mask_triangle_fill(layer, opacity, reveal)
     } else {
         let channels = app.paint_channels();
-        app.doc
+        app.session
+            .doc
             .begin_material_triangle_fill(layer, &channels, opacity, erase)
     };
     let fill = match fill {
@@ -584,7 +579,7 @@ pub fn begin_polygon(app: &mut AppState, w: Where, at: Pos2) -> bool {
                 Source::Fill,
                 lang.core_error(&e),
             );
-            return false;
+            return;
         }
     };
     if !erase && !mask {
@@ -592,17 +587,14 @@ pub fn begin_polygon(app: &mut AppState, w: Where, at: Pos2) -> bool {
     }
     app.region.drag = Some(PolygonDrag {
         fill,
-        on_surface: w.is_surface(),
+        on_surface,
         keys: HashSet::new(),
         last: at,
         erase,
     });
-    match first {
-        Some(t) => add_region(app, t),
-        None => add_region_at(app, w, at),
+    if let Some(t) = first {
+        add_region(app, t);
     }
-    // 最初の範囲で予算を超えたときは、`add_region` が札を手放している（始まっていない）
-    app.region.drag.is_some()
 }
 
 /// ポインタの下の範囲を足す（足した範囲はもう塗ってある）。
@@ -616,17 +608,21 @@ fn add_region_at(app: &mut AppState, w: Where, at: Pos2) {
 /// 三角形 `t` を含む範囲を足す。
 fn add_region(app: &mut AppState, t: u32) {
     let kind = app.region.kind;
-    let (Some(index), Some((model, _))) = (app.region_index(), app.region_model()) else {
+    let (Some(index), Some((model, set))) = (app.region_index(), app.region_model()) else {
         return;
     };
     let Some(drag) = app.region.drag.as_mut() else {
         return;
     };
-    if !drag.keys.insert(index.key(t, kind)) {
+    if !drag.keys.insert(index.key_in(t, kind, &set)) {
         return;
     }
-    let triangles = pixel_triangles(&app.doc, &model.geometry, index.region(t, kind));
-    if let Err(e) = drag.fill.add(&mut app.doc, &triangles) {
+    let triangles = pixel_triangles(
+        &app.session.doc,
+        &model.geometry,
+        &index.region_in(t, kind, &set),
+    );
+    if let Err(e) = drag.fill.add(&mut app.session.doc, &triangles) {
         // core は失敗した塗りを取り消してから返す（予算を超えたなど）。札を手放して知らせる
         app.region.drag = None;
         app.canvas.stroke = None;
@@ -679,15 +675,12 @@ pub fn finish_drag(app: &mut AppState, cancel: bool) -> bool {
     let regions = drag.keys.len();
     let what = kind_name(lang, app.region.kind);
     if cancel {
-        drag.fill.cancel(&mut app.doc);
+        drag.fill.cancel(&mut app.session.doc);
         app.region.cycle = None;
-        app.info(
-            Source::Fill,
-            lang.pick("ストロークを取り消しました。", "Stroke cancelled."),
-        );
+        app.info(Source::Fill, lang.t("region-stroke-cancelled"));
         return true;
     }
-    match drag.fill.commit(&mut app.doc) {
+    match drag.fill.commit(&mut app.session.doc) {
         Ok(result) => {
             if regions == 1 && !drag.on_surface {
                 cycle_applied(app, CycleKind::Fill, result.changed);
@@ -695,32 +688,17 @@ pub fn finish_drag(app: &mut AppState, cancel: bool) -> bool {
                 app.region.cycle = None;
             }
             if result.changed {
-                app.modified = true;
+                app.session.mark_modified();
                 let text = if drag.erase {
-                    format!(
-                        "{what} × {regions} {}",
-                        lang.pick("を消しました。", "erased.")
-                    )
+                    format!("{what} × {regions} {}", lang.t("region-erased-2"))
                 } else {
-                    format!(
-                        "{what} × {regions} {}",
-                        lang.pick("を塗りました。", "filled.")
-                    )
+                    format!("{what} × {regions} {}", lang.t("region-filled-3"))
                 };
                 app.info(Source::Fill, text);
             } else if regions == 0 {
-                app.refuse(
-                    Source::Fill,
-                    lang.pick(
-                        "ポインタの下にこのテクスチャセットの三角形がありません。",
-                        "No triangle of this texture set under the pointer.",
-                    ),
-                );
+                app.refuse(Source::Fill, lang.t("region-no-triangle-of-this-texture-2"));
             } else {
-                app.refuse(
-                    Source::Fill,
-                    lang.pick("そこには塗るものがありません。", "Nothing to fill there."),
-                );
+                app.refuse(Source::Fill, lang.t("region-nothing-to-fill-there"));
             }
         }
         Err(e) => app.notify(
@@ -829,7 +807,8 @@ pub fn update_hover(app: &mut AppState, w: Where, at: Option<Pos2>) {
         app.region.hover = None;
         return;
     };
-    let key = index.key(t, kind);
+    let set = app.view3d.material.clone();
+    let key = index.key_in(t, kind, &set);
     if let Some(h) = app.region.hover.as_mut() {
         if h.id_key.is_none()
             && h.key == key
@@ -841,7 +820,7 @@ pub fn update_hover(app: &mut AppState, w: Where, at: Option<Pos2>) {
             return;
         }
     }
-    let tris = index.region(t, kind).to_vec();
+    let tris = index.region_in(t, kind, &set).into_owned();
     let outline = index.outline(&tris);
     app.region.hover = Some(Hover {
         on_surface: w.is_surface(),

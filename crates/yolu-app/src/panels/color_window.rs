@@ -25,6 +25,7 @@ use egui::{pos2, vec2, Color32, Context, Id, Order, Pos2, Rect, Sense, Ui, Vec2}
 
 use super::color::{hue_at, in_ring, wheel_square, ColorTextures, RING_THICKNESS};
 use crate::colorsets::Palette;
+use crate::engine::unit_f32_to_byte;
 use crate::lang::Lang;
 use crate::state::{hsv_to_rgb, parse_hex, rgb_to_hsv, to_hex, AppState};
 use crate::ui::scroll::Scroll;
@@ -69,8 +70,12 @@ impl Pick {
     /// 0〜1 の RGBA から。`alpha` が false ならアルファを持たない。
     pub fn from_floats(c: [f32; 4], alpha: bool) -> Pick {
         Pick {
-            rgb: [w::to_byte(c[0]), w::to_byte(c[1]), w::to_byte(c[2])],
-            alpha: alpha.then(|| w::to_byte(c[3])),
+            rgb: [
+                unit_f32_to_byte(c[0]),
+                unit_f32_to_byte(c[1]),
+                unit_f32_to_byte(c[2]),
+            ],
+            alpha: alpha.then(|| unit_f32_to_byte(c[3])),
         }
     }
 
@@ -178,7 +183,11 @@ fn hsv(rgb: [u8; 3]) -> (f32, f32, f32) {
 }
 
 fn bytes(rgb: (f32, f32, f32)) -> [u8; 3] {
-    [w::to_byte(rgb.0), w::to_byte(rgb.1), w::to_byte(rgb.2)]
+    [
+        unit_f32_to_byte(rgb.0),
+        unit_f32_to_byte(rgb.1),
+        unit_f32_to_byte(rgb.2),
+    ]
 }
 
 fn textures(ctx: &Context) -> Arc<Mutex<ColorTextures>> {
@@ -576,7 +585,7 @@ pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
                 close,
                 state_id().with("close"),
                 "close",
-                lang.pick("閉じる", "Close"),
+                lang.t("panels-close-tip"),
                 false,
                 true,
                 15.0,
@@ -593,7 +602,7 @@ pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
             let response = ui.interact(wheel, wheel_id, Sense::click_and_drag());
             // 押した所が輪なら色相、中の四角なら彩度と明度（ドラッグの間は押したほうのまま）
             let mode_id = wheel_id.with("mode");
-            if response.is_pointer_button_down_on() && ui.input(|i| i.pointer.any_pressed()) {
+            if w::pressed_by_primary(&response) && ui.input(|i| i.pointer.any_pressed()) {
                 let origin = ui.input(|i| i.pointer.press_origin());
                 let mode = origin
                     .map(|o| {
@@ -608,7 +617,7 @@ pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
                     .unwrap_or(0);
                 ui.data_mut(|d| d.insert_temp(mode_id, mode));
             }
-            let wheel_down = response.is_pointer_button_down_on();
+            let wheel_down = w::pressed_by_primary(&response);
             let mut picked = false;
             if wheel_down {
                 let mode: u8 = ui.data(|d| d.get_temp(mode_id).unwrap_or(0));
@@ -672,11 +681,7 @@ pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
                 6.0,
             );
             response.widget_info(|| {
-                egui::WidgetInfo::labeled(
-                    egui::WidgetType::Other,
-                    true,
-                    lang.pick("色相の円", "Hue wheel"),
-                )
+                egui::WidgetInfo::labeled(egui::WidgetType::Other, true, lang.t("panels-hue-wheel"))
             });
 
             // 16 進
@@ -694,7 +699,7 @@ pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
                 hex_of(window, alpha),
                 state_id().with("hex"),
                 &hex,
-                Some(lang.pick("16 進の色（#RRGGBB）", "Hex color (#RRGGBB)")),
+                Some(lang.t("panels-hex-color-rrggbb-tip")),
                 false,
             );
             // 別の欄を押して相手を替えたフレームに決まった入力は、打っていたときの相手（前の相手）へ当てる
@@ -745,10 +750,7 @@ pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
                     }
                 } else {
                     let typed = lang.quote(&text);
-                    failure = Some(lang.pick(
-                        format!("{typed}は 16 進の色として読めません。"),
-                        format!("{typed} is not a valid hex color."),
-                    ));
+                    failure = Some(lang.f("panels-is-not-a-valid-hex", &[("typed", &typed)]));
                 }
             }
 
@@ -756,7 +758,7 @@ pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
             let mut alpha_active = false;
             if let Some(a) = state.shown.alpha {
                 let spec = SliderSpec::new("A", 0.0, 100.0, NumberFormat::int("%"))
-                    .tooltip(lang.pick("不透明度", "Opacity"));
+                    .tooltip(lang.t("panels-opacity-tip"));
                 let out = w::slider(
                     ui,
                     alpha_of(window),
@@ -768,7 +770,7 @@ pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
                 if out.changed {
                     let next = Pick {
                         rgb: state.shown.rgb,
-                        alpha: Some(w::to_byte(out.value / 100.0)),
+                        alpha: Some(unit_f32_to_byte(out.value / 100.0)),
                     };
                     if next != state.shown {
                         state.shown = next;
@@ -789,18 +791,14 @@ pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
             let paint = paint_of(window);
             let main = Pick {
                 rgb: [
-                    w::to_byte(sources.main[0]),
-                    w::to_byte(sources.main[1]),
-                    w::to_byte(sources.main[2]),
+                    unit_f32_to_byte(sources.main[0]),
+                    unit_f32_to_byte(sources.main[1]),
+                    unit_f32_to_byte(sources.main[2]),
                 ],
                 alpha: state.shown.alpha,
             };
-            if paint_button(
-                ui,
-                paint,
-                main,
-                lang.pick("描画色を入れる", "Use Paint Color"),
-            ) && main != state.shown
+            if paint_button(ui, paint, main, lang.t("panels-use-paint-color"))
+                && main != state.shown
             {
                 state.sync(main);
                 updates.push((
@@ -991,7 +989,7 @@ fn set_grid(ui: &mut Ui, view: Rect, set: &Palette) -> Option<[u8; 3]> {
         }
         let hit = cell.intersect(view);
         let response = ui.interact(hit, offset_id.with(i), Sense::click());
-        let [r, g, b, a] = swatch.rgba.map(w::to_byte);
+        let [r, g, b, a] = swatch.rgba.map(unit_f32_to_byte);
         w::checker(&p, cell, CELL * 0.5);
         p.rect_filled(cell, 1.0, Color32::from_rgba_unmultiplied(r, g, b, a));
         w::outline(

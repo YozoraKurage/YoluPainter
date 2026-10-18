@@ -624,7 +624,7 @@ fn saving_rewrites_only_the_edited_set_and_keeps_the_others_byte_for_byte() {
         saved.sets_written,
         vec!["22222222-2222-4222-8222-222222222222".to_string()]
     );
-    assert!(saved.backup.is_some(), "前の版は退避に残る");
+    assert!(saved.backup.is_some(), "前のバージョンは退避に残る");
     let after = entries(&fx.path("a.ylp"));
     let body = "sets/11111111-1111-4111-8111-111111111111/";
     let face = "sets/22222222-2222-4222-8222-222222222222/";
@@ -679,7 +679,7 @@ fn saving_an_old_format_file_moves_it_to_format_7_and_keeps_the_untouched_sets()
     let Reply::Doc(info) = ok(&mut host, json!({"command": "doc.info"})) else {
         panic!()
     };
-    assert!(info.format < 7, "試験の台は旧形式: {}", info.format);
+    assert!(info.format < 7, "テストの台は旧形式: {}", info.format);
     let editable: Vec<&SetSummary> = info
         .sets
         .iter()
@@ -720,7 +720,7 @@ fn saving_an_old_format_file_moves_it_to_format_7_and_keeps_the_untouched_sets()
     assert!(saved.written);
     assert_eq!((saved.upgraded_from, saved.format), (Some(info.format), 7));
     assert_eq!(saved.sets_written, vec![edited.clone()]);
-    let backup = saved.backup.expect("前の版は退避に残る");
+    let backup = saved.backup.expect("前のバージョンは退避に残る");
     assert_eq!(
         read(std::path::Path::new(&backup)),
         old_bytes,
@@ -811,7 +811,7 @@ fn saving_tells_when_a_set_uses_something_only_this_editor_has() {
                 .find(|t| t.en.contains("Unity version up to 0.4.x"))
                 .unwrap();
             assert!(
-                note.ja.contains("Unity 版") && note.en.contains("version"),
+                note.ja.contains("Unity ブリッジ") && note.en.contains("version"),
                 "{note:?}"
             );
         }

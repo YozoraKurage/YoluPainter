@@ -1,0 +1,32 @@
+# 画面の文（windows）。キーは「windows-」と英語の文から作った短い名前、ツールチップの文はキーの終わりが -tip。
+
+windows-and-more = ほか { $existing } 件
+windows-files-to-replace = 置き換えるファイル
+windows-of-images-already-exist = 書く { $total } 枚のうち、もうあるファイル { $existing } 個
+windows-cancel = やめる
+windows-replace = 置き換える
+windows-replaces-the-files-with-the-tip = 同じ名前のファイルを新しい画像に置き換えます
+windows-close-window = ウィンドウを閉じる
+windows-normal = 法線
+windows-linear = リニア
+windows-replaced = 置き換え
+windows-new = 新規
+windows-exported-images = 書き出した画像
+windows-close = 閉じる
+windows-files = { $many } 個のファイル
+windows-replace-the-imported-psd = 取り込んだ PSD を置き換える
+windows-this-project-was-imported-from-tip = このプロジェクトを取り込んだ PSD です。書き出した PSD に置き換えます
+windows-replaces-the-files-with-the-2-tip = 同じ名前のファイルを書き出した PSD に置き換えます
+windows-px = { $pixels } 画素
+windows-merge-layers = レイヤーの結合
+windows-the-look-changes = 見た目が変わります
+windows-merge = 結合する
+windows-merges-even-though-the-look-tip = 見た目が変わっても結合します（取り消しでレイヤーが戻ります）
+windows-psd-import = PSD の読み込み
+windows-psd-export = PSD の書き出し
+windows-cancel-tip = 取消
+windows-saving = 保存しています
+windows-text = ・
+windows-there-are-unsaved-changes = 保存していない変更があります。
+windows-running-jobs-will-be-cancelled = 走っている仕事（{ $names }）は取り消されます。終わりますか？
+windows-there-are-unsaved-changes-and = 保存していない変更があります。走っている仕事（{ $names }）も取り消されます。

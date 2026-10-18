@@ -2,7 +2,7 @@
 
 `liltoon/` の部品（`*.wgsl`。つなぎ方は `crates/yolu-app/src/view3d/liltoon_wgsl.rs`）と、`crates/yolu-app/src/look/liltoon.rs` のプロパティの既定値・名前は、lilToon 2.3.4 の
 シェーダー（`Shader/Includes`）とインスペクターから式と値を WGSL・Rust に移したもの。lilToon のファイル・テクスチャ・
-画像は同梱しない。配布元: [lilToon](https://github.com/lilxyzw/lilToon)（版 2.3.4、
+画像は同梱しない。配布元: [lilToon](https://github.com/lilxyzw/lilToon)（バージョン 2.3.4、
 `https://github.com/lilxyzw/lilToon/releases/download/2.3.4/jp.lilxyzw.liltoon-2.3.4.zip`）。
 
 ビルトインのレンダーパイプラインの光の式は、lilToon に同梱の OpenLit Library 1.0.2（`openlit_core.hlsl`）から移した。

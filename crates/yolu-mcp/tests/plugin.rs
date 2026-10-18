@@ -46,7 +46,7 @@ fn both_manifests_carry_the_apps_version_and_point_at_the_shared_parts() {
         assert_eq!(
             manifest["version"],
             env!("CARGO_PKG_VERSION"),
-            "プラグインの版はアプリと同じ（版を上げたら plugin/ の 2 つの plugin.json も上げる）"
+            "プラグインのバージョンはアプリと同じ（バージョンを上げたら plugin/ の 2 つの plugin.json も上げる）"
         );
         assert!(manifest["description"].as_str().unwrap().len() > 20);
         assert!(manifest["author"]["name"].is_string());

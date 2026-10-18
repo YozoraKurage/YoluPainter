@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use egui::{pos2, vec2, Id, Key, Rect, Vec2};
+use egui::{pos2, vec2, Id, Key, Rect};
 
 use super::list::{FileRow, Preview, SetRow};
 use super::{default_channel_file_name, ExportAction};
@@ -97,8 +97,8 @@ impl ExportForm {
 
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            ExportForm::ChannelPng => lang.pick("今のチャンネル", "Current Channel"),
-            ExportForm::AllChannels => lang.pick("チャンネルごと", "Per Channel"),
+            ExportForm::ChannelPng => lang.t("export-current-channel"),
+            ExportForm::AllChannels => lang.t("export-per-channel"),
             ExportForm::UnityStandard => "Unity Standard / URP Lit",
             ExportForm::Hdrp => "HDRP Lit",
             ExportForm::LilToon => "lilToon",
@@ -106,11 +106,11 @@ impl ExportForm {
     }
 }
 
-/// ウィンドウの状態（開いているか・動かした量・選んだ出力先・外したセット）。アプリの状態で、.ylp には入れない。
+/// ウィンドウの状態（開いているか・選んだ出力先・外したセット。動かした量は `UiState::export_window_offset`）。アプリの状態で、
+/// .ylp には入れない。
 #[derive(Debug, Default)]
 pub struct WindowState {
     pub open: bool,
-    pub offset: Vec2,
     /// 選んだ PNG のファイル。名前が既定の名前（今のセット・チャンネルの名前）のときは持たず、フォルダだけ覚える
     /// （チャンネルやセットを替えても、名前が追いかける）。
     file: Option<PathBuf>,
@@ -125,8 +125,18 @@ pub struct WindowState {
     files_scroll: f32,
     /// 書くファイルがもうあるかの調べ（`list`）。
     pub(super) exists: super::list::ExistsCache,
-    /// 選んだ先とチェックがどのプロジェクトのものか（`AppState::project_epoch`）。替わったら忘れる。
+    /// 選んだ先とチェックがどのプロジェクトのものか（`Session::project_epoch`）。替わったら忘れる。
     epoch: u64,
+    /// このプロジェクトで最後に「書き出す」を押したときの設定（「前と同じ設定で書き出す」が使う。プロジェクトの間だけ覚える）。
+    last: Option<LastRun>,
+}
+
+/// 「書き出す」を押したときの出力テンプレート・出力先・セット。
+#[derive(Debug, Clone, PartialEq)]
+struct LastRun {
+    form: ExportForm,
+    destination: PathBuf,
+    sets: Vec<u32>,
 }
 
 impl AppState {
@@ -139,7 +149,7 @@ impl AppState {
     pub(super) fn export_no_set_reason(&self) -> String {
         let lang = self.lang;
         if self.export_form().writes_file() {
-            if let Some(reason) = self.sets.current().read_only.as_deref() {
+            if let Some(reason) = self.session.sets.current().read_only.as_deref() {
                 return crate::lang::refusals::read_only_set(lang, reason);
             }
         }
@@ -148,7 +158,8 @@ impl AppState {
 
     /// 開いたプロジェクトのフォルダ（保存していなければ、またフォルダが無ければ None）。
     fn project_folder(&self) -> Option<PathBuf> {
-        self.project
+        self.session
+            .project
             .as_ref()
             .and_then(|p| p.path().parent())
             .filter(|d| d.is_dir())
@@ -158,18 +169,19 @@ impl AppState {
     /// 選んだ出力先とチェック。別のプロジェクトで選んだものは、ウィンドウを開いたままプロジェクトを替えられても（新規・開く・Live Link・外からの操作）
     /// 今のプロジェクトのものではないので、無いものとして扱う。
     pub(super) fn export_chosen(&self) -> Option<&WindowState> {
-        (self.export.window.epoch == self.project_epoch).then_some(&self.export.window)
+        (self.export.window.epoch == self.session.project_epoch()).then_some(&self.export.window)
     }
 
     /// 選んだ先が今のプロジェクトのものでなければ忘れて、今のプロジェクトのものにする。
     fn sync_export_window(&mut self) {
-        let epoch = self.project_epoch;
+        let epoch = self.session.project_epoch();
         let window = &mut self.export.window;
         if window.epoch != epoch {
             window.file = None;
             window.folder = None;
             window.confirmed = None;
             window.unchecked.clear();
+            window.last = None;
             window.epoch = epoch;
         }
     }
@@ -229,10 +241,11 @@ impl AppState {
                     self.refuse(Source::Export, crate::lang::refusals::during_stroke(lang));
                     return;
                 }
-                self.dialog_request = Some(DialogRequest::ExportDestination);
+                self.outbox.dialog_request = Some(DialogRequest::ExportDestination);
             }
             ExportAction::Destination(path) => self.choose_export_destination(path),
             ExportAction::Run => self.run_export_window(),
+            ExportAction::Again => self.export_again(),
             _ => unreachable!("ウィンドウの操作ではない"),
         }
     }
@@ -267,14 +280,11 @@ impl AppState {
         let lang = self.lang;
         let form = self.export_form();
         // 選ぶウィンドウの確かめは、選んだ 1 回の書き出しだけに効く（受け取って使い切る）。2 回目からは、ファイルがあれば確かめる
-        let confirmed = (self.export.window.epoch == self.project_epoch)
+        let confirmed = (self.export.window.epoch == self.session.project_epoch())
             .then(|| self.export.window.confirmed.take())
             .flatten();
         let Some(destination) = self.export_destination() else {
-            self.refuse(
-                Source::Export,
-                lang.pick("出力先がありません。", "There is no destination."),
-            );
+            self.refuse(Source::Export, lang.t("export-there-is-no-destination"));
             return;
         };
         let sets = self.export_checked_uids();
@@ -283,25 +293,50 @@ impl AppState {
             self.refuse(Source::Export, why);
             return;
         }
-        let action = match form.template_id() {
-            Some(id) => ExportAction::TemplateTo {
-                id: id.to_owned(),
-                dir: destination,
-                sets: Some(sets),
-            },
-            None if form.writes_file() => {
-                // 選ぶウィンドウが確かめたファイルはそのまま、ほかは書く前にもうあるか確かめる
-                if confirmed.as_ref() == Some(&destination) {
-                    ExportAction::ChannelTo(destination)
-                } else {
-                    ExportAction::ChannelNamed(destination)
-                }
-            }
-            None => ExportAction::ChannelsTo {
-                dir: destination,
-                sets: Some(sets),
-            },
+        self.sync_export_window();
+        self.export.window.last = Some(LastRun {
+            form,
+            destination: destination.clone(),
+            sets: sets.clone(),
+        });
+        // 選ぶウィンドウが確かめたファイルはそのまま、ほかは書く前にもうあるか確かめる
+        let confirmed = confirmed.as_ref() == Some(&destination);
+        let action = export_action_for(form, destination, sets, confirmed);
+        let was_exporting = self.export.is_exporting();
+        self.export_apply(action);
+        self.close_export_window_if_started(was_exporting);
+    }
+
+    /// 「前と同じ設定で書き出す」: このプロジェクトで最後に「書き出す」を押したときの設定でウィンドウを開かずに書き出す。
+    /// まだ書き出していなければ、書き出しのウィンドウを開く。書く前の確かめ・断りは「書き出す」と同じ道を通る。
+    fn export_again(&mut self) {
+        let lang = self.lang;
+        if self.is_stroking() {
+            self.refuse(Source::Export, crate::lang::refusals::during_stroke(lang));
+            return;
+        }
+        self.sync_export_window();
+        let Some(last) = self.export.window.last.clone() else {
+            self.export_window_apply(ExportAction::OpenWindow);
+            return;
         };
+        // そのあとに消した・読むだけになったセットは外す（PNG は今のセットの 1 枚で、セットを選ばない）
+        let writes_file = last.form.writes_file();
+        let sets: Vec<u32> = last
+            .sets
+            .iter()
+            .copied()
+            .filter(|uid| {
+                (0..self.session.sets.len())
+                    .filter_map(|i| self.session.sets.get(i))
+                    .any(|set| set.uid == *uid && set.read_only.is_none())
+            })
+            .collect();
+        if sets.is_empty() && !writes_file {
+            self.refuse(Source::Export, super::no_sets_message(lang));
+            return;
+        }
+        let action = export_action_for(last.form, last.destination, sets, false);
         let was_exporting = self.export.is_exporting();
         self.export_apply(action);
         self.close_export_window_if_started(was_exporting);
@@ -312,6 +347,33 @@ impl AppState {
         if !was_exporting && self.export.is_exporting() {
             self.export.window.open = false;
         }
+    }
+}
+
+/// 出力テンプレートに合う書き出しの操作。`confirmed` は、選ぶウィンドウがそのファイルの置き換えを確かめているとき。
+fn export_action_for(
+    form: ExportForm,
+    destination: PathBuf,
+    sets: Vec<u32>,
+    confirmed: bool,
+) -> ExportAction {
+    match form.template_id() {
+        Some(id) => ExportAction::TemplateTo {
+            id: id.to_owned(),
+            dir: destination,
+            sets: Some(sets),
+        },
+        None if form.writes_file() => {
+            if confirmed {
+                ExportAction::ChannelTo(destination)
+            } else {
+                ExportAction::ChannelNamed(destination)
+            }
+        }
+        None => ExportAction::ChannelsTo {
+            dir: destination,
+            sets: Some(sets),
+        },
     }
 }
 
@@ -345,7 +407,7 @@ pub fn run_dialog(state: &mut AppState) {
     let nearest = nearest_existing_folder;
     if state.export_form().writes_file() {
         let mut dialog = crate::dialog::file(state, Place::ImageExport)
-            .set_title(lang.pick("チャンネルを PNG に書き出す", "Export the channel as PNG"))
+            .set_title(lang.t("export-export-the-channel-as-png"))
             .add_filter("PNG", &["png"])
             .set_file_name(
                 destination
@@ -366,7 +428,7 @@ pub fn run_dialog(state: &mut AppState) {
         }
     } else {
         let mut dialog = crate::dialog::file(state, Place::ImageExport)
-            .set_title(lang.pick("画像を書き出すフォルダ", "Folder for the exported images"));
+            .set_title(lang.t("export-folder-for-the-exported-images"));
         if let Some(dir) = destination.as_deref().and_then(nearest) {
             dialog = dialog.set_directory(dir);
         }
@@ -420,7 +482,7 @@ fn color_space_name(lang: Lang, srgb: bool) -> &'static str {
     if srgb {
         "sRGB"
     } else {
-        lang.pick("リニア", "Linear")
+        lang.t("export-linear")
     }
 }
 
@@ -535,7 +597,7 @@ fn draw_file(
     if file.exists {
         p.circle_filled(dot.center(), 3.0, t::WARNING);
         ui.interact(dot.expand(4.0), id, egui::Sense::hover())
-            .on_hover_text(lang.pick("上書き", "Overwrite"));
+            .on_hover_text(lang.t("export-overwrite-tip"));
     }
     let space = color_space_name(lang, file.srgb);
     w::text(
@@ -572,14 +634,14 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     // 置き換えの確認などのモーダルが前にある間の Esc は、そちらだけが受ける（ここは閉じない）
     let modal = crate::windows::modal_open(app);
     let spec = Spec {
-        title: lang.pick("テクスチャを書き出す", "Export Textures"),
+        title: lang.t("export-export-textures"),
         icon: Some("folder_open"),
         size: vec2(WIDTH, HEIGHT),
         modal: false,
-        close_label: lang.pick("ウィンドウを閉じる", "Close Window"),
+        close_label: lang.t("export-close-window"),
     };
     let id = Id::new(("yolu.window", WINDOW));
-    let mut offset = app.export.window.offset;
+    let mut offset = app.ui.export_window_offset;
     let mut sets_scroll = app.export.window.sets_scroll;
     let mut files_scroll = app.export.window.files_scroll;
     let mut requests: Vec<Request> = Vec::new();
@@ -604,7 +666,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 pos2(left.left() + MARGIN, left.top() + 8.0),
                 vec2(left.width() - 2.0 * MARGIN, 16.0),
             ),
-            lang.pick("テクスチャセット", "Texture Sets"),
+            lang.t("export-texture-sets"),
             t::HEADER.with_color(t::TEXT_DIM),
             Align::Left,
         );
@@ -635,11 +697,11 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         w::text(
             &p,
             Rect::from_min_size(r.min, vec2(LABEL_WIDTH, r.height())),
-            lang.pick("出力先", "Output Path"),
+            lang.t("export-output-path"),
             t::LABEL,
             Align::Left,
         );
-        let choose = lang.pick("選ぶ…", "Choose…");
+        let choose = lang.t("export-choose");
         let choose_width = w::text_width(&p, choose, t::LABEL) + 24.0;
         let choose_rect = Rect::from_min_size(
             pos2(r.right() - choose_width, r.top()),
@@ -685,7 +747,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             ui,
             row(1),
             (id, "template"),
-            Some(lang.pick("出力テンプレート", "Output Template")),
+            Some(lang.t("export-output-template")),
             form.name(lang),
             None,
             true,
@@ -699,7 +761,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             ui,
             row(2),
             (id, "padding"),
-            Some(lang.pick("パディング", "Padding")),
+            Some(lang.t("export-padding")),
             &padding,
             None,
             true,
@@ -719,7 +781,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 pos2(right.left() + MARGIN, heading_top),
                 vec2(right.width() - 2.0 * MARGIN, 16.0),
             ),
-            lang.pick("書き出すファイル", "Files to Export"),
+            lang.t("export-files-to-export"),
             t::HEADER.with_color(t::TEXT_DIM),
             Align::Left,
         );
@@ -745,9 +807,9 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         w::fill(&p, footer, t::PANEL_HEADER);
         w::hline(&p, footer.left(), footer.right(), footer.top(), t::BORDER);
         let reason = if exporting {
-            Some(lang.pick("書き出し中", "An export is running"))
+            Some(lang.t("export-an-export-is-running-2"))
         } else if destination.is_none() {
-            Some(lang.pick("出力先が未選択", "No output path"))
+            Some(lang.t("export-no-output-path"))
         } else if !any_checked {
             Some(no_set_reason.as_str())
         } else {
@@ -756,14 +818,14 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         let mut x = footer.right() - MARGIN;
         let buttons = [
             (
-                lang.pick("キャンセル", "Cancel"),
+                lang.t("export-cancel"),
                 false,
                 true,
                 None,
                 ExportAction::CloseWindow,
             ),
             (
-                lang.pick("書き出す", "Export"),
+                lang.t("export-export"),
                 true,
                 reason.is_none(),
                 reason,
@@ -779,13 +841,13 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             }
         }
     });
-    app.export.window.offset = offset;
+    app.ui.export_window_offset = offset;
     app.export.window.sets_scroll = sets_scroll;
     app.export.window.files_scroll = files_scroll;
     for request in requests {
         match request {
             Request::Popup(popup, anchor) => {
-                app.popup = Some(OpenPopup {
+                app.ui.popup = Some(OpenPopup {
                     kind: PopupKind::M2(popup),
                     state: PopupState::new(ctx, anchor).with_min_width(anchor.width()),
                 });

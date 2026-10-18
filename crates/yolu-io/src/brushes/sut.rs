@@ -7,10 +7,12 @@
 //!   プレビューの PNG。どの素材を使うかは `Variant` の参照の BLOB の名前から決める。名前で当たらない参照は、残った素材（素材の種類が
 //!   分かるときは種類ごと）と参照の数がちょうど合うときだけ並びで当て、そのときは推定として [`SutNote`] で知らせる。決められない・
 //!   取り出せない筆先は使わず、欠けたことを知らせる（黙って別の画像を使わない）。
-//! - 影響元設定（`*Effector`）は筆圧（最小値と曲線）と、傾き（大きさ・不透明度・流量へ。曲線は直線に近似）。速さ・ランダムは表せない
-//!   ので注記する。入り抜き（大きさへ。長さは画素）・手ぶれ補正・筆先の角度・角度のランダムも写す。写せたものは [`SutMapped`]、
-//!   近似したものは [`SutNote`] にも載せる。
-//! - 表せない設定（色の混ぜの旗だけのもの・吹き付け・デュアルブラシ・色の変化・合成モードなど）は、旗が立っているものだけ
+//! - 影響元設定（`*Effector`。大きさ・不透明度・流量・厚さ（真円率へ）・紙質濃度・絵の具量・絵の具濃度・色相・彩度・明度・サブ描画色混合率）は、筆圧・傾き・速さ・ランダムの
+//!   切り替えと最小値、筆圧と傾きの曲線を影響元へ写す。速さ・ランダムの曲線は読めないので直線にして注記する。入り抜き（大きさへ。長さは画素）・手ぶれ補正（`FlickerReduction`。後補正は表せない）・間隔（種類ごと）・
+//!   筆先の角度・角度の影響元（ペンの向き・ペン軸の回転・線の方向・ランダム）・厚さの適用方向・最低 1 ピクセルも写す。写せたものは
+//!   [`SutMapped`]、近似したものは [`SutNote`] にも載せる。
+//! - デュアルブラシは `dual` が写す（2 つ目のサイズ・筆先・連動・濃度・硬さ・間隔・厚さ・向き・合成モード・アンチエイリアス・影響元）。
+//! - 表せない設定（色の混ぜの旗だけのもの・写せなかった吹き付けとデュアルブラシ・合成モードなど）は、旗が立っているものだけ
 //!   [`SutNote`] で知らせる。列の名前と単位は公開の解析からの推定を含むので、本物のファイルでの確かめは別に要る（確かめた所と
 //!   推測の所は docs/BRUSH_IMPORT.md）。
 //!
@@ -18,20 +20,32 @@
 
 mod blob;
 mod c2f;
+mod color;
 mod db;
+mod dual;
 mod material;
+mod mixing;
+mod refer;
+mod spray;
 mod tar;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use yolu_core::brush::MAX_STROKE_ASSIST;
+use yolu_core::brush::{
+    Input, Item, PostCorrection, StabilizerSpeed, TaperTargets, MAX_POST_STRENGTH,
+    MAX_STROKE_ASSIST, MAX_SWEEP,
+};
+use yolu_core::brush::{MAX_WATER_EDGE_BLUR, MAX_WATER_EDGE_WIDTH, MIN_WATER_EDGE_WIDTH};
 use yolu_core::curve::{Curve, CurvePoint};
-use yolu_core::{AntiAlias, Brush, BrushTip, PaperTexture, PressureResponse, TipSelection};
+use yolu_core::{
+    AntiAlias, Brush, BrushTip, FlipRule, Influence, Influences, InputResponse, InputUse,
+    PaperTexture, TipSelection, WaterEdge,
+};
 
 use super::error::{BrushImportError, Fault};
 use super::notes::{Source, SutInput, SutMapped, SutNote, SutTarget, Unrepresented};
-use super::png_tip;
+use super::png_tip::{self, Tone};
 use super::reader::Budget;
 use super::{short_text, ImportedBrush, ImportedSet, SkipReason, SkippedBrush};
 use blob::{parse_effector, parse_refs, Effector, Refs};
@@ -50,13 +64,23 @@ const SIZE: &[&str] = &["brushsize"];
 const OPACITY: &[&str] = &["opacity", "brushopacity"];
 const FLOW: &[&str] = &["brushflow"];
 const HARDNESS: &[&str] = &["brushhardness"];
+// 間隔: 種類（0 固定・1 広い・2 普通・3 狭い）と、固定のときの数値（直径に対する %）
+const INTERVAL_TYPE: &[&str] = &["brushautointervaltype"];
 const INTERVAL: &[&str] = &["brushinterval"];
 const THICKNESS: &[&str] = &["brushthickness"];
+// 厚さの適用方向（0 水平・1 垂直。列の名前の綴りは `Thicknes`）。1 が既定で、エンジンの真円率の潰す軸と同じ
+const THICKNESS_DIRECTION: &[&str] = &["brushverticalthicknes", "brushverticalthickness"];
+// 最低 1 ピクセル（1 がオン）
+const AT_LEAST_ONE_PIXEL: &[&str] = &["brushatleast1pixel"];
+// 画面上のサイズで指定（1 がオン。1 項目ずつ変えた書き出しの比べで、1 になることを確かめた）
+const SIZE_SYNC_VIEW_SCALE: &[&str] = &["brushsizesyncviewscale"];
+// ブラシサイズの単位（0 が px。環境設定の単位を替えても .sut の列は変わらないので、0 以外は来ない見込み）
+const SIZE_UNIT: &[&str] = &["brushsizeunit"];
 const ROTATION: &[&str] = &["brushrotation"];
 const USE_PATTERN: &[&str] = &["brushusepatternimage"];
 const PATTERN_ARRAY: &[&str] = &["brushpatternimagearray"];
 const TEXTURE_IMAGE: &[&str] = &["textureimage"];
-// デュアルブラシの筆先・質感の参照（デュアルブラシ自体は表せないが、ファイルにはその素材も入るので、素材の数え合わせに使う）
+// デュアルブラシの筆先・質感の参照（筆先は `dual` が 2 つ目の筆先に使い、どちらも素材の数え合わせに使う）
 const DUAL_PATTERN_ARRAY: &[&str] = &["dualpatternimagearray"];
 const DUAL_USE_PATTERN: &[&str] = &["dualusepatternimage"];
 const DUAL_TEXTURE_IMAGE: &[&str] = &["dualtextureimage"];
@@ -66,17 +90,38 @@ const TEXTURE_REVERSE: &[&str] = &["texturereversedensity"];
 const TEXTURE_ROTATE: &[&str] = &["texturerotate"];
 const TEXTURE_BRIGHTNESS: &[&str] = &["texturebrightness"];
 const TEXTURE_CONTRAST: &[&str] = &["texturecontrast"];
+// 質感の合わせ方（0 通常・1 乗算・2 減算・3 比較(暗)・4 輪郭・5 オーバーレイ・6 覆い焼きカラー・7 焼き込みカラー・8 ハードミックス・9 高さ）
 const TEXTURE_MODE: &[&str] = &["texturecompositemode"];
 const TEXTURE_EACH_TIP: &[&str] = &["textureforplot"];
 const SIZE_EFFECTOR: &[&str] = &["brushsizeeffector"];
 const OPACITY_EFFECTOR: &[&str] = &["opacityeffector", "brushopacityeffector"];
 const FLOW_EFFECTOR: &[&str] = &["brushfloweffector"];
 const THICKNESS_EFFECTOR: &[&str] = &["brushthicknesseffector"];
+const TEXTURE_DENSITY_EFFECTOR: &[&str] = &["texturedensityeffector"];
+const MIX_PAINT_EFFECTOR: &[&str] = &["brushmixcoloreffector"];
+const MIX_DENSITY_EFFECTOR: &[&str] = &["brushmixalphaeffector"];
 const WATER_COLOR: &[&str] = &["brushusewatercolor", "brushusewatercolor2"];
+// 下地混色の方式（0 色混ぜ・1 にじみ・2 色重ね）
+const WATER_COLOR_KIND: &[&str] = &["brushwatercolor"];
 const MIX_PAINT: &[&str] = &["brushmixcolor"];
 const MIX_DENSITY: &[&str] = &["brushmixalpha"];
 const MIX_STRETCH: &[&str] = &["brushmixcolorextension"];
+// 混色モード（0 標準・1 知覚的。187 列のバージョンにだけある）・輝度の補正（0 なし・1 低・2 中・3 高・4 最高。同じく 187 列のバージョンにだけ）・
+// にじむ強さ（`…LinkSize` 0 自動設定・1 固定値、固定値は `BrushBlur`、単位は `…Unit` 0 が画素）
+const MIX_MODE: &[&str] = &["brushcolormixingmode"];
+const MIX_LUMINANCE: &[&str] = &["brushlmslinearity"];
+const BLUR_LINK_SIZE: &[&str] = &["brushblurlinksize"];
+const BLUR: &[&str] = &["brushblur"];
+const BLUR_UNIT: &[&str] = &["brushblurunit"];
 const WATER_EDGE: &[&str] = &["brushusewateredge"];
+// 水彩境界の幅（単位は `…RadiusUnit`。0 だけを見た）・透明度影響と明度影響（0〜100）・ドラッグ後に処理（旗）・ぼかし幅（単位は `…BlurUnit`）
+const WATER_EDGE_RADIUS: &[&str] = &["brushwateredgeradius"];
+const WATER_EDGE_RADIUS_UNIT: &[&str] = &["brushwateredgeradiusunit"];
+const WATER_EDGE_ALPHA: &[&str] = &["brushwateredgealphapower"];
+const WATER_EDGE_VALUE: &[&str] = &["brushwateredgevaluepower"];
+const WATER_EDGE_AFTER_DRAG: &[&str] = &["brushwateredgeafterdrag"];
+const WATER_EDGE_BLUR: &[&str] = &["brushwateredgeblur"];
+const WATER_EDGE_BLUR_UNIT: &[&str] = &["brushwateredgeblurunit"];
 const SPRAY: &[&str] = &["brushusespray"];
 const DUAL: &[&str] = &["usedualbrush"];
 // 入り抜き: 入り・抜きそれぞれの旗・長さ・長さの単位（0 が画素）。影響先は `BrushInOutType`（0 が既定）と、`BrushInOutTarget`（BLOB）。
@@ -88,31 +133,55 @@ const IN_UNIT: &[&str] = &["brushinlengthunit"];
 const OUT_UNIT: &[&str] = &["brushoutlengthunit"];
 const IN_OUT_TYPE: &[&str] = &["brushinouttype"];
 const IN_OUT_TARGET: &[&str] = &["brushinouttarget"];
-// 手ぶれ補正の旗と強さ（段階）
-const USE_REVISION: &[&str] = &["brushuserevision"];
-const REVISION: &[&str] = &["brushrevision"];
-// 筆先の向きの影響元（旗の整数。0x80 がランダム。0x10・0x20・0x40 は影響元の旗と同じ並び）と、ランダムの強さ（百分率の整数）
+// 手ブレ補正の強さ（画面の値そのまま。0〜100）と、速度による手ブレ補正の旗・補正タイプ（0 すばやく描いたときに弱く補正・1 ゆっくり描いたときに補正）
+const FLICKER: &[&str] = &["flickerreduction"];
+const FLICKER_BY_SPEED: &[&str] = &["flickerreductionbyspeed"];
+const FLICKER_BY_SPEED_TYPE: &[&str] = &["flickerreductionbyspeedtype"];
+// はらい（画面の値そのまま。0〜100。列名は綴りのまま）
+const STICKNESS: &[&str] = &["stickness"];
+// 後補正の旗・強さ（画面の値そのまま）・速度による調整・表示倍率による調整・ベジェ曲線
+const POST_CORRECTION: &[&str] = &["brushuserevision"];
+const POST_STRENGTH: &[&str] = &["brushrevision"];
+const POST_BY_SPEED: &[&str] = &["brushrevisionbyspeed"];
+const POST_BY_VIEW_SCALE: &[&str] = &["brushrevisionbyviewscale"];
+const POST_BEZIER: &[&str] = &["brushrevisionbezier"];
+// 角をとがらせる（エンジンに無い）
+const SHARPEN_CORNER: &[&str] = &["brushsharpencorner"];
+// ベクターレイヤー向けの旗（ベクター消去・ベクター吸着）。実物の行はふつう両方の列を持つので、列ごとに旗を見る
+const VECTOR_ERASER: &[&str] = &["brushusevectoreraser"];
+const VECTOR_MAGNET: &[&str] = &["brushusevectormagnet"];
+// 筆先の向きの影響元（旗の整数。下位 0x03 は常に立つ・0x10 ペンの向き・0x20 ペン軸の回転・0x40 線の方向・0x80 ランダム）と、ランダムの強さ
+// （百分率の整数）
 const ROTATION_EFFECTOR: &[&str] = &["brushrotationeffector"];
 const ROTATION_RANDOM: &[&str] = &["brushrotationrandomscale"];
-const COLOR_CHANGE: &[&str] = &[
-    "brushhuechange",
-    "brushsaturationchange",
-    "brushvaluechange",
-    "brushsubcolor",
-];
 const BLEND_MODE: &[&str] = &["compositemode"];
-// アンチエイリアス（整数。0 なし・1 弱・2 中・3 強と推定: 画面の選びの順。手元の書き出しでは 0・1・2 を見た）。デュアルブラシの
-// `DualAntiAlias` はデュアルブラシごと表せないので読まない
+// 複数の筆先の繰り返し方法（0 繰り返し・1 折り返し・2 繰り返さない・3 ランダム・4 一巡のみ・5 ランダムに一巡。`…Type2` はいつも同じ値なので読まない）
+const PATTERN_ORDER: &[&str] = &["brushpatternordertype"];
+// 筆先の左右・上下の反転（0 なし・1 反転・2 ランダム・3 折り返し時に反転）
+const PATTERN_REVERSE_H: &[&str] = &["brushpatternreversehorizontal"];
+const PATTERN_REVERSE_V: &[&str] = &["brushpatternreversevertical"];
+// ブラシ先端同士を比較暗で合成（旗。先端が重なるとき濃い方を残す）
+const BLEND_DARKEN: &[&str] = &["brushblendpatternbydarken"];
+// 連続吹き付け・リボン（旗。1 がオン）
+const CONTINUOUS_PLOT: &[&str] = &["brushcontinuousplot"];
+const RIBBON: &[&str] = &["brushribbon"];
+// アンチエイリアス（整数。0 なし・1 弱・2 中・3 強。1 項目ずつ変えた書き出しの比べで決まった）。デュアルブラシの
+// `DualAntiAlias` は `dual` が読む
 const ANTI_ALIAS: &[&str] = &["antialias"];
 
-/// 読む列の名前の全部。
+/// 読む列の名前の全部（色の変化の列は `color::KNOWN`）。
 const KNOWN: &[&[&str]] = &[
     SIZE,
     OPACITY,
     FLOW,
     HARDNESS,
+    INTERVAL_TYPE,
     INTERVAL,
     THICKNESS,
+    THICKNESS_DIRECTION,
+    AT_LEAST_ONE_PIXEL,
+    SIZE_SYNC_VIEW_SCALE,
+    SIZE_UNIT,
     ROTATION,
     USE_PATTERN,
     PATTERN_ARRAY,
@@ -132,11 +201,27 @@ const KNOWN: &[&[&str]] = &[
     OPACITY_EFFECTOR,
     FLOW_EFFECTOR,
     THICKNESS_EFFECTOR,
+    TEXTURE_DENSITY_EFFECTOR,
+    MIX_PAINT_EFFECTOR,
+    MIX_DENSITY_EFFECTOR,
     WATER_COLOR,
+    WATER_COLOR_KIND,
     MIX_PAINT,
     MIX_DENSITY,
     MIX_STRETCH,
+    MIX_MODE,
+    MIX_LUMINANCE,
+    BLUR_LINK_SIZE,
+    BLUR,
+    BLUR_UNIT,
     WATER_EDGE,
+    WATER_EDGE_RADIUS,
+    WATER_EDGE_RADIUS_UNIT,
+    WATER_EDGE_ALPHA,
+    WATER_EDGE_VALUE,
+    WATER_EDGE_AFTER_DRAG,
+    WATER_EDGE_BLUR,
+    WATER_EDGE_BLUR_UNIT,
     SPRAY,
     DUAL,
     USE_IN,
@@ -147,13 +232,28 @@ const KNOWN: &[&[&str]] = &[
     OUT_UNIT,
     IN_OUT_TYPE,
     IN_OUT_TARGET,
-    USE_REVISION,
-    REVISION,
+    FLICKER,
+    FLICKER_BY_SPEED,
+    FLICKER_BY_SPEED_TYPE,
+    STICKNESS,
+    POST_CORRECTION,
+    POST_STRENGTH,
+    POST_BY_SPEED,
+    POST_BY_VIEW_SCALE,
+    POST_BEZIER,
+    SHARPEN_CORNER,
+    VECTOR_ERASER,
+    VECTOR_MAGNET,
     ROTATION_EFFECTOR,
     ROTATION_RANDOM,
-    COLOR_CHANGE,
     BLEND_MODE,
+    PATTERN_ORDER,
+    PATTERN_REVERSE_H,
+    PATTERN_REVERSE_V,
+    BLEND_DARKEN,
     ANTI_ALIAS,
+    CONTINUOUS_PLOT,
+    RIBBON,
 ];
 
 /// 割合の設定（0〜100 の百分率か 0〜1 の割合か列によって混ざるので、1 より大きければ百分率として見る）。
@@ -268,6 +368,20 @@ fn resolve_by_kind(
     if dual.is_some_and(|d| !d.complete) {
         return None;
     }
+    let picks = by_kind_picks(main, dual, materials, kind)?
+        .into_iter()
+        .take(main.items.len())
+        .collect();
+    Some(Resolved { picks })
+}
+
+/// [`resolve_by_kind`] の、メインとデュアルの参照の全部の当て（メインが先、デュアルが後）。当てられなければ None。
+fn by_kind_picks(
+    main: &Refs,
+    dual: Option<&Refs>,
+    materials: &[Material],
+    kind: Kind,
+) -> Option<Vec<Option<Pick>>> {
     let candidates: Vec<usize> = (0..materials.len())
         .filter(|&i| materials[i].kind == Some(kind))
         .collect();
@@ -296,15 +410,15 @@ fn resolve_by_kind(
         return None;
     }
     let mut rest = unused.into_iter();
-    let picks = found
-        .into_iter()
-        .map(|f| match f {
-            Some(i) => Some((i, false)),
-            None => rest.next().map(|i| (i, true)),
-        })
-        .take(main.items.len())
-        .collect();
-    Some(Resolved { picks })
+    Some(
+        found
+            .into_iter()
+            .map(|f| match f {
+                Some(i) => Some((i, false)),
+                None => rest.next().map(|i| (i, true)),
+            })
+            .collect(),
+    )
 }
 
 /// デュアルブラシを使う設定の、デュアルの素材の参照。使わない設定・参照の無い設定は None。
@@ -382,83 +496,11 @@ fn curve_points(raw: &[(f64, f64)]) -> (Vec<CurvePoint>, bool) {
     )
 }
 
-/// 傾きの影響の曲線が、直線（直立で 1・寝かせきって 0）から外れてよい最大の幅。これ以内なら近似の注記を付けない。
-const TILT_STRAIGHT: f64 = 0.1;
-
-/// 曲線（点を通る折れ線。x の昇順でなくてもよい）の x での値。点が 2 つに満たない・有限でない点だけなら None。
-fn curve_value(points: &[(f64, f64)], x: f64) -> Option<f64> {
-    let mut pts: Vec<(f64, f64)> = points
-        .iter()
-        .filter(|(px, py)| px.is_finite() && py.is_finite())
-        .map(|&(px, py)| (px.clamp(0.0, 1.0), py.clamp(0.0, 1.0)))
-        .collect();
-    if pts.len() < 2 {
-        return None;
-    }
-    pts.sort_by(|a, b| a.0.total_cmp(&b.0));
-    if x <= pts[0].0 {
-        return Some(pts[0].1);
-    }
-    let last = pts[pts.len() - 1];
-    if x >= last.0 {
-        return Some(last.1);
-    }
-    let i = pts.windows(2).position(|w| x <= w[1].0)?;
-    let (a, b) = (pts[i], pts[i + 1]);
-    let t = if b.0 > a.0 {
-        (x - a.0) / (b.0 - a.0)
-    } else {
-        0.0
-    };
-    Some(a.1 + (b.1 - a.1) * t)
-}
-
-/// 傾きの曲線が「直立で 1・寝かせきって 0 へ下がる」形なら、直線 1 − x からの最大の外れ。そうでなければ（上がる・途中で止まる・
-/// 読めない）None。このアプリの傾きの影響は、大きさ・不透明度・流量へ 1 − 傾き（直立 0〜寝かせきって 1）を掛けるだけで、
-/// 曲線も最小値も持たないので、全幅で下がる曲線だけを近似する。
-fn tilt_fit(points: &[(f64, f64)]) -> Option<f64> {
-    let (top, bottom) = (curve_value(points, 0.0)?, curve_value(points, 1.0)?);
-    if top < 0.9 || bottom > 0.1 {
-        return None;
-    }
-    (0..=20)
-        .map(|i| {
-            let x = i as f64 / 20.0;
-            curve_value(points, x).map(|y| (y - (1.0 - x)).abs())
-        })
-        .try_fold(0.0f64, |worst, d| d.map(|d| worst.max(d)))
-}
-
-/// 傾きの影響を、大きさ・不透明度・流量の傾きの切り替えに写す。写せたら true（写せなければ呼び出し側が「表せない」と知らせる）。
-/// 速さも使う設定は、筆圧でない 2 つ目の曲線がどちらの入力のものか決められないので写さない。太さ（真円率）には傾きの影響が無い。
-fn map_tilt(
-    brush: &mut Brush,
-    e: &Effector,
-    target: SutTarget,
-    notes: &mut Vec<Unrepresented>,
-    mapped: &mut Vec<SutMapped>,
-) -> bool {
-    if e.flags & Effector::SPEED != 0 {
-        return false;
-    }
-    let Some(deviation) = e.tilt_curve().and_then(tilt_fit) else {
-        return false;
-    };
-    let controls = &mut brush.controls;
-    match target {
-        SutTarget::Size => controls.tilt_size = true,
-        SutTarget::Opacity => controls.tilt_opacity = true,
-        SutTarget::Flow => controls.tilt_flow = true,
-        SutTarget::Thickness => return false,
-    }
-    mapped.push(SutMapped::Tilt);
-    if deviation > TILT_STRAIGHT {
-        notes.push(Unrepresented::ClipStudio(SutNote::TiltCurve(target)));
-    }
-    true
-}
-
-/// 影響元の列 1 つを読んで、筆圧は応えに、傾きは傾きの切り替えに、ほかの入力は注記にする。
+/// 影響元の列 1 つを読んで、項目の影響元へ写す: 旗（0x10 筆圧・0x20 傾き・0x40 速さ・0x80 ランダム）を入力ごとの切り替えに、
+/// ヘッダーの最小値を入力ごとの最小値に、1 つ目の曲線を筆圧の曲線に、2 つ目の曲線を傾きの曲線にする。
+/// 傾きの曲線の x は 0 が直立（CLIP STUDIO の曲線の x の向き。こちらの傾きの入力は直立 1 なので、x を 1 − x へ反転して写す）。
+/// 傾きの曲線を決められない（ヘッダーの枠が読めない・曲線と合わない）ときは直線にして知らせる。速さ・ランダムの曲線は読まない
+/// （使うと BLOB が 44 バイト伸びるが、中身の形が分からない）ので直線にして、使っていれば知らせる。
 fn effector(
     brush: &mut Brush,
     row: &Row,
@@ -481,64 +523,113 @@ fn effector(
         )));
         return;
     };
-    for (flag, input) in [
-        (Effector::TILT, SutInput::Tilt),
-        (Effector::SPEED, SutInput::Speed),
-        (Effector::RANDOM, SutInput::Random),
-    ] {
+    let mut influence = Influence::OFF;
+    for (index, (flag, input)) in [
+        (Effector::PRESSURE, Input::Pressure),
+        (Effector::TILT, Input::Tilt),
+        (Effector::SPEED, Input::Speed),
+        (Effector::RANDOM, Input::Random),
+    ]
+    .into_iter()
+    .enumerate()
+    {
         if e.flags & flag == 0 {
             continue;
         }
-        if input == SutInput::Tilt && map_tilt(brush, &e, target, notes, mapped) {
+        let raw: Option<Vec<(f64, f64)>> = match input {
+            Input::Pressure => e.pressure_curve().map(<[_]>::to_vec),
+            Input::Tilt => match e.tilt_curve() {
+                Some(curve) => curve.map(|c| c.iter().map(|&(x, y)| (1.0 - x, y)).collect()),
+                None => {
+                    notes.push(Unrepresented::ClipStudio(SutNote::TiltCurve(target)));
+                    None
+                }
+            },
+            Input::Speed | Input::Random => {
+                // 色の変化の影響元の既定（ランダム）の BLOB はヘッダーだけで、曲線は付かない（付くと 44 バイト伸びる）。曲線が無ければ知らせない
+                if !target.is_color() || e.trailing > 0 {
+                    notes.push(Unrepresented::ClipStudio(SutNote::InfluenceCurve {
+                        target,
+                        input: if input == Input::Speed {
+                            SutInput::Speed
+                        } else {
+                            SutInput::Random
+                        },
+                    }));
+                }
+                None
+            }
+        };
+        let (points, simplified) = raw.as_deref().map_or((Vec::new(), false), curve_points);
+        if simplified {
+            let input = if input == Input::Tilt {
+                SutInput::Tilt
+            } else {
+                SutInput::Pressure
+            };
+            notes.push(Unrepresented::ClipStudio(SutNote::CurveSimplified(
+                target, input,
+            )));
+        }
+        let (min, make): (f64, fn(f64, Vec<CurvePoint>) -> _) = if target.signed() {
+            (e.signed_minimums[index], InputResponse::new_signed)
+        } else {
+            (e.minimums[index], InputResponse::new)
+        };
+        let response = make(min, points).or_else(|_| make(min, Vec::new()));
+        let Ok(mut response) = response else {
             continue;
+        };
+        if input == Input::Tilt {
+            // 傾きの最大値（こちらは 0〜100%）。読めない・100% を超える値は 100% にして知らせる（ヘッダーの 0 埋めと見分けられない 0 は
+            // 値として読まない）
+            match e.tilt_max {
+                // 0 は、ヘッダーの 0 埋めと見分けられない（値としては読まず、100% のまま）
+                Some(0.0) => {}
+                Some(max) if max <= 1.0 => {
+                    response = response.with_max(max).unwrap_or(response);
+                }
+                _ => notes.push(Unrepresented::ClipStudio(SutNote::TiltMax(target))),
+            }
         }
-        notes.push(Unrepresented::ClipStudio(SutNote::Influence {
-            target,
-            input,
-        }));
-    }
-    if e.flags & Effector::PRESSURE == 0 {
-        return;
-    }
-    let (points, simplified) = e.pressure_curve().map_or((Vec::new(), false), curve_points);
-    if simplified {
-        notes.push(Unrepresented::ClipStudio(SutNote::CurveSimplified(target)));
-    }
-    let response = PressureResponse::new(e.pressure_min, points)
-        .or_else(|_| PressureResponse::new(e.pressure_min, Vec::new()));
-    let Ok(response) = response else {
-        return;
-    };
-    match target {
-        SutTarget::Size => {
-            brush.base.pressure_size = true;
-            brush.pressure.size = response;
-        }
-        SutTarget::Opacity => {
-            brush.base.pressure_opacity = true;
-            brush.pressure.opacity = response;
-        }
-        SutTarget::Flow => {
-            brush.base.pressure_flow = true;
-            brush.pressure.flow = response;
-        }
-        SutTarget::Thickness => {
-            notes.push(Unrepresented::ClipStudio(SutNote::ThicknessPressure));
-            return;
+        *influence.input_mut(input) = InputUse { on: true, response };
+        let item = match input {
+            Input::Pressure => SutMapped::Pressure,
+            Input::Tilt => SutMapped::Tilt,
+            Input::Speed => SutMapped::Speed,
+            Input::Random => SutMapped::Random,
+        };
+        if !mapped.contains(&item) {
+            mapped.push(item);
         }
     }
-    mapped.push(SutMapped::Pressure);
+    *target.influence_mut(&mut brush.influences) = influence;
 }
 
-/// 入り抜きの影響先が既定（大きさだけ）か。`BrushInOutType` が 0 で、`BrushInOutTarget`（ビッグエンディアンの整数: 12・項目の数・12 のあと、
-/// 項目ごとに「項目の番号・旗・旗」）の旗がすべて 0 のとき。実物の .sut では、項目は 21 個で、旗はどれも 0 だった。読めない・形が違う・
-/// 旗が立っているものは、大きさへの入り抜きと決められないので false。影響先の列が無い版は既定（大きさ）として扱う。
-fn start_end_targets_size(row: &Row) -> bool {
-    if row.first_number(IN_OUT_TYPE).is_some_and(|v| v != 0.0) {
-        return false;
-    }
+/// 入り抜きの影響先の番号（`BrushInOutTarget` の項目の 1 つ目の整数）のうち、エンジンに同じ項目があるもの。実物で確かめた番号:
+/// 紙質濃度 112・ブラシサイズ 1001・ブラシ濃度 1021・厚さ 1051・絵の具量 1082・絵の具濃度 1084（デュアル側は 50000 を足した番号）。
+const TAPER_ITEMS: [(u32, Item); 6] = [
+    (1001, Item::Size),
+    (1021, Item::Flow),
+    (1051, Item::Roundness),
+    (112, Item::TextureDensity),
+    (1082, Item::MixPaint),
+    (1084, Item::MixDensity),
+];
+
+/// 入り抜きの影響先の列の読み。
+enum StartEndTargets {
+    /// 影響先の列が無い（そのバージョンの描き方は未確認。今まで通り大きさだけとみなす）。
+    Absent,
+    /// オンの項目の「番号・最小値（0〜1）」。空なら、画面の影響先が「なし」で、長さが入っていても入り抜きは掛からない。
+    Listed(Vec<(u32, f64)>),
+}
+
+/// `BrushInOutTarget`（ビッグエンディアンの整数: 12・項目の数・12 のあと、項目ごとに「項目の番号・オン・最小値（%）」）で、オンの項目の
+/// 「番号・最小値（0〜1）」。読めない・形が違う・旗が 0 か 1 でない・最小値が 0〜100 でない・同じ番号の項目が重なるものは None。
+fn start_end_targets(row: &Row) -> Option<StartEndTargets> {
     let Some(blob) = row.first_blob(IN_OUT_TARGET) else {
-        return !row.is_oversized(IN_OUT_TARGET);
+        return (!row.is_oversized(IN_OUT_TARGET)).then_some(StartEndTargets::Absent);
     };
     let words: Vec<u32> = blob
         .as_chunks::<4>()
@@ -547,19 +638,33 @@ fn start_end_targets_size(row: &Row) -> bool {
         .map(|c| u32::from_be_bytes(*c))
         .collect();
     if blob.len() % 4 != 0 || words.len() < 3 || words[0] != 12 || words[2] != 12 {
-        return false;
+        return None;
     }
     let count = words[1] as usize;
-    words.len() == 3 + count * 3
-        && words[3..]
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .all(|item| item[1] == 0 && item[2] == 0)
+    if words.len() != 3 + count * 3 {
+        return None;
+    }
+    let mut on: Vec<(u32, f64)> = Vec::new();
+    for item in words[3..].as_chunks::<3>().0 {
+        let [id, flag, min] = *item;
+        if flag > 1 || (flag == 1 && min > 100) {
+            return None;
+        }
+        if flag == 1 {
+            if on.iter().any(|(seen, _)| *seen == id) {
+                return None;
+            }
+            on.push((id, f64::from(min) / 100.0));
+        }
+    }
+    Some(StartEndTargets::Listed(on))
 }
 
-/// 入り抜き: 大きさにだけ効く、長さが画素のものを `assist.taper_in`・`taper_out` へ。影響先・長さの単位が合わないものは写さずに知らせる。
-/// 速さに応じた長さ・割合は読まず、写したときに知らせる。
+/// 入り抜き: `BrushInOutType` が 0（長さ指定）で長さの単位が画素のものを、`assist.taper_in`・`taper_out` と、掛ける項目・項目ごとの最小値
+/// （`assist.taper_targets`）へ。影響先が全部オフ（画面の「なし」）なら、入り・抜きの旗と長さがあっても何も写さず、知らせもしない（線は
+/// 細らない）。影響先の列が無ければ大きさだけ。写せない項目（間隔・色相・彩度・明度・サブ描画色混合率・
+/// 粒子・デュアル側・番号の分からないもの）は写さずに知らせ、写せる項目が 1 つも無ければ入り抜きを写さない。パーセント指定・フェード・
+/// 読めない形・単位が合わないものも写さずに知らせる。速さに応じた長さ・割合は読まず、写したときに知らせる。
 fn start_end(
     row: &Row,
     brush: &mut Brush,
@@ -573,7 +678,43 @@ fn start_end(
     if !sides.iter().any(|(flag, ..)| row.on(flag)) {
         return;
     }
-    let mut refused = !start_end_targets_size(row);
+    let read_targets = start_end_targets(row);
+    if matches!(&read_targets, Some(StartEndTargets::Listed(on)) if on.is_empty()) {
+        // 影響先が「なし」: 指定方法・長さによらず、入り抜きは掛からない
+        return;
+    }
+    // 指定方法: 0 長さ指定・1 パーセント指定（線全体の長さが要るが、描いている間は終わりが分からない）・2 フェード（描き始めから最小値へ
+    // 向かい、抜きの長さで最小値に達して終わりまで続く。端で細る入り抜きでは表せない）
+    let mut refused = row.first_number(IN_OUT_TYPE).is_some_and(|v| v != 0.0);
+    let mut targets = TaperTargets::SIZE_ONLY;
+    if !refused {
+        match read_targets {
+            None => refused = true,
+            Some(StartEndTargets::Absent) => {}
+            Some(StartEndTargets::Listed(on)) => {
+                let mut taken_targets = TaperTargets::NONE;
+                let mut dropped = Vec::new();
+                for (id, min) in on {
+                    match TAPER_ITEMS.iter().find(|(known, _)| *known == id) {
+                        Some((_, item)) => {
+                            taken_targets = taken_targets
+                                .with(*item, Some(min))
+                                .unwrap_or(taken_targets);
+                        }
+                        None => dropped.push(id),
+                    }
+                }
+                if !dropped.is_empty() {
+                    notes.push(Unrepresented::ClipStudio(SutNote::StartEndTargets(dropped)));
+                }
+                if taken_targets == TaperTargets::NONE {
+                    // 写せる項目が 1 つも無い（知らせは上で済んでいる）
+                    return;
+                }
+                targets = taken_targets;
+            }
+        }
+    }
     let mut taken = false;
     if !refused {
         for (flag, length, unit, is_in) in sides {
@@ -601,34 +742,81 @@ fn start_end(
         notes.push(Unrepresented::ClipStudio(SutNote::StartEnd));
     }
     if taken {
+        brush.assist.taper_targets = targets;
         mapped.push(SutMapped::StartEnd);
         notes.push(Unrepresented::ClipStudio(SutNote::StartEndDetail));
     }
 }
 
-/// 手ぶれ補正: 強さ（段階）を糸の長さ（画素）へ 1 対 1 で写す（換算は推定）。強さが読めなければ写さずに知らせる。
+/// 手ブレ補正の強さ 1 あたりの糸の長さ（画素）。
+pub const STABILIZER_PER_LEVEL: f64 = 1.0;
+
+/// 補正: 画面の「手ブレ補正」（`FlickerReduction`。0〜100）を糸の長さ（画素。強さ × [`STABILIZER_PER_LEVEL`]、換算は近い式）へ、速度による
+/// 手ブレ補正（`FlickerReductionBySpeed`）と補正タイプ（`…Type`）を `assist.stabilizer_speed` へ（強さが 0 なら速度の旗は効かないので写さない。
+/// 強さ 0 の行にも旗の既定値は入っている）。はらい（`Stickness`。0〜100）を `assist.sweep`（0〜1）へ。後補正（`BrushUseRevision`・強さ
+/// `BrushRevision`・`…BySpeed`・`…ByViewScale`）を `assist.post` へ（強さ・速度・表示倍率の列には、後補正が切でも既定値が入っているので、
+/// 旗が立っているときだけ写す。列が無ければ後補正の既定の値）。後補正のベジェ曲線（`BrushRevisionBezier`）と角をとがらせる（`BrushSharpenCorner`）はエンジンに無いので、
+/// 旗が立っていれば知らせる。
 fn stabilizer(
     row: &Row,
     brush: &mut Brush,
     notes: &mut Vec<Unrepresented>,
     mapped: &mut Vec<SutMapped>,
 ) {
-    if !row.on(USE_REVISION) {
-        return;
+    if row.on(SHARPEN_CORNER) {
+        notes.push(Unrepresented::ClipStudio(SutNote::SharpenCorner));
     }
-    match row.first_number(REVISION).filter(|l| *l > 0.0) {
-        Some(level) => {
-            brush.assist.stabilizer = level.min(MAX_STROKE_ASSIST);
-            mapped.push(SutMapped::Stabilizer);
-            notes.push(Unrepresented::ClipStudio(SutNote::StabilizerStrength));
+    if row.on(POST_CORRECTION) {
+        // 列が無ければ、後補正を入れたときの既定の値（強さ・速度による調整・表示倍率による調整）で写す
+        let tuned = PostCorrection::default();
+        let flag =
+            |names: &[&str], default: bool| row.first_number(names).map_or(default, |v| v != 0.0);
+        brush.assist.post = PostCorrection {
+            on: true,
+            strength: row
+                .first_number(POST_STRENGTH)
+                .unwrap_or(tuned.strength)
+                .clamp(0.0, MAX_POST_STRENGTH),
+            by_speed: flag(POST_BY_SPEED, tuned.by_speed),
+            by_view_scale: flag(POST_BY_VIEW_SCALE, tuned.by_view_scale),
+            ..tuned
+        };
+        mapped.push(SutMapped::PostCorrection);
+        notes.push(Unrepresented::ClipStudio(SutNote::PostCorrectionStrength));
+        if row.on(POST_BEZIER) {
+            notes.push(Unrepresented::ClipStudio(SutNote::PostCorrectionBezier));
         }
-        None => notes.push(Unrepresented::ClipStudio(SutNote::Stabilizer)),
+    }
+    if let Some(sweep) = row.first_number(STICKNESS).filter(|v| *v > 0.0) {
+        brush.assist.sweep = (sweep / 100.0).clamp(0.0, MAX_SWEEP);
+        mapped.push(SutMapped::Sweep);
+        notes.push(Unrepresented::ClipStudio(SutNote::SweepApprox));
+    }
+    let Some(level) = row.first_number(FLICKER).filter(|l| *l > 0.0) else {
+        return;
+    };
+    brush.assist.stabilizer = (level * STABILIZER_PER_LEVEL).min(MAX_STROKE_ASSIST);
+    mapped.push(SutMapped::Stabilizer);
+    notes.push(Unrepresented::ClipStudio(SutNote::StabilizerStrength));
+    if row.on(FLICKER_BY_SPEED) {
+        brush.assist.stabilizer_speed = Some(match row.first_number(FLICKER_BY_SPEED_TYPE) {
+            Some(0.0) => StabilizerSpeed::WeakenWhenFast,
+            Some(1.0) => StabilizerSpeed::SlowOnly,
+            // 知らない値は写さずに知らせる
+            _ => {
+                notes.push(Unrepresented::ClipStudio(SutNote::Stabilizer));
+                return;
+            }
+        });
+        mapped.push(SutMapped::StabilizerSpeed);
     }
 }
 
-/// 筆先の向き: 角度（度）を `tip.angle` へ（向きの正負は確かめていないので、エンジンと同じ向きとして写す）、向きの影響元のランダム
-/// （旗 0x80 と強さ）を `jitter.angle` へ。筆圧・傾き・速さ（旗 0x10・0x20・0x40）と、読めない強さのランダムは表せないので知らせる。旗の下の 2 ビットは意味を
-/// 確かめられていない（実物ではどのブラシにも立っていた）ので読まない。
+/// 筆先の向き: 角度（度）を `tip.angle` へ（向きの正負は確かめていないので、エンジンと同じ向きとして写す）。向きの影響元（旗）は
+/// エンジンの近い設定へ: 0x10 ペンの向き → `controls.tilt_angle`（ペンが倒れている向きを角度に足す）、0x20 ペン軸の回転 →
+/// `controls.rotation_angle`（回転の情報がある入力の軸の回転を角度に足す）、0x40 線の方向 → `tip.follow_direction`（線の向きを角度に足す）、
+/// 0x80 ランダム → `jitter.angle`（強さは `BrushRotationRandomScale`）。下位 0x03 は常に立つので読まない。強さを読めないランダムと、
+/// 知らない旗は表せないので知らせる。
 fn tip_direction(
     row: &Row,
     brush: &mut Brush,
@@ -640,7 +828,23 @@ fn tip_direction(
         mapped.push(SutMapped::TipAngle);
     }
     let influences = row.first_number(ROTATION_EFFECTOR).map_or(0, |v| v as i64);
-    let mut unmapped = influences & 0x70 != 0;
+    let mut unmapped = influences & !(0x03 | 0x10 | 0x20 | 0x40 | 0x80) != 0;
+    let mut sourced = false;
+    if influences & 0x10 != 0 {
+        brush.controls.tilt_angle = true;
+        sourced = true;
+    }
+    if influences & 0x20 != 0 {
+        brush.controls.rotation_angle = true;
+        sourced = true;
+    }
+    if influences & 0x40 != 0 {
+        brush.tip.follow_direction = true;
+        sourced = true;
+    }
+    if sourced {
+        mapped.push(SutMapped::AngleSource);
+    }
     if influences & 0x80 != 0 {
         // ランダムの強さが読めなければ写せない（強さ 0 は、ゆらがないので写すものが無い）
         match percent(row, ROTATION_RANDOM).map(|r| r.clamp(0.0, 1.0)) {
@@ -657,6 +861,74 @@ fn tip_direction(
     }
 }
 
+/// 厚さの適用方向（`BrushVerticalThicknes`。0 水平・1 垂直）。エンジンの真円率は、角度 0 のとき縦の軸を潰す（横長の楕円）。垂直（既定）は
+/// それと同じ向きなので何もしない。水平は潰す軸が 90 度違うので、丸い筆先は角度に 90 度を足して写す（楕円を回すだけで、ほかの向きの設定と
+/// 同じ角度に足されるので矛盾しない）。画像の筆先は、画像も回ってしまい形が変わるので写さずに知らせる。潰していない（真円率 1）ときは
+/// 向きの違いが形に出ないので何もしないが、真円率の影響元が入っていれば、筆圧などで潰れたときに形に出るので写す（影響元は先に写してある）。
+fn thickness_direction(
+    row: &Row,
+    brush: &mut Brush,
+    notes: &mut Vec<Unrepresented>,
+    mapped: &mut Vec<SutMapped>,
+) {
+    let horizontal = row.first_number(THICKNESS_DIRECTION) == Some(0.0);
+    if !horizontal || (brush.tip.roundness >= 1.0 && !brush.influences.roundness.is_on()) {
+        return;
+    }
+    if brush.tip.image.is_some() || !brush.tip.images.is_empty() {
+        notes.push(Unrepresented::ClipStudio(SutNote::ThicknessDirection));
+        return;
+    }
+    brush.tip.angle = (brush.tip.angle + 90.0 + 180.0).rem_euclid(360.0) - 180.0;
+    mapped.push(SutMapped::ThicknessDirection);
+}
+
+/// 間隔: 種類（`BrushAutoIntervalType`）が 0（固定）か列が無ければ、`BrushInterval`（直径に対する %）。広い・普通・狭いは数値を使わず、
+/// 実測した 12%・8%・4% 〔円形の硬い筆先で測った値〕。エンジンの `spacing` は公称の直径に対する割合（`add_path_point` の
+/// `2 × 半径 × spacing`）なので、そのまま写せる。知らない種類は写さずに（既定の間隔のまま）知らせる。
+fn interval(row: &Row, brush: &mut Brush, notes: &mut Vec<Unrepresented>) {
+    let spacing = match interval_spacing(row, INTERVAL_TYPE, INTERVAL) {
+        Ok(spacing) => spacing,
+        Err(other) => {
+            notes.push(Unrepresented::ClipStudio(SutNote::IntervalType(other)));
+            None
+        }
+    };
+    if let Some(v) = spacing {
+        brush.base.spacing = v.clamp(0.01, 4.0);
+    }
+}
+
+/// 間隔の種類の列 `kind` と数値の列 `value` から、直径に対する割合の間隔（[`interval`] の表。2 つ目の筆先も同じ表）。数値が無ければ
+/// None、知らない種類は `Err(その値)`。
+fn interval_spacing(row: &Row, kind: &[&str], value: &[&str]) -> Result<Option<f64>, f64> {
+    match row.first_number(kind) {
+        None | Some(0.0) => Ok(row.first_number(value).map(|v| v / 100.0)),
+        Some(1.0) => Ok(Some(0.12)),
+        Some(2.0) => Ok(Some(0.08)),
+        Some(3.0) => Ok(Some(0.04)),
+        Some(other) => Err(other),
+    }
+}
+
+/// 質感の合わせ方（`TextureCompositeMode`）をエンジンの同じ名前の合わせ方へ。通常・輪郭・高さ・知らない値は同じものが無い（None）。
+fn texture_mode(value: f64) -> Option<yolu_core::TextureMode> {
+    use yolu_core::TextureMode as M;
+    if value.fract() != 0.0 {
+        return None;
+    }
+    match value as i64 {
+        1 => Some(M::Multiply),
+        2 => Some(M::Subtract),
+        3 => Some(M::Darken),
+        5 => Some(M::Overlay),
+        6 => Some(M::ColorDodge),
+        7 => Some(M::ColorBurn),
+        8 => Some(M::HardMix),
+        _ => None,
+    }
+}
+
 // ---------------- 取り込み ----------------
 
 /// 1 回の取り込みの間、素材と、その画像を作った結果を持つ。
@@ -667,7 +939,7 @@ struct Library<'a> {
     /// 素材の C2F を読む仕事の残り（全部の素材で共有）。
     c2f_work: c2f::Work,
     tips: HashMap<usize, Option<Arc<BrushTip>>>,
-    textures: HashMap<(usize, bool), Option<Arc<BrushTip>>>,
+    textures: HashMap<(usize, bool, Tone), Option<Arc<BrushTip>>>,
     /// 画像を取り出せなかった素材（使おうとしたもの）。
     unreadable: HashSet<usize>,
 }
@@ -722,22 +994,23 @@ impl<'a> Library<'a> {
         Ok(tip.map(|t| (t, self.preview(index))))
     }
 
-    /// 素材の画像を質感（白が塗れる）にする。
+    /// 素材の画像を質感（白が塗れる）にする。`tone` は明るさ・コントラストの補正（画像へ焼き込む）。
     fn texture(
         &mut self,
         index: usize,
         name: &str,
         invert: bool,
+        tone: Tone,
         budget: &mut Budget,
     ) -> Result<Option<(Arc<BrushTip>, bool)>, Fault> {
-        if let Some(done) = self.textures.get(&(index, invert)) {
+        if let Some(done) = self.textures.get(&(index, invert, tone)) {
             return Ok(done.clone().map(|t| (t, self.preview(index))));
         }
         let png = self.materials()?.0[index]
             .image
             .as_ref()
             .map(|i| i.png.clone());
-        let tip = match png.map(|png| png_tip::read_png_texture(&png, name, invert)) {
+        let tip = match png.map(|png| png_tip::read_png_texture(&png, name, invert, tone)) {
             Some(Ok(tip)) => {
                 budget.take(tip.width() as u64 * tip.height() as u64)?;
                 Some(Arc::new(tip))
@@ -747,7 +1020,7 @@ impl<'a> Library<'a> {
                 None
             }
         };
-        self.textures.insert((index, invert), tip.clone());
+        self.textures.insert((index, invert, tone), tip.clone());
         Ok(tip.map(|t| (t, self.preview(index))))
     }
 
@@ -883,53 +1156,427 @@ fn texture(
                 .and_then(|r| r.picks.first().copied().flatten())
         }
     };
-    let invert = row.on(TEXTURE_REVERSE);
+    let (texture, events) = paper(
+        row,
+        &MAIN_TEXTURE,
+        pick,
+        &format!("{name} texture"),
+        library,
+        budget,
+    )?;
+    for event in events {
+        let note = match event {
+            TextureEvent::Missing => SutNote::TextureMissing,
+            TextureEvent::Proprietary => SutNote::ProprietaryImage,
+            TextureEvent::Guessed => SutNote::TextureGuessed,
+            TextureEvent::Mode => SutNote::TextureMode,
+            TextureEvent::Mapped => {
+                mapped.push(SutMapped::Texture);
+                continue;
+            }
+            TextureEvent::Rotated => {
+                mapped.push(SutMapped::TextureRotation);
+                continue;
+            }
+            TextureEvent::Toned => {
+                mapped.push(SutMapped::TextureTone);
+                SutNote::TextureToneApprox
+            }
+            TextureEvent::Preview => SutNote::PreviewImage,
+            TextureEvent::EachTip => SutNote::TextureEachTip,
+        };
+        let note = Unrepresented::ClipStudio(note);
+        if !(event.once() && notes.contains(&note)) {
+            notes.push(note);
+        }
+    }
+    brush.texture = texture;
+    Ok(())
+}
+
+/// 紙質の列の名前（主は `Texture…`、2 つ目は `DualTexture…`）。画像の参照の列は呼び手が読む。
+struct TextureColumns {
+    reverse: &'static [&'static str],
+    brightness: &'static [&'static str],
+    contrast: &'static [&'static str],
+    density: &'static [&'static str],
+    scale: &'static [&'static str],
+    mode: &'static [&'static str],
+    rotate: &'static [&'static str],
+    each_tip: &'static [&'static str],
+}
+
+const MAIN_TEXTURE: TextureColumns = TextureColumns {
+    reverse: TEXTURE_REVERSE,
+    brightness: TEXTURE_BRIGHTNESS,
+    contrast: TEXTURE_CONTRAST,
+    density: TEXTURE_DENSITY,
+    scale: TEXTURE_SCALE,
+    mode: TEXTURE_MODE,
+    rotate: TEXTURE_ROTATE,
+    each_tip: TEXTURE_EACH_TIP,
+};
+
+/// 紙質を写すときに出た事（出た順。呼び手が自分の知らせ・写せた項目へ直す）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TextureEvent {
+    /// 素材を決められない・画像を取り出せない（質感なし）。
+    Missing,
+    /// 素材の画像が CLIP STUDIO 独自の入れ物にだけある素材がファイルにある（`Missing` の後だけ）。
+    Proprietary,
+    /// 素材を並びで当てた（推定）。
+    Guessed,
+    /// 合わせ方に同じ物が無い（乗算にした）。
+    Mode,
+    /// 質感を写した。
+    Mapped,
+    /// 回転を写した。
+    Rotated,
+    /// 明るさ・コントラストを画像へ焼き込んだ。
+    Toned,
+    /// 画像は素材のプレビューから取った。
+    Preview,
+    /// 描点ごとに適用（写さない）。
+    EachTip,
+}
+
+impl TextureEvent {
+    /// 1 つのブラシで 1 度だけ知らせる事（筆先と質感で同じ知らせになる）。
+    fn once(self) -> bool {
+        matches!(self, TextureEvent::Proprietary | TextureEvent::Preview)
+    }
+}
+
+/// 決めた素材 `pick`（None は決められない）から紙質を作る（主と 2 つ目で同じ処理）: 画像（濃度反転・明るさとコントラストを焼き込む）・
+/// 濃度・拡大率・合わせ方・回転を、列 `cols` から読む。
+fn paper(
+    row: &Row,
+    cols: &TextureColumns,
+    pick: Option<Pick>,
+    label: &str,
+    library: &mut Library<'_>,
+    budget: &mut Budget,
+) -> Result<(Option<PaperTexture>, Vec<TextureEvent>), Fault> {
+    let mut events = Vec::new();
+    let invert = row.on(cols.reverse);
+    let tone = texture_tone(row, cols);
     let found = match pick {
         Some((index, by_order)) => library
-            .texture(index, &format!("{name} texture"), invert, budget)?
+            .texture(index, label, invert, tone, budget)?
             .map(|(image, preview)| (image, preview, by_order)),
         None => None,
     };
     let Some((image, preview, guessed)) = found else {
-        notes.push(Unrepresented::ClipStudio(SutNote::TextureMissing));
-        let note = Unrepresented::ClipStudio(SutNote::ProprietaryImage);
-        if library.any_proprietary()? && !notes.contains(&note) {
-            notes.push(note);
+        events.push(TextureEvent::Missing);
+        if library.any_proprietary()? {
+            events.push(TextureEvent::Proprietary);
         }
-        return Ok(());
+        return Ok((None, events));
     };
     if guessed {
-        notes.push(Unrepresented::ClipStudio(SutNote::TextureGuessed));
+        events.push(TextureEvent::Guessed);
     }
-    let depth = percent(row, TEXTURE_DENSITY).map_or(1.0, |d| d.clamp(0.0, 1.0));
+    let depth = percent(row, cols.density).map_or(1.0, |d| d.clamp(0.0, 1.0));
     let scale = row
-        .first_number(TEXTURE_SCALE)
+        .first_number(cols.scale)
         .map(ratio)
         .filter(|s| *s > 0.0)
         .unwrap_or(1.0)
         .clamp(0.05, 64.0);
-    brush.texture = Some(PaperTexture {
+    // 合わせ方: 列が無ければ乗算（今まで通り）。同じ名前のモードがあれば写し、無ければ乗算にして知らせる
+    let mode = match row.first_number(cols.mode) {
+        None => yolu_core::TextureMode::Multiply,
+        Some(value) => texture_mode(value).unwrap_or_else(|| {
+            events.push(TextureEvent::Mode);
+            yolu_core::TextureMode::Multiply
+        }),
+    };
+    // 回転は度（反時計回りは未確認。0 は回さない）。画像は回さず、読む位置を回す
+    let angle = row
+        .first_number(cols.rotate)
+        .filter(|v| v.is_finite() && *v != 0.0)
+        .map_or(0.0, |v| v.rem_euclid(360.0));
+    events.push(TextureEvent::Mapped);
+    if angle != 0.0 {
+        events.push(TextureEvent::Rotated);
+    }
+    if !tone.is_none() {
+        events.push(TextureEvent::Toned);
+    }
+    if preview {
+        events.push(TextureEvent::Preview);
+    }
+    if row.on(cols.each_tip) {
+        events.push(TextureEvent::EachTip);
+    }
+    let texture = PaperTexture {
         image,
         depth,
         scale,
-        mode: yolu_core::TextureMode::Multiply,
-    });
-    mapped.push(SutMapped::Texture);
-    if preview && !notes.contains(&Unrepresented::ClipStudio(SutNote::PreviewImage)) {
-        notes.push(Unrepresented::ClipStudio(SutNote::PreviewImage));
+        mode,
+        angle,
+    };
+    Ok((Some(texture), events))
+}
+
+/// 質感の明るさ・コントラスト（どちらも -100〜100 の整数に収める）。両方 0（か列が無い）なら補正なし。
+fn texture_tone(row: &Row, cols: &TextureColumns) -> Tone {
+    let value = |names: &[&str]| {
+        row.first_number(names)
+            .filter(|v| v.is_finite())
+            .map_or(0, |v| v.round().clamp(-100.0, 100.0) as i32)
+    };
+    Tone {
+        brightness: value(cols.brightness),
+        contrast: value(cols.contrast),
+    }
+}
+
+/// 繰り返し方法（`BrushPatternOrderType`）の値から、エンジンの選び方と、近い動きか。知らない値は None。
+fn repeat_method(value: f64) -> Option<(TipSelection, bool)> {
+    if value.fract() != 0.0 {
+        return None;
+    }
+    match value as i64 {
+        0 => Some((TipSelection::Sequential, false)),
+        // 折り返しの端の扱い（端の筆先を 2 回使うか）は公式の説明に無いので、端を重ねない動きにして近いと知らせる
+        1 => Some((TipSelection::PingPong, true)),
+        2 => Some((TipSelection::Hold, false)),
+        3 => Some((TipSelection::Random, false)),
+        4 => Some((TipSelection::Once, false)),
+        // 乱数の並べ替えの中身は同じと言えないので、近いと知らせる
+        5 => Some((TipSelection::Shuffle, true)),
+        _ => None,
+    }
+}
+
+/// 反転（`BrushPatternReverseHorizontal`・`…Vertical`）の値から、エンジンの反転のしかた。知らない値は None。
+fn flip_method(value: f64) -> Option<FlipRule> {
+    if value.fract() != 0.0 {
+        return None;
+    }
+    match value as i64 {
+        0 => Some(FlipRule::Off),
+        1 => Some(FlipRule::On),
+        2 => Some(FlipRule::Random),
+        3 => Some(FlipRule::OnFold),
+        _ => None,
+    }
+}
+
+/// 筆先の繰り返し方法と反転の写し先（主の筆先と 2 つ目の筆先）。
+struct TipTarget<'a> {
+    image: &'a mut Option<Arc<BrushTip>>,
+    images: &'a mut Vec<Arc<BrushTip>>,
+    selection: &'a mut TipSelection,
+    flip_x: &'a mut FlipRule,
+    flip_y: &'a mut FlipRule,
+}
+
+/// 繰り返し方法と反転を写すときに出た事（出た順。呼び手が自分の知らせ・写せた項目へ直す）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TipEvent {
+    /// 繰り返し方法を写した。
+    Order,
+    /// 繰り返し方法を写したが、近い動き（折り返し・ランダムに一巡）。
+    OrderApprox,
+    /// 繰り返し方法を読めなかった（列が無い・知らない値。ランダムのまま）。
+    OrderUnknown,
+    /// 反転を写した。
+    Flip,
+    /// 反転が知らない値（反転しない）。
+    FlipUnknown,
+}
+
+/// 筆先の繰り返し方法（列 `order`）と左右・上下の反転（列 `reverse`）を写す（主と 2 つ目で同じ処理）。2 枚以上のときは並びの選び方に
+/// なる。列が無い・知らない値は、乱数にして知らせる。1 枚のときは、止まる設定（一巡のみ・ランダムに一巡）だけが効く（ほかは何枚目を
+/// 選んでも同じ筆先）。止まる設定は、1 枚を並び（`images`）へ移して、最初のダブのあとを置かないようにする。反転は筆先の画像にだけ効く
+/// （丸い筆先は反転しても同じ）。
+fn tip_order_and_flips(
+    row: &Row,
+    order: &[&str],
+    reverse: [&[&str]; 2],
+    t: TipTarget<'_>,
+) -> Vec<TipEvent> {
+    let mut events = Vec::new();
+    let single = t.images.is_empty() && t.image.is_some();
+    if single || t.images.len() >= 2 {
+        let method = row.first_number(order).and_then(repeat_method);
+        if single {
+            // 1 枚の一巡のみ・ランダムに一巡は同じ動き（最初のダブだけ）なので、近い動きの知らせは要らない
+            if let Some((selection @ (TipSelection::Once | TipSelection::Shuffle), _)) = method {
+                *t.images = t.image.take().into_iter().collect();
+                *t.selection = selection;
+                events.push(TipEvent::Order);
+            }
+        } else {
+            match method {
+                Some((selection, approximate)) => {
+                    *t.selection = selection;
+                    events.push(TipEvent::Order);
+                    if approximate {
+                        events.push(TipEvent::OrderApprox);
+                    }
+                }
+                None => events.push(TipEvent::OrderUnknown),
+            }
+        }
+    }
+    if t.image.is_some() || !t.images.is_empty() {
+        for (columns, rule) in reverse.into_iter().zip([t.flip_x, t.flip_y]) {
+            let Some(value) = row.first_number(columns) else {
+                continue;
+            };
+            let Some(method) = flip_method(value) else {
+                events.push(TipEvent::FlipUnknown);
+                continue;
+            };
+            if method == FlipRule::Off {
+                continue;
+            }
+            *rule = method;
+            events.push(TipEvent::Flip);
+        }
+    }
+    events
+}
+
+/// 筆先の繰り返し方法・左右上下の反転・先端同士の比較暗を写す。
+fn tip_rules(
+    row: &Row,
+    brush: &mut Brush,
+    notes: &mut Vec<Unrepresented>,
+    mapped: &mut Vec<SutMapped>,
+) {
+    let tip = &mut brush.tip;
+    let events = tip_order_and_flips(
+        row,
+        PATTERN_ORDER,
+        [PATTERN_REVERSE_H, PATTERN_REVERSE_V],
+        TipTarget {
+            image: &mut tip.image,
+            images: &mut tip.images,
+            selection: &mut tip.selection,
+            flip_x: &mut tip.flip_x,
+            flip_y: &mut tip.flip_y,
+        },
+    );
+    for event in events {
+        match event {
+            TipEvent::Order => mapped.push(SutMapped::TipOrder),
+            TipEvent::OrderApprox => notes.push(Unrepresented::ClipStudio(SutNote::TipOrderApprox)),
+            TipEvent::OrderUnknown => notes.push(Unrepresented::ClipStudio(SutNote::TipOrder)),
+            TipEvent::Flip => {
+                if !mapped.contains(&SutMapped::TipFlip) {
+                    mapped.push(SutMapped::TipFlip);
+                }
+            }
+            TipEvent::FlipUnknown => notes.push(Unrepresented::ClipStudio(SutNote::TipFlip)),
+        }
+    }
+    // 先端同士の比較暗は、丸い筆先でも、重なるダブに効く
+    if row.on(BLEND_DARKEN) {
+        brush.tip.darken_overlap = true;
+        mapped.push(SutMapped::TipDarken);
+    }
+    // リボン: 旗を写す（丸い筆先・散布効果のときはエンジンが効かせない。CLIP STUDIO でも選べない組み合わせ）
+    if row.on(RIBBON) {
+        brush.tip.ribbon = true;
+        mapped.push(SutMapped::Ribbon);
+    }
+}
+
+/// 連続吹き付け（`BrushContinuousPlot`）: 旗を写す。後補正も入っていれば、このアプリでは同時に効かないので切で写して知らせる
+/// （補正の列を読んだ後に呼ぶ）。
+fn continuous_plot(
+    row: &Row,
+    brush: &mut Brush,
+    notes: &mut Vec<Unrepresented>,
+    mapped: &mut Vec<SutMapped>,
+) {
+    if !row.on(CONTINUOUS_PLOT) {
+        return;
+    }
+    if brush.assist.post.on {
+        notes.push(Unrepresented::ClipStudio(SutNote::ContinuousWithPost));
+        return;
+    }
+    brush.tip.continuous = true;
+    mapped.push(SutMapped::Continuous);
+}
+
+/// 水彩境界: 旗が立っていれば、幅・透明度影響・明度影響・ドラッグ後に処理・ぼかし幅を写す（無い列は [`WaterEdge::default`]）。
+/// 幅とぼかし幅は画素として読み、単位の列が 0 でなければ（0 しか確かめていない）知らせる。範囲の外の値は範囲へ詰めて知らせる。
+fn water_edge(
+    row: &Row,
+    brush: &mut Brush,
+    notes: &mut Vec<Unrepresented>,
+    mapped: &mut Vec<SutMapped>,
+) {
+    if !row.on(WATER_EDGE) {
+        return;
+    }
+    let d = WaterEdge::default();
+    let mut clamped = false;
+    // 列の値を範囲へ詰める（無い列は既定。有限でない値は既定にして、詰めたと数える）
+    let mut fit = |columns: &[&str], divisor: f64, lo: f64, hi: f64, default: f64| {
+        let Some(raw) = row.first_number(columns).map(|v| v / divisor) else {
+            return default;
+        };
+        let used = if raw.is_finite() {
+            raw.clamp(lo, hi)
+        } else {
+            default
+        };
+        clamped |= used != raw;
+        used
+    };
+    let edge = WaterEdge {
+        width: fit(
+            WATER_EDGE_RADIUS,
+            1.0,
+            MIN_WATER_EDGE_WIDTH,
+            MAX_WATER_EDGE_WIDTH,
+            d.width,
+        ),
+        opacity: fit(WATER_EDGE_ALPHA, 100.0, 0.0, 1.0, d.opacity),
+        darkness: fit(WATER_EDGE_VALUE, 100.0, 0.0, 1.0, d.darkness),
+        after_stroke: row.on(WATER_EDGE_AFTER_DRAG),
+        blur: fit(WATER_EDGE_BLUR, 1.0, 0.0, MAX_WATER_EDGE_BLUR, d.blur),
+    };
+    if row.on(WATER_EDGE_RADIUS_UNIT) || row.on(WATER_EDGE_BLUR_UNIT) {
+        notes.push(Unrepresented::ClipStudio(SutNote::WaterEdgeUnit));
+    }
+    if clamped {
+        notes.push(Unrepresented::ClipStudio(SutNote::WaterEdgeRange));
+    }
+    brush.water_edge = Some(edge);
+    mapped.push(SutMapped::WaterEdge);
+}
+
+/// 写せない設定（ベクターのツール・写せなかった散布効果・写せなかったデュアルブラシ・色の変化・合成モード）のフラグが立っていれば知らせる。
+fn unrepresented_flags(
+    row: &Row,
+    spray_mapped: bool,
+    dual_mapped: bool,
+    notes: &mut Vec<Unrepresented>,
+) {
+    if row.on(VECTOR_ERASER) || row.on(VECTOR_MAGNET) {
+        notes.push(Unrepresented::ClipStudio(SutNote::VectorTools));
     }
     for (columns, note) in [
-        (TEXTURE_ROTATE, SutNote::TextureRotation),
-        (TEXTURE_BRIGHTNESS, SutNote::TextureBrightness),
-        (TEXTURE_CONTRAST, SutNote::TextureContrast),
-        (TEXTURE_MODE, SutNote::TextureMode),
-        (TEXTURE_EACH_TIP, SutNote::TextureEachTip),
+        (if spray_mapped { &[] } else { SPRAY }, SutNote::Spray),
+        (if dual_mapped { &[] } else { DUAL }, SutNote::DualBrush),
+        (BLEND_MODE, SutNote::BlendMode),
     ] {
-        if row.on(columns) {
+        // 旗の列も、「0 でない数が 1 つでもある」で知る
+        if columns
+            .iter()
+            .any(|c| row.number(c).is_some_and(|v| v != 0.0))
+        {
             notes.push(Unrepresented::ClipStudio(note));
         }
     }
-    Ok(())
 }
 
 /// `Variant` の 1 行から core のブラシを作る。写せた設定の一覧と、表せなかった設定の一覧を添える。
@@ -941,10 +1588,10 @@ fn brush_from_row(
 ) -> Result<(Brush, Vec<Unrepresented>, Vec<SutMapped>), Fault> {
     let mut notes: Vec<Unrepresented> = Vec::new();
     let mut mapped: Vec<SutMapped> = Vec::new();
-    let mut brush = Brush::default();
-    brush.base.pressure_size = false;
-    brush.base.pressure_opacity = false;
-    brush.base.pressure_flow = false;
+    let mut brush = Brush {
+        influences: Influences::none(),
+        ..Brush::default()
+    };
 
     let images = tips(row, name, library, budget, &mut notes)?;
     let mut tip_side = None;
@@ -965,14 +1612,16 @@ fn brush_from_row(
                 .map(|t| t.width().max(t.height()) as f64)
                 .reduce(f64::max);
             brush.tip.images = images;
-            brush.tip.selection = TipSelection::Random;
             mapped.push(SutMapped::TipImage);
-            notes.push(Unrepresented::ClipStudio(SutNote::TipOrder));
         }
     }
     // 大きさの設定も筆先の画像も無ければ、core の既定の半径のまま
     if let Some(diameter) = row.first_number(SIZE).filter(|v| *v > 0.0).or(tip_side) {
         brush.base.radius = (diameter.min(2000.0) / 2.0).max(0.5);
+    }
+    // 単位の列は 0（px）のほかは来ない見込み（環境設定の単位は .sut に入らない）。0 以外は px として読んだと知らせる
+    if row.on(SIZE_UNIT) {
+        notes.push(Unrepresented::ClipStudio(SutNote::LengthUnit));
     }
     if let Some(v) = percent(row, OPACITY) {
         brush.base.opacity = v.clamp(0.0, 1.0);
@@ -980,9 +1629,7 @@ fn brush_from_row(
     if let Some(v) = percent(row, FLOW) {
         brush.base.flow = v.clamp(0.0, 1.0);
     }
-    if let Some(v) = row.first_number(INTERVAL) {
-        brush.base.spacing = ratio(v).clamp(0.01, 4.0);
-    }
+    interval(row, &mut brush, &mut notes);
     if let Some(v) = percent(row, THICKNESS) {
         brush.tip.roundness = v.clamp(0.0, 1.0).max(0.01);
     }
@@ -1018,52 +1665,62 @@ fn brush_from_row(
         &mut notes,
         &mut mapped,
     )?;
+    // 質感の濃さの影響元は、質感を写せたブラシだけ（質感の無いブラシには効く所が無い）
+    if brush.texture.is_some() {
+        effector(
+            &mut brush,
+            row,
+            SutTarget::TextureDensity,
+            TEXTURE_DENSITY_EFFECTOR,
+            &mut notes,
+            &mut mapped,
+        );
+    }
     tip_direction(row, &mut brush, &mut notes, &mut mapped);
+    thickness_direction(row, &mut brush, &mut notes, &mut mapped);
+    tip_rules(row, &mut brush, &mut notes, &mut mapped);
+    if row.on(AT_LEAST_ONE_PIXEL) {
+        brush.controls.min_one_pixel = true;
+        mapped.push(SutMapped::MinOnePixel);
+    }
+    if row.on(SIZE_SYNC_VIEW_SCALE) {
+        brush.controls.size_by_screen = true;
+        mapped.push(SutMapped::SizeByScreen);
+    }
     start_end(row, &mut brush, &mut notes, &mut mapped);
     stabilizer(row, &mut brush, &mut notes, &mut mapped);
+    continuous_plot(row, &mut brush, &mut notes, &mut mapped);
 
-    // 色の混ぜ: 混色の旗（BrushUseWaterColor）が立っているときだけ、絵の具量（BrushMixColor）・絵の具濃度（BrushMixAlpha）・色延び
-    // （BrushMixColorExtension）を、0〜100 から 0〜1 にして「絵の具で混ぜる」へ写す（CLIP STUDIO の絵の具量 100 は下の色を拾わない＝
-    // こちらの量 1 と同じ向き）。CLIP STUDIO は混色が切のブラシ（G ペンなど）にも既定の値（50 など）を書くので、値だけでは決めない。
-    // 旗が立っていて写せる値が無いものは知らせる。
-    let (paint, density, stretch) = (
-        row.first_number(MIX_PAINT).unwrap_or(0.0),
-        row.first_number(MIX_DENSITY).unwrap_or(0.0),
-        row.first_number(MIX_STRETCH).unwrap_or(0.0),
-    );
-    let mixing = row.on(WATER_COLOR);
-    if mixing && (paint > 0.0 || density > 0.0 || stretch > 0.0) {
-        let unit = |v: f64| (v / 100.0).clamp(0.0, 1.0);
-        brush.mix.mode = yolu_core::brush::MixMode::Mix;
-        brush.mix.paint = unit(paint);
-        brush.mix.density = unit(density);
-        brush.mix.stretch = unit(stretch);
-        mapped.push(SutMapped::ColorMixing);
-    } else if mixing {
-        notes.push(Unrepresented::ClipStudio(SutNote::ColorMixing {
-            paint,
-            density,
-            stretch,
-        }));
-    }
-    if row.on(WATER_EDGE) {
-        notes.push(Unrepresented::WetEdges);
-    }
-    for (columns, note) in [
-        (SPRAY, SutNote::Spray),
-        (DUAL, SutNote::DualBrush),
-        (COLOR_CHANGE, SutNote::ColorChange),
-        (BLEND_MODE, SutNote::BlendMode),
-    ] {
-        // 旗の列も、色の変化の値の列も、「0 でない数が 1 つでもある」で知る
-        if columns
-            .iter()
-            .any(|c| row.number(c).is_some_and(|v| v != 0.0))
-        {
-            notes.push(Unrepresented::ClipStudio(note));
-        }
-    }
+    mixing::color_mixing(row, &mut brush, &mut notes, &mut mapped);
+    color::color_change(row, &mut brush, &mut notes, &mut mapped);
+    water_edge(row, &mut brush, &mut notes, &mut mapped);
+    refer::reference_lines(row, &mut brush, &mut notes, &mut mapped);
+    spray_dual_and_flags(
+        row,
+        name,
+        library,
+        budget,
+        &mut brush,
+        &mut notes,
+        &mut mapped,
+    )?;
     Ok((brush, notes, mapped))
+}
+
+/// 散布効果とデュアルブラシを写し、写せない設定の旗を知らせる（`brush_from_row` の終わり）。
+fn spray_dual_and_flags(
+    row: &Row,
+    name: &str,
+    library: &mut Library<'_>,
+    budget: &mut Budget,
+    brush: &mut Brush,
+    notes: &mut Vec<Unrepresented>,
+    mapped: &mut Vec<SutMapped>,
+) -> Result<(), Fault> {
+    spray::spray(row, brush, notes, mapped);
+    let dual = dual::dual(row, name, library, budget, brush, notes, mapped)?;
+    unrepresented_flags(row, brush.spray.is_some(), dual, notes);
+    Ok(())
 }
 
 pub(crate) fn read_sut(
@@ -1078,6 +1735,10 @@ pub(crate) fn read_sut(
     }
     let known: Vec<&str> = KNOWN
         .iter()
+        .chain(color::KNOWN)
+        .chain(spray::KNOWN)
+        .chain(dual::KNOWN)
+        .chain(refer::KNOWN)
         .flat_map(|names| names.iter().copied())
         .collect();
     let mut variants: Option<Variants<'_>> = db.variants(&known)?;
@@ -1170,24 +1831,6 @@ mod tests {
     }
 
     #[test]
-    fn tilt_curves_are_fitted_only_when_they_fall_over_the_full_range() {
-        // 直線 1 − x: 外れ 0
-        let straight = tilt_fit(&[(0.0, 1.0), (1.0, 0.0)]).unwrap();
-        assert!(straight < 1e-9);
-        // 途中まで 1 のまま落ちる曲線は、直線から大きく外れる（近似の注記が付く幅）
-        let plateau = tilt_fit(&[(0.0, 1.0), (0.364, 1.0), (0.609, 0.0), (1.0, 0.0)]).unwrap();
-        assert!(plateau > TILT_STRAIGHT);
-        // 上がる・途中までしか下がらない・点が足りない・有限でない点だけは写さない
-        assert_eq!(tilt_fit(&[(0.0, 0.0), (1.0, 1.0)]), None);
-        assert_eq!(tilt_fit(&[(0.0, 1.0), (1.0, 0.5)]), None);
-        assert_eq!(tilt_fit(&[(0.0, 0.5), (1.0, 0.0)]), None);
-        assert_eq!(tilt_fit(&[(0.0, 1.0)]), None);
-        assert_eq!(tilt_fit(&[(f64::NAN, 1.0), (1.0, f64::INFINITY)]), None);
-        // x の昇順でない点・範囲外の値も読める
-        assert!(tilt_fit(&[(1.0, -3.0), (0.0, 4.0)]).unwrap() < 1e-9);
-    }
-
-    #[test]
     fn curves_become_valid_core_curves() {
         let straight = |p: &[(f64, f64)]| {
             let (points, simplified) = curve_points(p);
@@ -1262,7 +1905,7 @@ mod tests {
             if points.is_empty() {
                 straight += 1;
             }
-            let response = PressureResponse::new((next() % 101) as f64 / 100.0, points);
+            let response = InputResponse::new((next() % 101) as f64 / 100.0, points);
             assert!(response.is_ok(), "round {round}: {pts:?}");
         }
         assert!(straight > 0, "点が足りない・有限でない場合も通る");

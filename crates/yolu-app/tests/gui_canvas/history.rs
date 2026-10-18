@@ -1,4 +1,5 @@
 use crate::common;
+use crate::common::drive::Drive;
 use egui_kittest::{
     kittest::{NodeT, Queryable},
     Harness,
@@ -8,7 +9,8 @@ use yolu_app::{
     lang::Lang,
     panels::history::{go_to, show, title},
     sets::MaterialRef,
-    state::AppState,
+    state::{Action, AppState, Tool},
+    textlayer::TextAction,
     Tab,
 };
 
@@ -16,8 +18,8 @@ use yolu_app::{
 fn rows_move_back_and_forward_in_both_languages() {
     for lang in [Lang::Ja, Lang::En] {
         let mut app = AppState::new_in(16, 16, lang);
-        let id = app.doc.add_layer("private layer name").unwrap();
-        app.doc.set_layer_opacity(id, 0.4, false).unwrap();
+        let id = app.doc_mut().add_layer("private layer name").unwrap();
+        app.doc_mut().set_layer_opacity(id, 0.4, false).unwrap();
         let mut h = common::gpu_thread::builder().build_ui_state(show, app);
         h.run();
         let earlier = h.get_by_label(title(HistoryKind::AddLayer, lang));
@@ -29,24 +31,28 @@ fn rows_move_back_and_forward_in_both_languages() {
         );
         h.get_by_label(title(HistoryKind::AddLayer, lang)).click();
         h.run();
-        assert_eq!(h.state().doc.undo_count(), 1);
+        assert_eq!(h.state().doc().undo_count(), 1);
         assert_eq!(
             h.get_by_label(title(HistoryKind::AddLayer, lang))
                 .accesskit_node()
                 .toggled(),
             Some(egui::accesskit::Toggled::True)
         );
-        assert_eq!(h.state().doc.layer(id).unwrap().opacity(), 1.0);
+        assert_eq!(h.state().doc().layer(id).unwrap().opacity(), 1.0);
         h.get_by_label(title(HistoryKind::LayerProperties, lang))
             .click();
         h.run();
-        assert_eq!(h.state().doc.undo_count(), 2);
-        assert_eq!(h.state().doc.layer(id).unwrap().opacity(), 0.4);
+        assert_eq!(h.state().doc().undo_count(), 2);
+        assert_eq!(h.state().doc().layer(id).unwrap().opacity(), 0.4);
+        assert!(h.state().modified(), "開いたときと違う中身へ移った");
         h.get_by_label(lang.pick("開始位置", "Starting point"))
             .click();
         h.run();
-        assert_eq!(h.state().doc.undo_count(), 0);
-        assert!(h.state().modified);
+        assert_eq!(h.state().doc().undo_count(), 0);
+        assert!(
+            !h.state().modified(),
+            "開いたときと同じ中身へ戻ったので変更ではない"
+        );
         assert!(h.query_by_label("private layer name").is_none());
     }
 }
@@ -54,47 +60,73 @@ fn rows_move_back_and_forward_in_both_languages() {
 #[test]
 fn stroke_and_read_only_set_refuse_history_navigation() {
     let mut app = AppState::new(16, 16);
-    let id = app.doc.add_layer("a").unwrap();
-    let s = app.doc.begin_stroke(id, &BrushSettings::default()).unwrap();
+    let id = app.doc_mut().add_layer("a").unwrap();
+    let s = app
+        .doc_mut()
+        .begin_stroke(id, &BrushSettings::default())
+        .unwrap();
     go_to(&mut app, 0);
-    assert_eq!(app.doc.undo_count(), 1);
-    app.doc.cancel_stroke(s);
-    app.sets.get_mut(0).unwrap().read_only = Some("test".into());
+    assert_eq!(app.doc().undo_count(), 1);
+    app.doc_mut().cancel_stroke(s);
+    app.sets_mut().get_mut(0).unwrap().read_only = Some("test".into());
     go_to(&mut app, 0);
-    assert_eq!(app.doc.undo_count(), 1);
-    assert!(!app.modified);
+    assert_eq!(app.doc().undo_count(), 1);
+    assert!(!app.modified());
+}
+
+/// 打っている文字は、取り消しと同じく打ち終えてから移る（打っている途中のまま、その文字のレイヤーを戻さない）。
+#[test]
+fn moving_in_the_history_finishes_the_typed_text_first() {
+    let mut app = AppState::new(256, 256);
+    app.act(Action::SelectTool(Tool::Text));
+    let layers = app.doc().layers().len();
+    app.act(Action::Text(TextAction::Begin { x: 20.0, y: 200.0 }));
+    app.text_typed("abc".into());
+    assert!(app.text().editing.is_some());
+    assert_eq!(app.doc().undo_count(), 1);
+    go_to(&mut app, 0);
+    assert!(app.text().editing.is_none(), "打ち終えてから戻った");
+    assert_eq!(app.doc().layers().len(), layers);
+    go_to(&mut app, 1);
+    let texts: Vec<String> = app
+        .doc()
+        .layers()
+        .iter()
+        .filter_map(|l| l.text().map(|t| t.text.clone()))
+        .collect();
+    assert_eq!(texts, ["abc"], "打った分が 1 段");
 }
 
 #[test]
 fn switching_sets_uses_each_documents_history() {
     let mut app = AppState::new(16, 16);
-    app.doc.add_layer("a").unwrap();
+    app.doc_mut().add_layer("a").unwrap();
     let mut second = Document::new(16, 16).unwrap();
     let id = second.add_layer("b").unwrap();
     second.set_layer_opacity(id, 0.5, false).unwrap();
-    let index = app.sets.push(
+    let index = app.sets_mut().push(
         "second".into(),
         "second".into(),
         false,
-        MaterialRef::Unassigned,
+        vec![MaterialRef::Unassigned],
         None,
         second,
     );
     app.switch_set(index).unwrap();
     assert_eq!(
-        app.doc.history().collect::<Vec<_>>(),
+        app.doc().history().collect::<Vec<_>>(),
         vec![HistoryKind::AddLayer, HistoryKind::LayerProperties]
     );
     go_to(&mut app, 0);
     app.switch_set(0).unwrap();
     assert_eq!(
-        app.doc.history().collect::<Vec<_>>(),
+        app.doc().history().collect::<Vec<_>>(),
         vec![HistoryKind::AddLayer]
     );
-    assert_eq!(app.doc.undo_count(), 1);
+    assert_eq!(app.doc().undo_count(), 1);
     app.switch_set(index).unwrap();
-    assert_eq!(app.doc.undo_count(), 0);
-    assert_eq!(app.doc.redo_count(), 2);
+    assert_eq!(app.doc().undo_count(), 0);
+    assert_eq!(app.doc().redo_count(), 2);
 }
 
 #[test]
@@ -105,10 +137,10 @@ fn tab_is_available_and_invalid_position_is_ignored() {
         .find_tab(&Tab::History)
         .is_some());
     let mut app = AppState::new(16, 16);
-    app.doc.add_layer("a").unwrap();
+    app.doc_mut().add_layer("a").unwrap();
     go_to(&mut app, 2);
-    assert_eq!(app.doc.undo_count(), 1);
-    assert!(!app.modified);
+    assert_eq!(app.doc().undo_count(), 1);
+    assert!(!app.modified());
 }
 
 #[test]
@@ -116,23 +148,29 @@ fn empty_and_evicted_history_do_not_show_discarded_steps() {
     let mut h = common::gpu_thread::builder().build_ui_state(show, AppState::new(16, 16));
     h.run();
     assert!(h.query_by_label("開始位置").is_none());
-    let id = h.state_mut().doc.add_layer("a").unwrap();
-    h.state_mut().doc.set_layer_opacity(id, 0.5, false).unwrap();
-    let cost = h.state().doc.history_bytes() - 128;
-    h.state_mut().doc.set_undo_budget_bytes(cost).unwrap();
+    let id = h.state_mut().doc_mut().add_layer("a").unwrap();
+    h.state_mut()
+        .doc_mut()
+        .set_layer_opacity(id, 0.5, false)
+        .unwrap();
+    let cost = h.state().doc().history_bytes() - 128;
+    h.state_mut().doc_mut().set_undo_budget_bytes(cost).unwrap();
     h.run();
     assert!(h.query_by_label("レイヤーを追加").is_none());
     h.get_by_label("レイヤーを変える");
     h.get_by_label("開始位置").click();
     h.run();
-    assert_eq!(h.state().doc.layer(id).unwrap().opacity(), 1.0);
+    assert_eq!(h.state().doc().layer(id).unwrap().opacity(), 1.0);
 }
 
 #[test]
 fn history_rows_are_disabled_during_a_stroke() {
     let mut app = AppState::new(16, 16);
-    let id = app.doc.add_layer("a").unwrap();
-    let s = app.doc.begin_stroke(id, &BrushSettings::default()).unwrap();
+    let id = app.doc_mut().add_layer("a").unwrap();
+    let s = app
+        .doc_mut()
+        .begin_stroke(id, &BrushSettings::default())
+        .unwrap();
     let mut h = common::gpu_thread::builder().build_ui_state(show, app);
     h.run();
     assert!(h.get_by_label("開始位置").accesskit_node().is_disabled());
@@ -140,7 +178,7 @@ fn history_rows_are_disabled_during_a_stroke() {
         .get_by_label("レイヤーを追加")
         .accesskit_node()
         .is_disabled());
-    h.state_mut().doc.cancel_stroke(s);
+    h.state_mut().doc_mut().cancel_stroke(s);
     h.run();
     assert!(!h.get_by_label("開始位置").accesskit_node().is_disabled());
 }
@@ -148,20 +186,20 @@ fn history_rows_are_disabled_during_a_stroke() {
 #[test]
 fn long_history_only_builds_visible_rows_and_keeps_absolute_positions() {
     let mut app = AppState::new_in(16, 16, Lang::En);
-    let base = app.doc.layers()[0].id();
+    let base = app.doc().layers()[0].id();
     for i in 0..5_000 {
-        app.doc
+        app.doc_mut()
             .set_layer_opacity(base, if i % 2 == 0 { 0.3 } else { 0.7 }, false)
             .unwrap();
     }
-    let marker = app.doc.add_layer("marker").unwrap();
+    let marker = app.doc_mut().add_layer("marker").unwrap();
     for i in 0..5_000 {
-        app.doc
+        app.doc_mut()
             .set_layer_opacity(base, if i % 2 == 0 { 0.3 } else { 0.7 }, false)
             .unwrap();
     }
-    app.doc.remove_layer(marker).unwrap();
-    assert_eq!(app.doc.undo_count(), 10_002);
+    app.doc_mut().remove_layer(marker).unwrap();
+    assert_eq!(app.doc().undo_count(), 10_002);
     let mut h = common::gpu_thread::builder()
         .with_size(egui::vec2(300.0, 240.0))
         .with_max_steps(120)
@@ -199,7 +237,7 @@ fn long_history_only_builds_visible_rows_and_keeps_absolute_positions() {
     assert!(h.query_all_by_label("Edit layer").count() <= 20);
     h.get_by_label("Add layer").click();
     h.run();
-    assert_eq!(h.state().doc.undo_count(), 5_001);
+    assert_eq!(h.state().doc().undo_count(), 5_001);
     assert_eq!(
         h.get_by_label("Add layer").accesskit_node().toggled(),
         Some(egui::accesskit::Toggled::True)
@@ -210,12 +248,12 @@ fn long_history_only_builds_visible_rows_and_keeps_absolute_positions() {
         .unwrap()
         .click();
     h.run();
-    assert_eq!(h.state().doc.undo_count(), 5_002);
+    assert_eq!(h.state().doc().undo_count(), 5_002);
     scroll(&h, -1_000_000.0);
     h.run();
     h.get_by_label("Remove layer").click();
     h.run();
-    assert_eq!(h.state().doc.undo_count(), 10_002);
+    assert_eq!(h.state().doc().undo_count(), 10_002);
     assert_eq!(
         h.get_by_label("Remove layer").accesskit_node().toggled(),
         Some(egui::accesskit::Toggled::True)
@@ -224,5 +262,5 @@ fn long_history_only_builds_visible_rows_and_keeps_absolute_positions() {
     h.run();
     h.get_by_label("Starting point").click();
     h.run();
-    assert_eq!(h.state().doc.undo_count(), 0);
+    assert_eq!(h.state().doc().undo_count(), 0);
 }

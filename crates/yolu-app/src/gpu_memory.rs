@@ -110,11 +110,11 @@ impl GpuMemory {
     /// ウィンドウに出す名前（数は出さない。指定した量は「指定」とだけ）。
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            GpuMemory::Auto => lang.pick("自動", "Automatic"),
-            GpuMemory::Low => lang.pick("低", "Low"),
-            GpuMemory::Standard => lang.pick("標準", "Standard"),
-            GpuMemory::High => lang.pick("高", "High"),
-            GpuMemory::Mib(_) => lang.pick("指定", "Custom"),
+            GpuMemory::Auto => lang.t("gpu_memory-automatic"),
+            GpuMemory::Low => lang.t("gpu_memory-low"),
+            GpuMemory::Standard => lang.t("gpu_memory-standard"),
+            GpuMemory::High => lang.t("gpu_memory-high"),
+            GpuMemory::Mib(_) => lang.t("gpu_memory-custom"),
         }
     }
 }

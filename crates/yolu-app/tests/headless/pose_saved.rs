@@ -2,6 +2,7 @@
 //! Live Link など、ポーズのセッションが無いときの保存・読めないエントリ・復旧の書き置き・「変更あり」の印。画面を描かないので Wine でも回る。
 //! ポーズの欄の画面は `gui_view3d/pose_ui.rs`、ポーズの操作は `gui_view3d/pose.rs`。
 
+use crate::common::drive::Drive;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -40,15 +41,15 @@ impl Drop for TempDir {
 /// 試しの人形を読み、プロジェクトのモデル（ファイル）として扱う（ポーズは、プロジェクトのモデルのものだけ保存される）。
 fn figure(dir: &TempDir) -> AppState {
     let mut s = AppState::new(64, 64);
-    s.apply(Action::Pose(PoseAction::LoadFigure));
-    assert!(s.view3d.pose.session.is_some(), "{}", s.message);
+    s.act(Action::Pose(PoseAction::LoadFigure));
+    assert!(s.view3d().pose.session.is_some(), "{}", s.message());
     // 読んだモデルはファイルのもの（試しの人形は、ふつうはファイルを持たない）
-    s.np.model_file = Some(dir.file("figure.fbx"));
+    s.np_mut().model_file = Some(dir.file("figure.fbx"));
     s
 }
 
 fn bone(s: &AppState, name: &str) -> usize {
-    s.view3d
+    s.view3d()
         .pose
         .session
         .as_ref()
@@ -62,7 +63,7 @@ fn bone(s: &AppState, name: &str) -> usize {
 
 /// 右上腕を回して動かして大きさを変え、頭を回し、メッシュ 0 の最初の BlendShape の重みを 70 にする（ポーズの取り消しの段は 1 つ）。
 fn pose_it(s: &mut AppState) {
-    let session = s.view3d.pose.session.as_ref().unwrap();
+    let session = s.view3d().pose.session.as_ref().unwrap();
     let mut p = session.pose().clone();
     let arm = bone(s, "右上腕");
     p.locals[arm].rotation = Quat::from_euler(EulerRot::XYZ, 0.3, -0.5, 1.1);
@@ -71,11 +72,11 @@ fn pose_it(s: &mut AppState) {
     let head = bone(s, "頭");
     p.locals[head].rotation = Quat::from_rotation_y(0.4);
     p.blend_weights[0][0] = 70.0;
-    pose::set_pose(&mut s.view3d, p).unwrap();
+    pose::set_pose(s.view3d_mut(), p).unwrap();
 }
 
 fn session_pose(s: &AppState) -> yolu_core::skin::Pose {
-    s.view3d.pose.session.as_ref().unwrap().pose().clone()
+    s.view3d().pose.session.as_ref().unwrap().pose().clone()
 }
 
 fn close(a: &yolu_core::skin::Pose, b: &yolu_core::skin::Pose) -> bool {
@@ -89,8 +90,8 @@ fn close(a: &yolu_core::skin::Pose, b: &yolu_core::skin::Pose) -> bool {
 }
 
 fn save_as(s: &mut AppState, path: &Path) {
-    s.apply(Action::SaveProjectAs(path.to_path_buf()));
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    s.act(Action::SaveProjectAs(path.to_path_buf()));
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
 }
 
 fn on_disk(path: &Path) -> Project {
@@ -100,10 +101,10 @@ fn on_disk(path: &Path) -> Project {
 /// ファイルを開く（モデルのファイルは無いので読めない。そのあと試しの人形をファイルのモデルとして入れて、ポーズを戻す）。
 fn reopen_with_figure(dir: &TempDir, path: &Path) -> (AppState, Option<String>) {
     let mut s = AppState::new(64, 64);
-    s.apply(Action::OpenProject(path.to_path_buf()));
-    assert!(s.project.is_some(), "{}", s.message);
-    s.apply(Action::Pose(PoseAction::LoadFigure));
-    s.np.model_file = Some(dir.file("figure.fbx"));
+    s.act(Action::OpenProject(path.to_path_buf()));
+    assert!(s.project().is_some(), "{}", s.message());
+    s.act(Action::Pose(PoseAction::LoadFigure));
+    s.np_mut().model_file = Some(dir.file("figure.fbx"));
     let note = stored::restore_from_project(&mut s);
     (s, note)
 }
@@ -133,20 +134,20 @@ fn headless_the_pose_of_the_project_model_is_saved_and_comes_back_on_the_same_mo
     // 同じモデルを開くと戻る。取り消しの段にも「変更あり」にもならない
     let (mut again, note) = reopen_with_figure(&dir, &path);
     assert!(close(&session_pose(&again), &posed), "{note:?}");
-    let session = again.view3d.pose.session.as_ref().unwrap();
+    let session = again.view3d().pose.session.as_ref().unwrap();
     assert!(!session.can_undo() && !session.can_redo());
     assert_eq!(session.edits, 0);
     assert_eq!(note.as_deref(), Some("ポーズを戻しました。"));
     assert!(session.preset_notes.is_empty());
     pose::sync_modified(&mut again);
-    assert!(!again.modified, "戻しただけでは変更ではない");
+    assert!(!again.modified(), "戻しただけでは変更ではない");
     // 戻したあとに変えれば変更あり・取り消しは戻した状態へ
     let mut p = session_pose(&again);
     p.locals[bone(&again, "左足")].rotation = Quat::from_rotation_x(0.5);
-    pose::set_pose(&mut again.view3d, p).unwrap();
+    pose::set_pose(again.view3d_mut(), p).unwrap();
     pose::sync_modified(&mut again);
-    assert!(again.modified);
-    assert!(pose::undo(&mut again.view3d).unwrap());
+    assert!(again.modified());
+    assert!(pose::undo(again.view3d_mut()).unwrap());
     assert!(close(&session_pose(&again), &posed));
 }
 
@@ -155,24 +156,24 @@ fn headless_a_pose_change_marks_the_project_modified_but_the_demo_figure_without
     let dir = TempDir::new("modified");
     let mut s = figure(&dir);
     pose::sync_modified(&mut s);
-    assert!(!s.modified, "モデルを入れただけでは変更ではない");
+    assert!(!s.modified(), "モデルを入れただけでは変更ではない");
     pose_it(&mut s);
     pose::sync_modified(&mut s);
-    assert!(s.modified, "ポーズを変えると保存が要る");
-    s.modified = false;
+    assert!(s.modified(), "ポーズを変えると保存が要る");
+    s.set_modified(false);
     pose::sync_modified(&mut s);
-    assert!(!s.modified, "同じポーズでは印を付け直さない");
+    assert!(!s.modified(), "同じポーズでは印を付け直さない");
     // 取り消しも変更
-    assert!(pose::undo(&mut s.view3d).unwrap());
+    assert!(pose::undo(s.view3d_mut()).unwrap());
     pose::sync_modified(&mut s);
-    assert!(s.modified);
+    assert!(s.modified());
     // ファイルのモデルが無い（試しの人形そのまま）ときは、残らないので数えない
     let mut demo = AppState::new(64, 64);
-    demo.apply(Action::Pose(PoseAction::LoadFigure));
-    assert!(demo.np.model_file.is_none());
+    demo.act(Action::Pose(PoseAction::LoadFigure));
+    assert!(demo.np().model_file.is_none());
     pose_it(&mut demo);
     pose::sync_modified(&mut demo);
-    assert!(!demo.modified);
+    assert!(!demo.modified());
 }
 
 #[test]
@@ -184,10 +185,10 @@ fn headless_a_rest_pose_removes_the_entry_and_a_model_without_a_file_does_not_wr
     save_as(&mut s, &path);
     assert!(on_disk(&path).pose().unwrap().is_some());
     // 休みの形へ戻して保存すると、エントリが消える
-    pose::reset(&mut s.view3d).unwrap();
-    assert!(!s.view3d.pose.session.as_ref().unwrap().is_posed());
-    s.apply(Action::SaveProject);
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    pose::reset(s.view3d_mut()).unwrap();
+    assert!(!s.view3d().pose.session.as_ref().unwrap().is_posed());
+    s.act(Action::SaveProject);
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
     assert!(on_disk(&path).pose().unwrap().is_none());
     assert!(!on_disk(&path)
         .original_archive()
@@ -195,7 +196,7 @@ fn headless_a_rest_pose_removes_the_entry_and_a_model_without_a_file_does_not_wr
         .contains_key("pose.json"));
     // ファイルのモデルが無いプロジェクトでは、ポーズを動かしても書かない（モデルの参照も無い）
     let mut demo = AppState::new(64, 64);
-    demo.apply(Action::Pose(PoseAction::LoadFigure));
+    demo.act(Action::Pose(PoseAction::LoadFigure));
     pose_it(&mut demo);
     let other = dir.file("demo.ylp");
     save_as(&mut demo, &other);
@@ -235,7 +236,7 @@ fn headless_a_model_that_does_not_fit_skips_with_reasons_and_leaves_the_pose_alo
         Some("ポーズを戻しました（合わない項目 2 件）。"),
         "{note:?}"
     );
-    let skipped = &again.view3d.pose.session.as_ref().unwrap().preset_notes;
+    let skipped = &again.view3d().pose.session.as_ref().unwrap().preset_notes;
     assert_eq!(skipped.len(), 2, "{skipped:?}");
     let texts: Vec<String> = skipped.iter().map(|k| k.describe(Lang::Ja)).collect();
     assert!(
@@ -282,16 +283,16 @@ fn headless_a_model_that_does_not_fit_skips_with_reasons_and_leaves_the_pose_alo
     )
     .unwrap();
     let (none_fit, note) = reopen_with_figure(&dir, &path);
-    assert!(!none_fit.view3d.pose.session.as_ref().unwrap().is_posed());
+    assert!(!none_fit.view3d().pose.session.as_ref().unwrap().is_posed());
     assert_eq!(
         note.as_deref(),
         Some("ファイルのポーズに合うボーンがありません。")
     );
     // 英語のウィンドウの文
     let mut en = AppState::new_in(64, 64, Lang::En);
-    en.apply(Action::OpenProject(path.clone()));
-    en.apply(Action::Pose(PoseAction::LoadFigure));
-    en.np.model_file = Some(dir.file("figure.fbx"));
+    en.act(Action::OpenProject(path.clone()));
+    en.act(Action::Pose(PoseAction::LoadFigure));
+    en.np_mut().model_file = Some(dir.file("figure.fbx"));
     assert_eq!(
         stored::restore_from_project(&mut en).as_deref(),
         Some("No bone fits the pose in the file.")
@@ -310,13 +311,17 @@ fn headless_saving_without_a_pose_session_keeps_the_pose_in_the_file() {
         .bytes()
         .unwrap();
     let mut open = AppState::new(64, 64);
-    open.apply(Action::OpenProject(path.clone()));
+    open.act(Action::OpenProject(path.clone()));
     // モデルのファイルは無いので、セッションは無いまま（参照だけが残る）
-    assert!(open.view3d.pose.session.is_none());
-    assert!(open.np.model_file.is_some(), "参照は残る");
-    open.modified = true;
-    open.apply(Action::SaveProject);
-    assert!(open.message.starts_with("保存しました"), "{}", open.message);
+    assert!(open.view3d().pose.session.is_none());
+    assert!(open.np().model_file.is_some(), "参照は残る");
+    open.set_modified(true);
+    open.act(Action::SaveProject);
+    assert!(
+        open.message().starts_with("保存しました"),
+        "{}",
+        open.message()
+    );
     let after = on_disk(&path);
     assert_eq!(
         after.original_archive().entries()["pose.json"]
@@ -327,8 +332,8 @@ fn headless_saving_without_a_pose_session_keeps_the_pose_in_the_file() {
     );
     assert!(after.view_model().unwrap().is_some(), "モデルの参照も残る");
     // 保存をもう一度しても同じ
-    open.modified = true;
-    open.apply(Action::SaveProject);
+    open.set_modified(true);
+    open.act(Action::SaveProject);
     assert_eq!(
         on_disk(&path).original_archive().entries()["pose.json"]
             .bytes()
@@ -336,10 +341,14 @@ fn headless_saving_without_a_pose_session_keeps_the_pose_in_the_file() {
         before
     );
     // モデルを外した（試しの立方体などに替えた）プロジェクトは、ポーズも外す（どのモデルのポーズでもなくなる）
-    open.apply(Action::LoadDemoModel);
-    assert!(open.np.model_file.is_none());
-    open.apply(Action::SaveProject);
-    assert!(open.message.starts_with("保存しました"), "{}", open.message);
+    open.act(Action::LoadDemoModel);
+    assert!(open.np().model_file.is_none());
+    open.act(Action::SaveProject);
+    assert!(
+        open.message().starts_with("保存しました"),
+        "{}",
+        open.message()
+    );
     assert!(on_disk(&path).pose().unwrap().is_none());
 }
 
@@ -364,25 +373,29 @@ fn headless_an_unreadable_pose_is_told_kept_in_the_file_and_replaced_only_by_a_n
     tamper_pose(&path, b"{ not json");
     for lang in Lang::ALL {
         let mut open = AppState::new_in(64, 64, lang);
-        open.apply(Action::OpenProject(path.clone()));
-        open.apply(Action::Pose(PoseAction::LoadFigure));
-        open.np.model_file = Some(dir.file("figure.fbx"));
+        open.act(Action::OpenProject(path.clone()));
+        open.act(Action::Pose(PoseAction::LoadFigure));
+        open.np_mut().model_file = Some(dir.file("figure.fbx"));
         let note = stored::restore_from_project(&mut open).unwrap();
         assert!(
             note.contains(lang.pick("ポーズを読めません", "Cannot read the pose")),
             "{note}"
         );
-        assert!(!open.view3d.pose.session.as_ref().unwrap().is_posed());
+        assert!(!open.view3d().pose.session.as_ref().unwrap().is_posed());
     }
     // 休みの形のまま保存しても、読めなかったエントリは消さない
     let mut open = AppState::new(64, 64);
-    open.apply(Action::OpenProject(path.clone()));
-    open.apply(Action::Pose(PoseAction::LoadFigure));
-    open.np.model_file = Some(dir.file("figure.fbx"));
-    open.modified = true;
-    open.apply(Action::SaveProject);
-    assert!(open.message.starts_with("保存しました"), "{}", open.message);
-    assert!(!open.message.contains("置き換え"), "{}", open.message);
+    open.act(Action::OpenProject(path.clone()));
+    open.act(Action::Pose(PoseAction::LoadFigure));
+    open.np_mut().model_file = Some(dir.file("figure.fbx"));
+    open.set_modified(true);
+    open.act(Action::SaveProject);
+    assert!(
+        open.message().starts_with("保存しました"),
+        "{}",
+        open.message()
+    );
+    assert!(!open.message().contains("置き換え"), "{}", open.message());
     assert_eq!(
         on_disk(&path).original_archive().entries()["pose.json"]
             .bytes()
@@ -392,11 +405,11 @@ fn headless_an_unreadable_pose_is_told_kept_in_the_file_and_replaced_only_by_a_n
     );
     // 新しいポーズを付けて保存すると置き換わり、そのことを言う
     pose_it(&mut open);
-    open.apply(Action::SaveProject);
+    open.act(Action::SaveProject);
     assert!(
-        open.message.contains("読めなかったポーズ"),
+        open.message().contains("読めなかったポーズ"),
         "{}",
-        open.message
+        open.message()
     );
     assert!(on_disk(&path).pose().unwrap().is_some());
 }
@@ -450,13 +463,13 @@ fn headless_a_live_link_model_neither_restores_nor_removes_the_saved_pose_and_it
     let model = link_model();
     let (_, loaded) = open.receive_link_model(&model);
     loaded.unwrap();
-    pose::poll(&mut open.view3d);
+    pose::poll(open.view3d_mut());
     open.sync_rig_model();
     assert!(
-        open.view3d.pose.session.is_none(),
+        open.view3d().pose.session.is_none(),
         "Live Link のモデルはポーズのセッションを持たない"
     );
-    assert!(open.model.as_ref().is_some_and(|m| m.is_link()));
+    assert!(open.model().as_ref().is_some_and(|m| m.is_link()));
     let received = yolu_protocol::Pose {
         generation: 1,
         meshes: vec![yolu_protocol::MeshPose {
@@ -467,9 +480,13 @@ fn headless_a_live_link_model_neither_restores_nor_removes_the_saved_pose_and_it
     };
     let _ = open.receive_link_pose(&received);
     // 保存: ファイルのポーズはそのまま（消えず、受けたポーズで上書きもされない）。モデルの参照も残る
-    open.modified = true;
-    open.apply(Action::SaveProject);
-    assert!(open.message.starts_with("保存しました"), "{}", open.message);
+    open.set_modified(true);
+    open.act(Action::SaveProject);
+    assert!(
+        open.message().starts_with("保存しました"),
+        "{}",
+        open.message()
+    );
     let after = on_disk(&path);
     assert_eq!(
         after.original_archive().entries()["pose.json"]
@@ -496,25 +513,24 @@ fn plenty() -> SpaceProbe {
 }
 fn session(root: &Path) -> AppState {
     let mut s = AppState::new_in(64, 64, Lang::Ja);
-    s.recovery.set_space_probe(Some(plenty()));
-    s.recovery
-        .enable(
-            root.to_path_buf(),
-            RecoverySettings {
-                interval_seconds: 15,
-                strokes_between: 0,
-                generations_to_keep: 3,
-                directory: None,
-                ..RecoverySettings::default()
-            },
-        )
-        .unwrap();
+    s.recovery_mut().set_space_probe(Some(plenty()));
+    s.recovery_enable(
+        root.to_path_buf(),
+        RecoverySettings {
+            interval_seconds: 15,
+            strokes_between: 0,
+            generations_to_keep: 3,
+            directory: None,
+            ..RecoverySettings::default()
+        },
+    )
+    .unwrap();
     s
 }
 fn write_after(s: &mut AppState, from: Instant) {
     s.recovery_tick_at(from);
     s.recovery_tick_at(
-        from + Duration::from_secs(s.recovery.settings().interval_seconds as u64 + 1),
+        from + Duration::from_secs(s.recovery().settings().interval_seconds as u64 + 1),
     );
     s.recovery_wait();
 }
@@ -524,26 +540,26 @@ fn headless_a_pose_only_change_is_written_to_the_recovery_checkpoint_and_comes_b
     let dir = TempDir::new("recovery");
     let root = dir.file("recovery");
     let mut s = session(&root);
-    s.apply(Action::Pose(PoseAction::LoadFigure));
-    s.np.model_file = Some(dir.file("figure.fbx"));
+    s.act(Action::Pose(PoseAction::LoadFigure));
+    s.np_mut().model_file = Some(dir.file("figure.fbx"));
     // 絵を描かずに、ポーズだけを変える（変更ありの印が付き、書き置きの鍵が変わる）
-    s.modified = true;
+    s.set_modified(true);
     write_after(&mut s, Instant::now());
-    let first = s.recovery.checkpoints();
+    let first = s.recovery().checkpoints();
     pose_it(&mut s);
     pose::sync_modified(&mut s);
     write_after(&mut s, Instant::now() + Duration::from_secs(100));
     assert_eq!(
-        s.recovery.checkpoints(),
+        s.recovery().checkpoints(),
         first + 1,
         "ポーズだけの変更も書き置きになる"
     );
-    assert!(s.recovery.is_idle());
+    assert!(s.recovery().is_idle());
     drop(s);
     let mut s2 = session(&root);
     s2.recovery_apply(RecoveryAction::Open);
     let recovered = s2
-        .project
+        .project()
         .as_ref()
         .unwrap()
         .project()

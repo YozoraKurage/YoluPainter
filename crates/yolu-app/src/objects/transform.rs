@@ -42,10 +42,18 @@ pub enum Kind {
 impl Kind {
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            Kind::Grab => lang.pick("移動", "Move"),
-            Kind::Rotate => lang.pick("回転", "Rotate"),
-            Kind::Scale => lang.pick("拡縮", "Scale"),
+            Kind::Grab => lang.t("objects-move"),
+            Kind::Rotate => lang.t("objects-rotate"),
+            Kind::Scale => lang.t("objects-scale"),
         }
+    }
+
+    /// 「移動できません」・"Cannot move"（断りの文の「何が」）。
+    fn cannot(self, lang: Lang) -> String {
+        lang.f(
+            "objects-cannot-do",
+            &[("name", &super::english_lowercase(lang, self.name(lang)))],
+        )
     }
 }
 
@@ -402,7 +410,7 @@ impl Transform {
 
     /// 今の量（ポインタか打った値から。`snap` で刻みに合わせる）。
     fn compute(&self, app: &AppState, rect: Rect, snap: bool) -> Value {
-        let view = app.view3d.camera.view(rect.width(), rect.height());
+        let view = app.view3d.view.camera.view(rect.width(), rect.height());
         let local = |p: Pos2| Vec2::new(p.x - rect.left(), p.y - rect.top());
         let (from, now) = (local(self.from), local(self.last));
         let steps = app.objects.steps;
@@ -537,7 +545,7 @@ impl Transform {
             Constraint::Axis { axis, local } => {
                 let a = axis_letter(axis);
                 if local {
-                    lang.pick(format!(" ローカル {a}"), format!(" Local {a}"))
+                    lang.f("objects-local", &[("a", &a)])
                 } else {
                     format!(" {a}")
                 }
@@ -549,7 +557,7 @@ impl Transform {
                     axis_letter((axis + 1) % 3).max(axis_letter((axis + 2) % 3))
                 );
                 if local {
-                    lang.pick(format!(" ローカル {p}"), format!(" Local {p}"))
+                    lang.f("objects-local-2", &[("p", &p)])
                 } else {
                     format!(" {p}")
                 }
@@ -596,7 +604,7 @@ impl Transform {
     fn still_valid(&self, app: &AppState) -> bool {
         match self.what {
             What::Object(o) => {
-                app.doc.id() == self.doc_id
+                app.session.doc.id() == self.doc_id
                     && app.mode == EditorMode::Edit
                     && super::selectable(app, o)
             }
@@ -661,6 +669,7 @@ impl Transform {
                     return;
                 };
                 let Some(mut g) = app
+                    .session
                     .doc
                     .layer(layer)
                     .and_then(|l| l.fill_points(channel))
@@ -676,12 +685,14 @@ impl Transform {
                     return;
                 }
                 p.position = next;
-                let revision = app.doc.revision();
-                match app.doc.set_fill_points(layer, channel, Some(g), true) {
+                let revision = app.session.doc.revision();
+                match app
+                    .session
+                    .doc
+                    .set_fill_points(layer, channel, Some(g), true)
+                {
                     Ok(()) => {
-                        if app.doc.revision() != revision {
-                            app.modified = true;
-                        }
+                        app.session.mark_modified_if_changed(revision);
                     }
                     Err(e) => app.notify(
                         crate::notice::Kind::of_core(&e),
@@ -714,11 +725,12 @@ impl Transform {
             return Ok(None);
         };
         let lang = app.lang;
-        let what = lang.pick("パスを動かせません", "Cannot move the path");
-        let model =
-            app.view3d.full_model().cloned().ok_or_else(|| {
-                lang.with_reason(what, lang.pick("モデルがありません", "no model"))
-            })?;
+        let what = lang.t("objects-cannot-move-the-path");
+        let model = app
+            .view3d
+            .full_model()
+            .cloned()
+            .ok_or_else(|| lang.with_reason(what, lang.t("objects-no-model")))?;
         let tolerance = rebind_tolerance(&model.geometry, path);
         let mut points = Vec::with_capacity(path.points.len());
         for (i, ((p, at), normal)) in path.points.iter().zip(world).zip(normals).enumerate() {
@@ -728,10 +740,7 @@ impl Transform {
             let off = || {
                 lang.with_reason(
                     what,
-                    lang.pick(
-                        format!("{} 番目の点が面に乗りません", i + 1),
-                        format!("point {} is not on the surface", i + 1),
-                    ),
+                    lang.f("objects-point-is-not-on-the", &[("i", &(i + 1))]),
                 )
             };
             let hit = model
@@ -741,7 +750,7 @@ impl Transform {
                     tolerance,
                     facing,
                     REBIND_MAX_NODE_VISITS,
-                    app.view3d.material,
+                    Some(&app.view3d.material),
                 )
                 .map_err(|_| off())?
                 .ok_or_else(off)?;
@@ -764,14 +773,15 @@ impl Transform {
                 if moved.points == path.points {
                     return Ok(());
                 }
-                let Some(mut entries) = app.doc.layer(layer).map(|l| l.paths().to_vec()) else {
+                let Some(mut entries) = app.session.doc.layer(layer).map(|l| l.paths().to_vec())
+                else {
                     return Ok(());
                 };
                 let Some(entry) = entries.iter_mut().find(|e| e.path.id() == id) else {
                     return Ok(());
                 };
                 entry.path = LayerPath::Surface(moved);
-                app.doc.end_coalescing();
+                app.session.doc.end_coalescing();
                 // パスの一覧の口（点の選びを外し、面から外れて描かなかった標本を知らせる）
                 app.path_commit_list(layer, entries, None);
                 Ok(())
@@ -781,8 +791,8 @@ impl Transform {
                 Ok(())
             }
             _ => {
-                if app.doc.id() == self.doc_id {
-                    app.doc.end_coalescing();
+                if app.session.doc.id() == self.doc_id {
+                    app.session.doc.end_coalescing();
                 }
                 Ok(())
             }
@@ -795,8 +805,8 @@ impl Transform {
             What::Bone(_) => pose::end_edit(&mut app.view3d, false),
             What::Object(Object::Path { .. }) => {}
             What::Object(_) => {
-                if app.doc.id() == self.doc_id {
-                    let _ = app.doc.cancel_coalescing();
+                if app.session.doc.id() == self.doc_id {
+                    let _ = app.session.doc.cancel_coalescing();
                 }
             }
         }
@@ -806,30 +816,20 @@ impl Transform {
 /// G/R/S を当てるもの（断るときは理由の文）。
 fn target(app: &AppState, kind: Kind) -> Result<What, String> {
     let lang = app.lang;
-    let what = lang.pick(
-        format!("{}できません", kind.name(lang)),
-        format!("Cannot {}", kind.name(lang).to_lowercase()),
-    );
+    let what = kind.cannot(lang);
     let refuse = |reason: &str| lang.with_reason(&what, reason);
     if app.is_stroking() {
         return Err(crate::lang::refusals::during_stroke(lang).to_owned());
     }
-    if !app.view3d.visible || app.view3d.view_rect.is_none() || app.view3d.model.is_none() {
-        return Err(refuse(
-            lang.pick("3D ビューが見えていません", "the 3D View is not shown"),
-        ));
+    if !app.view3d.visible || app.view3d.view.view_rect.is_none() || app.view3d.model.is_none() {
+        return Err(refuse(lang.t("objects-the-3d-view-is-not")));
     }
     match app.mode {
-        EditorMode::Paint => Err(refuse(lang.pick(
-            "編集かポーズのモードで使います",
-            "used in Edit or Pose mode",
-        ))),
+        EditorMode::Paint | EditorMode::Hide => Err(refuse(lang.t("objects-used-in-edit-or-pose"))),
         EditorMode::Edit => {
             let o = super::selected(app).ok_or_else(|| refuse(super::nothing_selected(lang)))?;
             if matches!(o, Object::Point { .. }) && kind != Kind::Grab {
-                return Err(refuse(
-                    lang.pick("点は移動だけです", "points can only be moved"),
-                ));
+                return Err(refuse(lang.t("objects-points-can-only-be-moved")));
             }
             if let Some(reason) = app.read_only_reason() {
                 return Err(crate::lang::refusals::read_only_set(lang, reason));
@@ -843,7 +843,7 @@ fn target(app: &AppState, kind: Kind) -> Result<What, String> {
             .as_ref()
             .and_then(|s| s.selected)
             .map(What::Bone)
-            .ok_or_else(|| refuse(lang.pick("ボーンを選んでいません", "no bone is selected"))),
+            .ok_or_else(|| refuse(lang.t("objects-no-bone-is-selected"))),
     }
 }
 
@@ -852,11 +852,8 @@ pub fn request(app: &mut AppState, kind: Kind) {
     if crate::pie::dragging(app) || super::transforming(app) {
         let lang = app.lang;
         let text = lang.with_reason(
-            lang.pick(
-                format!("{}できません", kind.name(lang)),
-                format!("Cannot {}", kind.name(lang).to_lowercase()),
-            ),
-            lang.pick("ほかの操作の途中です", "another operation is in progress"),
+            kind.cannot(lang),
+            lang.t("objects-another-operation-is-in-progress"),
         );
         app.refuse(Source::Edit, text);
         return;
@@ -916,6 +913,7 @@ pub fn begin_with(
                     .into_iter()
                     .unzip();
             let path = app
+                .session
                 .doc
                 .layer(layer)
                 .and_then(|l| l.paths().iter().find(|e| e.path.id() == id))
@@ -955,7 +953,7 @@ pub fn begin_with(
     };
     if matches!(what, What::Object(_)) {
         // 前の欄のドラッグにまとめない
-        app.doc.end_coalescing();
+        app.session.doc.end_coalescing();
     }
     let value = match kind {
         Kind::Grab => Value::Move(Vec3::ZERO),
@@ -982,7 +980,7 @@ pub fn begin_with(
         from: pointer,
         last: pointer,
         angle: 0.0,
-        doc_id: app.doc.id(),
+        doc_id: app.session.doc.id(),
         opened_frame: frame,
         value,
         drag,
@@ -995,7 +993,7 @@ pub fn step(app: &mut AppState, input: &Input) -> Step {
     let Some(mut t) = app.objects.transform.take() else {
         return Step::Done;
     };
-    let Some(rect) = app.view3d.view_rect else {
+    let Some(rect) = app.view3d.view.view_rect else {
         t.cancel(app);
         return Step::Done;
     };
@@ -1032,13 +1030,13 @@ pub fn step(app: &mut AppState, input: &Input) -> Step {
         // 負の倍率は形もボーンも持たない: 前の量のままにして理由を出す
         let lang = app.lang;
         let text = lang.with_reason(
-            lang.pick("拡縮できません", "Cannot scale"),
-            lang.pick("負の倍率は使えません", "a negative factor cannot be used"),
+            lang.t("objects-cannot-scale"),
+            lang.t("objects-a-negative-factor-cannot-be"),
         );
         app.refuse(Source::Edit, text);
     }
     if let Some(p) = input.pointer {
-        let view = app.view3d.camera.view(rect.width(), rect.height());
+        let view = app.view3d.view.camera.view(rect.width(), rect.height());
         let center = view
             .to_screen(t.pivot)
             .map_or(rect.center(), |s| pos2(rect.left() + s.x, rect.top() + s.y));
@@ -1071,10 +1069,10 @@ pub fn finish(app: &mut AppState, commit: bool) {
         return;
     };
     if matches!(
-        app.popup.as_ref().map(|p| p.kind),
+        app.ui.popup.as_ref().map(|p| p.kind),
         Some(PopupKind::Transform)
     ) {
-        app.popup = None;
+        app.ui.popup = None;
     }
     if !t.still_valid(app) {
         t.cancel(app);
@@ -1094,7 +1092,7 @@ pub fn finish(app: &mut AppState, commit: bool) {
 pub fn settle(app: &mut AppState) {
     if super::transforming(app)
         && !matches!(
-            app.popup.as_ref().map(|p| p.kind),
+            app.ui.popup.as_ref().map(|p| p.kind),
             Some(PopupKind::Transform)
         )
     {
@@ -1110,39 +1108,24 @@ pub fn start_requested(ctx: &egui::Context, app: &mut AppState) {
     };
     let lang = app.lang;
     let refuse_with = |app: &mut AppState, reason: &str| {
-        let text = lang.with_reason(
-            lang.pick(
-                format!("{}できません", kind.name(lang)),
-                format!("Cannot {}", kind.name(lang).to_lowercase()),
-            ),
-            reason,
-        );
+        let text = lang.with_reason(kind.cannot(lang), reason);
         app.refuse(Source::Edit, text);
     };
-    if crate::pie::dragging(app) || ctx.input(|i| i.pointer.any_down()) || app.popup.is_some() {
-        refuse_with(
-            app,
-            lang.pick("ほかの操作の途中です", "another operation is in progress"),
-        );
+    if crate::pie::dragging(app) || ctx.input(|i| i.pointer.any_down()) || app.ui.popup.is_some() {
+        refuse_with(app, lang.t("objects-another-operation-is-in-progress"));
         return;
     }
-    if app.view3d.viewport != Some(ctx.viewport_id()) {
-        refuse_with(
-            app,
-            lang.pick(
-                "3D ビューが別のウィンドウにあります",
-                "the 3D View is in another window",
-            ),
-        );
+    if app.ui.view3d_viewport != Some(ctx.viewport_id()) {
+        refuse_with(app, lang.t("objects-the-3d-view-is-in"));
         return;
     }
     let pointer = ctx
         .input(|i| i.pointer.latest_pos())
-        .or_else(|| app.view3d.view_rect.map(|r| r.center()))
+        .or_else(|| app.view3d.view.view_rect.map(|r| r.center()))
         .unwrap_or_default();
     match begin(app, kind, pointer, ctx.cumulative_frame_nr()) {
         Ok(()) => {
-            app.popup = Some(OpenPopup {
+            app.ui.popup = Some(OpenPopup {
                 kind: PopupKind::Transform,
                 state: PopupState::new(ctx, Rect::from_min_size(pointer, egui::Vec2::ZERO)),
             });
@@ -1157,12 +1140,12 @@ pub fn start_drag(ctx: &egui::Context, app: &mut AppState) {
     let Some((kind, at, source)) = app.objects.drag_request.take() else {
         return;
     };
-    if app.popup.is_some() || super::transforming(app) {
+    if app.ui.popup.is_some() || super::transforming(app) {
         return;
     }
     match begin_with(app, kind, at, ctx.cumulative_frame_nr(), Some(source)) {
         Ok(()) => {
-            app.popup = Some(OpenPopup {
+            app.ui.popup = Some(OpenPopup {
                 kind: PopupKind::Transform,
                 state: PopupState::new(ctx, Rect::from_min_size(at, egui::Vec2::ZERO)),
             });
@@ -1236,7 +1219,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState, popup: &mut PopupState) -> 
     if step(app, &input) == Step::Done {
         return false;
     }
-    let (Some(t), Some(rect)) = (app.objects.transform.as_ref(), app.view3d.view_rect) else {
+    let (Some(t), Some(rect)) = (app.objects.transform.as_ref(), app.view3d.view.view_rect) else {
         return false;
     };
     popup.rect = rect;
@@ -1246,7 +1229,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState, popup: &mut PopupState) -> 
             Id::new("yolu.transform"),
         ))
         .with_clip_rect(rect);
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     let to = |v: Vec2| pos2(rect.left() + v.x, rect.top() + v.y);
     let center = view.to_screen(t.pivot).map(to);
     // 軸の線（軸は 1 本、面はその 2 本）。物の中心を通して、表示域の端まで
@@ -1304,30 +1287,20 @@ pub fn show(ctx: &egui::Context, app: &mut AppState, popup: &mut PopupState) -> 
 /// Alt+G/R/S: 選んだ物の位置・回転・大きさを既定へ（形はモデルの外形に合わせた置き場、ボーンはファイルの形。1 回の取り消し）。
 pub fn reset(app: &mut AppState, kind: Kind) {
     let lang = app.lang;
-    let what = lang.pick(
-        match kind {
-            Kind::Grab => "位置を戻せません",
-            Kind::Rotate => "回転を戻せません",
-            Kind::Scale => "大きさを戻せません",
-        },
-        match kind {
-            Kind::Grab => "Cannot reset the position",
-            Kind::Rotate => "Cannot reset the rotation",
-            Kind::Scale => "Cannot reset the scale",
-        },
-    );
+    let what = match kind {
+        Kind::Grab => lang.t("objects-cannot-reset-the-position"),
+        Kind::Rotate => lang.t("objects-cannot-reset-the-rotation"),
+        Kind::Scale => lang.t("objects-cannot-reset-the-scale"),
+    };
     if app.is_stroking() || super::transforming(app) || crate::pie::dragging(app) {
         app.refuse(Source::Edit, crate::lang::refusals::during_stroke(lang));
         return;
     }
     match app.mode {
-        EditorMode::Paint => {}
+        EditorMode::Paint | EditorMode::Hide => {}
         EditorMode::Pose => {
             let Some(bone) = app.view3d.pose.session.as_ref().and_then(|s| s.selected) else {
-                let text = lang.with_reason(
-                    what,
-                    lang.pick("ボーンを選んでいません", "no bone is selected"),
-                );
+                let text = lang.with_reason(what, lang.t("objects-no-bone-is-selected"));
                 app.refuse(Source::Pose, text);
                 return;
             };
@@ -1354,10 +1327,7 @@ pub fn reset(app: &mut AppState, kind: Kind) {
                 return;
             };
             let Object::Shape(target) = o else {
-                let text = lang.with_reason(
-                    what,
-                    lang.pick("既定の置き場がありません", "it has no default placement"),
-                );
+                let text = lang.with_reason(what, lang.t("objects-it-has-no-default-placement"));
                 app.refuse(Source::Edit, text);
                 return;
             };
@@ -1380,7 +1350,7 @@ pub fn reset(app: &mut AppState, kind: Kind) {
             if next == current {
                 return;
             }
-            app.doc.end_coalescing();
+            app.session.doc.end_coalescing();
             if let Some(Err(e)) = gizmo::write_shape(app, target, next, false) {
                 app.notify(
                     crate::notice::Kind::of_core(&e),
@@ -1397,7 +1367,7 @@ fn default_shape(app: &AppState, target: Target) -> Option<sg::Shape> {
     use crate::fillfx::placement::{fit_to_bounds, new_shape_gradient_of};
     let bounds = app.view3d.full_model()?.geometry.bounds();
     let current = shape_of(app, target)?;
-    let layer = app.doc.layer(target.layer())?;
+    let layer = app.session.doc.layer(target.layer())?;
     let from_placement = |p: yolu_core::fill_image::Placement| sg::Shape {
         center: p.center,
         rotation: p.rotation,
@@ -1417,7 +1387,7 @@ fn default_shape(app: &AppState, target: Target) -> Option<sg::Shape> {
             from_volume(new_shape_gradient_of(g.volume.shape, Some(&bounds)).volume)
         }
         Target::Filter(_, filter) => {
-            let (_, effect, _) = app.doc.find_filter(filter)?;
+            let (_, effect, _) = app.session.doc.find_filter(filter)?;
             let g = effect.settings().generator_settings()?;
             if g.kind == yolu_core::generator::Kind::Image {
                 from_placement(fit_to_bounds(&bounds, g.image.projection.mode))

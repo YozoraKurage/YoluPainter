@@ -10,7 +10,7 @@
 //! どれも離すまで文書を変えない。Esc・フォーカスを失う・ツールの切り替え・ビューが隠れるで、途中の形を何も描かずに捨てる（離したのを取りこぼした
 //! グラデーションは、2D と同じく最後の位置で塗る。ペンの押しを OS に奪われて補った離しも、取りこぼしと同じ）。
 
-use egui::{Modifiers, Painter, Pos2, Rect};
+use egui::{Painter, Pos2, Rect};
 use yolu_core::geometry::{
     cover_screen, pick, ProjectionSettings, ScreenCoverSettings, ScreenCoverage, ScreenShape,
     SurfaceHit, SurfaceInput,
@@ -23,11 +23,12 @@ use super::input::{
 use crate::drafting::canvas::{fill_region, finish_paint, paint_outline};
 use crate::drafting::{endpoints, outline, Figure};
 use crate::notice::Source;
+use crate::state::key::Modifiers;
 use crate::state::{AppState, StrokeSource, Tool};
 
 /// 3D ビューでグラデーション・図形・定規のドラッグの途中か（どれでも true。離す・Esc・フォーカスを失うまで）。
 pub fn dragging(app: &AppState) -> bool {
-    app.view3d.input.draft.is_some()
+    app.view3d.view.input.draft.is_some()
 }
 
 /// ドラッグで決めるもの。
@@ -64,7 +65,7 @@ pub(super) fn press(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSour
         _ => return,
     };
     if app.is_stroking()
-        || app.view3d.input.draft.is_some()
+        || app.view3d.view.input.draft.is_some()
         || app.gradient.drag.is_some()
         || app.view3d.model.is_none()
     {
@@ -81,7 +82,7 @@ pub(super) fn press(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSour
             }
         }
         DraftKind::Figure => {
-            if let Err(reason) = crate::region::tools::paint_gate(app) {
+            if let Err(reason) = crate::stroke_gate::paint(app) {
                 app.refuse(Source::Ruler, reason);
                 return;
             }
@@ -97,7 +98,7 @@ pub(super) fn press(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSour
             return;
         };
         // ブラシと同じく、ほかのテクスチャセットの面からは始めない
-        if refuse_other_set(app, &model, &hit) {
+        if refuse_other_set(app, Source::Ruler, &model, &hit) {
             return;
         }
         Some(hit)
@@ -105,7 +106,7 @@ pub(super) fn press(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSour
         None
     };
     let p = screen_point(rect, at);
-    app.view3d.input.draft = Some(SurfaceDraft {
+    app.view3d.view.input.draft = Some(SurfaceDraft {
         kind,
         source,
         start: p,
@@ -120,6 +121,7 @@ pub(super) fn press(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSour
 pub(super) fn moved(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSource, m: &Modifiers) {
     if let Some(d) = app
         .view3d
+        .view
         .input
         .draft
         .as_mut()
@@ -133,7 +135,7 @@ pub(super) fn moved(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSour
 
 /// 毎フレーム: 押しているあいだの Shift・Alt は、動かさなくても形に効く（2D と同じ）。
 pub(super) fn modifiers(app: &mut AppState, m: &Modifiers) {
-    if let Some(d) = app.view3d.input.draft.as_mut() {
+    if let Some(d) = app.view3d.view.input.draft.as_mut() {
         d.shift = m.shift;
         d.alt = m.alt;
     }
@@ -147,11 +149,17 @@ pub(super) fn release(
     source: StrokeSource,
     m: &Modifiers,
 ) {
-    if app.view3d.input.draft.is_none_or(|d| d.source != source) {
+    if app
+        .view3d
+        .view
+        .input
+        .draft
+        .is_none_or(|d| d.source != source)
+    {
         return;
     }
     moved(app, rect, at, source, m);
-    if let Some(d) = app.view3d.input.draft.take() {
+    if let Some(d) = app.view3d.view.input.draft.take() {
         apply(app, rect, d);
     }
 }
@@ -159,10 +167,16 @@ pub(super) fn release(
 /// 離したのを取りこぼした（ウィンドウの外で離した・ペンの押しを OS に奪われて補った離し（`AppState::pen_release_lost`）など）: グラデーションは最後の位置で
 /// 離したことにし、図形と定規は何も変えずにやめる（2D と同じ。2D のグラデーションの補った離しも最後の位置で塗る）。この入力（`source`）で始めたドラッグだけ。
 pub(super) fn lost_release(app: &mut AppState, rect: Rect, source: StrokeSource) {
-    if app.view3d.input.draft.is_none_or(|d| d.source != source) {
+    if app
+        .view3d
+        .view
+        .input
+        .draft
+        .is_none_or(|d| d.source != source)
+    {
         return;
     }
-    if let Some(d) = app.view3d.input.draft.take() {
+    if let Some(d) = app.view3d.view.input.draft.take() {
         if d.kind == DraftKind::Gradient {
             apply(app, rect, d);
         }
@@ -171,7 +185,7 @@ pub(super) fn lost_release(app: &mut AppState, rect: Rect, source: StrokeSource)
 
 /// Esc: 途中の形を捨てる（グラデーションは知らせる。2D と同じ）。何かあったか。
 pub(super) fn cancel(app: &mut AppState) -> bool {
-    match app.view3d.input.draft.map(|d| d.kind) {
+    match app.view3d.view.input.draft.map(|d| d.kind) {
         None => false,
         Some(DraftKind::Gradient) => crate::gradient::canvas::cancel(app),
         Some(_) => app.drafting_cancel(),
@@ -203,14 +217,14 @@ pub(super) fn cover(
     source: Source,
 ) -> Option<ScreenCoverage> {
     let model = app.view3d.model.clone()?;
-    let material = app.view3d.material;
-    if material < 0 {
+    let material = app.view3d.material.clone();
+    if material.is_empty() {
         app.refuse(source, app.region_missing_reason());
         return None;
     }
     let view = camera_view(app, rect);
     let settings = ScreenCoverSettings {
-        material: Some(material),
+        material: Some(&material),
         projection: ProjectionSettings {
             paint_hidden: false,
             paint_backfaces: false,
@@ -218,9 +232,9 @@ pub(super) fn cover(
         },
         shape,
         positions,
-        room: app.doc.stroke_budget_bytes(),
+        room: app.session.doc.stroke_budget_bytes(),
     };
-    match cover_screen(&app.doc, model.geometry.clone(), &view, &settings) {
+    match cover_screen(&app.session.doc, model.geometry.clone(), &view, &settings) {
         Ok(c) => Some(c),
         Err(e) => {
             app.fail(source, app.lang.surface_error(&e));
@@ -264,7 +278,7 @@ fn figure(app: &mut AppState, rect: Rect, a: DVec2, b: DVec2) {
     if app.is_stroking() {
         return;
     }
-    let layer = match crate::region::tools::paint_gate(app) {
+    let layer = match crate::stroke_gate::paint(app) {
         Ok(id) => id,
         Err(e) => {
             app.refuse(Source::Ruler, e);
@@ -273,8 +287,8 @@ fn figure(app: &mut AppState, rect: Rect, a: DVec2, b: DVec2) {
     };
     let figure = app.drafting.figure;
     let corner = app.drafting.corner as f64;
-    let before = app.doc.revision();
-    app.doc.end_coalescing();
+    let before = app.session.doc.revision();
+    app.session.doc.end_coalescing();
     if app.drafting.fill && figure != Figure::Line {
         let shape = match figure {
             Figure::Rectangle => ScreenShape::Rectangle { a, b, corner },
@@ -301,7 +315,7 @@ fn outline_stroke(
     let (Some(model), Some(&first)) = (app.view3d.model.clone(), points.first()) else {
         return;
     };
-    if app.view3d.material < 0 {
+    if app.view3d.material.is_empty() {
         app.refuse(Source::Ruler, app.region_missing_reason());
         return;
     }
@@ -312,7 +326,17 @@ fn outline_stroke(
         mut stroke,
         mut surface,
         ..
-    }) = open_stroke(app, &model, rect, view, layer, false, true, input(first))
+    }) = open_stroke(
+        app,
+        Source::Ruler,
+        &model,
+        rect,
+        view,
+        layer,
+        false,
+        true,
+        input(first),
+    )
     else {
         return;
     };
@@ -322,7 +346,7 @@ fn outline_stroke(
         let n = ((p - last).length() / OUTLINE_STEP).ceil().max(1.0) as usize;
         for i in 1..=n {
             let q = last + (p - last) * (i as f64 / n as f64);
-            if let Err(e) = surface.add_input(&mut app.doc, &mut stroke, input(q)) {
+            if let Err(e) = surface.add_input(&mut app.session.doc, &mut stroke, input(q)) {
                 result = Err(e);
                 break 'points;
             }
@@ -330,11 +354,11 @@ fn outline_stroke(
         last = p;
     }
     if result.is_ok() {
-        result = surface.finish(&mut app.doc, &mut stroke);
+        result = surface.finish(&mut app.session.doc, &mut stroke);
     }
     let ended = match result {
         Err(e) => {
-            app.doc.cancel_stroke(stroke);
+            app.session.doc.cancel_stroke(stroke);
             app.fail(Source::Ruler, app.lang.surface_error(&e));
             Ok(())
         }
@@ -342,7 +366,7 @@ fn outline_stroke(
             if let Some(outcome) = surface.symmetry_note() {
                 app.warn(Source::View3d, app.lang.mirror_note(outcome));
             }
-            app.doc.end_stroke(stroke).map(|_| ())
+            app.session.doc.end_stroke(stroke).map(|_| ())
         }
     };
     finish_paint(app, ended, before);
@@ -351,7 +375,7 @@ fn outline_stroke(
 /// 3D ビューの上に、ドラッグの途中の形（グラデーションの線・図形の輪郭・引いている定規）を描く（2D と同じ見た目）。作った定規は `rulers::draw3d`。
 pub fn paint_overlay(painter: &Painter, app: &AppState, rect: Rect) {
     let screen = |p: DVec2| to_pos(rect, p);
-    let draft = app.view3d.input.draft;
+    let draft = app.view3d.view.input.draft;
     match draft {
         Some(d) if d.kind == DraftKind::Gradient => {
             crate::gradient::canvas::paint_line(painter, screen(d.start), screen(d.current));

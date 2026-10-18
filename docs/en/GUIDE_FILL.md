@@ -6,7 +6,7 @@ This page covers fill layers (layers that paint surfaces with values, images or 
 
 ## Create a fill layer
 
-Choose a type from "New Fill Layer" in the Layers panel (the same item is in the Layer menu). It is made right above the selected layer (inside the group, if a layer in a group is selected).
+Choose a type from "New Fill Layer" in the Layers panel (the same item is in the Layer menu). It is made right above the selected layer (inside the group, if a layer in a group is selected). Only Solid Color is made right below the selected layer.
 
 | Type | What it creates |
 |---|---|
@@ -64,12 +64,11 @@ Effects are filters (which change pixels) and generators (which make values) pla
 
 "Add Filter" and "Add Generator" are separate entrances.
 
-- The two buttons at the bottom of the Layers panel
 - The Layer and Layer Mask sections of Properties (the mask section says "Add Filter to Mask" and "Add Generator to Mask")
 - The layer context menu, and "Add Filter ▸" and "Add Generator ▸" in the Layer menu
 - The Filter menu (filters and anchors only)
 
-Thumbnails choose whether an effect goes on the layer or on its mask. Click the layer thumbnail to target the layer's pixels, or the mask thumbnail to target the mask (the targeted thumbnail gets a blue frame); the add buttons and Properties then follow the target. Clicking a row of a mask effect also targets the mask. Right-clicking the mask thumbnail offers adding to the mask, Invert, Enabled and Delete Mask.
+Thumbnails choose whether an effect goes on the layer or on its mask. Click the layer thumbnail to target the layer's pixels, or the mask thumbnail to target the mask (the targeted thumbnail gets a blue frame); the add items and Properties then follow the target. Clicking a row of a mask effect also targets the mask. Right-clicking the mask thumbnail offers adding to the mask, Invert, Enabled and Delete Mask.
 
 The eye on a row turns the effect on or off, and the up, down and delete buttons reorder or remove it (the same items are in the context menu). Click a row to see its settings in Properties. Every effect has "Strength", and a generator's "Combine" chooses how it meets the values below (Multiply, Replace, Screen, Max, Min, Add, Subtract).
 
@@ -114,7 +113,7 @@ Items are Images, Brushes, Materials, Smart Materials and Smart Masks; filter th
 - "Save Layer": puts the selected layer (with its contents, for a group) into the project's assets as a smart material. "Save Mask" makes the mask a smart mask. The save runs in another thread, with "Saving" and "Cancel" in the panel; meanwhile deleting from or importing into the assets is refused with "Already saving". Layers that use user channels, noise, grunge, color corrections or the 0.5.0 effects cannot be written to `.ylsmart`, so they are refused with a reason.
 - "Place" (also double-click, right-click, or dragging onto the Layers list): puts the item above the selected layer as new layers. In a texture set of a different size it is stretched to fit, and one undo takes it back. A smart mask uses "Apply to Mask" and replaces the selected layer's mask. An item that cannot be placed just sits in the list with the reason.
 - "Put into the library" and "Use in this project": move items between the assets and the library.
-- `.ylsmart` can be imported and exported (the Unity version up to 0.4.x reads it too; the Unity bridge does not import it from 0.5.0).
+- `.ylsmart` can be imported and exported (the Unity bridge up to 0.4.x reads it too; the Unity bridge does not import it from 0.5.0).
 
 "Save as Material" in a fill layer's context menu writes the fill values, gradients, projection and filters to `Materials` in the library as a `.ylmaterial` (named after the layer; a number is added when the name is taken). Masks, clipping, opacity, blend mode, visibility and locks are not kept, and a placed material becomes the defaults of a new fill layer. A fill that uses an asset image cannot be saved (the item is disabled and the tooltip gives the reason).
 
@@ -130,4 +129,4 @@ The layer that was selected when recording started, and the layers and effects c
 
 ## Handing files to older versions and Unity
 
-A `.ylp` that uses point gradients, an image with anisotropic filtering turned off, or a 0.5.0 effect cannot be opened by the 0.4.x standalone app or the Unity version up to 0.4.x. See [GUIDE_FILES.md](GUIDE_FILES.md) for what to watch when handing files over.
+A `.ylp` that uses point gradients, an image with anisotropic filtering turned off, or a 0.5.0 effect cannot be opened by the 0.4.x standalone app or the Unity bridge up to 0.4.x. See [GUIDE_FILES.md](GUIDE_FILES.md) for what to watch when handing files over.

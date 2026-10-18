@@ -16,7 +16,7 @@ use crate::ui::menu::Entry;
 
 /// 効果を足す先: マスクに描いているあいだはマスク、そうでなければレイヤーの画素。
 pub fn target(app: &AppState) -> FilterTarget {
-    match app.selected_layer {
+    match app.session.selected_layer {
         Some(id) => target_for(app, id),
         None => FilterTarget::Content,
     }
@@ -40,12 +40,12 @@ fn refused(label: &str, why: impl Into<String>) -> Entry<Action> {
 
 /// 「フィルターを追加」（ボタン・入れ子のメニューの名前）。
 pub fn add_filter_label(lang: Lang) -> &'static str {
-    lang.pick("フィルターを追加", "Add Filter")
+    lang.t("fx-add-filter")
 }
 
 /// 「ジェネレーターを追加」（ボタン・入れ子のメニューの名前）。
 pub fn add_generator_label(lang: Lang) -> &'static str {
-    lang.pick("ジェネレーターを追加", "Add Generator")
+    lang.t("fx-add-generator")
 }
 
 /// フィルターを足す項目（平らな並び。足す先は `target`）。断られる項目は、押せない項目にして理由をツールチップに置く。
@@ -57,6 +57,7 @@ pub fn filter_entries(app: &AppState, layer: LayerId, target: FilterTarget) -> V
     for kind in FilterKind::ALL {
         let label = kind.name(lang);
         match app
+            .session
             .doc
             .filter_refusal(layer, target, &kind.settings(), channel)
         {
@@ -83,12 +84,14 @@ pub fn generator_entries(
         let label = names::generator_name(lang, kind);
         let settings = EffectSettings::generator(generator::Settings::new(kind));
         let refusal = app
+            .session
             .doc
             .filter_refusal(layer, target, &settings, channel)
             .err();
         let no_anchor = kind == Kind::Anchor
             && refusal.is_none()
             && app
+                .session
                 .doc
                 .anchors_readable_from(layer)
                 .map_or(true, |a| a.is_empty());
@@ -97,13 +100,7 @@ pub fn generator_entries(
                 Entry::item(label, Action::Fx(FxOp::AddGenerator { target, kind })).enabled(free),
             ),
             (Some(why), _) => v.push(refused(label, lang.core_error(&why))),
-            (None, true) => v.push(refused(
-                label,
-                lang.pick(
-                    "このレイヤーより下にアンカーが無い",
-                    "no anchor below this layer",
-                ),
-            )),
+            (None, true) => v.push(refused(label, lang.t("fx-no-anchor-below-this-layer"))),
         }
     }
     v
@@ -111,7 +108,9 @@ pub fn generator_entries(
 
 /// 選んでいるレイヤーの、足せるレイヤー（無ければ None）。
 fn selected_layer(app: &AppState) -> Option<LayerId> {
-    app.selected_layer.filter(|id| app.doc.layer(*id).is_some())
+    app.session
+        .selected_layer
+        .filter(|id| app.session.doc.layer(*id).is_some())
 }
 
 /// 「フィルターを追加」のボタンのポップアップ（フィルターだけ。足す先は `target`）。選んでいるレイヤーが無ければ空。
@@ -144,7 +143,7 @@ pub fn layer_entries(app: &AppState, layer: LayerId) -> Vec<Entry<Action>> {
 pub fn mask_entries(app: &AppState, layer: LayerId) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
-    let Some(mask) = app.doc.layer(layer).and_then(|l| l.mask()) else {
+    let Some(mask) = app.session.doc.layer(layer).and_then(|l| l.mask()) else {
         return Vec::new();
     };
     let (enabled, inverted) = (mask.enabled(), mask.inverted());
@@ -159,20 +158,20 @@ pub fn mask_entries(app: &AppState, layer: LayerId) -> Vec<Entry<Action>> {
         ),
         Entry::Separator,
         Entry::item(
-            lang.pick("反転", "Invert"),
+            lang.t("fx-invert"),
             Action::M2(Edit::MaskInverted(layer, !inverted)),
         )
         .checked(inverted)
         .enabled(free),
         Entry::item(
-            lang.pick("有効", "Enabled"),
+            lang.t("fx-enabled"),
             Action::M2(Edit::MaskEnabled(layer, !enabled)),
         )
         .checked(enabled)
         .enabled(free),
         Entry::Separator,
         Entry::item(
-            lang.pick("マスクを削除", "Delete Mask"),
+            lang.t("fx-delete-mask"),
             Action::M2(Edit::RemoveMask(layer)),
         )
         .enabled(free),
@@ -181,7 +180,7 @@ pub fn mask_entries(app: &AppState, layer: LayerId) -> Vec<Entry<Action>> {
 
 /// アンカーを置く・外す項目（選んでいるレイヤーとそのマスク）。
 pub fn anchor_entries(app: &AppState) -> Vec<Entry<Action>> {
-    match app.selected_layer {
+    match app.session.selected_layer {
         Some(id) => anchor_entries_for(app, id),
         None => Vec::new(),
     }
@@ -191,14 +190,14 @@ pub fn anchor_entries(app: &AppState) -> Vec<Entry<Action>> {
 pub fn anchor_entries_for(app: &AppState, id: LayerId) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
-    let Some(layer) = app.doc.layer(id) else {
+    let Some(layer) = app.session.doc.layer(id) else {
         return Vec::new();
     };
     let mut v = Vec::new();
     match layer.anchor() {
         None => v.push(
             Entry::item(
-                lang.pick("アンカーを置く", "Add Anchor"),
+                lang.t("fx-add-anchor"),
                 Action::Fx(FxOp::AddAnchor {
                     layer: id,
                     placement: AnchorPlacement::Layer,
@@ -208,7 +207,7 @@ pub fn anchor_entries_for(app: &AppState, id: LayerId) -> Vec<Entry<Action>> {
         ),
         Some(a) => v.push(
             Entry::item(
-                lang.pick("アンカーを外す", "Remove Anchor"),
+                lang.t("fx-remove-anchor"),
                 Action::Fx(FxOp::RemoveAnchor(a.id())),
             )
             .enabled(free),
@@ -218,7 +217,7 @@ pub fn anchor_entries_for(app: &AppState, id: LayerId) -> Vec<Entry<Action>> {
         match mask.anchor() {
             None => v.push(
                 Entry::item(
-                    lang.pick("マスクにアンカーを置く", "Add Anchor to Mask"),
+                    lang.t("fx-add-anchor-to-mask"),
                     Action::Fx(FxOp::AddAnchor {
                         layer: id,
                         placement: AnchorPlacement::Mask,
@@ -228,7 +227,7 @@ pub fn anchor_entries_for(app: &AppState, id: LayerId) -> Vec<Entry<Action>> {
             ),
             Some(a) => v.push(
                 Entry::item(
-                    lang.pick("マスクのアンカーを外す", "Remove Mask Anchor"),
+                    lang.t("fx-remove-mask-anchor"),
                     Action::Fx(FxOp::RemoveAnchor(a.id())),
                 )
                 .enabled(free),
@@ -242,18 +241,18 @@ pub fn anchor_entries_for(app: &AppState, id: LayerId) -> Vec<Entry<Action>> {
 pub fn context_entries(app: &AppState) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
-    if let Some((layer, effect, target)) = app.fx.filter(&app.doc) {
+    if let Some((layer, effect, target)) = app.fx.filter(&app.session.doc) {
         let id = effect.id();
-        let stack = app.doc.filters_of(layer, target).unwrap_or(&[]);
+        let stack = app.session.doc.filters_of(layer, target).unwrap_or(&[]);
         let index = stack.iter().position(|e| e.id() == id).unwrap_or(0);
         let count = stack.len();
         let on = effect.enabled();
         vec![
             Entry::item(
                 if on {
-                    lang.pick("フィルターを無効にする", "Turn the filter off")
+                    lang.t("fx-turn-the-filter-off")
                 } else {
-                    lang.pick("フィルターを有効にする", "Turn the filter on")
+                    lang.t("fx-turn-the-filter-on")
                 },
                 Action::Fx(FxOp::SetEnabled {
                     layer,
@@ -263,7 +262,7 @@ pub fn context_entries(app: &AppState) -> Vec<Entry<Action>> {
             )
             .enabled(free),
             Entry::item(
-                lang.pick("上へ（後から掛かる）", "Move up (applied later)"),
+                lang.t("fx-move-up-applied-later"),
                 Action::Fx(FxOp::Move {
                     layer,
                     id,
@@ -272,7 +271,7 @@ pub fn context_entries(app: &AppState) -> Vec<Entry<Action>> {
             )
             .enabled(free && index + 1 < count),
             Entry::item(
-                lang.pick("下へ（先に掛かる）", "Move down (applied earlier)"),
+                lang.t("fx-move-down-applied-earlier"),
                 Action::Fx(FxOp::Move {
                     layer,
                     id,
@@ -281,14 +280,14 @@ pub fn context_entries(app: &AppState) -> Vec<Entry<Action>> {
             )
             .enabled(free && index > 0),
             Entry::item(
-                lang.pick("フィルターを削除", "Remove the filter"),
+                lang.t("fx-remove-the-filter"),
                 Action::Fx(FxOp::Remove { layer, id }),
             )
             .enabled(free),
         ]
-    } else if let Some(info) = app.fx.anchor(&app.doc) {
+    } else if let Some(info) = app.fx.anchor(&app.session.doc) {
         vec![Entry::item(
-            lang.pick("アンカーを外す", "Remove Anchor"),
+            lang.t("fx-remove-anchor"),
             Action::Fx(FxOp::RemoveAnchor(info.anchor.id())),
         )
         .enabled(free)]
@@ -346,7 +345,7 @@ fn set_generator(layer: LayerId, id: yolu_core::FilterId, g: generator::Settings
 pub fn choice_entries(app: &AppState, choice: FxChoice) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
-    let Some((layer, effect, _)) = app.fx.filter(&app.doc) else {
+    let Some((layer, effect, _)) = app.fx.filter(&app.session.doc) else {
         return Vec::new();
     };
     let id = effect.id();
@@ -473,7 +472,7 @@ pub fn choice_entries(app: &AppState, choice: FxChoice) -> Vec<Entry<Action>> {
             .collect(),
         FxChoice::Anchor => {
             let mut choices: Vec<Option<AnchorId>> = vec![None];
-            if let Ok(readable) = app.doc.anchors_readable_from(layer) {
+            if let Ok(readable) = app.session.doc.anchors_readable_from(layer) {
                 choices.extend(readable.iter().map(|a| Some(a.anchor.id())));
             }
             let current = (g.anchor.id != 0).then_some(AnchorId(g.anchor.id));
@@ -502,7 +501,7 @@ pub fn choice_entries(app: &AppState, choice: FxChoice) -> Vec<Entry<Action>> {
             .iter()
             .map(|c: &Channel| {
                 Entry::item(
-                    crate::m2::channel_name(lang, &app.doc, *c),
+                    crate::m2::channel_name(lang, &app.session.doc, *c),
                     Action::Fx(FxOp::SetAnchorRef {
                         layer,
                         filter: id,
@@ -594,9 +593,9 @@ pub fn choice_entries(app: &AppState, choice: FxChoice) -> Vec<Entry<Action>> {
 pub fn anchor_choice_name(app: &AppState, id: Option<AnchorId>) -> String {
     let lang = app.lang;
     match id {
-        None => lang.pick("なし", "None").to_owned(),
-        Some(id) => match app.doc.find_anchor(id) {
-            None => lang.pick("（無いアンカー）", "(missing anchor)").to_owned(),
+        None => lang.t("fx-none").to_owned(),
+        Some(id) => match app.session.doc.find_anchor(id) {
+            None => lang.t("fx-missing-anchor").to_owned(),
             Some(info) => names::anchor_label(lang, info.anchor, info.placement),
         },
     }

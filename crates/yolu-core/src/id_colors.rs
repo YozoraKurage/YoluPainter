@@ -1,4 +1,5 @@
 //! 焼いた ID マップの色の取得と比較。Empty は選ばず、余白は選ぶ。
+use crate::Reason;
 use crate::{
     mesh_maps::{BakedMeshMap, MeshMapKind},
     CoreError,
@@ -6,7 +7,7 @@ use crate::{
 pub const DEFAULT_TOLERANCE: u8 = 8;
 fn require(map: &BakedMeshMap) -> Result<(), CoreError> {
     if map.kind() != MeshMapKind::Id {
-        Err(CoreError::InvalidArgument("ID マップが必要"))
+        Err(CoreError::InvalidArgument(Reason::IdMapRequired))
     } else {
         Ok(())
     }
@@ -52,10 +53,10 @@ impl crate::SelectionMask {
     ) -> Result<Self, CoreError> {
         require(map)?;
         if map.width() != doc.width() as usize || map.height() != doc.height() as usize {
-            return Err(CoreError::InvalidArgument("ID マップの大きさ"));
+            return Err(CoreError::InvalidArgument(Reason::IdMapSize));
         }
         if colors.iter().any(|c| *c > 0xffffff) {
-            return Err(CoreError::InvalidArgument("ID の色"));
+            return Err(CoreError::InvalidArgument(Reason::IdColor));
         }
         Ok(Self::build(
             doc.width(),

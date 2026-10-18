@@ -11,8 +11,8 @@ use crate::state::AppState;
 
 /// 3D に見せる、今のセットでないセット 1 つ。
 pub struct OtherSet<'a> {
-    /// このセットが受け持つモデルのマテリアルの番号。
-    pub material: i32,
+    /// このセットが受け持つモデルのマテリアルの組。
+    pub material: yolu_core::geometry::MaterialSet,
     /// セットの文書（しまってあるもの）。
     pub doc: &'a Document,
     /// 持つ優先（小さいほど先。今のセットから並びの上で近い順）。メモリの予算が足りないとき、大きい方から持たない。
@@ -22,22 +22,23 @@ pub struct OtherSet<'a> {
 /// 見せるほかのセット（マテリアルに付いていて、目を開いている、今のセットでないもの）。文書の ID が今のセットや先のセットと重なるものは
 /// 渡さない（絵の持ち物を文書の ID で見分けるので、同じ ID の 2 つの文書が 1 つの持ち物を取り合わないように）。
 pub fn collect(app: &AppState) -> Vec<OtherSet<'_>> {
-    let current = app.sets.current_index();
-    let mut seen = vec![app.doc.id()];
-    app.sets
+    let current = app.session.sets.current_index();
+    let mut seen = vec![app.session.doc.id()];
+    app.session
+        .sets
         .iter()
         .enumerate()
         .filter_map(|(i, set)| {
             if i == current || !set.visible {
                 return None;
             }
-            let doc = app.sets.stashed_doc(i)?;
+            let doc = app.session.sets.stashed_doc(i)?;
             if seen.contains(&doc.id()) {
                 return None;
             }
             seen.push(doc.id());
             Some(OtherSet {
-                material: set.bound? as i32,
+                material: Some(set.bound_set()).filter(|m| !m.is_empty())?,
                 doc,
                 rank: i.abs_diff(current) as u32,
             })

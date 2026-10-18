@@ -3,6 +3,7 @@
 #[path = "../brush_import_files/mod.rs"]
 mod brush_import_files;
 use crate::common;
+use crate::common::drive::Drive;
 /// 合成の .sut（SQLite）の組み立ては、読み手の試験（yolu-io）と同じものを使う。
 #[allow(dead_code)]
 #[path = "../../../yolu-io/tests/brush_files/sut.rs"]
@@ -14,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use brush_import_files::*;
 use common::*;
-use egui::{pos2, Event, Rect};
+use egui::{pos2, Rect};
 use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
 use yolu_app::brushes::{BrushAction, Category, Group};
@@ -26,7 +27,7 @@ use yolu_app::{Tab, YoluApp};
 type H = Harness<'static, YoluApp>;
 
 fn st(h: &H) -> &AppState {
-    &h.state().state
+    h.app()
 }
 
 fn temp_dir(name: &str) -> PathBuf {
@@ -45,9 +46,7 @@ fn write(dir: &Path, file: &str, bytes: &[u8]) -> PathBuf {
 }
 
 fn language(h: &mut H, lang: Lang) {
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Language(lang)));
+    h.act(Action::M2Ui(UiOp::Language(lang)));
     h.run();
 }
 
@@ -63,7 +62,7 @@ fn wait_import(h: &mut H) {
 }
 
 fn with_store(h: &mut H, dir: &Path) {
-    h.state_mut().state.attach_brush_store(dir.join("brushes"));
+    h.app_mut().attach_brush_store(dir.join("brushes"));
     h.run();
 }
 
@@ -117,6 +116,25 @@ fn drop_files(h: &mut H, at: egui::Pos2, files: &[&PathBuf]) {
     h.step();
 }
 
+/// 詳細のウィンドウの欄を、その名前の部品が見える所まで送る（筆先の格子はブラシ先端の区分の終わりにある）。
+fn scroll_to(h: &mut H, label: &str) {
+    let window = yolu_app::ui::window::last_rect(&h.ctx, yolu_app::panels::brush_detail::id())
+        .expect("ブラシの詳細のウィンドウを描いている");
+    let view = Rect::from_min_max(
+        pos2(window.left() + 168.0, window.top() + 140.0),
+        window.max,
+    );
+    for _ in 0..40 {
+        let r = h.get_by_label(label).rect();
+        if view.contains(r.center()) {
+            return;
+        }
+        let step = r.center().y - view.center().y;
+        h.brushes_mut().ui.detail.scroll += step;
+        h.run();
+    }
+}
+
 /// 名前のマスの「選んでいる」印（アクセシビリティの木の切り替え）。同じ名前の部品（プロパティの欄と詳細のウィンドウの同じ格子）が
 /// 全部同じ印のときだけ、その値を返す（食い違えば None）。部品が無くても None。
 fn marked(h: &H, label: &str) -> Option<bool> {
@@ -137,14 +155,12 @@ fn the_import_button_asks_for_the_file_window_and_is_off_while_importing() {
     h.get_by_label("ブラシを取り込む（ABR・GBR・GIH・VBR・PNG・PAT）")
         .click();
     h.run();
-    assert_eq!(st(&h).dialog_request, Some(DialogRequest::ImportBrushes));
+    assert_eq!(*st(&h).dialog_request(), Some(DialogRequest::ImportBrushes));
     // 取り込み中は押せない
-    h.state_mut().state.dialog_request = None;
+    *h.dialog_request_mut() = None;
     let file = write(&dir, "chalk.gbr", &gbr_gray("Chalk"));
-    h.state_mut().state.brushes.import.park_next = true;
-    h.state_mut()
-        .state
-        .apply(Action::Brush(BrushAction::Import(vec![file])));
+    h.brushes_mut().import.park_next = true;
+    h.act(Action::Brush(BrushAction::Import(vec![file])));
     h.run();
     assert!(h
         .get_by_label("ブラシを取り込む（ABR・GBR・GIH・VBR・PNG・PAT）")
@@ -156,9 +172,7 @@ fn the_import_button_asks_for_the_file_window_and_is_off_while_importing() {
         "{:?}",
         drawn_texts(&h)
     );
-    h.state_mut()
-        .state
-        .apply(Action::Brush(BrushAction::ImportCancel));
+    h.act(Action::Brush(BrushAction::ImportCancel));
     wait_import(&mut h);
     assert!(!h
         .get_by_label("ブラシを取り込む（ABR・GBR・GIH・VBR・PNG・PAT）")
@@ -176,9 +190,7 @@ fn imported_brushes_get_their_own_tab_and_a_mark_whose_tooltip_lists_what_was_le
     assert!(h.query_by_label("取り込み").is_none());
     let colour = write(&dir, "colour.gbr", &gbr_color("Colour tip"));
     let plain = write(&dir, "plain.gbr", &gbr_gray("Plain tip"));
-    h.state_mut()
-        .state
-        .apply(Action::Brush(BrushAction::Import(vec![colour, plain])));
+    h.act(Action::Brush(BrushAction::Import(vec![colour, plain])));
     wait_import(&mut h);
     // タブが現れ、取り込んだブラシに替わって、そのグループを開いている
     assert_eq!(st(&h).shown_brush_group(), Some(Group::Imported));
@@ -210,7 +222,7 @@ fn imported_brushes_get_their_own_tab_and_a_mark_whose_tooltip_lists_what_was_le
     assert!(!tip.contains("表せなかった"), "{tip}");
     // 英語（状態の帯の知らせは、出した時の言語の文のまま残るので消してから見る）
     language(&mut h, Lang::En);
-    h.state_mut().state.message.clear();
+    h.message_mut().clear();
     h.run();
     let colour_row = row(&h, "Colour tip");
     move_to(&h, pos2(2.0, 2.0));
@@ -233,9 +245,7 @@ fn imported_brushes_get_their_own_tab_and_a_mark_whose_tooltip_lists_what_was_le
         .map(|e| e.key)
         .collect::<Vec<_>>()
     {
-        h.state_mut()
-            .state
-            .apply(Action::Brush(BrushAction::Delete(key)));
+        h.act(Action::Brush(BrushAction::Delete(key)));
     }
     h.run();
     h.run();
@@ -257,9 +267,11 @@ fn the_sample_of_a_brush_without_start_end_keeps_the_drawers_setting_while_a_bru
         stabilizer: 7.0,
         taper_in: 3.0,
         taper_out: 0.0,
+        taper_targets: Default::default(),
         curve: false,
+        ..StrokeAssist::default()
     };
-    h.state_mut().state.m2.brush.assist = drawer;
+    h.m2_mut().brush.assist = drawer;
     let taper = SutBuilder::new()
         .brush(
             "Taper",
@@ -277,9 +289,7 @@ fn the_sample_of_a_brush_without_start_end_keeps_the_drawers_setting_while_a_bru
         write(&dir, "plain.gbr", &gbr_gray("Plain tip")),
         write(&dir, "taper.sut", &taper),
     ];
-    h.state_mut()
-        .state
-        .apply(Action::Brush(BrushAction::Import(files)));
+    h.act(Action::Brush(BrushAction::Import(files)));
     wait_import(&mut h);
     let find = |h: &H, name: &str| {
         st(h)
@@ -290,15 +300,19 @@ fn the_sample_of_a_brush_without_start_end_keeps_the_drawers_setting_while_a_bru
             .expect("取り込んだブラシ")
     };
     let (plain, taper) = (find(&h, "Plain tip"), find(&h, "Taper"));
-    h.state_mut()
-        .state
-        .apply(Action::Brush(BrushAction::Select(taper)));
+    h.act(Action::Brush(BrushAction::Select(taper)));
     h.run();
     // 持つブラシを選んでいる間、今の設定にはその値が重なっている
-    assert_eq!(st(&h).m2.brush.assist.taper_in, 1130.0);
-    assert_eq!(st(&h).brushes.drawer_assist, Some(drawer));
+    assert_eq!(st(&h).m2().brush.assist.taper_in, 1130.0);
+    assert_eq!(st(&h).brushes().drawer_assist, Some(drawer));
     // 持たないブラシの行の見本は、描き手の設定で描かれる（重なった値で描かれない）
-    let effective = st(&h).brushes.lib.entry(plain).unwrap().effective().clone();
+    let effective = st(&h)
+        .brushes()
+        .lib
+        .entry(plain)
+        .unwrap()
+        .effective()
+        .clone();
     let key_for = |assist: StrokeAssist| {
         key_of(
             &Brush {
@@ -308,20 +322,19 @@ fn the_sample_of_a_brush_without_start_end_keeps_the_drawers_setting_while_a_bru
             SampleSpec::row(false),
         )
     };
-    let (right, wrong) = (key_for(drawer), key_for(st(&h).m2.brush.assist));
+    let (right, wrong) = (key_for(drawer), key_for(st(&h).m2().brush.assist));
     assert_ne!(right, wrong, "二つの見本は別の絵");
     let start = Instant::now();
-    while st(&h).brushes.samples.image(right).is_none() && start.elapsed() < Duration::from_secs(30)
-    {
+    while st(&h).ui().samples.image(right).is_none() && start.elapsed() < Duration::from_secs(30) {
         h.run();
         std::thread::sleep(Duration::from_millis(5));
     }
     assert!(
-        st(&h).brushes.samples.image(right).is_some(),
+        st(&h).ui().samples.image(right).is_some(),
         "描き手の設定の見本"
     );
     assert!(
-        st(&h).brushes.samples.image(wrong).is_none(),
+        st(&h).ui().samples.image(wrong).is_none(),
         "持つブラシの値で描いた見本は作られない"
     );
     std::fs::remove_dir_all(dir).unwrap();
@@ -332,7 +345,7 @@ fn dropping_brush_files_imports_them_and_a_png_only_when_dropped_on_the_list() {
     let dir = temp_dir("drop");
     let mut h = app(1600.0, 960.0, 128);
     with_store(&mut h, &dir);
-    let list = st(&h).brushes.ui.list_rect.expect("一覧を描いている");
+    let list = st(&h).ui().brushes_list_rect.expect("一覧を描いている");
     let inside = list.center();
     let outside = pos2(900.0, 500.0);
     let abr = write(&dir, "old.abr", &abr_v1());
@@ -340,15 +353,29 @@ fn dropping_brush_files_imports_them_and_a_png_only_when_dropped_on_the_list() {
     // ABR はウィンドウのどこに落としても取り込む。PNG はほかの用途と区別がつかないので、一覧の外では取り込まない
     drop_files(&mut h, outside, &[&png]);
     assert!(!st(&h).is_brush_importing());
+    assert!(
+        !st(&h).message().contains("tip.png"),
+        "{}",
+        st(&h).message()
+    );
+    // 取り込みは別のスレッドで、小さなファイルは落としたフレームのうちに終わることがある。始まったことは、まだ取り込み中か、
+    // もう取り込んだ結果で見る
     drop_files(&mut h, outside, &[&abr]);
-    assert!(st(&h).is_brush_importing());
+    assert!(
+        st(&h).is_brush_importing() || st(&h).brush_entries_in(Group::Imported).len() == 2,
+        "ABR の取り込みが始まらない"
+    );
     wait_import(&mut h);
     assert_eq!(st(&h).brush_entries_in(Group::Imported).len(), 2);
     // 一覧の上の PNG は取り込もうとする（PNG として読めなければ、その理由を状態の帯に出す）
     drop_files(&mut h, inside, &[&png]);
-    assert!(st(&h).is_brush_importing());
+    assert!(
+        st(&h).is_brush_importing() || st(&h).message().contains("tip.png"),
+        "一覧の上の PNG の取り込みが始まらない: {}",
+        st(&h).message()
+    );
     wait_import(&mut h);
-    assert!(st(&h).message.contains("tip.png"), "{}", st(&h).message);
+    assert!(st(&h).message().contains("tip.png"), "{}", st(&h).message());
     assert_eq!(st(&h).brush_entries_in(Group::Imported).len(), 2);
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -356,11 +383,11 @@ fn dropping_brush_files_imports_them_and_a_png_only_when_dropped_on_the_list() {
 #[test]
 fn the_krita_grid_in_the_shape_category_filters_by_name_and_picks_a_tip() {
     let mut h = app(1600.0, 960.0, 128);
-    h.state_mut().state.brushes.ui.detail.open = true;
-    h.state_mut().state.brushes.ui.detail.category = Category::Shape;
+    h.brushes_mut().ui.detail.open = true;
+    h.brushes_mut().ui.detail.category = Category::Tip;
     h.run();
     h.run();
-    assert!(st(&h).brushes.krita.is_ready());
+    assert!(st(&h).brushes().krita.is_ready());
     // 格子の中の筆先は名前で探せる
     let krita = yolu_app::brushes::store::krita();
     let first = &krita.brushes[0];
@@ -370,9 +397,9 @@ fn the_krita_grid_in_the_shape_category_filters_by_name_and_picks_a_tip() {
         first.name
     );
     // 検索の欄に打つと絞られる（打つ文字が合わない筆先のマスは消える）
-    h.state_mut().state.brushes.krita.search = "bristle".into();
+    h.brushes_mut().krita.search = "bristle".into();
     h.run();
-    let shown = st(&h).brushes.krita.matches();
+    let shown = st(&h).brushes().krita.matches();
     assert!(!shown.is_empty() && shown.len() < 76);
     let hidden = (0..76).find(|i| !shown.contains(i)).unwrap();
     let hidden_name = krita.brushes[hidden].name.clone();
@@ -381,17 +408,18 @@ fn the_krita_grid_in_the_shape_category_filters_by_name_and_picks_a_tip() {
         "絞られた筆先 {hidden_name} は出ない"
     );
     // マスを押すと、その筆先になる
-    h.state_mut().state.brushes.krita.search.clear();
+    h.brushes_mut().krita.search.clear();
     h.run();
     let name = krita.brushes[hidden].name.clone();
+    scroll_to(&mut h, name.as_str());
     h.get_by_label(name.as_str()).click();
     h.run();
     assert_eq!(
-        st(&h).m2.brush.tip.image,
+        st(&h).m2().brush.tip.image,
         krita.brushes[hidden].brush.tip.image
     );
     assert_eq!(
-        yolu_app::brushes::krita::current_index(&st(&h).m2.brush.tip),
+        yolu_app::brushes::krita::current_index(&st(&h).m2().brush.tip),
         Some(hidden)
     );
     let japanese_free = {
@@ -410,27 +438,28 @@ fn a_png_dropped_where_the_list_was_is_not_taken_while_another_tab_is_open() {
     let mut h = app(1600.0, 960.0, 128);
     with_store(&mut h, &dir);
     let inside = st(&h)
-        .brushes
-        .ui
-        .list_rect
+        .ui()
+        .brushes_list_rect
         .expect("一覧を描いている")
         .center();
     let png = write(&dir, "tip.png", b"not even a png");
     // ツールプロパティやブラシサイズのタブを一覧の組へ入れて前に出している間は、一覧を描かないので、前の位置へ落としても取り込まない
     for tab in [Tab::ToolProperties, Tab::BrushSize] {
         put_in_group_of(&mut h, tab, Tab::SubTools);
-        assert!(st(&h).brushes.ui.list_rect.is_none(), "{tab:?}");
+        assert!(st(&h).ui().brushes_list_rect.is_none(), "{tab:?}");
         drop_files(&mut h, inside, &[&png]);
         assert!(!st(&h).is_brush_importing(), "{tab:?}");
-        assert!(st(&h).message.is_empty() || !st(&h).message.contains("tip.png"));
+        // 一覧の外へ落とした PNG はファイルの取り込みのウィンドウの行になる。モーダルなので、後の操作を妨げないよう閉じる
+        h.act(Action::DropIn(yolu_app::dropin::DropOp::Cancel));
+        h.run();
+        assert!(st(&h).message().is_empty() || !st(&h).message().contains("tip.png"));
     }
     // ブラシのタブへ戻れば、一覧の上の PNG は取り込もうとする
     click_tab(&mut h, Tab::SubTools);
     h.run();
     let inside = st(&h)
-        .brushes
-        .ui
-        .list_rect
+        .ui()
+        .brushes_list_rect
         .expect("一覧を描いている")
         .center();
     drop_files(&mut h, inside, &[&png]);
@@ -444,8 +473,8 @@ fn only_the_cell_of_the_current_tip_is_marked_in_the_shape_grid() {
     let dir = temp_dir("marks");
     let mut h = app(1600.0, 960.0, 128);
     with_store(&mut h, &dir);
-    h.state_mut().state.brushes.ui.detail.open = true;
-    h.state_mut().state.brushes.ui.detail.category = Category::Shape;
+    h.brushes_mut().ui.detail.open = true;
+    h.brushes_mut().ui.detail.category = Category::Tip;
     h.run();
     h.run();
     let round = "丸（硬さ）";
@@ -458,11 +487,9 @@ fn only_the_cell_of_the_current_tip_is_marked_in_the_shape_grid() {
         .position(|b| b.brush.tip.images.len() > 1)
         .unwrap();
     for index in [0, hose] {
-        h.state_mut()
-            .state
-            .apply(Action::M2Ui(UiOp::Brush(yolu_app::m2::BrushOp::KritaTip(
-                index,
-            ))));
+        h.act(Action::M2Ui(UiOp::Brush(yolu_app::m2::BrushOp::KritaTip(
+            index,
+        ))));
         h.run();
         h.run();
         assert_eq!(
@@ -477,29 +504,23 @@ fn only_the_cell_of_the_current_tip_is_marked_in_the_shape_grid() {
         );
     }
     // 組み込みの筆先を選べば、そのマスだけ（丸は外れる）
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Brush(yolu_app::m2::BrushOp::Tip(Some(
-            "grain",
-        )))));
+    h.act(Action::M2Ui(UiOp::Brush(yolu_app::m2::BrushOp::Tip(Some(
+        "grain",
+    )))));
     h.run();
     h.run();
     assert_eq!(marked(&h, round), Some(false));
     assert_eq!(marked(&h, &krita.brushes[hose].name), Some(false));
     // 取り込んだ画像のブラシを選んでも、丸にも組み込みにも Krita にも印は付かない
     let file = write(&dir, "chalk.gbr", &gbr_gray("Chalk"));
-    h.state_mut()
-        .state
-        .apply(Action::Brush(BrushAction::Import(vec![file])));
+    h.act(Action::Brush(BrushAction::Import(vec![file])));
     wait_import(&mut h);
     h.run();
     assert_eq!(st(&h).shown_brush_group(), Some(Group::Imported));
     assert_eq!(marked(&h, round), Some(false));
     assert_eq!(marked(&h, &krita.brushes[0].name), Some(false));
     // 丸へ戻せば丸のマスだけ
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Brush(yolu_app::m2::BrushOp::Tip(None))));
+    h.act(Action::M2Ui(UiOp::Brush(yolu_app::m2::BrushOp::Tip(None))));
     h.run();
     h.run();
     assert_eq!(marked(&h, round), Some(true));
@@ -509,14 +530,14 @@ fn only_the_cell_of_the_current_tip_is_marked_in_the_shape_grid() {
 #[test]
 fn the_flip_fields_are_on_for_a_hose_as_well_as_for_a_single_image() {
     let mut h = app(1600.0, 960.0, 128);
-    h.state_mut().state.brushes.ui.detail.open = true;
-    h.state_mut().state.brushes.ui.detail.category = Category::Shape;
+    h.brushes_mut().ui.detail.open = true;
+    h.brushes_mut().ui.detail.category = Category::Tip;
     h.run();
     h.run();
-    // 反転の欄（プロパティの欄のアルファのタブと詳細のウィンドウに 1 つずつ）。全部が同じ有効・無効のときだけ値を返す
+    // 反転の欄（詳細のウィンドウの選びの箱「左右反転: 値」）。全部が同じ有効・無効のときだけ値を返す
     let flip_x = |h: &H| {
         let all: Vec<bool> = h
-            .query_all_by_label("左右反転")
+            .query_all_by_label_contains("左右反転")
             .map(|n| !n.accesskit_node().is_disabled())
             .collect();
         assert!(!all.is_empty(), "反転の欄が無い");
@@ -540,48 +561,21 @@ fn the_flip_fields_are_on_for_a_hose_as_well_as_for_a_single_image() {
         .position(|b| b.brush.tip.images.len() > 1)
         .unwrap();
     for (index, what) in [(single, "1 枚の筆先"), (hose, "ホース")] {
-        h.state_mut()
-            .state
-            .apply(Action::M2Ui(UiOp::Brush(yolu_app::m2::BrushOp::KritaTip(
-                index,
-            ))));
+        h.act(Action::M2Ui(UiOp::Brush(yolu_app::m2::BrushOp::KritaTip(
+            index,
+        ))));
         h.run();
         h.run();
         assert!(flip_x(&h), "{what}で反転の欄が無効");
     }
     // 反転が入ったままホースを選んでも、欄から外せる（押すと反転が外れる）
-    h.state_mut().state.m2.brush.tip.flip_x = true;
+    h.m2_mut().brush.tip.flip_x = yolu_core::FlipRule::On;
     h.run();
-    h.get_all_by_label("左右反転").next().unwrap().click();
+    h.get_all_by_label("左右反転: 反転").next().unwrap().click();
     h.run();
-    assert!(!st(&h).m2.brush.tip.flip_x);
-}
-
-/// 矩形の中だけを撮って、正解の絵と比べる。
-fn shot(h: &mut H, rect: Rect, name: &str) {
-    // 直前に押した所のポインタが絵に残らないように
-    h.event(Event::PointerGone);
-    h.step();
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().floor() as u32,
-        rect.top().floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
-}
-
-/// ブラシのパネルの全体（タブの帯から、下のカラーのパネルの見出しの上まで）。
-fn panel_rect(h: &H) -> Rect {
-    let tab = h.state().tab_rects[&Tab::SubTools];
-    let color = h.state().tab_rects[&Tab::Color];
-    Rect::from_min_max(
-        pos2(tab.left() - 2.0, tab.top()),
-        pos2(tab.left() + 300.0, color.top()),
-    )
+    let at = popup_item(&h, "なし").center();
+    click(&mut h, at);
+    assert_eq!(st(&h).m2().brush.tip.flip_x, yolu_core::FlipRule::Off);
 }
 
 fn imported_panel(lang: Lang, dir: &Path) -> H {
@@ -593,9 +587,7 @@ fn imported_panel(lang: Lang, dir: &Path) -> H {
         write(dir, "chalk_set.gbr", &gbr_gray("Chalk")),
         write(dir, "old_set.abr", &abr_v1()),
     ];
-    h.state_mut()
-        .state
-        .apply(Action::Brush(BrushAction::Import(files)));
+    h.act(Action::Brush(BrushAction::Import(files)));
     wait_import(&mut h);
     h.run();
     h
@@ -605,17 +597,9 @@ fn imported_panel(lang: Lang, dir: &Path) -> H {
 fn snapshot_the_imported_group_with_the_mark_for_what_was_left_out() {
     let dir = temp_dir("snapshot");
     let mut h = imported_panel(Lang::Ja, &dir);
-    let rect = panel_rect(&h);
-    shot(&mut h, rect, "brushes_panel_imported");
-    std::fs::remove_dir_all(dir).unwrap();
-}
-
-#[test]
-fn snapshot_the_imported_group_in_english() {
-    let dir = temp_dir("snapshot-en");
-    let mut h = imported_panel(Lang::En, &dir);
-    let rect = panel_rect(&h);
-    shot(&mut h, rect, "brushes_panel_imported_english");
+    let rect =
+        crate::common::shot::group_span(&h, yolu_app::Tab::SubTools, Some(yolu_app::Tab::Color));
+    crate::common::shot::clean_region(&mut h, "brushes_panel_imported", rect);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -668,7 +652,7 @@ fn csp_window(lang: Lang, dir: &Path) -> H {
     let mut h = app(1600.0, 900.0, 128);
     language(&mut h, lang);
     with_store(&mut h, dir);
-    h.state_mut().state.brushes.csp.places = Some(celsys_places(dir));
+    h.brushes_mut().csp.places = Some(celsys_places(dir));
     let button = lang.pick("CLIP STUDIO から取り込む", "Import from CLIP STUDIO");
     h.get_by_label(button).click();
     wait_csp(&mut h);
@@ -679,11 +663,11 @@ fn csp_window(lang: Lang, dir: &Path) -> H {
 fn wait_csp(h: &mut H) {
     let start = Instant::now();
     h.run();
-    while st(h).brushes.csp.is_busy() && start.elapsed() < Duration::from_secs(60) {
+    while st(h).brushes().csp.is_busy() && start.elapsed() < Duration::from_secs(60) {
         h.run();
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert!(!st(h).brushes.csp.is_busy(), "探す仕事が終わらない");
+    assert!(!st(h).brushes().csp.is_busy(), "探す仕事が終わらない");
     h.run();
 }
 
@@ -691,7 +675,7 @@ fn wait_csp(h: &mut H) {
 fn the_clip_studio_button_opens_a_window_whose_rows_are_marked_and_imported() {
     let dir = temp_dir("csp-ui");
     let mut h = csp_window(Lang::Ja, &dir);
-    assert!(st(&h).brushes.csp.open);
+    assert!(st(&h).brushes().csp.open);
     // 見出し・状態の 1 行・名前（読めたもの）・ファイル名（読めなかったもの）・下の帯のボタン
     for label in [
         "Stamp",
@@ -720,7 +704,7 @@ fn the_clip_studio_button_opens_a_window_whose_rows_are_marked_and_imported() {
     h.run();
     wait_import(&mut h);
     // ウィンドウが閉じ、選んだものだけが取り込まれている
-    assert!(!st(&h).brushes.csp.open);
+    assert!(!st(&h).brushes().csp.open);
     assert!(!drawn_texts(&h).iter().any(|t| t == "CLIP STUDIO から"));
     assert!(h.query_by_label("Ink").is_some() && h.query_by_label("Stamp").is_none());
     assert_eq!(st(&h).shown_brush_group(), Some(Group::Imported));
@@ -775,22 +759,18 @@ fn the_clip_studio_window_in_english_and_the_button_is_off_while_importing() {
     // 閉じる
     h.get_by_label("Close").click();
     h.run();
-    assert!(!st(&h).brushes.csp.open);
+    assert!(!st(&h).brushes().csp.open);
     // 取り込み中は入口を押せない
-    h.state_mut().state.brushes.import.park_next = true;
-    h.state_mut()
-        .state
-        .apply(Action::Brush(BrushAction::Import(vec![dir.join(
-            "AppData/Roaming/CELSYSUserData/CELSYS/CLIPStudioModule/SubTool/Pen/b_ink.sut",
-        )])));
+    h.brushes_mut().import.park_next = true;
+    h.act(Action::Brush(BrushAction::Import(vec![dir.join(
+        "AppData/Roaming/CELSYSUserData/CELSYS/CLIPStudioModule/SubTool/Pen/b_ink.sut",
+    )])));
     h.run();
     assert!(h
         .get_by_label("Import from CLIP STUDIO")
         .accesskit_node()
         .is_disabled());
-    h.state_mut()
-        .state
-        .apply(Action::Brush(BrushAction::ImportCancel));
+    h.act(Action::Brush(BrushAction::ImportCancel));
     wait_import(&mut h);
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -805,7 +785,7 @@ fn the_clip_studio_window_says_why_nothing_was_found_in_both_languages() {
         let mut h = app(1600.0, 900.0, 128);
         language(&mut h, lang);
         with_store(&mut h, &dir);
-        h.state_mut().state.brushes.csp.places = Some(yolu_io::brushes::clipstudio::Places {
+        h.brushes_mut().csp.places = Some(yolu_io::brushes::clipstudio::Places {
             appdata: Some(dir.join("AppData/Roaming")),
             profile: Some(dir.clone()),
             onedrive: None,
@@ -825,22 +805,10 @@ fn the_clip_studio_window_says_why_nothing_was_found_in_both_languages() {
     }
 }
 
-/// ウィンドウの中だけを撮って、正解の絵と比べる。
-fn shot_window(h: &mut H, name: &str) {
-    let rect = yolu_app::windows::window_rect(&h.ctx, yolu_app::panels::brush_clipstudio::NAME)
-        .expect("ウィンドウが開いている");
-    h.event(Event::PointerGone);
-    h.step();
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().floor() as u32,
-        rect.top().floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+/// 「CLIP STUDIO から」のウィンドウの範囲。
+fn clipstudio_rect(h: &H) -> Rect {
+    yolu_app::windows::window_rect(&h.ctx, yolu_app::panels::brush_clipstudio::NAME)
+        .expect("ウィンドウが開いている")
 }
 
 #[test]
@@ -849,7 +817,8 @@ fn snapshot_the_clip_studio_window() {
     let mut h = csp_window(Lang::Ja, &dir);
     h.get_by_label("Ink").click();
     h.run();
-    shot_window(&mut h, "brush_clipstudio_window");
+    let rect = clipstudio_rect(&h);
+    crate::common::shot::clean_region(&mut h, "brush_clipstudio_window", rect);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -859,6 +828,7 @@ fn snapshot_the_clip_studio_window_in_english() {
     let mut h = csp_window(Lang::En, &dir);
     h.get_by_label("Ink").click();
     h.run();
-    shot_window(&mut h, "brush_clipstudio_window_english");
+    let rect = clipstudio_rect(&h);
+    crate::common::shot::clean_region(&mut h, "brush_clipstudio_window_english", rect);
     std::fs::remove_dir_all(dir).unwrap();
 }

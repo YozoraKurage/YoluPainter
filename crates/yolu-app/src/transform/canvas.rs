@@ -1,20 +1,21 @@
 //! 移動・変形のツールのキャンバスの入力（押す・動く・離す・Esc・Enter・矢印キー）と、キャンバスの上の表示（動かすものの外枠とハンドル、
 //! ドラッグ中の変形後の外枠）。ドラッグの間は文書を変えず、離したところ（か Enter）で `Edit::Transform` を 1 回当てる。
 
-use egui::{Color32, CursorIcon, Modifiers, Painter, Pos2, Rect, Shape, Stroke, Vec2};
+use egui::{Color32, CursorIcon, Painter, Pos2, Rect, Shape, Stroke, Vec2};
 
 use super::{arrow_to_canvas, collapses, handle_points, handles_usable, hit, Bounds, Drag, Mode};
 use crate::canvas::view::CanvasView;
 use crate::layerops::Xform;
 use crate::m2::Edit;
 use crate::notice::Source;
+use crate::state::key::Modifiers;
 use crate::state::{Action, AppState, StrokeSource, Tool};
 
 impl AppState {
     /// 動かすものの範囲（文書の版・動かすレイヤーが変わるまで覚える）。
     pub fn transform_bounds_cached(&mut self) -> Option<Bounds> {
         let ids = self.transform_targets();
-        let revision = self.doc.revision();
+        let revision = self.session.doc.revision();
         if let Some((r, cached, bounds)) = &self.transform.cache {
             if *r == revision && *cached == ids {
                 return *bounds;
@@ -59,18 +60,11 @@ pub fn press(
         app.refuse(
             Source::Transform,
             if app.transform_targets().is_empty() {
-                app.lang.pick(
-                    "動かす画素のあるレイヤーがありません。",
-                    "No layer with pixels to move.",
-                )
-            } else if app.doc.selection().is_some() {
-                app.lang.pick(
-                    "選択範囲の中に動かす画素がありません。",
-                    "No pixels to move inside the selection.",
-                )
+                app.lang.t("transform-no-layer-with-pixels-to")
+            } else if app.session.doc.selection().is_some() {
+                app.lang.t("transform-no-pixels-to-move-inside")
             } else {
-                app.lang
-                    .pick("動かす画素がありません。", "No pixels to move.")
+                app.lang.t("transform-no-pixels-to-move")
             },
         );
         return;
@@ -143,10 +137,7 @@ pub fn commit(app: &mut AppState) {
             if collapses(&t) {
                 app.refuse(
                     Source::Transform,
-                    app.lang.pick(
-                        "潰れてしまうので変形しません。",
-                        "That would collapse the layer.",
-                    ),
+                    app.lang.t("transform-that-would-collapse-the-layer"),
                 );
                 return;
             }
@@ -163,7 +154,7 @@ pub fn cancel(app: &mut AppState) -> bool {
     if any {
         app.info(
             Source::Transform,
-            app.lang.pick("変形をやめました。", "Transform cancelled."),
+            app.lang.t("transform-transform-cancelled"),
         );
     }
     any
@@ -198,7 +189,9 @@ pub fn arrow(app: &mut AppState, screen: (f64, f64), shift: bool) {
     let Some(rect) = app.ui.canvas_rect else {
         return;
     };
-    let view = app.view.view(rect, app.doc.width(), app.doc.height());
+    let view = app
+        .view
+        .view(rect, app.session.doc.width(), app.session.doc.height());
     let (dx, dy) = arrow_to_canvas(&view, screen);
     let step = if shift { 10 } else { 1 };
     app.apply(Action::M2(Edit::Transform(Xform::Move {

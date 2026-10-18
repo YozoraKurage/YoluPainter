@@ -89,7 +89,7 @@ impl Desktop for Fake {
             return Err(Failure::Overlay);
         }
         if self.failure == Some("panic") {
-            panic!("試験の失敗");
+            panic!("テストの失敗");
         }
         let mut selection = Selection::default();
         selection.input(std::mem::replace(&mut self.event, PickInput::Cancel));
@@ -157,6 +157,7 @@ fn every_failure_restores_the_window_including_unwinding() {
 fn rgb_scalar_and_mask_picking_change_paint_color_without_document_or_undo() {
     let mut app = AppState::new(16, 16);
     let before = app
+        .session
         .doc
         .composite_pixel(crate::engine::Channel::Color, 0, 0)
         .unwrap();
@@ -171,7 +172,8 @@ fn rgb_scalar_and_mask_picking_change_paint_color_without_document_or_undo() {
     apply_color(&mut app, [0, 255, 0]);
     assert_eq!(app.color.main, [0.7152, 0.7152, 0.7152, 1.0]);
     assert_eq!(
-        app.doc
+        app.session
+            .doc
             .composite_pixel(crate::engine::Channel::Color, 0, 0)
             .unwrap(),
         before

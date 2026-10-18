@@ -184,15 +184,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
-name = "arbitrary"
-version = "1.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
-dependencies = [
- "derive_arbitrary",
-]
-
-[[package]]
 name = "arboard"
 version = "3.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -859,17 +850,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "derive_arbitrary"
-version = "1.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e567bd82dcff979e4b03460c307b3cdc9e96fde3d73bed1496d2bc75d9dd62a"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "dify"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1362,6 +1342,41 @@ dependencies = [
  "libz-sys",
  "miniz_oxide 0.9.1",
  "zlib-rs",
+]
+
+[[package]]
+name = "fluent-bundle"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01203cb8918f5711e73891b347816d932046f95f54207710bda99beaeb423bf4"
+dependencies = [
+ "fluent-langneg",
+ "fluent-syntax",
+ "intl-memoizer",
+ "intl_pluralrules",
+ "rustc-hash 2.1.3",
+ "self_cell",
+ "smallvec",
+ "unic-langid",
+]
+
+[[package]]
+name = "fluent-langneg"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7eebbe59450baee8282d71676f3bfed5689aeab00b27545e83e5f14b1195e8b0"
+dependencies = [
+ "unic-langid",
+]
+
+[[package]]
+name = "fluent-syntax"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54f0d287c53ffd184d04d8677f590f4ac5379785529e5e08b1c8083acdd5c198"
+dependencies = [
+ "memchr",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1927,6 +1942,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "intl-memoizer"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "310da2e345f5eb861e7a07ee182262e94975051db9e4223e909ba90f392f163f"
+dependencies = [
+ "type-map",
+ "unic-langid",
+]
+
+[[package]]
+name = "intl_pluralrules"
+version = "7.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "078ea7b7c29a2b4df841a7f6ac8775ff6074020c6776d48491ce2268e068f972"
+dependencies = [
+ "unic-langid",
+]
+
+[[package]]
 name = "is-docker"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2085,6 +2119,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
 
 [[package]]
+name = "lhash"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "744a4c881f502e98c2241d2e5f50040ac73b30194d64452bb6260393b53f0dc9"
+
+[[package]]
 name = "libc"
 version = "0.2.190"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2178,6 +2218,15 @@ name = "log"
 version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+
+[[package]]
+name = "mach-dxcompiler-rs"
+version = "0.1.6+2026.09.16-48d5a66.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "699d5b85d279d172f6ea742c6c47342fdd7c388872cea2e137e2c6721ef2e6d6"
+dependencies = [
+ "lhash",
+]
 
 [[package]]
 name = "memchr"
@@ -2310,6 +2359,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys 0.3.1",
+]
+
+[[package]]
+name = "nix"
+version = "0.31.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+dependencies = [
+ "bitflags 2.13.2",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
 ]
 
 [[package]]
@@ -3767,6 +3828,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinystr"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1e27c91459209c2986af3dcf603a5a74a4368754ce37414f59acc971167f643"
+dependencies = [
+ "displaydoc",
+ "serde_core",
+ "zerovec",
+]
+
+[[package]]
 name = "tinyvec"
 version = "1.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3939,6 +4011,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "typed-path"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e28f89b80c87b8fb0cf04ab448d5dd0dd0ade2f8891bae878de66a75a28600e"
+
+[[package]]
 name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3962,6 +4040,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "260522f1eb74139f0e78b29dd82a58e5437d728c5498024a39e5af7282694240"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "unic-langid"
+version = "0.9.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a28ba52c9b05311f4f6e62d5d9d46f094bd6e84cb8df7b3ef952748d752a7d05"
+dependencies = [
+ "unic-langid-impl",
+]
+
+[[package]]
+name = "unic-langid-impl"
+version = "0.9.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dce1bf08044d4b7a94028c93786f8566047edc11110595914de93362559bc658"
+dependencies = [
+ "tinystr",
 ]
 
 [[package]]
@@ -4415,6 +4511,7 @@ dependencies = [
  "libc",
  "libloading",
  "log",
+ "mach-dxcompiler-rs",
  "naga",
  "naga-types",
  "ndk-sys",
@@ -4926,7 +5023,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "ed25519-dalek",
  "flate2",
@@ -4941,7 +5038,7 @@ dependencies = [
 
 [[package]]
 name = "yolu-app"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "arboard",
  "bevy_mikktspace",
@@ -4951,6 +5048,8 @@ dependencies = [
  "egui",
  "egui_dock",
  "egui_kittest",
+ "fluent-bundle",
+ "fluent-syntax",
  "half",
  "hex",
  "image",
@@ -4968,6 +5067,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tokio",
+ "unic-langid",
  "windows",
  "winit",
  "winresource",
@@ -4984,14 +5084,14 @@ dependencies = [
 
 [[package]]
 name = "yolu-brush-sets"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "sha2",
 ]
 
 [[package]]
 name = "yolu-cli"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "serde_json",
  "tokio",
@@ -5003,7 +5103,7 @@ dependencies = [
 
 [[package]]
 name = "yolu-core"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "glam",
  "harfrust",
@@ -5016,7 +5116,7 @@ dependencies = [
 
 [[package]]
 name = "yolu-gpu"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "bytemuck",
  "naga",
@@ -5027,7 +5127,7 @@ dependencies = [
 
 [[package]]
 name = "yolu-io"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "crc32fast",
  "flate2",
@@ -5044,7 +5144,7 @@ dependencies = [
 
 [[package]]
 name = "yolu-mcp"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "bytes",
  "http-body-util",
@@ -5060,8 +5160,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "yolu-mock"
+version = "0.7.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "egui_dock",
+ "egui_kittest",
+ "png",
+ "winit",
+ "yolu-app",
+ "yolu-core",
+ "yolu-gpu",
+]
+
+[[package]]
 name = "yolu-model"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "ufbx",
  "yolu-core",
@@ -5069,7 +5184,7 @@ dependencies = [
 
 [[package]]
 name = "yolu-ops"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "png",
  "schemars",
@@ -5081,7 +5196,7 @@ dependencies = [
 
 [[package]]
 name = "yolu-protocol"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "libc",
  "serde",
@@ -5091,7 +5206,7 @@ dependencies = [
 
 [[package]]
 name = "yolu-update"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -5228,25 +5343,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "zerofrom"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ec05a11813ea801ff6d75110ad09cd0824ddba17dfe17128ea0d5f68e6c5272"
+
+[[package]]
 name = "zeroize"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
 
 [[package]]
-name = "zip"
-version = "2.4.2"
+name = "zerovec"
+version = "0.11.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fabe6324e908f85a1c52063ce7aa26b68dcb7eb6dbc83a2d148403c9bc3eba50"
+checksum = "bb0464e17806c1d976d5cba29399c7f08e516e279e2ba493f63123b5fca67dd8"
 dependencies = [
- "arbitrary",
+ "serde",
+ "zerofrom",
+]
+
+[[package]]
+name = "zip"
+version = "9.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a954114b47a54df49f83d2722814e86b23d4bb1b54a1b90fb7d92b41619ddc22"
+dependencies = [
  "crc32fast",
- "crossbeam-utils",
- "displaydoc",
  "flate2",
  "indexmap",
  "memchr",
- "thiserror 2.0.21",
+ "nix",
+ "typed-path",
  "zopfli",
 ]
 

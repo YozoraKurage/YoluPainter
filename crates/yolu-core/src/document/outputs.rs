@@ -9,11 +9,12 @@
 //! - どれも文書を変えない（評価のキャッシュを埋めるだけ）。矩形はキャンバスの中、行の並びは `order`（合成と同じ。`BottomUp` が文書の並び）。
 //!   取消の旗が立てば `Cancelled` で戻り、出力は不定（呼び手が捨てる）。
 
+use crate::Reason;
 use std::sync::atomic::AtomicBool;
 
 use super::eval::{cancelled, SourceKey};
 use super::*;
-use crate::composite::{composite_entries_into, Stack};
+use crate::composite::composite_entries_into;
 
 /// 面から何を読むか。
 #[derive(Clone, Copy)]
@@ -100,7 +101,9 @@ impl Document {
     ) -> Result<(), CoreError> {
         self.check_rect(rect)?;
         if out_len != rect.width as usize * rect.height as usize * bytes_per_pixel {
-            return Err(CoreError::InvalidArgument("出力の大きさが矩形と違う"));
+            return Err(CoreError::InvalidArgument(
+                Reason::OutputSizeDoesNotMatchRectangle,
+            ));
         }
         Ok(())
     }
@@ -132,9 +135,7 @@ impl Document {
         self.check_output_rect(rect, out.len(), 4)?;
         let l = &self.layers[index];
         if !matches!(l.kind, LayerKind::Raster | LayerKind::Fill) {
-            return Err(CoreError::Unsupported(
-                "ラスターと塗りつぶし以外には、レイヤーの出力の画素が無い",
-            ));
+            return Err(CoreError::Unsupported(Reason::LayerOutputOnlyRasterOrFill));
         }
         cancelled(cancel)?;
         if rect.is_empty() {
@@ -184,7 +185,7 @@ impl Document {
         let index = self.index_of(id)?;
         self.check_output_rect(rect, out.len(), 1)?;
         let Some(mask) = &self.layers[index].mask else {
-            return Err(CoreError::Unsupported("レイヤーにマスクが無い"));
+            return Err(CoreError::Unsupported(Reason::LayerHasNoMask));
         };
         cancelled(cancel)?;
         if rect.is_empty() {
@@ -238,17 +239,18 @@ impl Document {
         let kind = self.channel_kind(channel)?;
         self.check_output_rect(rect, out.len(), 4)?;
         if self.layers[index].kind != LayerKind::Group {
-            return Err(CoreError::Unsupported(
-                "グループ以外には、グループの出力が無い",
-            ));
+            return Err(CoreError::Unsupported(Reason::GroupOutputOnlyGroups));
         }
         cancelled(cancel)?;
         if rect.is_empty() {
             return Ok(());
         }
-        let entries = Stack::new(&self.layers, channel, kind, None).plan_level(Some(id));
+        let set = self.layers[index].set;
+        let entries = self
+            .set_stack(set, None, channel, kind, None)
+            .plan_level(Some(id));
         let eval = self.evaluate_entries(&entries, channel, rect, cancel)?;
-        let stack = Stack::new(&self.layers, channel, kind, Some(&eval));
+        let stack = self.set_stack(set, None, channel, kind, Some(&eval));
         composite_entries_into(&stack, &entries, self.tile_size, rect, out, order)
     }
 }
@@ -266,7 +268,7 @@ impl Document {
             let index = copy.index_of(*id)?;
             let layer = &mut copy.layers[index];
             if layer.adjustment.is_none() {
-                return Err(CoreError::Unsupported("調整レイヤーではない"));
+                return Err(CoreError::Unsupported(Reason::NotAdjustmentLayer));
             }
             layer.adjustment = Some(settings.clone());
         }
@@ -276,12 +278,13 @@ impl Document {
 
 impl Document {
     /// レイヤー（グループも）が、そのチャンネルの合成の計画に出るか: 表示・不透明度・有効の印・中身があり、グループは子の計画が空でない。出ないレイヤーは合成が落とす
-    /// ので、クリッピングの組にも入らない（下地のグループの通過を妨げない）。PSD の書き出しが、レイヤーを別の形（グループの画素化）で書くときに、
-    /// 合成が落とすレイヤーを隠したレイヤーにして、重なりの意味を変えないために使う。
+    /// ので、何も描かない（クリッピングの組には入らないが、下地のグループが分離するかは、このレイヤーが見えるかによらず決まる）。PSD の書き出しが、
+    /// レイヤーを別の形（グループの画素化）で書くときに、合成が落とすレイヤーを隠したレイヤーにして、重なりの意味を変えないために使う。
     pub fn contributes(&self, id: LayerId, channel: Channel) -> Result<bool, CoreError> {
         let index = self.index_of(id)?;
         let kind = self.channel_kind(channel)?;
-        Ok(Stack::new(&self.layers, channel, kind, None)
+        Ok(self
+            .set_stack(self.layers[index].set, None, channel, kind, None)
             .make_entry(index)
             .is_some())
     }

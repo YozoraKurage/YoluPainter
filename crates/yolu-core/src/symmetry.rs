@@ -27,6 +27,7 @@
 //! assert_eq!(l.pixel(10, 20).unwrap(), l.pixel(53, 20).unwrap()); // 縦の軸 x = 32 で鏡に写る
 //! ```
 
+use crate::Reason;
 use glam::DVec2;
 
 use crate::error::CoreError;
@@ -110,20 +111,22 @@ impl CanvasSymmetry {
 
     /// 中心が有限で ±1e7 の中、写しの数が 2〜16（線対称は偶数）、角度が有限で ±360 度の中。
     pub fn validate(&self) -> Result<(), CoreError> {
-        require_finite(self.center.x, "symmetry center")?;
-        require_finite(self.center.y, "symmetry center")?;
+        require_finite(self.center.x, Reason::SymmetryCenter)?;
+        require_finite(self.center.y, Reason::SymmetryCenter)?;
         if self.center.x.abs() > MAX_CENTER || self.center.y.abs() > MAX_CENTER {
-            return Err(CoreError::InvalidArgument("対称の中心（±1e7）"));
+            return Err(CoreError::InvalidArgument(Reason::SymmetryCenterRange));
         }
         if !(2..=16).contains(&self.count) {
-            return Err(CoreError::InvalidArgument("放射状の写しの数（2〜16）"));
+            return Err(CoreError::InvalidArgument(Reason::RadialSymmetryCountRange));
         }
         if self.mode == SymmetryMode::Lines && !self.count.is_multiple_of(2) {
-            return Err(CoreError::InvalidArgument("線対称の線の本数（偶数）"));
+            return Err(CoreError::InvalidArgument(
+                Reason::LineSymmetryNeedsEvenLines,
+            ));
         }
-        require_finite(self.angle, "symmetry angle")?;
+        require_finite(self.angle, Reason::SymmetryAngle)?;
         if self.angle.abs() > MAX_ANGLE {
-            return Err(CoreError::InvalidArgument("対称の角度（±360 度）"));
+            return Err(CoreError::InvalidArgument(Reason::SymmetryAngleRange));
         }
         Ok(())
     }

@@ -1951,7 +1951,8 @@ mod tests {
         let (p, mut t) = open_original(s);
         let mut versions = vec![ORIGINAL.to_vec()];
         for i in 1..=n {
-            t.save_with(&changed(&p, &format!("版 {i}")), keep).unwrap();
+            t.save_with(&changed(&p, &format!("バージョン {i}")), keep)
+                .unwrap();
             versions.push(fs::read(s.file()).unwrap());
         }
         versions
@@ -1987,7 +1988,10 @@ mod tests {
         let mut last = ORIGINAL.to_vec();
         for i in 1..=4 {
             let report = t
-                .save_with(&changed(&p, &format!("版 {i}")), BackupKeep::Count(1))
+                .save_with(
+                    &changed(&p, &format!("バージョン {i}")),
+                    BackupKeep::Count(1),
+                )
                 .unwrap();
             assert!(report.prune_failures.is_empty());
             // 返した退避は実在し、直前の版そのもの
@@ -2036,7 +2040,7 @@ mod tests {
         let s = Scratch::new();
         let (p, mut t) = open_original(&s);
         for i in 1..=3 {
-            t.save(&changed(&p, &format!("版 {i}"))).unwrap();
+            t.save(&changed(&p, &format!("バージョン {i}"))).unwrap();
         }
         let dir = s.backups();
         // この文書の退避ではないもの: 別の文書の時刻の名前・利用者が名前を変えて残した版・メモ・フォルダー・形の崩れた名前
@@ -2063,7 +2067,7 @@ mod tests {
         assert_eq!(s.kept().len(), 3);
         let last = fs::read(s.file()).unwrap();
         let report = t
-            .save_with(&changed(&p, "版 5"), BackupKeep::Count(1))
+            .save_with(&changed(&p, "バージョン 5"), BackupKeep::Count(1))
             .unwrap();
         assert!(report.prune_failures.is_empty());
         assert_eq!(s.kept(), [last], "残るのは今回の退避だけ");
@@ -2088,7 +2092,10 @@ mod tests {
         let (p, mut t) = open_original(&s);
         touch(&s.backups().join("sample-keep.ylp"), b"renamed by the user");
         let report = t
-            .save_with(&changed(&p, "名前を変えた版の隣"), BackupKeep::Count(1))
+            .save_with(
+                &changed(&p, "名前を変えたバージョンの隣"),
+                BackupKeep::Count(1),
+            )
             .unwrap();
         let made = report.backup.unwrap();
         assert_eq!(fs::read(&made).unwrap(), ORIGINAL);
@@ -2102,7 +2109,7 @@ mod tests {
         let s = Scratch::new();
         let (p, mut t) = open_original(&s);
         for i in 1..=3 {
-            t.save(&changed(&p, &format!("版 {i}"))).unwrap();
+            t.save(&changed(&p, &format!("バージョン {i}"))).unwrap();
         }
         let before = s.backup_dir_names();
         for point in [
@@ -2147,14 +2154,14 @@ mod tests {
         let s = Scratch::new();
         let (p, mut t) = open_original(&s);
         for i in 1..=4 {
-            t.save(&changed(&p, &format!("版 {i}"))).unwrap();
+            t.save(&changed(&p, &format!("バージョン {i}"))).unwrap();
         }
         let listed = backups(&s.file()).unwrap();
         assert_eq!(listed.len(), 4);
         // 保存の外で、消せない（権限）・先に消されている・消せる、が混ざる
         let (stuck, gone) = (listed[2].clone(), listed[3].clone());
         let mut tried = Vec::new();
-        let next = changed(&p, "版 5");
+        let next = changed(&p, "バージョン 5");
         let report = t
             .save_removing(&next, BackupKeep::Count(2), |path| {
                 tried.push(path.to_path_buf());
@@ -2189,7 +2196,7 @@ mod tests {
         assert!(stuck.exists() && !gone.exists() && listed[0].exists() && !listed[1].exists());
         assert!(s.leftovers().is_empty());
         // 次の保存はそのまま通る（消せなかったものは、また整理の対象になる）
-        t.save_with(&changed(&p, "版 6"), BackupKeep::Count(2))
+        t.save_with(&changed(&p, "バージョン 6"), BackupKeep::Count(2))
             .unwrap();
         assert_eq!(s.kept().len(), 2);
         assert!(!stuck.exists());

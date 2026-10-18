@@ -25,6 +25,7 @@ use glam::Vec2;
 use rayon::prelude::*;
 
 use super::build::{position_key, FastMap};
+use super::materials::{admits, MaterialSet};
 use super::seam_band::SeamBand;
 use super::SurfaceGeometry;
 use crate::mesh_maps::raster::Raster;
@@ -191,7 +192,7 @@ pub(crate) struct Parts {
 /// モデルのテクスチャセット 1 つの UV の位相。作るのは安く（写しは持たない）、重い物は初めて要るときに作る。`Send + Sync`。
 pub struct UvTopology {
     geometry: Arc<SurfaceGeometry>,
-    material: Option<i32>,
+    material: Option<MaterialSet>,
     /// 初めて要るときに作る（作る間、ほかのスレッドは `get_or_init` で待つ）。持ったまま rayon の仕事を待たない: 作るのが rayon のスレッドの中なら
     /// 並列にしない（[`may_parallelize`]）。
     parts: OnceLock<Parts>,
@@ -227,10 +228,10 @@ impl std::fmt::Debug for UvTopology {
 
 impl UvTopology {
     /// モデルのスナップショットと、テクスチャセットのマテリアルの組（None はモデル全体）から。
-    pub fn new(geometry: Arc<SurfaceGeometry>, material: Option<i32>) -> UvTopology {
+    pub fn new(geometry: Arc<SurfaceGeometry>, material: Option<&MaterialSet>) -> UvTopology {
         UvTopology {
             geometry,
-            material,
+            material: material.cloned(),
             parts: OnceLock::new(),
             maps: Mutex::new(Vec::new()),
             bands: Mutex::new(Vec::new()),
@@ -260,13 +261,13 @@ impl UvTopology {
                     && a.renderer == b.renderer
             })
     }
-    pub fn material(&self) -> Option<i32> {
-        self.material
+    pub fn material(&self) -> Option<&MaterialSet> {
+        self.material.as_ref()
     }
 
     pub(crate) fn parts(&self) -> &Parts {
         self.parts
-            .get_or_init(|| Parts::new(&self.geometry, self.material, may_parallelize()))
+            .get_or_init(|| Parts::new(&self.geometry, self.material.as_ref(), may_parallelize()))
     }
 
     /// アイランドの数（番号は 1..=数）。
@@ -314,7 +315,7 @@ impl UvTopology {
         }
         let built = build_island_map(
             &self.geometry,
-            self.material,
+            self.material.as_ref(),
             self.parts(),
             width,
             height,
@@ -544,10 +545,14 @@ pub(crate) fn same_uv(a: Vec2, b: Vec2) -> bool {
 
 impl Parts {
     /// `parallel` なら辺の向こうの検索を rayon で並べる（結果は逐次と同じ）。
-    pub(crate) fn new(g: &SurfaceGeometry, material: Option<i32>, parallel: bool) -> Parts {
+    pub(crate) fn new(
+        g: &SurfaceGeometry,
+        material: Option<&MaterialSet>,
+        parallel: bool,
+    ) -> Parts {
         let tris = g.triangles();
         let n = tris.len();
-        let member = |i: usize| material.is_none_or(|m| tris[i].material == m);
+        let member = |i: usize| admits(material, tris[i].material);
         // アイランド: UV の辺を共有する（同じスロットの）三角形をつなぐ
         let key = |uv: Vec2| {
             (
@@ -740,7 +745,7 @@ fn links_of(
 /// 行ごとの入れ物）が `budget` に収まらなければ、行の連なりを数えながら途中で断る。
 pub(crate) fn build_island_map(
     g: &SurfaceGeometry,
-    material: Option<i32>,
+    material: Option<&MaterialSet>,
     parts: &Parts,
     width: u32,
     height: u32,
@@ -761,7 +766,7 @@ pub(crate) fn build_island_map(
     }
     // ベイクと同じく、UV の面積の無い三角形は割り当てない
     let receivers: Vec<usize> = (0..tris.len())
-        .filter(|&i| material.is_none_or(|m| tris[i].material == m))
+        .filter(|&i| admits(material, tris[i].material))
         .filter(|&i| {
             let u = &uvs[i * 6..i * 6 + 6];
             let area = ((u[2] - u[0]) * (u[5] - u[1]) - (u[4] - u[0]) * (u[3] - u[1])) as f64;

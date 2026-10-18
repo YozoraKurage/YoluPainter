@@ -1,31 +1,35 @@
-//! UV の点の下の三角形を引く格子（1 つのマテリアル（テクスチャセット）の三角形だけ）。2D のキャンバスで押した UV の下の面を引く
+//! UV の点の下の三角形を引く格子（1 つのテクスチャセットのマテリアルの組の三角形だけ）。2D のキャンバスで押した UV の下の面を引く
 //! 範囲のツール・ベイクの見取り図と、2D のストロークに 3D の対称を当てるとき（ダブの中心の UV の下の面の点）に使う。
 
 use std::sync::Arc;
 
 use glam::{DVec2, Vec2, Vec3};
 
+use super::materials::MaterialSet;
 use super::query::uv_barycentric;
 use super::{SurfaceGeometry, SurfaceTriangle};
 
-/// UV の点の下の三角形を引く格子（1 つのマテリアルの三角形だけ）。
+/// UV の点の下の三角形を引く格子（1 つのマテリアルの組の三角形だけ）。
 pub struct UvGrid {
     geometry: Arc<SurfaceGeometry>,
-    material: i32,
+    material: MaterialSet,
     cells: Vec<Vec<u32>>,
     n: usize,
 }
 
 impl UvGrid {
-    pub fn new(geometry: &Arc<SurfaceGeometry>, material: i32) -> UvGrid {
+    pub fn new(geometry: &Arc<SurfaceGeometry>, material: &MaterialSet) -> UvGrid {
         let triangles = geometry.triangles();
-        let count = triangles.iter().filter(|t| t.material == material).count();
+        let count = triangles
+            .iter()
+            .filter(|t| material.contains(t.material))
+            .count();
         // 1 マスにおよそ数個の三角形が来る大きさ（16〜256）
         let n = ((count as f64 / 4.0).sqrt().ceil() as usize).clamp(16, 256);
         let mut cells = vec![Vec::new(); n * n];
         let bin = |v: f32| ((v.clamp(0.0, 1.0) * n as f32) as usize).min(n - 1);
         for (i, t) in triangles.iter().enumerate() {
-            if t.material != material {
+            if !material.contains(t.material) {
                 continue;
             }
             let (x0, x1) = (
@@ -47,22 +51,22 @@ impl UvGrid {
         }
         UvGrid {
             geometry: geometry.clone(),
-            material,
+            material: material.clone(),
             cells,
             n,
         }
     }
 
-    pub fn is_for(&self, geometry: &Arc<SurfaceGeometry>, material: i32) -> bool {
-        self.material == material && Arc::ptr_eq(&self.geometry, geometry)
+    pub fn is_for(&self, geometry: &Arc<SurfaceGeometry>, material: &MaterialSet) -> bool {
+        self.material == *material && Arc::ptr_eq(&self.geometry, geometry)
     }
 
     pub fn geometry(&self) -> &Arc<SurfaceGeometry> {
         &self.geometry
     }
 
-    pub fn material(&self) -> i32 {
-        self.material
+    pub fn material(&self) -> &MaterialSet {
+        &self.material
     }
 
     /// UV の点を含む三角形（重なっていれば番号の小さいもの）。UV の 0〜1 の外は None。

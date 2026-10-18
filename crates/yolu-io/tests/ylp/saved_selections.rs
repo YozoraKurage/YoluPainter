@@ -10,7 +10,7 @@ const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/selection
 
 fn writer() -> WriterInfo {
     WriterInfo {
-        app: "試験".into(),
+        app: "テスト".into(),
         version: "1".into(),
         unity: "なし".into(),
     }
@@ -28,10 +28,10 @@ fn project() -> Project {
     let spec = |id: &str, name: &str| SetSpec {
         id: id.into(),
         name: name.into(),
-        material: MaterialRef::Material {
+        materials: vec![MaterialRef::Material {
             name: name.into(),
             asset: None,
-        },
+        }],
         document: Some(native.clone().into()),
         composites: Vec::new(),
     };
@@ -81,7 +81,7 @@ fn only_a_document_that_uses_them_becomes_format_8_and_it_goes_back_to_7_when_no
     assert_eq!(format_of(&with), 8, "使う文書だけ 8");
     let again = reopened(&with);
     assert_eq!(format_of(&again), 8);
-    assert_eq!(MAX_FORMAT, 8);
+    assert_eq!(yolu_io::SAVED_SELECTIONS_FORMAT, 8);
     // 外側の版は変わらない（名前の決まりは同じ）
     assert_eq!(
         again.original_archive().manifest_version(),
@@ -269,11 +269,17 @@ fn unrelated_edits_keep_the_saved_selection_entries_byte_for_byte() {
         .into_iter()
         .filter(|r| *r != yolu_io::Removal::SavedSelections)
         .collect();
-    let copy = edited.for_distribution(writer(), &keep).unwrap();
+    let copy = edited
+        .for_distribution(writer(), &keep, &edited.unused_resources(&keep))
+        .unwrap();
     assert_eq!(copy.saved_selections(A).unwrap().items.len(), 1);
     assert_eq!(format_of(&copy), 8);
     let stripped = edited
-        .for_distribution(writer(), &yolu_io::Removal::ALL)
+        .for_distribution(
+            writer(),
+            &yolu_io::Removal::ALL,
+            &edited.unused_resources(&yolu_io::Removal::ALL),
+        )
         .unwrap();
     assert!(stripped.saved_selections(A).unwrap().items.is_empty());
     assert_eq!(format_of(&stripped), 7);
@@ -558,7 +564,7 @@ fn a_newer_format_than_this_reader_knows_is_refused_with_the_writer_and_format_8
     let p = project()
         .with_saved_selections(A, &[item("a", rect(1, 1, 9, 9))])
         .unwrap();
-    // 形式 9 は読まない（書いたアプリを添えて断る。黙って捨てない）
+    // 読める上限より新しい形式は読まない（書いたアプリを添えて断る。黙って捨てない）
     let mut files = p.original_archive().entries().clone();
     let mut info: serde_json::Value =
         serde_json::from_slice(&files["ylp.json"].bytes().unwrap()).unwrap();
@@ -570,17 +576,17 @@ fn a_newer_format_than_this_reader_knows_is_refused_with_the_writer_and_format_8
     match Project::from_entries(files) {
         Err(yolu_io::Error::UnsupportedFormat { format, app, .. }) => {
             assert_eq!(format, MAX_FORMAT + 1);
-            assert_eq!(app, "試験");
+            assert_eq!(app, "テスト");
         }
         other => panic!("{:?}", other.map(|_| ())),
     }
     let text = yolu_io::Error::UnsupportedFormat {
-        format: 9,
+        format: MAX_FORMAT + 1,
         app: "A".into(),
         version: "1".into(),
     }
     .to_string();
-    assert!(text.contains("形式8"), "{text}");
+    assert!(text.contains(&format!("形式{MAX_FORMAT}")), "{text}");
     assert_eq!(format_of(&reopened(&p)), 8);
 }
 
@@ -710,7 +716,7 @@ fn a_bad_pose_is_refused_whole_and_the_entry_stays_as_bytes() {
         Project::from_entries(files).unwrap()
     };
     for (what, broken) in [
-        ("版", text.replace("\"format\":1", "\"format\":2")),
+        ("バージョン", text.replace("\"format\":1", "\"format\":2")),
         ("JSON", "{ not json".to_owned()),
         (
             "配列でない",

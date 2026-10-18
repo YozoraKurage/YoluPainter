@@ -41,6 +41,14 @@ pub enum PriorityOp {
         island: usize,
         list: Option<MeshOverlapList>,
     },
+    /// 手で選んでいるときの押下: アイランド（代表の三角形）を一覧 `list` に入れる（もう入っていれば外す）。`replace` なら先に前の押下の
+    /// 選びを取り消す（2D で重なった所を続けて押した）。`canvas` なら 2D の押下（続けて押したときの控えに、当てた結果を残す）。
+    Press {
+        island: usize,
+        list: MeshOverlapList,
+        replace: bool,
+        canvas: bool,
+    },
 }
 
 /// 手でアイランドを選んでいる（どの一覧へ、どのセットで）。
@@ -144,16 +152,16 @@ pub struct IslandRow {
 /// 一覧の名前（手で選ぶアイランドの一覧の見出し・知らせ）。
 pub fn list_name(lang: Lang, list: MeshOverlapList) -> &'static str {
     match list {
-        MeshOverlapList::Skip => lang.pick("焼かないアイランド", "Islands Not Baked"),
-        MeshOverlapList::Prefer => lang.pick("優先するアイランド", "Preferred Islands"),
+        MeshOverlapList::Skip => lang.t("bake-islands-not-baked"),
+        MeshOverlapList::Prefer => lang.t("bake-preferred-islands"),
     }
 }
 
 /// 決め方の短い名前（ウィンドウの切り替えのボタン）。
 pub fn rule_label(lang: Lang, rule: MeshOverlapRule) -> &'static str {
     match rule {
-        MeshOverlapRule::LowestIndex => lang.pick("番号", "Index"),
-        MeshOverlapRule::LargerArea => lang.pick("面積", "Area"),
+        MeshOverlapRule::LowestIndex => lang.t("bake-index"),
+        MeshOverlapRule::LargerArea => lang.t("bake-area"),
         MeshOverlapRule::PositiveX => "+X",
         MeshOverlapRule::NegativeX => "−X",
     }
@@ -162,22 +170,10 @@ pub fn rule_label(lang: Lang, rule: MeshOverlapRule) -> &'static str {
 /// 決め方の意味（ツールチップ）。
 pub fn rule_help(lang: Lang, rule: MeshOverlapRule) -> &'static str {
     match rule {
-        MeshOverlapRule::LowestIndex => lang.pick(
-            "重なったテクセルには、番号の小さい三角形の値を焼く",
-            "An overlapping texel takes the triangle with the lower index",
-        ),
-        MeshOverlapRule::LargerArea => lang.pick(
-            "重なったテクセルには、3D の面積の大きいアイランドの値を焼く",
-            "An overlapping texel takes the island with the larger 3D area",
-        ),
-        MeshOverlapRule::PositiveX => lang.pick(
-            "重なったテクセルには、モデルの +X の側のアイランドの値を焼く（ミラーの片側）",
-            "An overlapping texel takes the island on the model's +X side (one side of a mirror)",
-        ),
-        MeshOverlapRule::NegativeX => lang.pick(
-            "重なったテクセルには、モデルの −X の側のアイランドの値を焼く（ミラーの片側）",
-            "An overlapping texel takes the island on the model's −X side (one side of a mirror)",
-        ),
+        MeshOverlapRule::LowestIndex => lang.t("bake-an-overlapping-texel-takes-the-tip"),
+        MeshOverlapRule::LargerArea => lang.t("bake-an-overlapping-texel-takes-the-2-tip"),
+        MeshOverlapRule::PositiveX => lang.t("bake-an-overlapping-texel-takes-the-3-tip"),
+        MeshOverlapRule::NegativeX => lang.t("bake-an-overlapping-texel-takes-the-4-tip"),
     }
 }
 
@@ -234,7 +230,7 @@ impl AppState {
     /// 今のセットの手で選んだアイランドの一覧（`list` の、代表の昇順）。入力を作り終えていなければ名前は仮（アイランドの番号だけ）。
     pub fn overlap_island_rows(&mut self, list: MeshOverlapList) -> Vec<IslandRow> {
         let lang = self.lang;
-        let priority = self.doc.bake_priority().clone();
+        let priority = self.session.doc.bake_priority().clone();
         let chosen = match list {
             MeshOverlapList::Skip => priority.skipped(),
             MeshOverlapList::Prefer => priority.preferred(),
@@ -271,9 +267,9 @@ impl AppState {
                             .filter_map(|m| m.first().map(|r| *r as usize))
                             .filter(|r| *r >= *start && *r < end && *r <= t)
                             .count();
-                        format!("{name} · {} {n}", lang.pick("アイランド", "Island"))
+                        format!("{name} · {} {n}", lang.t("bake-island"))
                     }
-                    _ => format!("{} {}", lang.pick("アイランド", "Island"), t),
+                    _ => format!("{} {}", lang.t("bake-island"), t),
                 };
                 IslandRow {
                     representative: t,
@@ -285,7 +281,7 @@ impl AppState {
 
     /// 手で選んだアイランドの一覧が今のモデルのものでないか（一覧があり、入力を作り終えていて、指紋が違う）。
     pub fn overlap_islands_foreign(&mut self) -> bool {
-        let priority = self.doc.bake_priority();
+        let priority = self.session.doc.bake_priority();
         if priority.skipped().is_empty() && priority.preferred().is_empty() {
             return false;
         }
@@ -303,10 +299,10 @@ impl AppState {
             self.refuse(Source::Bake, crate::lang::refusals::during_stroke(lang));
             return;
         }
-        let current = self.doc.bake_priority().clone();
+        let current = self.session.doc.bake_priority().clone();
         let next = match op {
             PriorityOp::Pick(list) => {
-                let set = self.sets.current().uid;
+                let set = self.session.sets.current().uid;
                 self.bake.pick = match (list, self.bake.pick) {
                     (Some(l), Some(p)) if p.list == l && p.set == set => None,
                     (Some(l), _) => Some(Picking { list: l, set }),
@@ -329,12 +325,18 @@ impl AppState {
             PriorityOp::Remove(island) => current.with_island("", island, None),
             PriorityOp::Set { set, island, list } => {
                 // メニューを開いた後にセットを替えた: 今のセットのアイランドではない
-                if set != self.sets.current().uid {
+                if set != self.session.sets.current().uid {
                     return;
                 }
                 self.set_island(island, list);
                 return;
             }
+            PriorityOp::Press {
+                island,
+                list,
+                replace,
+                canvas,
+            } => return self.press_island(island, list, replace, canvas),
         };
         let next = match next {
             Ok(p) => p,
@@ -346,10 +348,34 @@ impl AppState {
         self.set_bake_priority(next, None);
     }
 
+    /// 手で選んでいるときの押下を当てる（`PriorityOp::Press`）。前の選びを取り消せなければ、続けて押したときの控えを捨てて知らせる。
+    fn press_island(&mut self, island: usize, list: MeshOverlapList, replace: bool, canvas: bool) {
+        if replace {
+            match self.session.doc.undo() {
+                Ok(_) => self.session.mark_modified(),
+                Err(e) => {
+                    self.region.cycle = None;
+                    let text = self.lang.core_error(&e);
+                    self.notify(crate::notice::Kind::of_core(&e), Source::Bake, text);
+                    return;
+                }
+            }
+        }
+        let current = self.session.doc.bake_priority();
+        let has = match list {
+            MeshOverlapList::Skip => current.skipped().contains(&island),
+            MeshOverlapList::Prefer => current.preferred().contains(&island),
+        };
+        let changed = self.set_island(island, (!has).then_some(list));
+        if canvas {
+            cycle_applied(self, CycleKind::BakeIsland, changed);
+        }
+    }
+
     /// アイランド（代表の三角形）を一覧 `list` に入れる（もう一方からは外す）か、None なら外す。変えたら true。
     fn set_island(&mut self, island: usize, list: Option<MeshOverlapList>) -> bool {
         let lang = self.lang;
-        let current = self.doc.bake_priority().clone();
+        let current = self.session.doc.bake_priority().clone();
         let was = if current.preferred().contains(&island) {
             Some(MeshOverlapList::Prefer)
         } else if current.skipped().contains(&island) {
@@ -388,17 +414,11 @@ impl AppState {
         let done = match (list, was) {
             (Some(l), _) => {
                 let name = lang.quote(list_name(lang, l));
-                lang.pick(
-                    format!("アイランドを{name}に追加しました。"),
-                    format!("Island added to {name}."),
-                )
+                lang.f("bake-island-added-to", &[("name", &name)])
             }
             (None, Some(w)) => {
                 let name = lang.quote(list_name(lang, w));
-                lang.pick(
-                    format!("アイランドを{name}から外しました。"),
-                    format!("Island removed from {name}."),
-                )
+                lang.f("bake-island-removed-from", &[("name", &name)])
             }
             (None, None) => return false,
         };
@@ -413,20 +433,16 @@ impl AppState {
             self.refuse(Source::Bake, text);
             return false;
         }
-        if *self.doc.bake_priority() == next {
+        if *self.session.doc.bake_priority() == next {
             return false;
         }
-        match self.doc.set_bake_priority(next) {
+        match self.session.doc.set_bake_priority(next) {
             Ok(()) => {
-                self.modified = true;
+                self.session.mark_modified();
                 self.info(
                     Source::Bake,
                     done.unwrap_or_else(|| {
-                        lang.pick(
-                            "重なった UV の決め方を変えました。",
-                            "Overlapping UV priority changed.",
-                        )
-                        .to_owned()
+                        lang.t("bake-overlapping-uv-priority-changed").to_owned()
                     }),
                 );
                 true
@@ -485,7 +501,7 @@ fn candidates(app: &mut AppState, islands: &Islands, w: Where, at: Pos2) -> Vec<
 /// 手で選んでいるか（今のセットで）。違うセットに移っていたらやめる（ウィンドウを閉じたときは `CloseWindow` がやめる）。
 pub fn picking(app: &mut AppState) -> Option<MeshOverlapList> {
     let p = app.bake.pick?;
-    if p.set != app.sets.current().uid {
+    if p.set != app.session.sets.current().uid {
         app.bake.pick = None;
         return None;
     }
@@ -511,7 +527,7 @@ pub fn press(app: &mut AppState, w: Where, at: Pos2) -> bool {
     if let Under::OtherSet(name) = under(app, w, at) {
         app.refuse(
             Source::Bake,
-            crate::region::tools::other_set_face(lang, &name),
+            crate::stroke_gate::other_set_face(lang, &name),
         );
         return true;
     }
@@ -525,13 +541,7 @@ pub fn press(app: &mut AppState, w: Where, at: Pos2) -> bool {
     };
     let found = candidates(app, &islands, w, at);
     if found.is_empty() {
-        app.refuse(
-            Source::Bake,
-            lang.pick(
-                "ポインタの下にこのテクスチャセットの三角形がありません。",
-                "No triangle of this texture set under the pointer.",
-            ),
-        );
+        app.refuse(Source::Bake, lang.t("bake-no-triangle-of-this-texture"));
         return true;
     }
     let keys: Vec<u64> = found.iter().map(|(k, _)| *k).collect();
@@ -542,30 +552,12 @@ pub fn press(app: &mut AppState, w: Where, at: Pos2) -> bool {
             (0, false)
         }
     };
-    if undo {
-        match app.doc.undo() {
-            Ok(_) => app.modified = true,
-            Err(e) => {
-                app.region.cycle = None;
-                app.notify(
-                    crate::notice::Kind::of_core(&e),
-                    Source::Bake,
-                    lang.core_error(&e),
-                );
-                return true;
-            }
-        }
-    }
-    let island = found[index].1;
-    let current = app.doc.bake_priority();
-    let has = match list {
-        MeshOverlapList::Skip => current.skipped().contains(&island),
-        MeshOverlapList::Prefer => current.preferred().contains(&island),
-    };
-    let changed = app.set_island(island, (!has).then_some(list));
-    if matches!(w, Where::Canvas(_)) {
-        cycle_applied(app, CycleKind::BakeIsland, changed);
-    }
+    app.apply(Action::Bake(BakeAction::Priority(PriorityOp::Press {
+        island: found[index].1,
+        list,
+        replace: undo,
+        canvas: matches!(w, Where::Canvas(_)),
+    })));
     true
 }
 
@@ -578,9 +570,9 @@ fn pinned(app: &mut AppState) -> Option<(usize, bool)> {
         island,
         map,
         surface,
-    }) = app.popup.as_ref().map(|p| p.kind)
+    }) = app.ui.popup.as_ref().map(|p| p.kind)
     {
-        if set == app.sets.current().uid {
+        if set == app.session.sets.current().uid {
             return Some((island, if map { shown_side } else { surface }));
         }
     }
@@ -695,49 +687,43 @@ fn show_island(app: &mut AppState, w: Where, representative: usize) {
 /// 「外す」も。読むだけのセット・描いている間・開いた後にセットを替えたときは選べない。
 pub fn menu_entries(app: &AppState, set: u32, island: usize, map: bool) -> Vec<Entry<Action>> {
     let lang = app.lang;
-    let priority = app.doc.bake_priority();
+    let priority = app.session.doc.bake_priority();
     let preferred = priority.preferred().contains(&island);
     let skipped = priority.skipped().contains(&island);
-    let enabled =
-        set == app.sets.current().uid && !app.is_stroking() && app.read_only_reason().is_none();
+    let enabled = set == app.session.sets.current().uid
+        && !app.is_stroking()
+        && app.read_only_reason().is_none();
     let op = |list: Option<MeshOverlapList>| {
         Action::Bake(BakeAction::Priority(PriorityOp::Set { set, island, list }))
     };
     let mut out = vec![
         Entry::item(
             if map {
-                lang.pick("優先する", "Prefer")
+                lang.t("bake-prefer")
             } else {
-                lang.pick("優先して焼く", "Prefer in Bake")
+                lang.t("bake-prefer-in-bake")
             },
             op((!preferred).then_some(MeshOverlapList::Prefer)),
         )
         .checked(preferred)
         .enabled(enabled)
-        .tooltip(lang.pick(
-            "重なったテクセルに、このアイランドの値を焼く",
-            "Overlapping texels take this island's values",
-        )),
+        .tooltip(lang.t("bake-overlapping-texels-take-this-island-tip")),
         Entry::item(
             if map {
-                lang.pick("焼かない", "Skip")
+                lang.t("bake-skip")
             } else {
-                lang.pick("焼かない", "Skip in Bake")
+                lang.t("bake-skip-in-bake")
             },
             op((!skipped).then_some(MeshOverlapList::Skip)),
         )
         .checked(skipped)
         .enabled(enabled)
-        .tooltip(lang.pick(
-            "このアイランドをベイクの割り当てから外す",
-            "Leaves this island out of the bake",
-        )),
+        .tooltip(lang.t("bake-leaves-this-island-out-of-tip")),
     ];
     if map {
         out.push(Entry::Separator);
         out.push(
-            Entry::item(lang.pick("外す", "Remove"), op(None))
-                .enabled(enabled && (preferred || skipped)),
+            Entry::item(lang.t("bake-remove"), op(None)).enabled(enabled && (preferred || skipped)),
         );
     }
     out
@@ -756,9 +742,9 @@ pub fn open_menu(
     map: bool,
     surface: bool,
 ) {
-    app.popup = Some(OpenPopup {
+    app.ui.popup = Some(OpenPopup {
         kind: PopupKind::BakeIsland {
-            set: app.sets.current().uid,
+            set: app.session.sets.current().uid,
             island,
             map,
             surface,
@@ -799,7 +785,7 @@ pub fn menu_release(app: &mut AppState, ctx: &egui::Context, w: Where, at: Pos2)
         return;
     }
     if let Under::OtherSet(name) = under(app, w, from) {
-        let text = crate::region::tools::other_set_face(app.lang, &name);
+        let text = crate::stroke_gate::other_set_face(app.lang, &name);
         app.refuse(Source::Fill, text);
         return;
     }
@@ -863,7 +849,7 @@ pub fn poll_menu(ctx: &egui::Context, app: &mut AppState) {
         return;
     };
     let same_model = app.view3d.full_model().is_some_and(|m| wait.model.is(m));
-    if app.tool != Tool::PolygonFill || app.is_stroking() || app.popup.is_some() || !same_model {
+    if app.tool != Tool::PolygonFill || app.is_stroking() || app.ui.popup.is_some() || !same_model {
         return;
     }
     match app.overlap_islands(false) {

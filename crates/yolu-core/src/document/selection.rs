@@ -6,6 +6,7 @@
 //! - 塗りつぶし（バケツ）は、渡した範囲と選択範囲の重なり（どちらかが無ければもう片方、どちらも無ければ全体）を、量の割合で
 //!   塗る。どれも 1 回の Undo で、タイルの前後の状態を持つ。予算（ストロークの巻き戻しと画素）を超えたら何も変えずに断る。
 
+use crate::Reason;
 use rayon::prelude::*;
 
 use super::{Command, Document, Entry, Target, TileChange};
@@ -67,7 +68,7 @@ impl Document {
         self.ensure_no_stroke()?;
         if !self.undo.is_empty() || !self.redo.is_empty() {
             return Err(CoreError::Unsupported(
-                "選択範囲を戻せるのは読み込みの直後だけ",
+                Reason::SelectionRestoreOnlyAfterLoading,
             ));
         }
         self.check_selection_size(mask.as_ref())?;
@@ -83,7 +84,7 @@ impl Document {
                     || m.tile_size() != self.tile_size =>
             {
                 Err(CoreError::InvalidArgument(
-                    "選択範囲の大きさがキャンバスと違う",
+                    Reason::SelectionSizeDoesNotMatchCanvas,
                 ))
             }
             _ => Ok(()),
@@ -103,18 +104,18 @@ impl Document {
         region: Option<&SelectionMask>,
         erase: bool,
     ) -> Result<bool, CoreError> {
-        require_finite(opacity, "opacity")?;
+        require_finite(opacity, Reason::Opacity)?;
         if !(0.0..=1.0).contains(&opacity) {
-            return Err(CoreError::InvalidArgument("opacity"));
+            return Err(CoreError::InvalidArgument(Reason::Opacity));
         }
         self.ensure_no_stroke()?;
         self.require_channel(channel)?;
         let index = self.index_of(layer)?;
         if self.layers[index].kind != LayerKind::Raster {
-            return Err(CoreError::Unsupported("塗りつぶしはラスターレイヤーだけ"));
+            return Err(CoreError::Unsupported(Reason::FillNeedsRasterLayer));
         }
         if !self.layers[index].is_channel_enabled(channel) {
-            return Err(CoreError::Unsupported("無効のチャンネルには塗れない"));
+            return Err(CoreError::Unsupported(Reason::CannotFillDisabledChannel));
         }
         let keep_alpha = self.pixel_write_guard(layer, erase)?;
         // パスレイヤーの断りはロックのあと（C# の PaintableSurface は RefuseLockedPixels → RefusePathLayer の順）
@@ -141,15 +142,15 @@ impl Document {
         region: Option<&SelectionMask>,
         reveal: bool,
     ) -> Result<bool, CoreError> {
-        require_finite(amount, "amount")?;
+        require_finite(amount, Reason::Amount)?;
         if !(0.0..=1.0).contains(&amount) {
-            return Err(CoreError::InvalidArgument("amount"));
+            return Err(CoreError::InvalidArgument(Reason::Amount));
         }
         self.ensure_no_stroke()?;
         let index = self.index_of(layer)?;
         // マスクの有無がロックより先（C# の RequireMask のあとに RefuseLockedAttributes）
         if self.layers[index].mask.is_none() {
-            return Err(CoreError::Unsupported("レイヤーにマスクが無い"));
+            return Err(CoreError::Unsupported(Reason::LayerHasNoMask));
         }
         self.refuse_lock(layer, super::LayerLocks::ALL)?;
         self.edit_region(index, Target::Mask, region, move |start, coverage| {
@@ -166,7 +167,9 @@ impl Document {
             return Ok(self.selection.clone());
         };
         if r.width() != self.width || r.height() != self.height || r.tile_size() != self.tile_size {
-            return Err(CoreError::InvalidArgument("範囲の大きさがキャンバスと違う"));
+            return Err(CoreError::InvalidArgument(
+                Reason::RegionSizeDoesNotMatchCanvas,
+            ));
         }
         Ok(Some(match &self.selection {
             None => r.clone(),
@@ -233,6 +236,7 @@ impl Document {
                 layer,
                 target,
                 changes,
+                created: false,
             },
             cost,
         });

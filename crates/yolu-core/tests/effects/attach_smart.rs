@@ -94,10 +94,13 @@ fn a_material_at_another_size_scales_blur_and_sharpen_radii_and_keeps_only_pixel
         style: Default::default(),
         id: 1,
         channel: Channel::Color,
-        brush: PathBrush(BrushSettings {
-            radius: 2.0,
-            ..BrushSettings::default()
-        }),
+        brush: PathBrush(
+            BrushSettings {
+                radius: 2.0,
+                ..BrushSettings::default()
+            },
+            yolu_core::PressureSwitches::default(),
+        ),
         points: vec![
             CanvasPoint::new(3.0, 3.0, 1.0).unwrap(),
             CanvasPoint::new(30.0, 20.0, 1.0).unwrap(),
@@ -280,10 +283,13 @@ fn a_surface_path_is_dropped_when_a_material_is_captured() {
         style: Default::default(),
         id: 3,
         channel: Channel::Height,
-        brush: PathBrush(BrushSettings {
-            radius: 0.1,
-            ..BrushSettings::default()
-        }),
+        brush: PathBrush(
+            BrushSettings {
+                radius: 0.1,
+                ..BrushSettings::default()
+            },
+            yolu_core::PressureSwitches::default(),
+        ),
         points: vec![PathPoint::new(0, 0.3, 0.2, 1.0).unwrap()],
         model_fingerprint: fingerprint(&g),
         material: None,
@@ -344,10 +350,13 @@ fn fill_layer_with_surface_path(doc: &mut Document) -> yolu_core::LayerId {
         style: Default::default(),
         id: 5,
         channel: Channel::Height,
-        brush: PathBrush(BrushSettings {
-            radius: 0.1,
-            ..BrushSettings::default()
-        }),
+        brush: PathBrush(
+            BrushSettings {
+                radius: 0.1,
+                ..BrushSettings::default()
+            },
+            yolu_core::PressureSwitches::default(),
+        ),
         points: vec![PathPoint::new(0, 0.3, 0.2, 1.0).unwrap()],
         model_fingerprint: fingerprint(&g),
         material: None,
@@ -433,10 +442,13 @@ fn a_fill_layer_canvas_path_is_dropped_with_its_surface_in_a_different_sized_can
                 style: Default::default(),
                 id: 1,
                 channel: Channel::Height,
-                brush: PathBrush(BrushSettings {
-                    radius: 2.0,
-                    ..BrushSettings::default()
-                }),
+                brush: PathBrush(
+                    BrushSettings {
+                        radius: 2.0,
+                        ..BrushSettings::default()
+                    },
+                    yolu_core::PressureSwitches::default(),
+                ),
                 points: vec![
                     CanvasPoint::new(3.0, 3.0, 1.0).unwrap(),
                     CanvasPoint::new(30.0, 20.0, 1.0).unwrap(),

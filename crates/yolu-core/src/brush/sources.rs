@@ -8,6 +8,7 @@
 //!   どの画素を書くより前に済ませ、プリマルチプライドで混ぜた色を画素ごとに持つ。同じ画素の重複・範囲外・参照の無い画素は、
 //!   ダブごと取り消す。
 
+use crate::Reason;
 use std::collections::HashMap;
 
 use super::effects::byte255;
@@ -183,9 +184,14 @@ impl StrokeState {
                 .before_px
                 .as_ref()
                 .map_or(Rgba8::TRANSPARENT, |t| t.get(at))),
-            _ => surface
-                .tile(coord)
-                .map_or(Ok(Rgba8::TRANSPARENT), |t| t.get(at)),
+            _ => {
+                let mut c = [surface
+                    .tile(coord)
+                    .map_or(Ok(Rgba8::TRANSPARENT), |t| t.get(at))?];
+                // 伸ばすの面のダブ: 描いている間に付けた水彩境界の縁は、下地に入れない（縁の無い値で読む）
+                self.ground_without_edge(coord, at / 4, &mut c);
+                Ok(c[0])
+            }
         }
     }
 
@@ -245,7 +251,16 @@ impl StrokeState {
             && !self.brush.base.erase
         {
             let plain: Vec<BrushPixel> = pixels.iter().map(|p| p.pixel).collect();
-            return self.apply_dab(surface, &plain, DVec2::ZERO, pressure, points, changed);
+            let any = self.apply_surface_dab(
+                surface,
+                &plain,
+                DVec2::ZERO,
+                None,
+                pressure,
+                points,
+                changed,
+            )?;
+            return Ok(self.flush_water_edge(surface, changed)? | any);
         }
         let smears = self.mix_on && self.brush.mix.mode == MixMode::Smear;
         if !smears
@@ -254,18 +269,16 @@ impl StrokeState {
                 BrushEffect::Clone { .. } | BrushEffect::Smudge { .. } | BrushEffect::Blur { .. }
             )
         {
-            return Err(CoreError::Unsupported(
-                "写像されたダブはクローン・指先・ぼかし・色の混ぜの伸ばすだけ",
-            ));
+            return Err(CoreError::Unsupported(Reason::MappedDabsNeedSamplingBrush));
         }
         if points.is_some_and(|p| p.len() != pixels.len()) {
             return Err(CoreError::InvalidArgument(
-                "ステンシルの点は画素ごとに 1 つ",
+                Reason::StencilPointCountMismatch,
             ));
         }
-        require_finite(pressure, "pressure")?;
+        require_finite(pressure, Reason::Pressure)?;
         if !(0.0..=1.0).contains(&pressure) {
-            return Err(CoreError::InvalidArgument("pressure"));
+            return Err(CoreError::InvalidArgument(Reason::Pressure));
         }
         self.effect.scratch = 0;
         self.effect.has_position = true;
@@ -286,11 +299,13 @@ impl StrokeState {
         }
         self.effect.scratch = bytes;
         if smears {
-            self.begin_mapped_mix_dab(self.brush.pressure_scale(pressure));
+            self.begin_mapped_mix_dab(self.surface_pressure(self.brush.pressure_scale(pressure)));
         }
         let result = self.apply_mapped(surface, pixels, pressure, points, changed);
         self.effect.scratch = 0;
-        result
+        let any = result?;
+        // 描いている間に付ける水彩境界（伸ばすの面のダブ）: このダブの画素の範囲を計算し直す
+        Ok(self.flush_water_edge(surface, changed)? | any)
     }
 
     fn apply_mapped(
@@ -312,34 +327,48 @@ impl StrokeState {
         };
         for (i, p) in pixels.iter().enumerate() {
             let dest = p.pixel;
-            require_finite(dest.coverage, "coverage")?;
+            require_finite(dest.coverage, Reason::Coverage)?;
             if dest.x < 0
                 || dest.x >= self.width
                 || dest.y < 0
                 || dest.y >= self.height
                 || !(0.0..=1.0).contains(&dest.coverage)
             {
-                return Err(CoreError::InvalidArgument("写像されたダブの画素"));
+                return Err(CoreError::InvalidArgument(Reason::MappedDabPixel));
             }
             for t in [&p.a, &p.b, &p.c, &p.d] {
                 if !valid_tap(t, self.width, self.height) {
-                    return Err(CoreError::InvalidArgument("写像されたダブの参照"));
+                    return Err(CoreError::InvalidArgument(Reason::MappedDabSource));
                 }
             }
             if p.a.weight + p.b.weight + p.c.weight + p.d.weight <= 0.0 {
-                return Err(CoreError::InvalidArgument("写像された画素に参照が無い"));
+                return Err(CoreError::InvalidArgument(Reason::MappedPixelNeedsSource));
             }
             if mapped
                 .index
                 .insert(dest.y * self.width + dest.x, i)
                 .is_some()
             {
-                return Err(CoreError::InvalidArgument("写像されたダブの画素が重複"));
+                return Err(CoreError::InvalidArgument(Reason::DuplicateMappedDabPixel));
             }
             mapped.colors.push(self.sample_mapped(surface, p)?);
         }
+        // はみ出し防止: 範囲の外の画素は書かない（読みは全部の画素で済ませた後）
+        let keep = self.refer_keep(
+            pixels
+                .iter()
+                .map(|p| (p.pixel.x, p.pixel.y, p.pixel.coverage)),
+            None,
+        )?;
+        if self.edge_live() {
+            for (i, p) in pixels.iter().enumerate() {
+                if keep.as_ref().is_none_or(|k| k[i]) {
+                    self.edge_mark_pixel(p.pixel.x, p.pixel.y);
+                }
+            }
+        }
         let brush = self.brush.clone();
-        let pressure = brush.pressure_scale(pressure);
+        let pressure = self.surface_pressure(brush.pressure_scale(pressure));
         let mut paint = self.paint(&brush, None);
         paint.mapped = Some(&mapped);
         let ts = surface.tile_size() as i64;
@@ -347,6 +376,9 @@ impl StrokeState {
         let mut any = false;
         let mut result = Ok(());
         for (i, p) in pixels.iter().enumerate() {
+            if keep.as_ref().is_some_and(|k| !k[i]) {
+                continue;
+            }
             let d = p.pixel;
             let coord = TileCoord::new((d.x / ts) as u32, (d.y / ts) as u32);
             let local = ((d.y % ts) * ts + d.x % ts) as usize;

@@ -11,6 +11,7 @@
 //! （Unity 版もウィンドウの状態で、.ylp・ブラシの設定・プリセットには入れない）。1 つの操作は 1 つの `StencilOp` で、文書を変えないので Undo の
 //! 段にはならない（塗ったストロークは 1 回の Undo）。
 
+use yolu_core::Reason;
 mod frame;
 mod input;
 mod overlay;
@@ -179,7 +180,7 @@ impl LoadedStencil {
     ) -> Result<LoadedStencil, CoreError> {
         if width < 1 || height < 1 || rgba.len() != width * height * 4 {
             return Err(CoreError::InvalidArgument(
-                "ステンシルの画像のバイト数が幅 × 高さ × 4 でない",
+                Reason::StencilBufferSizeMismatch,
             ));
         }
         let mut flipped = Vec::with_capacity(rgba.len());
@@ -443,7 +444,7 @@ impl AppState {
             return;
         }
         match op {
-            StencilOp::Pick => self.dialog_request = Some(DialogRequest::OpenStencil),
+            StencilOp::Pick => self.outbox.dialog_request = Some(DialogRequest::OpenStencil),
             StencilOp::Load(path) => self.load_stencil(&path),
             StencilOp::Recent(i) => {
                 if let Some(r) = self.stencil.recent.get(i).cloned() {
@@ -455,10 +456,7 @@ impl AppState {
                 self.stencil.overlay = None;
                 self.stencil.thumb = None;
                 self.stencil.drag = None;
-                self.info(
-                    Source::Stencil,
-                    lang.pick("ステンシルを外しました。", "The stencil was removed."),
-                );
+                self.info(Source::Stencil, lang.t("stencil-the-stencil-was-removed"));
             }
             StencilOp::Mode(mode) => self.stencil.mode = mode,
             StencilOp::Tiling(tiling) => self.stencil.tiling = tiling,
@@ -486,7 +484,7 @@ impl AppState {
                 self.stencil.remember(&name, path);
                 self.info(
                     Source::Stencil,
-                    format!("{}: {name}", lang.pick("ステンシル", "Stencil")),
+                    format!("{}: {name}", lang.t("stencil-stencil")),
                 );
             }
             Err(e) => {
@@ -494,9 +492,9 @@ impl AppState {
                 self.fail(
                     Source::Stencil,
                     lang.with_reason(
-                        lang.pick(
-                            format!("ステンシル{}を読めません", lang.quote(&name)),
-                            format!("Cannot load the stencil {}", lang.quote(&name)),
+                        lang.f(
+                            "stencil-cannot-load-the-stencil",
+                            &[("name", &lang.quote(&name))],
                         ),
                         lang.stencil_error(&e),
                     ),
@@ -524,7 +522,9 @@ impl AppState {
         let Some(frame) = st.frame_in(rect) else {
             return Ok(None);
         };
-        let view = self.view.view(rect, self.doc.width(), self.doc.height());
+        let view = self
+            .view
+            .view(rect, self.session.doc.width(), self.session.doc.height());
         let [a, b, c, d, e, g] = view.screen_affine();
         let [p, q, r, s, t, u] = frame.image_affine();
         let mapping = StencilMapping::new(

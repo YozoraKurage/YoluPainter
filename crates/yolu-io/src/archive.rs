@@ -1085,7 +1085,7 @@ mod tests {
         assert_eq!(
             crc32_bitwise(b"123456789"),
             0xcbf4_3926,
-            "試験の CRC-32 が標準の確認値と合う"
+            "テストの CRC-32 が標準の確認値と合う"
         );
         let mut files = full_sample();
         files.insert("noise.bin".into(), noise(777, 3));

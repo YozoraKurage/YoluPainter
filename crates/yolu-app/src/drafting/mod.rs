@@ -6,8 +6,21 @@ pub mod props;
 
 use std::sync::Arc;
 
+use crate::features::Feature;
 use crate::state::{AppState, StrokeSource};
 use yolu_core::glam::DVec2;
+
+/// 図形のツールの、文書を変える操作（`Action::Draft`）。
+#[derive(Clone, Debug, PartialEq)]
+pub enum DraftOp {
+    /// 2D のキャンバスで、文書の座標の向かい合う角 `a`・`b` の図形を描く（塗るか、輪郭をストロークで。1 回の Undo）。`rect` はキャンバスの
+    /// 表示域（ステンシルを重ねる所）。離したときに入力から（テストも同じ道）。
+    Figure {
+        a: DVec2,
+        b: DVec2,
+        rect: egui::Rect,
+    },
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Figure {
@@ -235,10 +248,18 @@ pub fn outline(figure: Figure, a: DVec2, b: DVec2, corner: f64) -> Vec<DVec2> {
 }
 
 impl AppState {
+    /// 図形のツールの操作を当てる（`Action::Draft`）。
+    pub fn draft_apply(&mut self, op: DraftOp) {
+        match op {
+            DraftOp::Figure { a, b, rect } => canvas::figure(self, a, b, rect),
+        }
+    }
+
     /// 図形と定規のドラッグをやめる（2D のキャンバスと 3D ビューの両方）。何かあったか。
     pub fn drafting_cancel(&mut self) -> bool {
         let surface = self
             .view3d
+            .view
             .input
             .draft
             .take_if(|d| d.kind != crate::view3d::draft::DraftKind::Gradient)
@@ -273,6 +294,23 @@ impl AppState {
         self.selected_ruler().is_some()
     }
 }
+
+/// 機能の表の行（図形のドラッグの最中か。ツールを替えたとき・ペイントのモードを出るとき・文書を替えたとき、途中のドラッグをやめる。
+/// 文書を替えたときは、ペンの接触の状態も捨てる）。
+pub(crate) const FEATURE: Feature = Feature {
+    stroking: Some(|app| app.drafting.drag.is_some()),
+    tool_left: Some(|app| {
+        app.drafting_cancel();
+    }),
+    paint_left: Some(|app| {
+        app.drafting_cancel();
+    }),
+    document_replaced: Some(|app| {
+        app.drafting_cancel();
+        app.drafting.pen_down = None;
+    }),
+    ..Feature::new("drafting")
+};
 
 #[cfg(test)]
 mod tests {

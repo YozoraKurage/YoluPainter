@@ -27,7 +27,9 @@
 //! assert!(doc.selection().is_none());
 //! ```
 
+use crate::Reason;
 mod modify;
+pub(crate) use modify::disk_half_heights;
 mod shapes;
 
 use std::collections::{HashMap, HashSet};
@@ -164,10 +166,10 @@ impl SelectionMask {
     /// 何も選んでいない選択範囲（大きさ 1〜32768、タイル 1〜1024）。
     pub fn empty(width: u32, height: u32, tile_size: u32) -> Result<SelectionMask, CoreError> {
         if width == 0 || width > 32768 || height == 0 || height > 32768 {
-            return Err(CoreError::InvalidArgument("選択範囲の大きさ"));
+            return Err(CoreError::InvalidArgument(Reason::SelectionSize));
         }
         if tile_size == 0 || tile_size > 1024 {
-            return Err(CoreError::InvalidArgument("選択範囲のタイルの大きさ"));
+            return Err(CoreError::InvalidArgument(Reason::SelectionTileSize));
         }
         Ok(Self::blank(width, height, tile_size))
     }
@@ -202,11 +204,13 @@ impl SelectionMask {
         let mut map = HashMap::new();
         for (coord, amounts) in tiles {
             if !Self::check_tile(width, height, tile_size, coord, &amounts)? {
-                return Err(CoreError::InvalidArgument("選択範囲のタイルが空"));
+                return Err(CoreError::InvalidArgument(Reason::EmptySelectionTile));
             }
             let tile = Amounts::from_bytes(amounts).expect("空でない");
             if map.insert(coord, tile).is_some() {
-                return Err(CoreError::InvalidArgument("選択範囲のタイルが重なっている"));
+                return Err(CoreError::InvalidArgument(
+                    Reason::OverlappingSelectionTiles,
+                ));
             }
         }
         if map.is_empty() {
@@ -227,11 +231,11 @@ impl SelectionMask {
         let (cols, rows) = (width.div_ceil(tile_size), height.div_ceil(tile_size));
         if coord.x >= cols || coord.y >= rows {
             return Err(CoreError::InvalidArgument(
-                "選択範囲のタイルがキャンバスの外",
+                Reason::SelectionTileOutsideCanvas,
             ));
         }
         if amounts.len() != ts * ts {
-            return Err(CoreError::InvalidArgument("選択範囲のタイルの長さ"));
+            return Err(CoreError::InvalidArgument(Reason::SelectionTileLength));
         }
         let w = (width - coord.x * tile_size).min(tile_size) as usize;
         let h = (height - coord.y * tile_size).min(tile_size) as usize;
@@ -242,7 +246,7 @@ impl SelectionMask {
             }
             if i % ts >= w || i / ts >= h {
                 return Err(CoreError::InvalidArgument(
-                    "選択範囲のタイルの余白が 0 でない",
+                    Reason::SelectionTilePaddingNotZero,
                 ));
             }
             any = true;
@@ -318,10 +322,10 @@ impl SelectionMask {
     pub fn copy_tile(&self, coord: TileCoord, out: &mut [u8]) -> Result<bool, CoreError> {
         let ts = self.0.tile_size;
         if out.len() != (ts * ts) as usize {
-            return Err(CoreError::InvalidArgument("タイルの長さ"));
+            return Err(CoreError::InvalidArgument(Reason::TileLength));
         }
         if coord.x >= self.0.width.div_ceil(ts) || coord.y >= self.0.height.div_ceil(ts) {
-            return Err(CoreError::InvalidArgument("タイルがキャンバスの外"));
+            return Err(CoreError::InvalidArgument(Reason::TileOutsideCanvas));
         }
         Ok(self.copy_amounts(coord, out))
     }
@@ -392,7 +396,7 @@ impl SelectionMask {
         mode: SelectionCombine,
     ) -> Result<SelectionMask, CoreError> {
         if !self.same_size(other) {
-            return Err(CoreError::InvalidArgument("選択範囲の大きさが違う"));
+            return Err(CoreError::InvalidArgument(Reason::SelectionSizeMismatch));
         }
         Ok(match mode {
             SelectionCombine::Replace => other.clone(),

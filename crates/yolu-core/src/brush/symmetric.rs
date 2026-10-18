@@ -87,16 +87,29 @@ impl DabShape<'_> {
         let mut u = (self.cos * dx + self.sin * dy) / self.radius;
         let mut v = (-self.sin * dx + self.cos * dy) / (self.radius * self.roundness);
         if let Some(tip) = self.tip {
+            // リボンの帯: 範囲の外は 0、画像は帯の位置へずらし、線の向きの端は端の画素を延ばして読む（行の核と同じ）
+            let ribbon = self.ribbon;
+            if let Some(r) = ribbon {
+                if u < r.lo || u >= r.hi {
+                    return 0.0;
+                }
+                u -= r.center;
+            }
             if self.flip_x {
                 u = -u;
             }
             if self.flip_y {
                 v = -v;
             }
-            let c = tip.sample(
+            let (tu, tv) = (
                 (u / self.aspect_x + 1.0) * 0.5,
                 (v / self.aspect_y + 1.0) * 0.5,
             );
+            let c = if ribbon.is_some() {
+                tip.sample_ribbon(tu, tv)
+            } else {
+                tip.sample(tu, tv)
+            };
             return if self.edge.density != 1.0 {
                 c * self.edge.density
             } else {
@@ -195,9 +208,10 @@ impl StrokeState {
         self.copy_note
     }
 
-    /// 写し全部の画素と被覆率（同じ画素は大きい方）を、キャンバスの画素の番号（y × 幅 + x）の順に。
+    /// 写し全部の画素と被覆率（同じ画素は大きい方）を、キャンバスの画素の番号（y × 幅 + x）の順に。はみ出し防止があれば、写しごとに
+    /// 写したダブの中心から範囲を求め、範囲の外の画素は入れない。
     fn symmetric_pixels(
-        &self,
+        &mut self,
         transforms: &[CopyMap],
         x: f64,
         y: f64,
@@ -206,9 +220,21 @@ impl StrokeState {
     ) -> Result<Vec<(i64, f64)>, CoreError> {
         let bounds = symmetric_bounds(transforms, x, y, extent, self.width, self.height)?;
         let mut pixels = Vec::new();
+        let room = self.refer_room();
         for (t, x0, x1, y0, y1) in bounds {
+            let region = match self.refer.as_mut() {
+                None => None,
+                Some(r) => match r.area((x0, x1), (y0, y1), t.map(x, y), room)? {
+                    refer::DabArea::Nothing => continue,
+                    refer::DabArea::All => None,
+                    refer::DabArea::Mask(m) => Some(m),
+                },
+            };
             for py in y0..=y1 {
                 for px in x0..=x1 {
+                    if region.as_ref().is_some_and(|r| !r.contains(px, py)) {
+                        continue;
+                    }
                     let (ox, oy) = t.inverse(px as f64 + 0.5, py as f64 + 0.5);
                     let c = coverage(ox - x, oy - y);
                     if c > 0.0 {
@@ -252,6 +278,11 @@ impl StrokeState {
             return Err(CoreError::StrokeBudgetExceeded);
         }
         let w = self.width;
+        if self.edge_live() {
+            for &(key, _) in &pixels {
+                self.edge_mark_pixel(key % w, key / w);
+            }
+        }
         if self.mix_on {
             return self.symmetric_mix_dab(surface, brush, s, &pixels, changed);
         }
@@ -348,13 +379,11 @@ impl StrokeState {
                     let mut ceiling = s.opacity_scale;
                     let mut paper = None;
                     if let Some(tex) = s.texture {
-                        let grain = tex.image.sample_tiled(
-                            (px as f64 + 0.5) / tex.scale,
-                            (py as f64 + 0.5) / tex.scale,
-                        );
+                        let grain = tex.grain_at(px as f64 + 0.5, py as f64 + 0.5);
+                        let depth = super::texture_depth(tex, s.texture_density);
                         match tex.mode.as_blend() {
-                            None => ceiling *= 1.0 - tex.depth * (1.0 - grain),
-                            Some(m) => paper = Some((m, grain, tex.depth)),
+                            None => ceiling *= 1.0 - depth * (1.0 - grain),
+                            Some(m) => paper = Some((m, grain, depth)),
                         }
                     }
                     if coverage > 0.0 && ceiling > 0.0 {
@@ -385,7 +414,7 @@ impl StrokeState {
         Ok(any)
     }
 
-    /// 対称のデュアルのダブ（C# の DualDabAt の対称の枝）: 写し全部の画素の溜まりへ最大で置く。
+    /// 対称のデュアルのダブ（C# の DualDabAt の対称の分岐）: 写し全部の画素の溜まりへ最大で置く。
     pub(super) fn symmetric_dual_dab(
         &mut self,
         shape: &DualShape<'_>,
@@ -396,9 +425,23 @@ impl StrokeState {
         let ts = self.tile_size;
         for (t, x0, x1, y0, y1) in bounds {
             for py in y0..=y1 {
+                // 2 つ目の紙の質感は、写した先の文書の画素で読む（主の質感と同じくキャンバスに固定）
+                let grain = shape.texture.map(|tex| (tex, rows::Grain::new(tex, py)));
                 for px in x0..=x1 {
                     let (ox, oy) = t.inverse(px as f64 + 0.5, py as f64 + 0.5);
-                    let coverage = shape.coverage_at(ox - shape.x, oy - shape.y);
+                    let mut coverage = shape.coverage_at(ox - shape.x, oy - shape.y);
+                    if shape.flow != 1.0 {
+                        coverage *= shape.flow;
+                    }
+                    if let Some((tex, g)) = &grain {
+                        coverage = f64::from(rows::dual_textured(
+                            tex,
+                            g,
+                            tex.depth as f32,
+                            coverage as f32,
+                            px,
+                        ));
+                    }
                     if coverage <= 0.0 {
                         continue;
                     }

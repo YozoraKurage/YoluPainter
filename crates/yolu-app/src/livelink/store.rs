@@ -23,7 +23,12 @@ pub enum Stored {
 
 /// 今の状態から保存の材料を取る。保存に残せなかった骨の名前（道で指せない骨）も返す（保存の知らせに出す）。
 pub fn capture(state: &AppState) -> (Stored, Vec<String>) {
-    if let Some(target) = state.link_target.as_ref().filter(|_| super::linked(state)) {
+    if let Some(target) = state
+        .services
+        .link_target
+        .as_ref()
+        .filter(|_| super::linked(state))
+    {
         if let Some(session) = state.view3d.pose.session.as_ref() {
             let mut request: Request = (*target.request).clone();
             let unsaved = target
@@ -38,7 +43,7 @@ pub fn capture(state: &AppState) -> (Stored, Vec<String>) {
         }
         return (Stored::Keep, Vec::new());
     }
-    let stored = match &state.model {
+    let stored = match &state.session.model {
         Some(m) if !m.is_live_link() => Stored::Remove,
         _ => Stored::Keep,
     };

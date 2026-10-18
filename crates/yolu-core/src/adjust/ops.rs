@@ -27,6 +27,7 @@ use crate::generator::Ramp;
 use crate::math::{clamp01, require_finite, to_byte, UNIT};
 use crate::ranges;
 use crate::types::Rgba8;
+use crate::Reason;
 use std::sync::Arc;
 
 /// 輝度（0〜255）。Rec.709 の重みを整数（2126・7152・722 / 10000、四捨五入）で当てる。灰色（R=G=B=v）は v。
@@ -248,9 +249,9 @@ impl ColorBalance {
     ) -> Result<Self, CoreError> {
         let values = [shadows, midtones, highlights];
         for v in values.iter().flatten() {
-            require_finite(*v, "カラーバランス")?;
+            require_finite(*v, Reason::ColorBalance)?;
             if !(-Self::RANGE..=Self::RANGE).contains(v) {
-                return Err(CoreError::InvalidArgument("カラーバランス（−100〜100）"));
+                return Err(CoreError::InvalidArgument(Reason::ColorBalanceRange));
             }
         }
         Ok(Self {
@@ -324,12 +325,10 @@ impl BrightnessContrast {
     pub const CONTRAST: std::ops::RangeInclusive<f64> = -50.0..=100.0;
 
     pub fn new(brightness: f64, contrast: f64) -> Result<Self, CoreError> {
-        require_finite(brightness, "明るさ")?;
-        require_finite(contrast, "コントラスト")?;
+        require_finite(brightness, Reason::Brightness)?;
+        require_finite(contrast, Reason::Contrast)?;
         if !Self::BRIGHTNESS.contains(&brightness) || !Self::CONTRAST.contains(&contrast) {
-            return Err(CoreError::InvalidArgument(
-                "明るさ（−150〜150）・コントラスト（−50〜100）",
-            ));
+            return Err(CoreError::InvalidArgument(Reason::BrightnessContrastRange));
         }
         let slope = (contrast / 50.0).exp2();
         let exponent = (-brightness / 75.0).exp2();
@@ -371,7 +370,7 @@ pub struct Threshold {
 impl Threshold {
     pub fn new(level: u32) -> Result<Self, CoreError> {
         if !ranges::THRESHOLD_LEVEL.contains(&level) {
-            return Err(CoreError::InvalidArgument("しきい値（1〜255）"));
+            return Err(CoreError::InvalidArgument(Reason::ThresholdRange));
         }
         Ok(Self { level: level as u8 })
     }
@@ -399,7 +398,7 @@ pub struct Posterize {
 impl Posterize {
     pub fn new(levels: u32) -> Result<Self, CoreError> {
         if !ranges::POSTERIZE_LEVELS.contains(&levels) {
-            return Err(CoreError::InvalidArgument("階調（2〜255）"));
+            return Err(CoreError::InvalidArgument(Reason::PosterizeLevelsRange));
         }
         Ok(Self {
             levels: levels as u8,

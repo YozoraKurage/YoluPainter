@@ -1,6 +1,7 @@
 //! クリッピングのボタン（レイヤーの欄の下の帯。CLIP STUDIO と同じ「下のレイヤーでクリッピング」の切り替え）: 押すと 1 回の Undo で入り切りし、
 //! 押している状態が分かり、押せないレイヤー（一番下・グループの中で下が無い）は理由つきで無効、プロパティのレイヤーの欄にクリッピングの項目は無い。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui_kittest::kittest::{NodeT, Queryable};
@@ -17,7 +18,7 @@ fn name() -> &'static str {
 }
 
 fn new_layer(h: &mut H) {
-    h.state_mut().state.apply(Action::NewLayer);
+    h.act(Action::NewLayer);
     h.run();
 }
 
@@ -29,13 +30,13 @@ fn is_disabled(h: &H, label: &str) -> bool {
 fn the_button_clips_the_selected_layer_to_the_one_below_and_back_with_one_undo_each() {
     let mut h = app(1280.0, 800.0, 128);
     new_layer(&mut h);
-    let top = h.state().state.selected_layer.unwrap();
-    assert!(!h.state().state.doc.layer(top).unwrap().clipping());
+    let top = h.selected_layer().unwrap();
+    assert!(!h.doc().layer(top).unwrap().clipping());
     assert!(!is_disabled(&h, name()));
-    let steps = h.state().state.doc.undo_count();
+    let steps = h.doc().undo_count();
     h.get_by_label(name()).click();
     h.run();
-    let doc = &h.state().state.doc;
+    let doc = h.doc();
     assert!(
         doc.layer(top).unwrap().clipping(),
         "押すとクリッピングが入る"
@@ -45,19 +46,20 @@ fn the_button_clips_the_selected_layer_to_the_one_below_and_back_with_one_undo_e
         "下のレイヤーがあるので効く"
     );
     assert_eq!(doc.undo_count(), steps + 1, "1 回の Undo");
-    assert_eq!(clipping_state(&h.state().state), (true, None));
-    h.snapshot("layers_clipping_button");
+    assert_eq!(clipping_state(h.app()), (true, None));
+    let rect = crate::common::shot::group(&h, yolu_app::Tab::Layers);
+    common::shot::region(&mut h, "layers_clipping_button", rect);
     // もう一度押すと外れる
     h.get_by_label(name()).click();
     h.run();
-    assert!(!h.state().state.doc.layer(top).unwrap().clipping());
-    assert_eq!(h.state().state.doc.undo_count(), steps + 2);
+    assert!(!h.doc().layer(top).unwrap().clipping());
+    assert_eq!(h.doc().undo_count(), steps + 2);
     // Undo で入り直し、もう 1 回で外れる
-    h.state_mut().state.apply(Action::Undo);
-    assert!(h.state().state.doc.layer(top).unwrap().clipping());
-    h.state_mut().state.apply(Action::Undo);
-    assert!(!h.state().state.doc.layer(top).unwrap().clipping());
-    assert_eq!(h.state().state.doc.undo_count(), steps);
+    h.act(Action::Undo);
+    assert!(h.doc().layer(top).unwrap().clipping());
+    h.act(Action::Undo);
+    assert!(!h.doc().layer(top).unwrap().clipping());
+    assert_eq!(h.doc().undo_count(), steps);
 }
 
 #[test]
@@ -65,20 +67,20 @@ fn the_bottom_layer_cannot_be_clipped_and_the_tooltip_says_why() {
     let mut h = app(1280.0, 800.0, 128);
     // 1 枚だけ: 一番下
     assert_eq!(
-        clipping_state(&h.state().state),
+        clipping_state(h.app()),
         (false, Some("一番下のレイヤーです"))
     );
     let tip = format!("{}（一番下のレイヤーです）", name());
     assert!(is_disabled(&h, &tip), "押せない");
-    let steps = h.state().state.doc.undo_count();
+    let steps = h.doc().undo_count();
     h.get_by_label(&tip).click();
     h.run();
-    assert_eq!(h.state().state.doc.undo_count(), steps);
+    assert_eq!(h.doc().undo_count(), steps);
     // 上に足すと、一番下のほうは相変わらず無効、上のほうは有効
     new_layer(&mut h);
     assert!(!is_disabled(&h, name()));
-    let bottom = h.state().state.doc.layers()[0].id();
-    h.state_mut().state.selected_layer = Some(bottom);
+    let bottom = h.doc().layers()[0].id();
+    h.set_selected_layer(Some(bottom));
     h.run();
     assert!(is_disabled(&h, &tip));
 }
@@ -87,47 +89,41 @@ fn the_bottom_layer_cannot_be_clipped_and_the_tooltip_says_why() {
 fn the_bottom_layer_of_a_group_cannot_be_clipped_but_the_one_above_it_can() {
     let mut h = app(1280.0, 800.0, 128);
     new_layer(&mut h);
-    let a = h.state().state.selected_layer.unwrap();
-    h.state_mut()
-        .state
-        .apply(Action::M2(yolu_app::m2::Edit::GroupSelected));
+    let a = h.selected_layer().unwrap();
+    h.act(Action::M2(yolu_app::m2::Edit::GroupSelected));
     h.run();
-    let group = h.state().state.selected_layer.unwrap();
+    let group = h.selected_layer().unwrap();
     assert_ne!(group, a);
     // グループの中の 1 枚: 下に兄弟が無いので無効（グループの外の下のレイヤーには付けられない）
-    h.state_mut().state.selected_layer = Some(a);
+    h.set_selected_layer(Some(a));
     h.run();
     let tip = format!("{}（グループの中で一番下のレイヤーです）", name());
     assert!(is_disabled(&h, &tip));
     // 兄弟を足すと、その上のレイヤーは有効
-    h.state_mut().state.apply(Action::NewLayer);
+    h.act(Action::NewLayer);
     h.run();
-    let b = h.state().state.selected_layer.unwrap();
-    assert_eq!(h.state().state.doc.layer(b).unwrap().parent(), Some(group));
+    let b = h.selected_layer().unwrap();
+    assert_eq!(h.doc().layer(b).unwrap().parent(), Some(group));
     assert!(!is_disabled(&h, name()));
     h.get_by_label(name()).click();
     h.run();
-    assert!(h.state().state.doc.layer(b).unwrap().clipping());
+    assert!(h.doc().layer(b).unwrap().clipping());
 }
 
 #[test]
 fn a_flag_left_on_a_layer_with_nothing_below_can_still_be_cleared_from_the_button() {
     let mut h = app(1280.0, 800.0, 128);
     new_layer(&mut h);
-    let bottom = h.state().state.doc.layers()[0].id();
+    let bottom = h.doc().layers()[0].id();
     // 一番下のレイヤーの印は効かない（`is_effectively_clipped` は偽）が、印そのものは外せる
-    h.state_mut()
-        .state
-        .doc
-        .set_layer_clipping(bottom, true)
-        .unwrap();
-    h.state_mut().state.selected_layer = Some(bottom);
+    h.doc_mut().set_layer_clipping(bottom, true).unwrap();
+    h.set_selected_layer(Some(bottom));
     h.run();
-    assert_eq!(clipping_state(&h.state().state), (true, None));
+    assert_eq!(clipping_state(h.app()), (true, None));
     assert!(!is_disabled(&h, name()));
     h.get_by_label(name()).click();
     h.run();
-    assert!(!h.state().state.doc.layer(bottom).unwrap().clipping());
+    assert!(!h.doc().layer(bottom).unwrap().clipping());
 }
 
 #[test]
@@ -140,7 +136,7 @@ fn the_layer_properties_have_no_clipping_row_and_the_button_is_in_the_layer_pane
         r.top() > props.bottom() && r.top() < props.bottom() + 40.0
     });
     click(&mut h, tab.center());
-    assert_eq!(h.state().state.ui.property_tab, 1);
+    assert_eq!(h.ui().property_tab, 1);
     assert!(
         h.query_all_by_label("クリッピング").next().is_none(),
         "プロパティのレイヤーの欄にクリッピングの項目は無い"
@@ -162,7 +158,7 @@ fn the_button_is_disabled_while_stroking() {
     let c = canvas_rect(&h).center();
     press(&h, c, egui::PointerButton::Primary);
     h.step();
-    assert!(h.state().state.is_stroking());
+    assert!(h.app().is_stroking());
     assert!(is_disabled(&h, name()), "描いている間は押せない");
     release(&h, c, egui::PointerButton::Primary);
     h.run();
@@ -172,7 +168,7 @@ fn the_button_is_disabled_while_stroking() {
 #[test]
 fn the_button_speaks_english_with_the_same_reasons() {
     let mut h = app(1280.0, 800.0, 128);
-    h.state_mut().state.lang = Lang::En;
+    h.set_lang(Lang::En);
     h.run();
     let en = clipping_name(Lang::En);
     assert_eq!(en, "Clip to the Layer Below");

@@ -1,6 +1,7 @@
 //! 正投影の 3D ビューの描き方（lilToon が `lilIsPerspective()` で分ける 3 か所と、背景の向き）: マットキャップは「透視」の設定によらず
 //! カメラの手前への向きで読む・輪郭線の Z バイアスは前の向きへ押す（視線に沿うので画面の縁は動かない）・背景は前の向き 1 つ。
 //! 透視の結果は前と同じ（透視の側は比べの元として同じ場面を描く）。
+use crate::common::drive::Drive;
 use crate::common::{app, click_tab, move_to};
 use egui::Pos2;
 use egui_kittest::Harness;
@@ -52,18 +53,19 @@ fn quad(size: f32) -> ModelMesh {
 }
 
 fn set_model(h: &mut H, meshes: Vec<ModelMesh>) {
-    let state = &mut h.state_mut().state;
-    let revision = state.view3d.next_revision();
-    state.view3d.material = 0;
-    let model = ViewModel::new("試験", meshes, vec![Some("試験".to_string())], revision).unwrap();
+    let state = h.app_mut();
+    let revision = state.view3d_mut().next_revision();
+    state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
+    let model =
+        ViewModel::new("テスト", meshes, vec![Some("テスト".to_string())], revision).unwrap();
     model.tangents();
-    state.view3d.set_model(model);
+    state.view3d_mut().set_model(model);
     h.run();
 }
 
 /// −Z の側から見るカメラ（正投影なら、同じ距離の透視と注視点の所で同じ大きさ）。
 fn look_at(h: &mut H, distance: f32, ortho: bool) {
-    h.state_mut().state.view3d.camera = OrbitCamera {
+    h.view3d_mut().view.camera = OrbitCamera {
         target: Vec3::ZERO,
         yaw: 0.0,
         pitch: 0.0,
@@ -86,9 +88,7 @@ fn op(h: &mut H, op: Op) {
 }
 
 fn fill_color(h: &mut H, color: [u8; 4]) {
-    h.state_mut()
-        .state
-        .doc
+    h.doc_mut()
         .add_fill_layer(
             "色",
             &[(
@@ -112,14 +112,14 @@ fn lil() -> MaterialLook {
 }
 
 fn set_look(h: &mut H, look: MaterialLook) {
-    h.state_mut().state.doc.set_look(look, false).unwrap();
+    h.doc_mut().set_look(look, false).unwrap();
     h.run();
 }
 
 /// 世界の点の、ウィンドウの画面の点。
 fn screen(h: &H, world: Vec3) -> Pos2 {
     let rect = h.state().view3d_rect().unwrap();
-    let c = h.state().state.view3d.camera;
+    let c = h.view3d().view.camera;
     let s = c
         .view(rect.width(), rect.height())
         .to_screen(world)
@@ -150,7 +150,7 @@ fn matcap_look(h: &mut H, perspective: bool) {
             pixels.extend_from_slice(&[x * 16, y * 16, 128, 255]);
         }
     }
-    let doc = &mut h.state_mut().state.doc;
+    let doc = h.doc_mut();
     let image = ImageInput::new(16, 16, pixels, ImageColorSpace::Srgb).unwrap();
     let inputs = doc.effect_inputs().clone().with_image(id, image);
     doc.set_effect_inputs(inputs).unwrap();
@@ -207,7 +207,8 @@ fn the_matcap_reads_by_the_camera_front_in_orthographic_whatever_its_perspective
     matcap_look(&mut h, true);
     h.event(egui::Event::PointerGone);
     h.run();
-    h.snapshot("view3d_liltoon_matcap_orthographic");
+    let rect = crate::view3d_area(&h);
+    crate::common::shot::region(&mut h, "view3d_liltoon_matcap_orthographic", rect);
 }
 
 /// 輪郭線（赤・光なし）の右の縁: 中心の行で、右の端から内へ探した最初の赤の画素の x。
@@ -272,7 +273,7 @@ fn the_outline_z_bias_pushes_toward_the_camera_front_in_orthographic() {
     );
     h.event(egui::Event::PointerGone);
     h.run();
-    h.snapshot("view3d_liltoon_outline_orthographic");
+    crate::common::shot::region(&mut h, "view3d_liltoon_outline_orthographic", rect);
 }
 
 #[test]
@@ -283,13 +284,14 @@ fn the_background_looks_along_the_view_in_orthographic() {
     op(&mut h, Op::EnvBackground(true));
     op(&mut h, Op::EnvBlur(0.0));
     let rect = h.state().view3d_rect().unwrap();
+    // （左上の隅は表示の種類のドロップダウンなので、その下）
     let corners = [
-        rect.min + egui::vec2(10.0, 10.0),
+        rect.min + egui::vec2(10.0, 50.0),
         rect.max - egui::vec2(10.0, 10.0),
         egui::pos2(rect.min.x + 10.0, rect.max.y - 10.0),
     ];
     // 透視: 背景は画素ごとの視線の向き（上と下で空の色が違う）
-    h.state_mut().state.view3d.camera = OrbitCamera {
+    h.view3d_mut().view.camera = OrbitCamera {
         pitch: 20.0,
         ..OrbitCamera::default()
     };
@@ -298,12 +300,12 @@ fn the_background_looks_along_the_view_in_orthographic() {
     let persp: Vec<[u8; 3]> = corners.iter().map(|p| px(&image, *p)).collect();
     assert!(far(persp[0], persp[1]) > 3, "{persp:?}");
     // 正投影: 視線はどこも前の向きなので、背景は 1 つの色（引いて広く見ても。近い面と遠い面の間の点からの向きでは、隅ほど傾く）
-    h.state_mut().state.view3d.camera.projection = Projection::Orthographic { height: 40.0 };
+    h.view3d_mut().view.camera.projection = Projection::Orthographic { height: 40.0 };
     h.run();
     let image = h.render().expect("描ける");
     let ortho: Vec<[u8; 3]> = corners.iter().map(|p| px(&image, *p)).collect();
     assert!(ortho.windows(2).all(|w| far(w[0], w[1]) <= 1), "{ortho:?}");
     h.event(egui::Event::PointerGone);
     h.run();
-    h.snapshot("view3d_background_orthographic");
+    crate::common::shot::region(&mut h, "view3d_background_orthographic", rect);
 }

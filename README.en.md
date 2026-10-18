@@ -15,10 +15,10 @@ Windows is the primary platform. Mac and Linux support is experimental.
 - 2D and 3D painting: brushes that respond to pressure and tilt, color mixing, blur, smudge and clone, symmetry, rulers, and stencils
 - Paint, Edit and Pose modes: in the 3D view, select and move projection boxes, decals, points, 3D paths and pose bones
 - Keyboard, mouse and pie menu assignments that you can change in the Keyboard Shortcuts category of the settings window
-- Layers, groups, masks, clipping, 26 blend modes, adjustment layers, text layers, and locks
+- Layers, groups, masks, clipping, 26 blend modes, adjustment layers, text layers, locks, and layer sets that choose the output per channel
 - Material painting: Color, Roughness, Metallic, Height, Normal, Emission, and user channels in a single stroke
 - Filters, generators that read baked mesh maps (AO (ambient occlusion), curvature, thickness, ID, and more), noise and grunge, and smart materials
-- The lilToon look in the 3D view
+- The lilToon look in the 3D view; you can add more 3D views side by side
 - Live Link with Unity: open a scene model in one step and send exported textures back to Unity (they are assigned to materials only after you confirm in Unity)
 - Editing layers, masks, and effects from the command line (`yolupainter-cli`) and from AI assistants connected over MCP
 - PSD layers, groups, masks, and adjustments in and out; import of ABR and CLIP STUDIO (.sut) brushes

@@ -8,6 +8,7 @@
 //! - 変化の記録（`change_serial` と `changed_tiles`）は、合成が変わり得るタイルをチャンネルごとに数で覚える。履歴や保存とは別。
 //! - チャンネルは文書の一覧（[`ChannelInfo`]）。0〜5 は標準の 6 つで、ユーザーチャンネルは足せる（[`Document::add_channel`]）。
 
+use crate::Reason;
 mod batch;
 mod history;
 pub use history::HistoryKind;
@@ -17,9 +18,13 @@ mod edits;
 mod effects;
 mod eval;
 mod layer_path;
+mod layer_sets;
+mod saved_mark;
+pub use layer_sets::{LayerSetInfo, MAX_LAYER_SETS};
 mod layer_text;
 pub(crate) mod locks;
 mod look;
+mod mask_ops;
 mod material;
 mod merge;
 mod operations;
@@ -33,6 +38,7 @@ pub use warp::{Homography, LiquifyDab, LiquifyMode, Warp, WarpMesh, WarpPoint};
 mod triangle_fill;
 pub use clipboard::{ClipboardRefusal, ClipboardSource, PasteResult, PixelClipboard};
 pub use locks::LayerLocks;
+pub use mask_ops::{MaskCopy, MaskPasteResult};
 pub use merge::{LayerMergeReport, MergeMethod, MergeRefusal};
 pub use resize::{CanvasResampling, PreparedResize, ResizeReport};
 pub use structure::MAX_GROUP_DEPTH;
@@ -73,7 +79,7 @@ use crate::types::{
     BlendMode, Channel, ChannelInfo, ChannelKind, LayerKind, Rect, Rgba8, RowOrder, TileCoord,
 };
 
-pub use crate::layer::{Layer, LayerId};
+pub use crate::layer::{Layer, LayerId, LayerSetId};
 #[cfg(test)]
 mod cache_tests;
 #[cfg(test)]
@@ -95,6 +101,15 @@ pub struct CompositedTile {
 }
 
 impl CompositedTile {
+    /// 歩幅 1 のタイル（`composite_tiles_then` の仕上げ）。
+    fn whole(_: usize, coord: TileCoord, rect: Rect, pixels: Vec<u8>) -> Self {
+        CompositedTile {
+            coord,
+            rect,
+            stride: 1,
+            pixels,
+        }
+    }
     /// 画像の幅・高さ（画素）。
     pub fn size(&self) -> (u32, u32) {
         (
@@ -137,6 +152,24 @@ impl Stroke {
     /// 時刻つきの入力（時刻は減ってはならない）。
     pub fn add_sample(&mut self, doc: &mut Document, sample: BrushSample) -> Result<(), CoreError> {
         doc.stroke_add(self.id, sample)
+    }
+    /// 直線の終わり: 手ぶれ補正の筆を、ここまでの最後の入力の点まで描き、待たせている曲線の区間も描き切って、そこを角にして続ける（確定のときと
+    /// 同じ詰め方・区間の描き方で、ストロークは続く。次の区間は、その点から曲線を始め直す）。決まった点（Shift の直線の押した点）までまっすぐに
+    /// 届かせたい入力の後に呼ぶ。続きの入力には、また補正と曲線が効く。補正も曲線も無いブラシでは線の形は変わらない。最初の 2 つの入力の直後に
+    /// 呼ぶと、入り抜きを掛けない直線になる（Shift の直線。直線の終点のそばで離せば、終わりの抜きも掛けない）。失敗したら、このストロークは
+    /// 取り消してから返す。
+    pub fn end_line(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        match &doc.active {
+            Some(a) if a.id == self.id => {}
+            _ => return Err(CoreError::NoActiveStroke),
+        }
+        if doc.triangle_fill.is_some() {
+            return Ok(());
+        }
+        doc.with_stroke(self.id, |state, surface, changed| {
+            state.end_line(surface, changed)
+        })
+        .map(|_| ())
     }
     /// このストロークが使うブラシ（始めたときに写して固定したもの）。3D の面のダブが、大きさと硬さの筆圧をストロークと同じ応え
     /// （最小値と曲線）で決めるのに使う。終わったストロークは断る。
@@ -207,6 +240,19 @@ impl Stroke {
     pub fn use_composite_clone_source(&mut self, doc: &mut Document) -> Result<(), CoreError> {
         doc.use_composite_clone_source(self.id)
     }
+    /// はみ出し防止（[`Brush::reference_lines`]）の参照の重なりを、印のある参照レイヤー `marked`（グループは子孫も。
+    /// [`Document::reference_view`] と同じ合成）のチャンネル `channel` の合成にする。最初のダブの前にだけ呼べ、写しをここで凍結する
+    /// （この後に参照レイヤーや印が変わっても、このストロークは変わらない）。複数チャンネルのストロークは、どのチャンネルも同じ範囲で塗る。
+    /// ブラシがはみ出し防止を使わない・`marked` に文書のレイヤーが 1 つも無いときは何もせず false（はみ出し防止は効かない）。
+    /// 最初のダブより後・知らないチャンネルは、このストロークを取り消してから返す。
+    pub fn use_reference_layers(
+        &mut self,
+        doc: &mut Document,
+        marked: &std::collections::HashSet<LayerId>,
+        channel: Channel,
+    ) -> Result<bool, CoreError> {
+        doc.use_reference_layers(self.id, marked, channel)
+    }
     /// 写像された面のダブ（3D の面のクローン・指先。C# の ApplyMappedDab）: 画素ごとに、読む場所（画素中心の最大 4 点と重み。UV アイランドの
     /// 継ぎ目の向こうも）を呼び手が決めて渡す。全ての読みをどの画素を書くより前に済ませるので、同じダブの中で先に変えた画素を読まない。
     /// 指先の最初の拾いと面の方向は呼び手が決める。points はステンシルの画素ごとの点（pixels と同じ数）、sampling_bytes は呼び手の
@@ -239,9 +285,22 @@ impl Stroke {
         &mut self,
         doc: &mut Document,
         look: Option<crate::brush::SurfaceDabLook>,
+        color: &[f64; 4],
+    ) -> Result<(), CoreError> {
+        doc.with_stroke(self.id, |state, surface, changed| {
+            state.begin_surface_dab(surface, look, color, changed)
+        })
+        .map(|_| ())
+    }
+    /// 3D の面のストローク: 水彩境界の幅・ぼかし幅（画面の点）をテクセルへ直す係数（画面の点 1 つのテクセルの数）。全部のチャンネルで、
+    /// 最初の 1 回だけ覚える。
+    pub(crate) fn set_water_edge_scale(
+        &mut self,
+        doc: &mut Document,
+        texels_per_point: f64,
     ) -> Result<(), CoreError> {
         doc.with_stroke(self.id, |state, _, _| {
-            state.begin_surface_dab(look);
+            state.set_water_edge_scale(texels_per_point);
             Ok(false)
         })
         .map(|_| ())
@@ -262,6 +321,17 @@ impl Stroke {
     /// この札の番号。
     pub fn id(&self) -> u64 {
         self.id
+    }
+    /// 描き直し（後補正）: ストロークが変えた画素を描く前へ戻し、始めたときと同じ形の空のストロークにする（ストロークの ID・選択範囲・凍結した合成の
+    /// 参照元は同じ。確定すると、描く前からの 1 回の Undo）。3D の面のストロークが、整えた入力で描き直す前に呼ぶ。
+    pub(crate) fn restart(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        match &doc.active {
+            Some(a) if a.id == self.id && doc.triangle_fill.is_none() => {
+                doc.restart_active_strokes();
+                Ok(())
+            }
+            _ => Err(CoreError::NoActiveStroke),
+        }
     }
 }
 
@@ -347,6 +417,9 @@ pub(crate) enum Command {
         layer: LayerId,
         target: Target,
         changes: Vec<TileChange>,
+        /// この段で初めてチャンネルの面を作った（`Target::Channel` のときだけ）。取り消しで空に戻った面を外してチャンネルを無効に戻し、
+        /// やり直しで作り直す（空の面でもレイヤーは合成に入るので、残すと見た目が戻らない）。
+        created: bool,
     },
     /// まとまり（レイヤー、またはグループと中身。len 枚）を index へ入れる。
     Insert {
@@ -472,6 +545,8 @@ pub(crate) enum Command {
     Rulers {
         changes: Vec<rulers::RulerChange>,
     },
+    /// レイヤーセットの一覧・出力の割り当て・レイヤーの所属の入れ替え。
+    LayerSets(layer_sets::SetCommand),
 }
 
 pub(crate) struct Entry {
@@ -543,6 +618,11 @@ pub struct Document {
     height: u32,
     tile_size: u32,
     layers: Vec<Layer>,
+    /// レイヤーセット（1 つ以上。並びは画面の並び）。レイヤーは `Layer::set` でどれか 1 つに入る。
+    layer_sets: Vec<LayerSetInfo>,
+    /// チャンネルの番号ごとの出力の割り当て（最終の結果をどのレイヤーセットから取るか。None はそのチャンネルの既定値）。
+    /// 文書に無いチャンネルの欄も、在るレイヤーセットか None を持つ。
+    route: layer_sets::Route,
     /// チャンネルの一覧（番号ごと。None は空き）。0〜5 は標準で必ずある。
     channels: Vec<Option<ChannelInfo>>,
     pub(crate) normal_settings: NormalSettings,
@@ -579,6 +659,8 @@ pub struct Document {
     coalesce: Option<CoalesceKey>,
     trim_count: u64,
     trimmed_bytes: u64,
+    /// 保存した所の目印（[`Document::mark_saved`]・[`Document::is_clean`]）。
+    saved: saved_mark::SavedMark,
     id_counter: u64,
     /// 効果（フィルター・Generator・Anchor・画像・グラデーション）の評価と、外から渡す入力。保存も Undo もしない。
     effects: eval::EffectState,
@@ -616,20 +698,26 @@ impl Document {
     /// タイルの大きさ（1〜1024）を選ぶ。画素の結果はタイルの大きさによらない。
     pub fn with_tile_size(width: u32, height: u32, tile_size: u32) -> Result<Document, CoreError> {
         if width == 0 || width > 32768 {
-            return Err(CoreError::InvalidArgument("width"));
+            return Err(CoreError::InvalidArgument(Reason::Width));
         }
         if height == 0 || height > 32768 {
-            return Err(CoreError::InvalidArgument("height"));
+            return Err(CoreError::InvalidArgument(Reason::Height));
         }
         if tile_size == 0 || tile_size > 1024 {
-            return Err(CoreError::InvalidArgument("tile_size"));
+            return Err(CoreError::InvalidArgument(Reason::TileSize));
         }
+        let first = LayerSetId(random_id(u64::MAX) | 1);
         Ok(Document {
             id: random_id(0) | 1,
             width,
             height,
             tile_size,
             layers: Vec::new(),
+            layer_sets: vec![LayerSetInfo {
+                id: first,
+                name: String::new(),
+            }],
+            route: [Some(first); Channel::MAX],
             channels: Channel::ALL
                 .iter()
                 .map(|c| ChannelInfo::standard(*c))
@@ -660,6 +748,7 @@ impl Document {
             coalesce: None,
             trim_count: 0,
             trimmed_bytes: 0,
+            saved: saved_mark::SavedMark::default(),
             id_counter: 0,
             effects: eval::EffectState::default(),
             batching: false,
@@ -681,7 +770,7 @@ impl Document {
             || layer_ids.len() != self.layers.len()
             || layer_ids.iter().any(|id| id.0 == 0 || !seen.insert(*id))
         {
-            return Err(CoreError::InvalidArgument("persistent_ids"));
+            return Err(CoreError::InvalidArgument(Reason::PersistentIds));
         }
         self.id = document_id;
         // グループの中のレイヤーの親も新しい ID へ（並びは同じなので、古い ID → 新しい ID の表で引く）
@@ -875,9 +964,9 @@ impl Document {
         opacity: f64,
         coalesce: bool,
     ) -> Result<(), CoreError> {
-        require_finite(opacity, "opacity")?;
+        require_finite(opacity, Reason::Opacity)?;
         if !(0.0..=1.0).contains(&opacity) {
-            return Err(CoreError::InvalidArgument("opacity"));
+            return Err(CoreError::InvalidArgument(Reason::Opacity));
         }
         self.set_property(
             id,
@@ -890,7 +979,7 @@ impl Document {
     pub fn set_layer_blend_mode(&mut self, id: LayerId, mode: BlendMode) -> Result<(), CoreError> {
         if mode == BlendMode::PassThrough && !self.layer(id).is_some_and(|l| l.is_group()) {
             self.index_of(id)?;
-            return Err(CoreError::InvalidArgument("PassThrough はグループだけ"));
+            return Err(CoreError::InvalidArgument(Reason::PassThroughNeedsGroup));
         }
         self.set_property(id, Property::Mode(mode), None)
     }
@@ -909,8 +998,8 @@ impl Document {
         if index == 0 || index >= self.layers.len() || !self.layers[index].clipping {
             return false;
         }
-        let parent = self.layers[index].parent;
-        self.layers[..index].iter().any(|l| l.parent == parent)
+        let me = &self.layers[index];
+        self.layers[..index].iter().any(|l| l.is_sibling_of(me))
     }
 
     /// 属性の変更を 1 段として記録する（同じ値なら何もしない）。
@@ -949,7 +1038,9 @@ impl Document {
                 layer
                     .adjustment
                     .as_ref()
-                    .ok_or(CoreError::Unsupported("調整レイヤーだけが調整の設定を持つ"))?
+                    .ok_or(CoreError::Unsupported(
+                        Reason::AdjustmentSettingsNeedAdjustmentLayer,
+                    ))?
                     .clone(),
             ),
             Property::ChannelBlend(c, _) => Property::ChannelBlend(*c, layer.channel_blend(*c)),
@@ -970,7 +1061,7 @@ impl Document {
         layer
             .mask
             .as_ref()
-            .ok_or(CoreError::Unsupported("レイヤーにマスクが無い"))
+            .ok_or(CoreError::Unsupported(Reason::LayerHasNoMask))
     }
 
     /// 段を当てて積む。鍵があり、直前の段が同じ鍵のまとめなら、その段の「後」の値だけを新しくする（戻すと最初の変更の前へ）。
@@ -1021,7 +1112,7 @@ impl Document {
                     }
                     _ => unreachable!("まとめる段は同じ種類"),
                 }
-                self.revision += 1;
+                self.merge_bump();
                 return Ok(());
             }
         }
@@ -1109,7 +1200,7 @@ impl Document {
         };
         if changed {
             self.mark_target_tile(index, Target::Channel(channel), coord);
-            self.external_mutation();
+            self.pixel_mutation();
         }
         Ok(changed)
     }
@@ -1165,7 +1256,7 @@ impl Document {
                     Ok(true) => {
                         changed += 1;
                         self.mark_target_tile(index, Target::Channel(channel), coord);
-                        self.external_mutation();
+                        self.pixel_mutation();
                     }
                     Err(e) => {
                         // 1 枚ずつ呼ぶなら、面を作るのは最初の 1 枚。それが断られたときだけ面を消す
@@ -1188,13 +1279,13 @@ impl Document {
         self.ensure_loadable()?;
         let index = self.index_of(id)?;
         if self.layers[index].mask.is_none() {
-            return Err(CoreError::Unsupported("レイヤーにマスクが無い"));
+            return Err(CoreError::Unsupported(Reason::LayerHasNoMask));
         }
         if bytes
             .chunks_exact(4)
             .any(|p| p[0] != 0 || p[1] != 0 || p[2] != 0)
         {
-            return Err(CoreError::InvalidArgument("マスクの画素の RGB は 0"));
+            return Err(CoreError::InvalidArgument(Reason::MaskRgbNotZero));
         }
         let growth = self.growth_for(index, Target::Mask);
         let changed = self.layers[index]
@@ -1205,7 +1296,7 @@ impl Document {
             .import_tile(coord, bytes, growth)?;
         if changed {
             self.mark_target_tile(index, Target::Mask, coord);
-            self.external_mutation();
+            self.pixel_mutation();
         }
         Ok(changed)
     }
@@ -1251,7 +1342,7 @@ impl Document {
                 Target::Channel(channel),
                 TileCoord::new(x / ts, y / ts),
             );
-            self.external_mutation();
+            self.pixel_mutation();
         }
         Ok(changed)
     }
@@ -1267,7 +1358,7 @@ impl Document {
         self.ensure_loadable()?;
         let index = self.index_of(id)?;
         if self.layers[index].mask.is_none() {
-            return Err(CoreError::Unsupported("レイヤーにマスクが無い"));
+            return Err(CoreError::Unsupported(Reason::LayerHasNoMask));
         }
         let growth = self.growth_for(index, Target::Mask);
         let ts = self.tile_size;
@@ -1275,7 +1366,7 @@ impl Document {
         let changed = surface.set_pixel(x, y, Rgba8::new(0, 0, 0, hide), growth)?;
         if changed {
             self.mark_target_tile(index, Target::Mask, TileCoord::new(x / ts, y / ts));
-            self.external_mutation();
+            self.pixel_mutation();
         }
         Ok(changed)
     }
@@ -1283,13 +1374,15 @@ impl Document {
     fn ensure_raster(&self, index: usize) -> Result<(), CoreError> {
         match self.layers[index].kind {
             LayerKind::Raster => Ok(()),
-            LayerKind::Fill => Err(CoreError::Unsupported("塗りつぶしレイヤーには描けない")),
-            LayerKind::Adjustment => Err(CoreError::Unsupported("調整レイヤーには描けない")),
-            LayerKind::Group => Err(CoreError::Unsupported("グループには描けない")),
+            LayerKind::Fill => Err(CoreError::Unsupported(Reason::CannotPaintFillLayer)),
+            LayerKind::Adjustment => {
+                Err(CoreError::Unsupported(Reason::CannotPaintAdjustmentLayer))
+            }
+            LayerKind::Group => Err(CoreError::Unsupported(Reason::CannotPaintGroup)),
         }
     }
 
-    /// ラスターレイヤーの面が無ければ作って有効にする（C# の GetChannel。履歴には入らない）。作ったら true。
+    /// ラスターレイヤーの面が無ければ作って有効にする（履歴には入らない。取り消すときは drop_created_surface で外す）。作ったら true。
     fn ensure_surface(&mut self, index: usize, channel: Channel) -> bool {
         let (w, h, ts) = (self.width, self.height, self.tile_size);
         let layer = &mut self.layers[index];
@@ -1326,6 +1419,15 @@ impl Document {
         self.refresh_anchor_readers();
     }
 
+    /// 画素・タイルの直接の書き込みの後始末。`mark_target_tile` が元画素の変化の記録（評価のキャッシュの鍵）と、フィルターの届く範囲の
+    /// 変化を済ませているので、`external_mutation` と違い評価のキャッシュは捨てない: 変わったタイルとその届く範囲を含むブロックだけ、鍵が
+    /// 合わなくなって次に読むときに評価し直される（ストロークと同じ道）。履歴は消す。
+    fn pixel_mutation(&mut self) {
+        self.clear_history_unchecked();
+        self.revision += 1;
+        self.refresh_anchor_readers();
+    }
+
     /// レイヤーの画素・マスクに、ディスクのキャッシュから読めなかったタイルがあるか（読もうとして失敗したものだけ。履歴の写しは見ない）。
     pub fn has_unreadable_tiles(&self) -> bool {
         self.layers.iter().any(|l| {
@@ -1342,10 +1444,13 @@ impl Document {
     /// 履歴（Undo・Redo）を消す。
     pub fn clear_history(&mut self) -> Result<(), CoreError> {
         self.ensure_loadable()?;
+        let at_saved = self.saved.is_at(self.undo.len());
         self.clear_history_unchecked();
+        self.saved.history_cleared(at_saved);
         Ok(())
     }
     fn clear_history_unchecked(&mut self) {
+        self.saved.forget_position();
         self.undo.clear();
         self.redo.clear();
         self.history_bytes = 0;
@@ -1361,7 +1466,9 @@ impl Document {
     pub fn set_source_budget_bytes(&mut self, bytes: u64) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
         if bytes < self.allocated_bytes() {
-            return Err(CoreError::InvalidArgument("予算が今の画素より小さい"));
+            return Err(CoreError::InvalidArgument(
+                Reason::BudgetBelowExistingPixels,
+            ));
         }
         self.source_budget = bytes;
         Ok(())
@@ -1451,7 +1558,7 @@ impl Document {
             return Err(e);
         }
         self.redo.push(entry);
-        self.revision += 1;
+        self.history_bump();
         Ok(true)
     }
 
@@ -1467,15 +1574,25 @@ impl Document {
             return Err(e);
         }
         self.undo.push(entry);
-        self.revision += 1;
+        self.history_bump();
         Ok(true)
     }
 
     /// 段を当てて履歴へ積む（C# の Execute）。
-    fn execute(&mut self, mut command: Command, cost: u64) -> Result<(), CoreError> {
+    fn execute(&mut self, command: Command, cost: u64) -> Result<(), CoreError> {
         let kind = command.history_kind();
+        self.execute_as(kind, command, cost)
+    }
+
+    /// `execute` の、履歴の種類を呼び手が決める形（まとまった段の名前を、中身の種類に合わせるとき）。
+    fn execute_as(
+        &mut self,
+        kind: HistoryKind,
+        mut command: Command,
+        cost: u64,
+    ) -> Result<(), CoreError> {
         self.apply(&mut command)?;
-        self.revision += 1;
+        self.history_bump();
         self.push(Entry {
             command,
             cost,
@@ -1486,6 +1603,7 @@ impl Document {
 
     fn push(&mut self, entry: Entry) {
         self.coalesce = None; // 新しい段はまとめを終える
+        self.saved.drop_redo_side(self.undo.len());
         for old in self.redo.drain(..) {
             self.history_bytes -= old.cost;
         }
@@ -1522,14 +1640,18 @@ impl Document {
         }
         self.trim_count += 1;
         self.trimmed_bytes += discarded;
+        let mut dropped_undo = 0;
         while self.history_bytes > self.undo_budget && self.undo.len() > self.minimum_undo_steps {
             let e = self.undo.remove(0);
             self.history_bytes -= e.cost;
+            dropped_undo += 1;
         }
         while self.history_bytes > self.undo_budget && !self.redo.is_empty() {
             let e = self.redo.remove(0);
             self.history_bytes -= e.cost;
         }
+        self.saved
+            .history_trimmed(dropped_undo, self.undo.len() + self.redo.len());
     }
 
     /// 段を当てる（やり直し・最初の実行）。
@@ -1602,7 +1724,8 @@ impl Document {
                 layer,
                 target,
                 changes,
-            } => self.restore_tiles(*layer, *target, changes, backwards),
+                created,
+            } => self.restore_tiles(*layer, *target, changes, *created, backwards),
             Command::Insert { index, len, block } => {
                 if backwards {
                     self.take_block(*index, *len, block)
@@ -1760,6 +1883,7 @@ impl Document {
             Command::Compound(steps) => self.switch_compound(steps, backwards),
             Command::Text(m) => self.switch_text(m, backwards),
             Command::Rulers { changes } => self.switch_rulers(changes, backwards),
+            Command::LayerSets(m) => self.switch_layer_sets(m, backwards),
         }
     }
 
@@ -1965,17 +2089,16 @@ impl Document {
 
     /// クリッピングの印のあるレイヤーの下地（同じグループのすぐ下の、印の無い兄弟）のうち、グループのものの中身に印を付ける。
     /// グループはクリッピングの組を持つと通過でも分離で合成するので、組のレイヤーが出入りする（印・表示・チャンネル・面・並び）と
-    /// 中身の合成が変わり得る（C# はここを記録しない）。
+    /// 中身の合成が変わり得る。
     fn mark_clip_bases(&mut self) {
         let mut bases = Vec::new();
         for i in 0..self.layers.len() {
             if !self.layers[i].clipping {
                 continue;
             }
-            let parent = self.layers[i].parent;
             let base = (0..i)
                 .rev()
-                .filter(|&j| self.layers[j].parent == parent)
+                .filter(|&j| self.layers[j].is_sibling_of(&self.layers[i]))
                 .find(|&j| !self.layers[j].clipping);
             if let Some(b) = base {
                 if self.layers[b].is_group() && !bases.contains(&b) {
@@ -2034,13 +2157,24 @@ impl Document {
         layer: LayerId,
         target: Target,
         changes: &[TileChange],
+        created: bool,
         backwards: bool,
     ) -> Result<(), CoreError> {
         let index = self.index_of(layer)?;
+        let created = match target {
+            Target::Channel(c) if created => Some(c),
+            _ => None,
+        };
+        // やり直しで作り直した面（断ったら外して、作る前と同じに戻す）
+        let remade = match (created, backwards) {
+            (Some(c), false) => self.ensure_surface(index, c).then_some(c),
+            _ => None,
+        };
         let growth = self.growth_for(index, target);
-        let surface = self
-            .target_surface_mut(index, target)
-            .ok_or(CoreError::Unsupported("面が無い"))?;
+        let Some(surface) = self.target_surface_mut(index, target) else {
+            self.undo_remade_surface(index, remade);
+            return Err(CoreError::Unsupported(Reason::SurfaceNotFound));
+        };
         let delta: i64 = changes
             .iter()
             .map(|c| {
@@ -2054,7 +2188,10 @@ impl Document {
                 )
             })
             .sum();
-        growth.ensure(surface.allocated_bytes(), delta)?;
+        if let Err(e) = growth.ensure(surface.allocated_bytes(), delta) {
+            self.undo_remade_surface(index, remade);
+            return Err(e);
+        }
         for c in changes {
             surface.restore(
                 c.coord,
@@ -2065,10 +2202,36 @@ impl Document {
                 },
             );
         }
+        if let Some(c) = remade {
+            self.mark_layer(index, Some(c));
+        }
         for c in changes {
             self.mark_target_tile(index, target, c.coord);
         }
+        if let (Some(c), true) = (created, backwards) {
+            self.drop_empty_created_surface(index, c);
+        }
         Ok(())
+    }
+
+    /// restore_tiles がやり直しで作り直した面を、断ったときに外す（面を作ってから予算を確かめるので、断ると面と有効が残る）。
+    fn undo_remade_surface(&mut self, index: usize, remade: Option<Channel>) {
+        if let Some(c) = remade {
+            self.drop_created_surface(index, c, true);
+        }
+    }
+
+    /// ストロークが作った面が空なら外し、チャンネルを無効に戻す（作る前と同じ合成に）。外したら true。
+    fn drop_empty_created_surface(&mut self, index: usize, channel: Channel) -> bool {
+        if !self.layers[index]
+            .surface(channel)
+            .is_some_and(|s| s.tile_count() == 0)
+        {
+            return false;
+        }
+        self.drop_created_surface(index, channel, true);
+        self.mark_layer(index, Some(channel));
+        true
     }
 
     /// レイヤーの元画素（チャンネルの面かマスク）のタイルが変わった。元画素の変化の記録（評価のキャッシュの鍵）と、合成が変わり得るタイル
@@ -2173,9 +2336,9 @@ impl Document {
         let keep_alpha = self.pixel_write_guard(layer, brush.base.erase)?;
         self.ensure_raster(index)?;
         self.refuse_path_layer(index)?;
-        self.ensure_surface(index, channel);
+        let created = self.ensure_surface(index, channel);
         if !self.layers[index].is_channel_enabled(channel) {
-            return Err(CoreError::Unsupported("無効のチャンネルには描けない"));
+            return Err(CoreError::Unsupported(Reason::CannotPaintDisabledChannel));
         }
         let target = Target::Channel(channel);
         let budgets = Budgets {
@@ -2195,7 +2358,8 @@ impl Document {
             StrokeState::new(
                 id, layer, index, channel, kind, brush, budgets, size, keep_alpha,
             )
-            .with_selection(self.selection.clone()),
+            .with_selection(self.selection.clone())
+            .with_created_surface(created),
         );
         self.active_target = target;
         Ok(Stroke { id })
@@ -2223,7 +2387,7 @@ impl Document {
         let index = self.index_of(layer)?;
         // マスクの有無がロックより先（C# の RequireMask のあとに RefuseLockedAttributes）。マスクの無いレイヤーは、ロックの有無に関わらず同じ理由で断る
         if self.layers[index].mask.is_none() {
-            return Err(CoreError::Unsupported("レイヤーにマスクが無い"));
+            return Err(CoreError::Unsupported(Reason::LayerHasNoMask));
         }
         self.refuse_lock(layer, LayerLocks::ALL)?;
         let mut brush = brush.without_color_dynamics();
@@ -2305,6 +2469,7 @@ impl Document {
         match result {
             Ok(any) => {
                 if any {
+                    self.saved.stroke_dab(self.revision);
                     self.revision += 1;
                 }
                 // 画素が変わらなくても、巻き戻し用の写しは育ち得る
@@ -2328,6 +2493,7 @@ impl Document {
         if self.triangle_fill.is_some() {
             return Ok(self.finish_triangles(false));
         }
+        self.redraw_post_corrected(stroke.id)?;
         self.with_stroke(stroke.id, |state, surface, changed| {
             state.finish_input(surface, changed)
         })?;
@@ -2355,6 +2521,14 @@ impl Document {
                 });
             }
         }
+        let created = match target {
+            Target::Channel(c) if state.created_surface => Some(c),
+            _ => None,
+        };
+        // 画素を変えなかったストロークは、始めに作った空の面も残さない（段を積まないので、見た目も保存の中身も始める前のまま）
+        if let (Some(c), true) = (created, changes.is_empty()) {
+            self.drop_empty_created_surface(state.layer_index, c);
+        }
         let result = StrokeResult {
             changed: !changes.is_empty(),
             stamps: state.stamp_count,
@@ -2376,11 +2550,77 @@ impl Document {
                     layer: state.layer,
                     target,
                     changes,
+                    created: created.is_some(),
                 },
                 cost,
             });
         }
+        self.settle_stroke_mark();
         Ok(result)
+    }
+
+    /// 後補正のブラシのストロークを、整えた入力で描き直す（整える点が無ければ何もしない）。描いている間の画素は戻してから、同じ形の空の
+    /// ストロークへ整えた入力を順に与える（確定は呼び手が続けて行い、描く前からの 1 回の Undo になる）。描き直しが予算などで断られたら、
+    /// ストロークは取り消してから返す。
+    fn redraw_post_corrected(&mut self, id: u64) -> Result<(), CoreError> {
+        let plan = match self.active.as_mut() {
+            Some(a) if a.id == id => a.take_post_plan(),
+            _ => None,
+        };
+        let Some(plan) = plan else {
+            return Ok(());
+        };
+        self.restart_active_strokes();
+        self.with_stroke(id, |state, surface, changed| {
+            let mut any = false;
+            for (points, corner) in &plan {
+                for sample in points {
+                    any |= state.add(surface, *sample, changed)?;
+                }
+                if *corner {
+                    any |= state.end_line(surface, changed)?;
+                }
+            }
+            Ok(any)
+        })
+        .map(|_| ())
+    }
+
+    /// 進行中のストローク（複数のチャンネルなら全部）の画素を描く前へ戻し、始めたときと同じ形の空のストロークにする（描き直しの前）。
+    pub(crate) fn restart_active_strokes(&mut self) {
+        let mut states = std::mem::take(&mut self.material.extra);
+        let Some(first) = self.active.take() else {
+            self.material.extra = states;
+            return;
+        };
+        let first_target = self.active_target;
+        states.insert(0, first);
+        let mut fresh = Vec::with_capacity(states.len());
+        for (i, mut state) in states.into_iter().enumerate() {
+            let target = if i == 0 {
+                first_target
+            } else {
+                Target::Channel(state.channel)
+            };
+            let index = state.layer_index;
+            let mut coords: Vec<TileCoord> = state.tiles.keys().copied().collect();
+            coords.sort();
+            if let Some(surface) = self.target_surface_mut(index, target) {
+                for coord in &coords {
+                    surface.restore(*coord, state.tiles[coord].before.as_ref());
+                }
+            }
+            // ストロークが自分の面を戻した変化（描くレイヤーより下の覚えは、これでは捨てない）
+            self.journal.own = true;
+            for coord in coords {
+                self.mark_target_tile(index, target, coord);
+            }
+            self.journal.own = false;
+            fresh.push(state.restarted());
+        }
+        self.active = Some(fresh.remove(0));
+        self.material.extra = fresh;
+        self.revision += 1;
     }
 
     /// ストロークを取り消す（描く前の画素へ戻す）。札がもう終わっていれば何もしない。
@@ -2417,27 +2657,32 @@ impl Document {
         for coord in coords {
             self.mark_target_tile(state.layer_index, target, coord);
         }
+        if let (Target::Channel(c), true) = (target, state.created_surface) {
+            restored |= self.drop_empty_created_surface(state.layer_index, c);
+        }
         if restored {
             self.revision += 1;
         }
+        self.settle_stroke_mark();
         true
     }
 
     // ───────── 合成 ─────────
 
-    /// Color の合成（straight RGBA8、行は下から上）。
+    /// Color の最終の結果（straight RGBA8、行は下から上）。
     pub fn composite(&self, rect: Rect) -> Result<Vec<u8>, CoreError> {
         self.composite_channel(Channel::Color, rect)
     }
 
-    /// チャンネルの合成（straight RGBA8、行は下から上）。
+    /// チャンネルの最終の結果（出力の割り当てのレイヤーセットの、そのチャンネルの合成。割り当てが無ければ、そのチャンネルの既定値で塗った画素。
+    /// straight RGBA8、行は下から上）。
     pub fn composite_channel(&self, channel: Channel, rect: Rect) -> Result<Vec<u8>, CoreError> {
         let mut out = vec![0u8; rect.width as usize * rect.height as usize * 4];
         self.composite_into(channel, rect, &mut out, RowOrder::BottomUp)?;
         Ok(out)
     }
 
-    /// 合成を呼び手の領域（width × height × 4）へ。order で行の並びを選ぶ。描いている途中でも読める。
+    /// 最終の結果を呼び手の領域（width × height × 4）へ。order で行の並びを選ぶ。描いている途中でも読める。
     pub fn composite_into(
         &self,
         channel: Channel,
@@ -2458,18 +2703,68 @@ impl Document {
         order: RowOrder,
         cancel: Option<&std::sync::atomic::AtomicBool>,
     ) -> Result<(), CoreError> {
+        match self.output_set(channel)? {
+            Some(set) => {
+                self.composite_set_into_cancellable(set, channel, rect, out, order, cancel)
+            }
+            None => {
+                self.check_rect(rect)?;
+                self.channel_kind(channel)?;
+                if out.len() != rect.width as usize * rect.height as usize * 4 {
+                    return Err(CoreError::InvalidArgument(
+                        Reason::OutputSizeDoesNotMatchRectangle,
+                    ));
+                }
+                self.fill_default(channel, out);
+                Ok(())
+            }
+        }
+    }
+
+    /// レイヤーセット `set` の、チャンネルの合成（出力の割り当てによらない。straight RGBA8、行は下から上）。描く・2D の表示が読む形。
+    pub fn composite_set_channel(
+        &self,
+        set: LayerSetId,
+        channel: Channel,
+        rect: Rect,
+    ) -> Result<Vec<u8>, CoreError> {
+        let mut out = vec![0u8; rect.width as usize * rect.height as usize * 4];
+        self.composite_set_into_cancellable(
+            set,
+            channel,
+            rect,
+            &mut out,
+            RowOrder::BottomUp,
+            None,
+        )?;
+        Ok(out)
+    }
+
+    /// `composite_set_channel` を呼び手の領域へ（取り消せる形。`composite_into_cancellable` と同じ決まり）。
+    pub fn composite_set_into_cancellable(
+        &self,
+        set: LayerSetId,
+        channel: Channel,
+        rect: Rect,
+        out: &mut [u8],
+        order: RowOrder,
+        cancel: Option<&std::sync::atomic::AtomicBool>,
+    ) -> Result<(), CoreError> {
+        self.require_layer_set(set)?;
         self.check_rect(rect)?;
         let kind = self.channel_kind(channel)?;
         if out.len() != rect.width as usize * rect.height as usize * 4 {
-            return Err(CoreError::InvalidArgument("出力の大きさが矩形と違う"));
+            return Err(CoreError::InvalidArgument(
+                Reason::OutputSizeDoesNotMatchRectangle,
+            ));
         }
         let eval = if rect.is_empty() {
             eval::EvalSet::default()
         } else {
-            self.evaluate_for_composite(channel, kind, rect, cancel)?
+            self.evaluate_for_composite(set, channel, kind, rect, cancel)?
         };
-        let stack = Stack::new(&self.layers, channel, kind, Some(&eval));
-        match self.memo_request(channel) {
+        let stack = self.set_stack(set, None, channel, kind, Some(&eval));
+        match self.memo_request(set, channel) {
             Some(memo) => {
                 composite::composite_into_memo(&stack, self.tile_size, rect, out, order, &memo)
             }
@@ -2477,9 +2772,41 @@ impl Document {
         }
     }
 
+    /// レイヤーセットの合成の、ただ 1 つの組み立て口: `set` のレイヤーだけを計画に入れる（並びは写さず、計画が他のレイヤーセットのレイヤーを
+    /// 飛ばす。計画の番号は文書の並びの番号のまま）。`below` があれば、並びのその番号より前のレイヤーだけ。
+    pub(crate) fn set_stack<'a>(
+        &'a self,
+        set: LayerSetId,
+        below: Option<usize>,
+        channel: Channel,
+        kind: ChannelKind,
+        eval: Option<&'a eval::EvalSet>,
+    ) -> Stack<'a> {
+        let layers = match below {
+            Some(index) => &self.layers[..index],
+            None => &self.layers[..],
+        };
+        Stack::in_set(layers, set, channel, kind, eval)
+    }
+
+    /// そのチャンネルの既定値で塗る（出力の割り当てが無いチャンネルの最終の結果）。
+    fn fill_default(&self, channel: Channel, out: &mut [u8]) {
+        let v = self
+            .channel_info(channel)
+            .map_or(Rgba8::TRANSPARENT, |i| i.default)
+            .to_array();
+        for px in out.chunks_exact_mut(4) {
+            px.copy_from_slice(&v);
+        }
+    }
+
     /// 描いている間の下の覚えを使う依頼（ストロークが無い・覚えを切っている・Anchor を読む効果がある・三角形の塗り・別のレイヤーへ書く
-    /// 多チャンネルのストロークのときは None）。
-    fn memo_request(&self, channel: Channel) -> Option<composite::MemoRequest<'_>> {
+    /// 多チャンネルのストローク・ストロークのレイヤーが別のレイヤーセットのときは None）。
+    fn memo_request(
+        &self,
+        set: LayerSetId,
+        channel: Channel,
+    ) -> Option<composite::MemoRequest<'_>> {
         let a = self.active.as_ref()?;
         if !self.journal.memo.enabled()
             || self.triangle_fill.is_some()
@@ -2489,12 +2816,14 @@ impl Document {
                 .iter()
                 .any(|s| s.layer_index != a.layer_index)
             || self.has_anchor_readers()
+            || self.layers.get(a.layer_index).is_none_or(|l| l.set != set)
         {
             return None;
         }
         Some(composite::MemoRequest {
             memo: &self.journal.memo,
             stroke: a.id,
+            set: set.0,
             layer: a.layer_index,
             channel,
             foreign: self.journal.foreign,
@@ -2536,7 +2865,7 @@ impl Document {
         self.journal.memo.set_enabled(on);
     }
 
-    /// 散らばったタイルの合成（straight RGBA8、行は下から上。キャンバスの外のタイルは飛ばす）。1 枚ずつ `composite_into` を呼ぶより、計画を
+    /// 散らばったタイルの最終の結果（straight RGBA8、行は下から上。キャンバスの外のタイルは飛ばす）。1 枚ずつ `composite_into` を呼ぶより、計画を
     /// 1 回で組み、タイルをワーカーへ分けるので、表示のように何枚も作り直すときの 1 枚あたりの時間が短い（比は文書と負荷による。計測の台
     /// `comp2d_bench --only call` の「1 枚ずつ ÷ 束」）。
     /// 効果の出力は、組のタイルを含むブロックだけを評価する。画素は `composite_into` と同じバイト。
@@ -2555,14 +2884,30 @@ impl Document {
         coords: &[TileCoord],
         cancel: Option<&std::sync::atomic::AtomicBool>,
     ) -> Result<Vec<CompositedTile>, CoreError> {
-        self.composite_tiles_then(channel, coords, cancel, |_, coord, rect, pixels| {
-            CompositedTile {
-                coord,
-                rect,
-                stride: 1,
-                pixels,
-            }
-        })
+        self.composite_tiles_then(channel, coords, cancel, CompositedTile::whole)
+    }
+
+    /// レイヤーセット `set` の、散らばったタイルの合成（出力の割り当てによらない。`composite_tiles_cancellable` と同じ決まり）。
+    pub fn composite_set_tiles_cancellable(
+        &self,
+        set: LayerSetId,
+        channel: Channel,
+        coords: &[TileCoord],
+        cancel: Option<&std::sync::atomic::AtomicBool>,
+    ) -> Result<Vec<CompositedTile>, CoreError> {
+        self.composite_set_tiles_then(set, channel, coords, cancel, CompositedTile::whole)
+    }
+
+    /// キャンバスの中のタイルと、その矩形（coords の並びのまま。キャンバスの外は飛ばす）。
+    fn canvas_tile_rects(&self, coords: &[TileCoord]) -> Vec<(TileCoord, Rect)> {
+        coords
+            .iter()
+            .filter_map(|c| {
+                self.tile_rect(*c)
+                    .filter(|r| !r.is_empty())
+                    .map(|r| (*c, r))
+            })
+            .collect()
     }
 
     /// `composite_tiles_cancellable` の、タイルごとの仕上げ `finish(番号, 座標, 矩形, 合成した画素)` を、そのタイルを合成したワーカーが
@@ -2575,24 +2920,50 @@ impl Document {
         cancel: Option<&std::sync::atomic::AtomicBool>,
         finish: impl Fn(usize, TileCoord, Rect, Vec<u8>) -> R + Sync,
     ) -> Result<Vec<R>, CoreError> {
+        match self.output_set(channel)? {
+            Some(set) => self.composite_set_tiles_then(set, channel, coords, cancel, finish),
+            None => {
+                self.channel_kind(channel)?;
+                Ok(self
+                    .canvas_tile_rects(coords)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, (coord, rect))| {
+                        let mut pixels = vec![0u8; rect.width as usize * rect.height as usize * 4];
+                        self.fill_default(channel, &mut pixels);
+                        finish(i, coord, rect, pixels)
+                    })
+                    .collect())
+            }
+        }
+    }
+
+    /// `composite_tiles_then` の、レイヤーセットを指す形。
+    pub(crate) fn composite_set_tiles_then<R: Send>(
+        &self,
+        set: LayerSetId,
+        channel: Channel,
+        coords: &[TileCoord],
+        cancel: Option<&std::sync::atomic::AtomicBool>,
+        finish: impl Fn(usize, TileCoord, Rect, Vec<u8>) -> R + Sync,
+    ) -> Result<Vec<R>, CoreError> {
+        self.require_layer_set(set)?;
         let kind = self.channel_kind(channel)?;
-        let tiles: Vec<(TileCoord, Rect)> = coords
-            .iter()
-            .filter_map(|c| {
-                self.tile_rect(*c)
-                    .filter(|r| !r.is_empty())
-                    .map(|r| (*c, r))
-            })
-            .collect();
+        let tiles = self.canvas_tile_rects(coords);
         if tiles.is_empty() {
             return Ok(Vec::new());
         }
         let wanted: Vec<TileCoord> = tiles.iter().map(|(c, _)| *c).collect();
-        let eval =
-            self.evaluate_for_composite_in(channel, kind, &eval::Region::Tiles(&wanted), cancel)?;
-        let stack = Stack::new(&self.layers, channel, kind, Some(&eval));
+        let eval = self.evaluate_for_composite_in(
+            set,
+            channel,
+            kind,
+            &eval::Region::Tiles(&wanted),
+            cancel,
+        )?;
+        let stack = self.set_stack(set, None, channel, kind, Some(&eval));
         let rects: Vec<Rect> = tiles.iter().map(|(_, r)| *r).collect();
-        let memo = self.memo_request(channel);
+        let memo = self.memo_request(set, channel);
         composite::composite_tiles_with(
             &stack,
             self.tile_size,
@@ -2602,7 +2973,7 @@ impl Document {
         )
     }
 
-    /// 散らばったタイルの、歩幅 stride で拾った粗い合成（操作中・開いた直後の仮の絵）。画素 (i, j) は、タイルの左下から (i·stride, j·stride)
+    /// 散らばったタイルの、歩幅 stride で拾った粗い最終の結果（操作中・開いた直後の仮の絵）。画素 (i, j) は、タイルの左下から (i·stride, j·stride)
     /// の画素の合成と同じバイト。効果の出力は、評価していないブロックがあれば、粗く評価した出力（縮めた読み元で、半径を歩幅で割る。
     /// 近似で、キャッシュには入れない）で、全部が評価済みなら、その正確な出力を拾う。stride は 1 以上でタイルの一辺の約数。
     pub fn composite_coarse_tiles(
@@ -2611,28 +2982,60 @@ impl Document {
         coords: &[TileCoord],
         stride: u32,
     ) -> Result<Vec<CompositedTile>, CoreError> {
+        match self.output_set(channel)? {
+            Some(set) => self.composite_set_coarse_tiles(set, channel, coords, stride),
+            None => {
+                if stride == 0 || !self.tile_size.is_multiple_of(stride) {
+                    return Err(CoreError::InvalidArgument(
+                        Reason::StepDoesNotDivideTileEdge,
+                    ));
+                }
+                self.channel_kind(channel)?;
+                Ok(self
+                    .canvas_tile_rects(coords)
+                    .into_iter()
+                    .map(|(coord, rect)| {
+                        let (w, h) = (rect.width.div_ceil(stride), rect.height.div_ceil(stride));
+                        let mut pixels = vec![0u8; w as usize * h as usize * 4];
+                        self.fill_default(channel, &mut pixels);
+                        CompositedTile {
+                            coord,
+                            rect,
+                            stride,
+                            pixels,
+                        }
+                    })
+                    .collect())
+            }
+        }
+    }
+
+    /// レイヤーセット `set` の、粗い合成（出力の割り当てによらない。`composite_coarse_tiles` と同じ決まり）。
+    pub fn composite_set_coarse_tiles(
+        &self,
+        set: LayerSetId,
+        channel: Channel,
+        coords: &[TileCoord],
+        stride: u32,
+    ) -> Result<Vec<CompositedTile>, CoreError> {
+        self.require_layer_set(set)?;
         if stride == 0 || !self.tile_size.is_multiple_of(stride) {
-            return Err(CoreError::InvalidArgument("歩幅がタイルの一辺の約数でない"));
+            return Err(CoreError::InvalidArgument(
+                Reason::StepDoesNotDivideTileEdge,
+            ));
         }
         let kind = self.channel_kind(channel)?;
-        let tiles: Vec<(TileCoord, Rect)> = coords
-            .iter()
-            .filter_map(|c| {
-                self.tile_rect(*c)
-                    .filter(|r| !r.is_empty())
-                    .map(|r| (*c, r))
-            })
-            .collect();
+        let tiles = self.canvas_tile_rects(coords);
         if tiles.is_empty() {
             return Ok(Vec::new());
         }
         let wanted: Vec<TileCoord> = tiles.iter().map(|(c, _)| *c).collect();
-        let eval = if self.effects_pending(channel, &wanted) {
-            self.evaluate_for_composite_coarse(channel, kind, &wanted, stride, None)?
+        let eval = if self.set_effects_pending(set, channel, &wanted) {
+            self.evaluate_for_composite_coarse(set, channel, kind, &wanted, stride, None)?
         } else {
-            self.evaluate_for_composite_in(channel, kind, &eval::Region::Tiles(&wanted), None)?
+            self.evaluate_for_composite_in(set, channel, kind, &eval::Region::Tiles(&wanted), None)?
         };
-        let stack = Stack::new(&self.layers, channel, kind, Some(&eval));
+        let stack = self.set_stack(set, None, channel, kind, Some(&eval));
         let rects: Vec<Rect> = tiles.iter().map(|(_, r)| *r).collect();
         let images =
             composite::composite_coarse_tiles_into(&stack, self.tile_size, &rects, stride)?;
@@ -2650,6 +3053,7 @@ impl Document {
 
     /// レイヤー `id` より下の合成（そのレイヤーと上のレイヤーは入れない。調整レイヤーの入力の見積りに使う）。straight RGBA8、行は下から上。
     /// レイヤーの並びの前の部分だけで合成するので、入れ子のレイヤーは、親のグループがそのレイヤーより前にある並びの範囲で合成する。
+    /// 読むのは、そのレイヤーのレイヤーセットのレイヤーだけ。
     pub fn composite_below(
         &self,
         id: LayerId,
@@ -2658,31 +3062,56 @@ impl Document {
     ) -> Result<Vec<u8>, CoreError> {
         self.check_rect(rect)?;
         let index = self.index_of(id)?;
+        let set = self.layers[index].set;
         let kind = self.channel_kind(channel)?;
         let mut out = vec![0u8; rect.width as usize * rect.height as usize * 4];
         if rect.is_empty() {
             return Ok(out);
         }
-        let eval = self.evaluate_for_composite(channel, kind, rect, None)?;
-        let stack = Stack::new(&self.layers[..index], channel, kind, Some(&eval));
+        let eval = self.evaluate_for_composite(set, channel, kind, rect, None)?;
+        let stack = self.set_stack(set, Some(index), channel, kind, Some(&eval));
         composite::composite_into(&stack, self.tile_size, rect, &mut out, RowOrder::BottomUp)?;
         Ok(out)
     }
 
-    /// 1 画素の合成（参照の式。画素ごとにレイヤーを引くので遅い。試験・スポイト向け）。
+    /// 1 画素の最終の結果（参照の式。画素ごとにレイヤーを引くので遅い。試験・スポイト向け）。
     pub fn composite_pixel(&self, channel: Channel, x: u32, y: u32) -> Result<Rgba8, CoreError> {
+        match self.output_set(channel)? {
+            Some(set) => self.composite_set_pixel(set, channel, x, y),
+            None => {
+                if x >= self.width || y >= self.height {
+                    return Err(CoreError::InvalidArgument(Reason::PixelOutsideCanvas));
+                }
+                self.channel_kind(channel)?;
+                Ok(self
+                    .channel_info(channel)
+                    .map_or(Rgba8::TRANSPARENT, |i| i.default))
+            }
+        }
+    }
+
+    /// レイヤーセット `set` の、1 画素の合成（出力の割り当てによらない）。
+    pub fn composite_set_pixel(
+        &self,
+        set: LayerSetId,
+        channel: Channel,
+        x: u32,
+        y: u32,
+    ) -> Result<Rgba8, CoreError> {
+        self.require_layer_set(set)?;
         if x >= self.width || y >= self.height {
-            return Err(CoreError::InvalidArgument("画素がキャンバスの外"));
+            return Err(CoreError::InvalidArgument(Reason::PixelOutsideCanvas));
         }
         let kind = self.channel_kind(channel)?;
         let ts = self.tile_size;
         let eval = self.evaluate_for_composite(
+            set,
             channel,
             kind,
             Rect::new(x / ts * ts, y / ts * ts, 1, 1),
             None,
         )?;
-        let stack = Stack::new(&self.layers, channel, kind, Some(&eval));
+        let stack = self.set_stack(set, None, channel, kind, Some(&eval));
         composite::composite_pixel(&stack, x, y)
     }
 
@@ -2690,7 +3119,7 @@ impl Document {
         if rect.x as u64 + rect.width as u64 > self.width as u64
             || rect.y as u64 + rect.height as u64 > self.height as u64
         {
-            Err(CoreError::InvalidArgument("矩形がキャンバスの外"))
+            Err(CoreError::InvalidArgument(Reason::RectangleOutsideCanvas))
         } else {
             Ok(())
         }

@@ -14,8 +14,9 @@ use yolu_core::generator::Kind as GeneratorKind;
 use yolu_core::glam::Vec2;
 use yolu_core::{Channel, EffectSettings, FilterId, LayerId, LayerKind, RulerId};
 
+use super::FillOp;
 use crate::notice::Source as NoticeSource;
-use crate::state::AppState;
+use crate::state::{Action, AppState};
 use crate::view3d::shape_gizmo::{self as sg, Handle, Root, Shape, Snap};
 
 /// ギズモが動かしているもの。
@@ -79,12 +80,12 @@ pub fn target(app: &AppState) -> Option<Target> {
     // 編集のモードは、点の印で選んだ物（G/R/S の途中・Q で隠したときは出さない）。ポーズのモードは出さない
     match app.mode {
         crate::mode::EditorMode::Edit => return crate::objects::gizmo_target(app),
-        crate::mode::EditorMode::Pose => return None,
+        crate::mode::EditorMode::Pose | crate::mode::EditorMode::Hide => return None,
         crate::mode::EditorMode::Paint => {}
     }
     app.view3d.model.as_ref()?;
-    let id = app.selected_layer?;
-    let layer = app.doc.layer(id)?;
+    let id = app.session.selected_layer?;
+    let layer = app.session.doc.layer(id)?;
     if let Some((l, f)) = app.fillfx.edit_filter {
         if l == id && filter_shape(app, l, f).is_some() {
             return Some(Target::Filter(l, f));
@@ -109,7 +110,7 @@ pub fn target(app: &AppState) -> Option<Target> {
 
 /// レイヤーのフィルターのスタックの段が、形のグラデーションの Generator ならその形、UV 以外の投影の画像の Generator なら投影の置き場。
 fn filter_shape(app: &AppState, layer: LayerId, filter: FilterId) -> Option<Shape> {
-    let (owner, effect, _) = app.doc.find_filter(filter)?;
+    let (owner, effect, _) = app.session.doc.find_filter(filter)?;
     if owner != layer {
         return None;
     }
@@ -129,7 +130,7 @@ fn filter_shape(app: &AppState, layer: LayerId, filter: FilterId) -> Option<Shap
 
 /// 対象の今の形。
 pub fn shape(app: &AppState, target: Target) -> Option<Shape> {
-    let layer = app.doc.layer(target.layer())?;
+    let layer = app.session.doc.layer(target.layer())?;
     match target {
         Target::Projection(_) => {
             let p = layer.projection();
@@ -176,7 +177,7 @@ pub fn handle_at(app: &AppState, rect: Rect, at: Pos2) -> Handle {
     let Some(s) = shape(app, t) else {
         return Handle::None;
     };
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     hit_at(app, t, &s, &view, local(rect, at))
 }
 
@@ -184,7 +185,7 @@ pub fn handle_at(app: &AppState, rect: Rect, at: Pos2) -> Handle {
 pub fn handle_point(app: &AppState, rect: Rect, handle: Handle) -> Option<Pos2> {
     let t = target(app)?;
     let s = shape(app, t)?;
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     if let (Target::Ruler(l, id), Handle::EndA | Handle::EndB) = (t, handle) {
         let r = crate::objects::ruler_of(app, l, id)?;
         let end = if handle == Handle::EndA {
@@ -216,12 +217,13 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2, source: Source) -> bool {
     let Some(start) = shape(app, t) else {
         return false;
     };
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     let p = local(rect, at);
     let handle = hit_at(app, t, &start, &view, p);
     if handle == Handle::None {
         return false;
     }
+    // 読むだけのセットは、ここで塗りつぶしレイヤーの出どころで断る（通した後は `apply` の読むだけの断りも通る）
     if let Some(reason) = app.read_only_reason() {
         app.refuse(
             NoticeSource::FillLayer,
@@ -229,17 +231,17 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2, source: Source) -> bool {
         );
         return true; // ハンドルを押したので、下のツールで描き始めない
     }
-    app.doc.end_coalescing(); // 前の欄のドラッグにまとめない
     let grab = crate::rulers::edit3d::grab_offset(app, &view, t, handle, p);
-    app.fillfx.drag = Some(ShapeDrag {
+    // 始まりは、ほかの操作と同じ入口から（途中の書き込みは札を持つこのドラッグだけが `write_shape` で）
+    app.apply(Action::Fill(FillOp::GrabShape(Box::new(ShapeDrag {
         handle,
         start,
         from: p,
         grab,
         target: t,
         source,
-        doc_id: app.doc.id(),
-    });
+        doc_id: app.session.doc.id(),
+    }))));
     true
 }
 
@@ -249,12 +251,14 @@ pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, symmetric: bool, snap: 
         return;
     };
     // テクスチャセットが替わった: 前の文書のドラッグは、ここでは何もせずに捨てる（替えるときに前の文書の変更は確定済み）
-    if app.doc.id() != d.doc_id {
+    if app.session.doc.id() != d.doc_id {
         app.fillfx.drag = None;
         return;
     }
     // レイヤーが替わった・無くなった: そこで終える
-    if app.selected_layer != Some(d.target.layer()) || app.doc.layer(d.target.layer()).is_none() {
+    if app.session.selected_layer != Some(d.target.layer())
+        || app.session.doc.layer(d.target.layer()).is_none()
+    {
         release(app, true);
         return;
     }
@@ -262,7 +266,7 @@ pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, symmetric: bool, snap: 
         crate::rulers::edit3d::drag_end(app, rect, &d, at);
         return;
     }
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     let next = sg::drag(
         d.handle,
         &d.start,
@@ -287,7 +291,8 @@ pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, symmetric: bool, snap: 
     }
 }
 
-/// 対象の形を文書へ入れる（`coalesce` なら続けて変える操作として 1 回の Undo にまとめる）。値が範囲外なら理由を知らせて None
+/// 対象の形を文書へ入れる（`coalesce` なら続けて変える操作として 1 回の Undo にまとめる）。ドラッグの持ち主（形のギズモ・編集のモードの
+/// G/R/S）の途中の書き込みの入口で、始まりの確かめ（読むだけ・描いている最中）は持ち主が始めるときに済ませてある。値が範囲外なら理由を知らせて None
 /// （文書は変えない）。対象が無ければ None。入れたら（変わっていれば「変更あり」の印を付けて）Some(Ok)、core が断ったら Some(Err)。
 pub fn write_shape(
     app: &mut AppState,
@@ -295,19 +300,20 @@ pub fn write_shape(
     next: Shape,
     coalesce: bool,
 ) -> Option<Result<(), yolu_core::CoreError>> {
-    let revision = app.doc.revision();
+    let revision = app.session.doc.revision();
     let result = match target {
         Target::Projection(layer) => {
-            let mut p = *app.doc.layer(layer)?.projection();
+            let mut p = *app.session.doc.layer(layer)?.projection();
             p.placement = next.into_placement();
             if let Err(e) = p.validate() {
                 app.fail(NoticeSource::FillLayer, app.lang.fill_error(&e));
                 return None;
             }
-            app.doc.set_fill_projection(layer, p, coalesce)
+            app.session.doc.set_fill_projection(layer, p, coalesce)
         }
         Target::Gradient(layer, ch) => {
             let mut g = app
+                .session
                 .doc
                 .layer(layer)
                 .and_then(|l| l.fill_gradient(ch))
@@ -316,15 +322,17 @@ pub fn write_shape(
             if g.validate().is_err() {
                 app.fail(
                     NoticeSource::FillLayer,
-                    app.lang
-                        .pick("形の値が範囲外です", "The shape is out of range"),
+                    app.lang.t("fillfx-the-shape-is-out-of"),
                 );
                 return None;
             }
-            app.doc.set_fill_gradient(layer, ch, Some(g), coalesce)
+            app.session
+                .doc
+                .set_fill_gradient(layer, ch, Some(g), coalesce)
         }
         Target::Filter(layer, filter) => {
             let mut g = app
+                .session
                 .doc
                 .find_filter(filter)
                 .and_then(|(_, e, _)| e.settings().generator_settings().cloned())?;
@@ -336,13 +344,16 @@ pub fn write_shape(
             if g.validate().is_err() {
                 app.fail(
                     NoticeSource::FillLayer,
-                    app.lang
-                        .pick("形の値が範囲外です", "The shape is out of range"),
+                    app.lang.t("fillfx-the-shape-is-out-of"),
                 );
                 return None;
             }
-            app.doc
-                .set_filter_settings(layer, filter, EffectSettings::generator(g), coalesce)
+            app.session.doc.set_filter_settings(
+                layer,
+                filter,
+                EffectSettings::generator(g),
+                coalesce,
+            )
         }
         Target::Ruler(layer, id) => {
             let current = crate::objects::ruler_of(app, layer, id)?;
@@ -350,16 +361,15 @@ pub fn write_shape(
             if moved.validate().is_err() {
                 app.fail(
                     NoticeSource::Ruler,
-                    app.lang
-                        .pick("定規の値が範囲外です", "The ruler is out of range"),
+                    app.lang.t("fillfx-the-ruler-is-out-of"),
                 );
                 return None;
             }
             app.ruler_put(layer, moved, coalesce)
         }
     };
-    if result.is_ok() && app.doc.revision() != revision {
-        app.modified = true;
+    if result.is_ok() && app.session.doc.revision() != revision {
+        app.session.mark_modified();
     }
     Some(result)
 }
@@ -369,26 +379,24 @@ pub fn release(app: &mut AppState, commit: bool) {
     let Some(d) = app.fillfx.drag.take() else {
         return;
     };
-    if d.doc_id != app.doc.id() {
+    if d.doc_id != app.session.doc.id() {
         return; // 前の文書のドラッグ（替えるときに確定済み）。今の文書には触らない
     }
     if commit {
-        app.doc.end_coalescing();
+        app.session.doc.end_coalescing();
         return;
     }
-    match app.doc.cancel_coalescing() {
+    match app.session.doc.cancel_coalescing() {
         Ok(true) => {
             let (source, text) = if matches!(d.target, Target::Ruler(..)) {
                 (
                     NoticeSource::Ruler,
-                    app.lang
-                        .pick("定規の操作をやめました", "Ruler edit cancelled"),
+                    app.lang.t("fillfx-ruler-edit-cancelled"),
                 )
             } else {
                 (
                     NoticeSource::FillLayer,
-                    app.lang
-                        .pick("形の操作をやめました", "Shape edit cancelled"),
+                    app.lang.t("fillfx-shape-edit-cancelled"),
                 )
             };
             app.info(source, text);
@@ -400,7 +408,7 @@ pub fn release(app: &mut AppState, commit: bool) {
                 NoticeSource::FillLayer,
                 app.lang.core_error(&e),
             );
-            app.doc.end_coalescing();
+            app.session.doc.end_coalescing();
         }
     }
 }
@@ -427,7 +435,7 @@ pub fn draw(ui: &Ui, app: &mut AppState, rect: Rect, pointer: Option<Pos2>) -> H
     let Some(s) = shape(app, t) else {
         return Handle::None;
     };
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     let hover = match &app.fillfx.drag {
         Some(d) => d.handle,
         None => pointer

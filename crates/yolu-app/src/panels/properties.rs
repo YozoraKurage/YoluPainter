@@ -1,6 +1,6 @@
 //! プロパティの欄（Substance Painter の並び）: 選んでいるレイヤーの中身だけを出す。ツールの設定は出さない（ツールの設定は左のドックの
 //! ツールプロパティのパネル `tool_props`。どのツールを選んでいても、この欄は同じレイヤーには同じ中身）。描く文脈（ペイントのレイヤーか、どのレイヤーでもマスク）は
-//! 頭にタブ（ステンシル｜レイヤー）、塗りつぶし・調整・グループの文脈はレイヤーの欄だけ、レイヤーの下の効果の行を選んでいるときは
+//! 頭にタブ（レイヤー｜ステンシル。初めはレイヤー）、塗りつぶし・調整・グループの文脈はレイヤーの欄だけ、レイヤーの下の効果の行を選んでいるときは
 //! その行の設定だけ。中身は縦に積み、はみ出したらスクロールする（ステンシルの欄は `brush_props` 経由、レイヤーの欄は `layer_props`）。
 //! テクスチャセットの見た目は別のパネル「マテリアル」（`material`）、ブラシそのもの（一覧・ツールプロパティ・ブラシサイズ・詳細）は左のドックの
 //! サブツール・ツールプロパティ・ブラシサイズのパネル（`subtools`・`tool_props`・`brushes`）と詳細のウィンドウ（`brush_detail`）。
@@ -16,7 +16,12 @@ use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, NumberFormat, Rows, SliderSpec};
 
-pub const TAB_ICONS: [&str; 2] = ["square", "tune"];
+/// `AppState::ui.property_tab` の値（並びでなく名前。値の意味は変えない）。
+pub const TAB_STENCIL: usize = 0;
+pub const TAB_LAYER: usize = 1;
+/// タブの並び（左から）。アイコンと `tab_labels` も同じ並び。
+pub const TAB_ORDER: [usize; 2] = [TAB_LAYER, TAB_STENCIL];
+pub const TAB_ICONS: [&str; 2] = ["tune", "square"];
 
 /// 欄の文脈（選んでいるレイヤーで決まる。ツールでは決まらない）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,8 +40,9 @@ pub fn context(app: &AppState) -> Context {
         return Context::Effect;
     }
     let kind = app
+        .session
         .selected_layer
-        .and_then(|id| app.doc.layer(id))
+        .and_then(|id| app.session.doc.layer(id))
         .map(|l| l.kind());
     match kind {
         Some(LayerKind::Raster) | None => Context::Paint,
@@ -48,7 +54,7 @@ pub fn context(app: &AppState) -> Context {
 /// タブの名前。
 pub fn tab_labels(app: &AppState) -> [&'static str; 2] {
     let l = app.lang;
-    [l.pick("ステンシル", "Stencil"), l.pick("レイヤー", "Layer")]
+    [l.t("panels-layer"), l.t("panels-stencil")]
 }
 
 pub fn open_popup(
@@ -58,7 +64,7 @@ pub fn open_popup(
     anchor: Rect,
     min_width: f32,
 ) {
-    app.popup = Some(OpenPopup {
+    app.ui.popup = Some(OpenPopup {
         kind: PopupKind::M2(popup),
         state: PopupState::new(ctx, anchor).with_min_width(min_width),
     });
@@ -221,7 +227,7 @@ pub fn snap_symmetry_row(
         ui,
         rows,
         id,
-        lang.pick("対称定規にスナップ", "Snap to Symmetry Ruler"),
+        lang.t("panels-snap-to-symmetry-ruler"),
         value,
         unavailable,
         unavailable.is_none(),
@@ -324,11 +330,16 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     let ctx = ui.ctx().clone();
     let context = context(app);
     let mut top = r.top();
-    let mut tab = app.ui.property_tab.min(TAB_ICONS.len() - 1);
+    let mut tab = if TAB_ORDER.contains(&app.ui.property_tab) {
+        app.ui.property_tab
+    } else {
+        TAB_LAYER
+    };
     if context == Context::Paint {
         let strip = Rect::from_min_size(r.min, vec2(r.width(), t::PROPERTY_TAB_STRIP_HEIGHT));
         let labels = tab_labels(app);
-        let chosen = w::tab_strip(ui, strip, "props.tabs", &labels, &TAB_ICONS, tab);
+        let at = TAB_ORDER.iter().position(|&t| t == tab).unwrap_or(0);
+        let chosen = TAB_ORDER[w::tab_strip(ui, strip, "props.tabs", &labels, &TAB_ICONS, at)];
         if chosen != tab {
             app.m2.props_scroll = 0.0;
         }
@@ -352,7 +363,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         Context::Effect => super::effect_props::effect_body(ui, app, &mut rows, &ctx),
         Context::Layer => super::layer_props::layer_body(ui, app, &mut rows, &ctx),
         Context::Paint => match tab {
-            0 => super::brush_props::stencil_tab(ui, app, &mut rows),
+            TAB_STENCIL => super::brush_props::stencil_tab(ui, app, &mut rows),
             _ => super::layer_props::layer_body(ui, app, &mut rows, &ctx),
         },
     }

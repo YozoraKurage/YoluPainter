@@ -56,10 +56,15 @@ pub const ANTI_ALIAS_VERSION: i32 = 34;
 /// ある文書だけがこの版になり、0.5.x までのスタンドアロンは版の範囲の外、Unity 版の読み手は「Unsupported archive version」で断る
 /// （形式は docs/YLP_FORMAT.md、理由は docs/YLP_DECISIONS.md）。この版の文書は版 27〜34 の中身も読み書きできる。
 pub const RULERS_VERSION: i32 = 35;
+/// レイヤーセット（頭の `layer_set_count`・`layer_sets[i]` と出力の割り当て `route_count`・`route[i]`、レイヤーの末尾の `set`）を足した版。
+/// レイヤーセットが 2 つ以上か、名前を付けたか、出力の割り当てを全部のチャンネルが 1 つのレイヤーセットから取る形から変えた文書だけがこの版になり、
+/// 0.6.x までのスタンドアロンは版の範囲の外として断る（形式は docs/YLP_FORMAT.md）。この版の文書は版 27〜35 の中身も読み書きできる。
+pub const LAYER_SETS_VERSION: i32 = 36;
 /// この読み手が読める一番新しい版。読める版の集合は 1〜`MIXING_VERSION`・`SPLIT_VERSION`（26。分けた正本の識別）・`PATHS_VERSION`（27）・
 /// `EFFECTS_VERSION`（28）・`POINT_GRADIENT_VERSION`（29）・`TEXT_VERSION`（30）・`SEAMS_VERSION`（32）・`BAKE_PRIORITY_VERSION`（33）・
-/// `ANTI_ALIAS_VERSION`（34）・`RULERS_VERSION`（35）で、間の 31 は意味を決めておらず断る（版を割り振ったら `is_known_version` へ足す）。
-pub const MAX_NATIVE_VERSION: i32 = RULERS_VERSION;
+/// `ANTI_ALIAS_VERSION`（34）・`RULERS_VERSION`（35）・`LAYER_SETS_VERSION`（36）で、間の 31 は意味を決めておらず断る（版を割り振ったら
+/// `is_known_version` へ足す）。
+pub const MAX_NATIVE_VERSION: i32 = LAYER_SETS_VERSION;
 /// レイヤーの後に手動の ID の色の塊（`YLID`）を置ける版。書き手の版（21 以上）はどれもこれ以上なので、色のために版を上げることは無い。
 pub(crate) const MANUAL_ID_COLORS_VERSION: i32 = 19;
 /// 標準のチャンネルの数（番号 0〜5。Unity 版の PaintChannel）。
@@ -447,6 +452,7 @@ fn is_known_version(version: i32) -> bool {
         || version == BAKE_PRIORITY_VERSION
         || version == ANTI_ALIAS_VERSION
         || version == RULERS_VERSION
+        || version == LAYER_SETS_VERSION
 }
 
 /// 正本をレイヤーごとに読む（頭 → レイヤー 0, 1, … → 終わり）。レイヤーごとに項目を取り出せる（流して core へ入れる読みが、レイヤー 1 枚ぶんだけ持つため）。
@@ -465,6 +471,10 @@ pub(crate) struct Parse<'a> {
     anchor_ids: HashMap<[u8; 16], i32>,
     /// 文書の中の定規の ID（重ならない）。
     ruler_ids: HashSet<[u8; 16]>,
+    /// 版 36 のレイヤーセットの ID（頭の並び。版 35 までは空）。
+    layer_sets: Vec<[u8; 16]>,
+    /// 版 36 のレイヤーごとの所属（読んだレイヤーの順。版 35 までは None）。
+    members: Vec<Option<[u8; 16]>>,
     /// 今のレイヤーの項目の始まり（`fields` の位置）。
     layer_start: usize,
 }
@@ -491,7 +501,7 @@ impl<'a> Parse<'a> {
             // 中の版は分けていない並びの版（26 は分けた正本の印で、中には入らない）
             check(
                 inner >= UNITY_NATIVE_VERSION && is_known_version(inner) && inner != SPLIT_VERSION,
-                format!("分けた正本の中の版 {inner} は未対応です"),
+                format!("分けた正本の中のバージョン {inner} は未対応です"),
             )?;
             let count = i32::from_le_bytes(r.take(4)?.try_into().unwrap());
             let parts =
@@ -506,7 +516,7 @@ impl<'a> Parse<'a> {
             check(
                 is_known_version(stored),
                 format!(
-                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{PATHS_VERSION}・{EFFECTS_VERSION}・{POINT_GRADIENT_VERSION}・{TEXT_VERSION}・{SEAMS_VERSION}・{BAKE_PRIORITY_VERSION}・{ANTI_ALIAS_VERSION}・{RULERS_VERSION})"
+                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{PATHS_VERSION}・{EFFECTS_VERSION}・{POINT_GRADIENT_VERSION}・{TEXT_VERSION}・{SEAMS_VERSION}・{BAKE_PRIORITY_VERSION}・{ANTI_ALIAS_VERSION}・{RULERS_VERSION}・{LAYER_SETS_VERSION})"
                 ),
             )?;
             check(parts.is_none(), "分けていない正本に部分があります")?;
@@ -540,6 +550,11 @@ impl<'a> Parse<'a> {
         if version >= BAKE_PRIORITY_VERSION {
             r.block("bake_priority", bake_priority)?;
         }
+        let layer_sets = if version >= LAYER_SETS_VERSION {
+            layer_sets(&mut r, &user)?
+        } else {
+            Vec::new()
+        };
         let count = r.int("layer_count", 0, crate::MAX_DOCUMENT_LAYERS as i32)?;
         let layer_start = r.fields.len();
         Ok(Self {
@@ -556,6 +571,8 @@ impl<'a> Parse<'a> {
             ids: HashSet::new(),
             anchor_ids: HashMap::new(),
             ruler_ids: HashSet::new(),
+            layer_sets,
+            members: Vec::new(),
             layer_start,
         })
     }
@@ -572,9 +589,14 @@ impl<'a> Parse<'a> {
         self.layer_start = self.r.fields.len();
         let (v, w, h, ts) = (self.version, self.width, self.height, self.tile_size);
         let user = &self.user;
-        let l = self
-            .r
-            .block(&format!("layers[{i}]"), |r| layer(r, v, w, h, ts, user))?;
+        let (l, set) = self.r.block(&format!("layers[{i}]"), |r| {
+            let l = layer(r, v, w, h, ts, user)?;
+            // 版 36: レイヤーの末尾に、入っているレイヤーセット
+            let set = (v >= LAYER_SETS_VERSION)
+                .then(|| r.id("set", false))
+                .transpose()?;
+            Ok((l, set))
+        })?;
         check(self.ids.insert(l.id), "レイヤーIDが重複しています")?;
         for id in &l.anchors {
             check(
@@ -585,6 +607,13 @@ impl<'a> Parse<'a> {
         for id in &l.rulers {
             check(self.ruler_ids.insert(*id), "定規のIDが重複しています")?;
         }
+        if let Some(set) = set {
+            check(
+                self.layer_sets.contains(&set),
+                "レイヤーの入っているレイヤーセットがありません",
+            )?;
+        }
+        self.members.push(set);
         self.layers.push(l);
         self.next += 1;
         Ok(Some(i as usize))
@@ -655,6 +684,10 @@ impl<'a> Parse<'a> {
                 check(
                     p > i && layers[p].kind == 3,
                     "親グループの位置・種類・循環が不正です",
+                )?;
+                check(
+                    self.members[p] == self.members[i],
+                    "グループの子が親と違うレイヤーセットにあります",
                 )?;
                 while open.last() != Some(&p) {
                     check(open.pop().is_some(), "グループの子が連続していません")?;
@@ -841,6 +874,39 @@ struct Layer {
     references: Vec<[u8; 16]>,
     /// レイヤーの定規の ID。
     rulers: Vec<[u8; 16]>,
+}
+/// 版 36 の頭のレイヤーセット: 数（1〜`yolu_core::MAX_LAYER_SETS`）、レイヤーセットごとに ID（空でない・重ならない）と名前（制御文字なし）、
+/// 出力の割り当ての数（文書のチャンネルの数）と、チャンネルの番号の昇順に番号（文書のチャンネル）と取るレイヤーセットの ID（空は既定値。空でなければ
+/// 一覧にあるもの）。返すのはレイヤーセットの ID の並び。
+fn layer_sets(r: &mut Reader<'_>, user: &UserChannels) -> Result<Vec<[u8; 16]>> {
+    let n = r.int("layer_set_count", 1, yolu_core::MAX_LAYER_SETS as i32)?;
+    let mut ids: Vec<[u8; 16]> = Vec::with_capacity(n as usize);
+    for i in 0..n {
+        r.block(&format!("layer_sets[{i}]"), |r| {
+            let id = r.id("id", false)?;
+            check(!ids.contains(&id), "レイヤーセットのIDが重複しています")?;
+            ids.push(id);
+            let name = r.string("name")?;
+            check(
+                !name.chars().any(char::is_control),
+                "レイヤーセットの名前が不正です",
+            )?;
+            Ok(())
+        })?;
+    }
+    let channels: Vec<i32> = (0..STANDARD_CHANNELS).chain(user.keys().copied()).collect();
+    r.int("route_count", channels.len() as i32, channels.len() as i32)?;
+    for (i, c) in channels.iter().enumerate() {
+        r.block(&format!("route[{i}]"), |r| {
+            r.int("channel", *c, *c)?;
+            let set = r.id("set", true)?;
+            check(
+                set == [0; 16] || ids.contains(&set),
+                "出力の割り当てのレイヤーセットがありません",
+            )
+        })?;
+    }
+    Ok(ids)
 }
 /// 版 22 のユーザーチャンネルの一覧: 数（版 22 は 1〜58で 0 の一覧は書かない。版 23 は 0〜58）、番号の昇順に番号（6〜63）・名前
 /// （1〜128 文字、制御文字なし、標準の名前とも重ならない）・種類・色空間・既定の RGBA。

@@ -53,7 +53,7 @@ use std::sync::Arc;
 use eframe::egui_wgpu::{self, wgpu};
 use rayon::prelude::*;
 use yolu_core::export::uses;
-use yolu_core::geometry::SurfaceGeometry;
+use yolu_core::geometry::{MaterialSet, SurfaceGeometry};
 use yolu_core::glam::DVec2;
 use yolu_core::normal::output_from_composites;
 use yolu_core::padding::{self, Rings};
@@ -254,11 +254,11 @@ struct PaintSet {
     pad: Option<PadShape>,
 }
 
-/// 塗り広げの元: モデルの面の形と、このセットが受け持つマテリアルの番号。
+/// 塗り広げの元: モデルの面の形と、このセットが受け持つマテリアルの組。
 #[derive(Clone)]
 pub struct UvSource {
     pub geometry: Arc<SurfaceGeometry>,
-    pub material: i32,
+    pub material: MaterialSet,
 }
 
 /// 塗り広げる UV の形（マテリアルの三角形の UV の値の要約と、その数）。ポーズで面の世代が変わっても、UV が同じなら同じ。
@@ -360,7 +360,7 @@ pub struct Paint {
     pad_source: Option<UvSource>,
     pad_want: Option<PadShape>,
     /// 形の要約を作った元（面の世代とマテリアル）。同じなら数え直さない。
-    pad_seen: Option<(u32, i32, Option<PadShape>)>,
+    pad_seen: Option<(u32, MaterialSet, Option<PadShape>)>,
     /// 覚えている段の地図。
     pad_rings: Option<PadRings>,
     /// 表示の写しの重みの絵（塗り広げるときだけ。UV の形・文書の大きさ・縮め・塗り広げの幅が同じなら作り直さない）。

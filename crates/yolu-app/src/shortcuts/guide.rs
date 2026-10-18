@@ -6,6 +6,7 @@ use crate::commands::{self, Kind};
 use crate::keyconfig;
 use crate::keymap::{self, Scope, GESTURES};
 use crate::lang::Lang;
+use crate::state::key::Modifiers;
 use crate::state::AppState;
 
 use super::editor::{command_name, mouse_name, when_label, Section};
@@ -18,7 +19,6 @@ pub const END: &str = "<!-- keymap:end -->";
 pub fn tables(lang: Lang) -> String {
     let app = AppState::new_in(32, 32, lang);
     let map = keymap::default_map();
-    let (open, close) = lang.pick(("（", "）"), (" (", ")"));
     let mut out = String::new();
     for scope in Scope::ALL {
         let section = Section::of_scope(scope);
@@ -37,7 +37,10 @@ pub fn tables(lang: Lang) -> String {
             }
             let mut name = command_name(&app, group.0);
             if let Some(when) = when_label(lang, bindings[0].when) {
-                name = format!("{name}{open}{when}{close}");
+                name = lang.f(
+                    "shortcuts-name-with-note",
+                    &[("name", &name), ("note", &when)],
+                );
             }
             let keys: Vec<String> = bindings
                 .iter()
@@ -61,32 +64,26 @@ pub fn tables(lang: Lang) -> String {
             continue;
         }
         out.push_str(&format!("### {}\n\n", section.label(lang)));
-        out.push_str(lang.pick(
-            "| 操作 | キー |\n|---|---|\n",
-            "| Action | Key |\n|---|---|\n",
-        ));
+        out.push_str(lang.t("shortcuts-action-key"));
         for (name, keys) in rows {
             out.push_str(&format!("| {} | {keys} |\n", escape(&name)));
         }
         out.push('\n');
     }
-    out.push_str(&format!("### {}\n\n", lang.pick("マウス", "Mouse")));
-    out.push_str(lang.pick(
-        "| 操作 | 組み合わせ | 効くモード |\n|---|---|---|\n",
-        "| Action | Combination | Mode |\n|---|---|---|\n",
-    ));
+    out.push_str(&format!("### {}\n\n", lang.t("shortcuts-mouse")));
+    out.push_str(lang.t("shortcuts-action-combination-mode"));
     for g in GESTURES.iter() {
         let binding = super::gestures::Binding {
             scope: g.scope,
             held: g
                 .held
                 .and_then(|h| map.rows_of(h).find_map(keymap::KeyBinding::key)),
-            modifiers: egui::Modifiers {
+            modifiers: Modifiers {
                 alt: g.alt,
                 shift: g.shift,
                 ctrl: g.ctrl,
                 command: g.ctrl,
-                ..egui::Modifiers::NONE
+                ..Modifiers::NONE
             },
             button: g.button,
             operation: g.operation,

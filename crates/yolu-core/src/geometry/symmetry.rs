@@ -302,11 +302,13 @@ pub fn copy_count(mirror: Option<&MirrorPlane>, radial: Option<&RadialSymmetry>)
 }
 
 /// 写し（copy 番目の回転・reflected ならミラーの後）の点を面へ投げ直す。positions は元と先に置いた写しの位置（重複を省く。この
-/// 写しの位置を足す）。順番は C# と同じ: 鏡映を先に、回転を後に。copy 0 で鏡映なしは元そのもので、呼ばない。
+/// 写しの位置を足す）。順番は C# と同じ: 鏡映を先に、回転を後に。copy 0 で鏡映なしは元そのもので、呼ばない。set は描くテクスチャセットの
+/// マテリアルの組で、写しの点がその組の面なら塗る（None なら元の点と同じマテリアルの面だけ）。
 #[allow(clippy::too_many_arguments)]
 pub fn find_copy(
     geometry: &SurfaceGeometry,
     hit: &SurfaceHit,
+    set: Option<&super::MaterialSet>,
     mirror: Option<&MirrorPlane>,
     radial: Option<&RadialSymmetry>,
     copy: u32,
@@ -334,20 +336,27 @@ pub fn find_copy(
         search_distance(radius, &geometry.bounds()),
         n,
         MAX_CLOSEST_POINT_NODE_VISITS,
-        -1,
+        None,
     ) {
         Err(_) => CopyHit::BudgetExceeded,
         Ok(None) => CopyHit::NoSurface,
-        // 同じマテリアル（テクスチャセット）なら別のメッシュでも塗る
-        Ok(Some(found)) if found.material != hit.material => CopyHit::OtherMaterial,
+        // 同じテクスチャセット（マテリアルの組）なら別のメッシュ・別のマテリアルでも塗る
+        Ok(Some(found))
+            if !set.map_or(found.material == hit.material, |s| {
+                s.contains(found.material)
+            }) =>
+        {
+            CopyHit::OtherMaterial
+        }
         Ok(Some(found)) => CopyHit::Found(found),
     }
 }
 
-/// 元の点から見た写しの当たり全部（カーソルの表示用。面に落ちなかった写し・重複・別のマテリアルは入らない）。
+/// 元の点から見た写しの当たり全部（カーソルの表示用。面に落ちなかった写し・重複・組の外のマテリアルは入らない。set は [`find_copy`] と同じ）。
 pub fn copy_hits(
     geometry: &SurfaceGeometry,
     hit: &SurfaceHit,
+    set: Option<&super::MaterialSet>,
     mirror: Option<&MirrorPlane>,
     radial: Option<&RadialSymmetry>,
     radius: f32,
@@ -362,6 +371,7 @@ pub fn copy_hits(
             if let CopyHit::Found(h) = find_copy(
                 geometry,
                 hit,
+                set,
                 mirror,
                 radial,
                 copy,
@@ -424,7 +434,7 @@ pub fn build_mirrored(
         search_distance(radius_world, &geometry.bounds()),
         plane.reflect_direction(hit.normal),
         MAX_CLOSEST_POINT_NODE_VISITS,
-        -1,
+        None,
     );
     let mirror_hit = match found {
         Err(_) => {
@@ -520,6 +530,7 @@ pub fn build_expanded(
             let found = match find_copy(
                 geometry,
                 hit,
+                None,
                 mirror,
                 radial,
                 copy,

@@ -7,10 +7,36 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+use egui::{pos2, Rect};
+use egui_kittest::Harness;
+use yolu_app::{Tab, YoluApp};
+
+/// ツールの帯・オプションバー・サブツールとツールプロパティ（左のドックの上の 2 つの組）の範囲。
+pub fn tool_panels(h: &Harness<'_, YoluApp>) -> Rect {
+    let sub_tools = common::shot::group(h, Tab::SubTools);
+    let props = common::shot::group(h, Tab::ToolProperties);
+    Rect::from_min_max(
+        pos2(0.0, yolu_app::ui::theme::MENU_BAR_HEIGHT),
+        pos2(sub_tools.right(), props.bottom()),
+    )
+}
+
+/// ツールプロパティの組と、キャンバスを合わせた範囲（ツールの欄と、その操作の結果の線・印）。
+pub fn tool_props_and_canvas(h: &Harness<'_, YoluApp>) -> Rect {
+    let canvas = h
+        .state()
+        .canvas_view_rect()
+        .expect("キャンバスを描いている");
+    common::shot::group(h, Tab::ToolProperties).union(canvas)
+}
+
 mod anti_alias_ui;
+mod brush_correction;
 mod brush_import_ui;
 mod brush_menu;
 mod brush_mix;
+mod brush_rows;
+mod brush_stroke_extras;
 mod brushes;
 mod canvas_gpu;
 mod clipboard;
@@ -31,6 +57,7 @@ mod history;
 mod image_stage_ui;
 mod layer_menu;
 mod layerops;
+mod modified_mark;
 mod pathtool;
 mod pressure_adjust;
 mod ramp_editor;
@@ -42,6 +69,7 @@ mod selection_bar;
 mod selection_build;
 mod stencil;
 mod stroke_look;
+mod taper_dot;
 mod text_tool;
 mod tool_keys;
 mod tool_layout_ui;

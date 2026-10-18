@@ -11,11 +11,10 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use egui::Key;
-
 use yolu_core::geometry::AxisView;
 
 use crate::clipboard::ClipAction;
+use crate::engine::LayerId;
 use crate::keymap::Operation;
 use crate::lang::Lang;
 use crate::m2::Edit;
@@ -25,7 +24,9 @@ use crate::pathtool::PathAction;
 use crate::pie::PieAction;
 use crate::prefs::PrefsAction;
 use crate::selection::{SelAction, SelEdit, SelUiOp};
+use crate::state::key::Key;
 use crate::state::{Action, AppState, Tool};
+use crate::view3d::hide::HideAction;
 use crate::view3d::navigation::NavOp;
 
 /// 操作の種類。
@@ -44,12 +45,14 @@ pub enum Kind {
 /// 名前（日本語と英語）の引き方。
 #[derive(Clone, Copy, Debug)]
 pub enum Name {
-    /// 実行する `Action` の名前（メニューの項目・ツールの名前。`shortcuts::action_label`）。
+    /// 実行する `Action` が自分の表で持つ名前（ツールの選びはツールの表、画面の色の取り方はその名前）。
     OfAction,
+    /// 選んでいるレイヤーで言い方が変わる名前（レイヤーのメニューの項目も同じ関数で名前を付ける。引数は、メニューを出すレイヤー）。
+    ByLayer(fn(&AppState, Option<LayerId>) -> &'static str),
     /// マウスの組み合わせの名前（`Operation::label`）。
     Mouse(Operation),
-    /// 日本語と英語の名前。
-    Text(&'static str, &'static str),
+    /// 言語ごとの名前（`.ftl` の文）。
+    Text(fn(Lang) -> &'static str),
 }
 
 /// 操作 1 つ。
@@ -64,10 +67,10 @@ pub struct Command {
     pub locked: bool,
     /// パイ・メニューから実行するときの `Action`（キーをビューが読む `Press` で、ビューの外からも実行できるもの。`action` を持つものは要らない）。
     pub run: Option<fn() -> Action>,
-    /// パイメニューの項目に出す短い名前（日本語・英語。無ければ `label`）。
-    pub short: Option<(&'static str, &'static str)>,
-    /// この版では実行できない理由（日本語・英語）。パイの項目は押せず、ツールチップに理由を出す。
-    pub unavailable: Option<(&'static str, &'static str)>,
+    /// パイメニューの項目に出す短い名前（無ければ `label`）。
+    pub short: Option<fn(Lang) -> &'static str>,
+    /// このバージョンでは実行できない理由。パイの項目は押せず、ツールチップに理由を出す。
+    pub unavailable: Option<fn(Lang) -> &'static str>,
     /// キーを押し続けたときの繰り返しの押しでも実行する（パイを開く操作は偽: 押したまま項目を選んで閉じたあと、繰り返しで開き直さない）。
     pub repeats: bool,
 }
@@ -78,14 +81,16 @@ impl Command {
         !self.locked
     }
 
-    /// 名前（`Action` を持つものは、メニューと同じ名前。`app` は言語とメニューの引き当てに使う）。
+    /// 名前（メニューにある操作は、メニューと同じ名前。`app` は言語と、選んでいるレイヤーで変わる名前に使う）。
     pub fn label(&self, app: &AppState) -> Option<String> {
         match self.name {
             Name::OfAction => self
                 .action
-                .and_then(|make| crate::shortcuts::action_label(app, &make())),
+                .and_then(|make| action_name(app.lang, &make()))
+                .map(Into::into),
+            Name::ByLayer(name) => Some(name(app, app.session.selected_layer).into()),
             Name::Mouse(operation) => Some(operation.label(app.lang).into()),
-            Name::Text(ja, en) => Some(app.lang.pick(ja, en).into()),
+            Name::Text(name) => Some(name(app.lang).into()),
         }
     }
 
@@ -96,21 +101,70 @@ impl Command {
 
     /// パイメニューの項目の短い名前（無ければ None。呼ぶ側は `label` を使う）。
     pub fn short_label(&self, lang: Lang) -> Option<&'static str> {
-        self.short.map(|(ja, en)| lang.pick(ja, en))
+        self.short.map(|name| name(lang))
     }
 
-    /// この版では実行できない理由（実行できれば None）。
+    /// このバージョンでは実行できない理由（実行できれば None）。
     pub fn unavailable(&self, lang: Lang) -> Option<&'static str> {
-        self.unavailable.map(|(ja, en)| lang.pick(ja, en))
+        self.unavailable.map(|reason| reason(lang))
     }
 
-    /// 言語だけで引ける名前（`Action` の名前はメニューの引き当てに `AppState` が要るので、`OfAction` は None）。
+    /// 言語だけで引ける名前（選んでいるレイヤーで変わる名前は `AppState` が要るので None）。
     pub fn static_label(&self, lang: Lang) -> Option<&'static str> {
         match self.name {
-            Name::OfAction => None,
+            Name::OfAction => self.action.and_then(|make| action_name(lang, &make())),
+            Name::ByLayer(_) => None,
             Name::Mouse(operation) => Some(operation.label(lang)),
-            Name::Text(ja, en) => Some(lang.pick(ja, en)),
+            Name::Text(name) => Some(name(lang)),
         }
+    }
+}
+
+/// `Action` が自分の表で持つ名前（ツールの選び・画面の色の取り方）。
+fn action_name(lang: Lang, action: &Action) -> Option<&'static str> {
+    match action {
+        Action::SelectTool(tool) => Some(tool.name_in(lang)),
+        Action::ScreenPick(mode) => Some(mode.label(lang)),
+        _ => None,
+    }
+}
+
+/// 操作（`Press`）の名前（メニューの項目はこの名前を使う）。言語だけで決まる名前を持たない操作は None。
+pub fn name(id: &str, lang: Lang) -> Option<&'static str> {
+    find(id)?.static_label(lang)
+}
+
+/// 言語だけで決まる名前を持つ操作の名前（表に無い・選んでいるレイヤーで変わる名前の ID は、書き間違いなのでここで落とす）。
+pub fn label_of(id: &str, lang: Lang) -> &'static str {
+    name(id, lang).unwrap_or_else(|| panic!("{id}: 言語だけで決まる名前を持つ操作"))
+}
+
+/// 「複製」の名前（レイヤーを選んでいるときの言い方。選んでいなければ「レイヤーを複製」）。
+pub fn duplicate_name(app: &AppState, layer: Option<LayerId>) -> &'static str {
+    if layer.is_some_and(|id| app.session.doc.layer(id).is_some()) {
+        app.lang.t("commands-duplicate")
+    } else {
+        app.lang.t("commands-duplicate-layer")
+    }
+}
+
+/// 結合の名前（複数選んでいればそのレイヤーを、グループならグループを、そうでなければ下のレイヤーと。レイヤーを選んでいなければ「レイヤーを結合」）。
+pub fn merge_down_name(app: &AppState, layer: Option<LayerId>) -> &'static str {
+    let l = app.lang;
+    let Some(layer) = layer.and_then(|id| app.session.doc.layer(id)) else {
+        return l.t("commands-merge-layers");
+    };
+    let members = app
+        .session
+        .doc
+        .topmost_of(&app.selected_layers())
+        .unwrap_or_default();
+    if members.len() > 1 {
+        l.t("commands-merge-layers")
+    } else if layer.is_group() {
+        l.t("commands-merge-group")
+    } else {
+        l.t("commands-merge-down")
     }
 }
 
@@ -128,15 +182,14 @@ const fn press(id: &'static str, make: fn() -> Action) -> Command {
     }
 }
 
-/// 名前を自分で持つ `Press`（メニューに同じ `Action` の項目が無いもの）。
+/// 名前を表で持つ `Press`（メニューに同じ `Action` の項目があれば、その項目もこの名前を使う）。
 const fn press_named(
     id: &'static str,
-    ja: &'static str,
-    en: &'static str,
+    name: fn(Lang) -> &'static str,
     make: fn() -> Action,
 ) -> Command {
     Command {
-        name: Name::Text(ja, en),
+        name: Name::Text(name),
         ..press(id, make)
     }
 }
@@ -144,31 +197,47 @@ const fn press_named(
 /// パイメニューに短い名前で出る `Press`。
 const fn press_short(
     id: &'static str,
-    (ja, en): (&'static str, &'static str),
-    short: (&'static str, &'static str),
+    name: fn(Lang) -> &'static str,
+    short: fn(Lang) -> &'static str,
     make: fn() -> Action,
 ) -> Command {
     Command {
         short: Some(short),
-        ..press_named(id, ja, en, make)
+        ..press_named(id, name, make)
     }
 }
 
 /// 割り当てを替えさせない `Press`（キーの受け口が決まっているもの）。
-const fn press_locked(id: &'static str, make: fn() -> Action) -> Command {
+const fn press_locked(
+    id: &'static str,
+    name: fn(Lang) -> &'static str,
+    make: fn() -> Action,
+) -> Command {
     Command {
         locked: true,
+        ..press_named(id, name, make)
+    }
+}
+
+/// 選んでいるレイヤーで言い方が変わる名前を持つ `Press`（レイヤーのメニューの項目も同じ関数で名前を付ける）。
+const fn by_layer(
+    id: &'static str,
+    name: fn(&AppState, Option<LayerId>) -> &'static str,
+    make: fn() -> Action,
+) -> Command {
+    Command {
+        name: Name::ByLayer(name),
         ..press(id, make)
     }
 }
 
 /// 押しを読むビューが ID でキーを引く `Press`（`Action` を持たない）。
-const fn read_by_view(id: &'static str, ja: &'static str, en: &'static str) -> Command {
+const fn read_by_view(id: &'static str, name: fn(Lang) -> &'static str) -> Command {
     Command {
         id,
         kind: Kind::Press,
         action: None,
-        name: Name::Text(ja, en),
+        name: Name::Text(name),
         locked: false,
         run: None,
         short: None,
@@ -177,10 +246,10 @@ const fn read_by_view(id: &'static str, ja: &'static str, en: &'static str) -> C
     }
 }
 
-const fn hold(id: &'static str, ja: &'static str, en: &'static str) -> Command {
+const fn hold(id: &'static str, name: fn(Lang) -> &'static str) -> Command {
     Command {
         kind: Kind::Hold,
-        ..read_by_view(id, ja, en)
+        ..read_by_view(id, name)
     }
 }
 
@@ -188,15 +257,15 @@ const fn gesture(id: &'static str, operation: Operation) -> Command {
     Command {
         kind: Kind::Gesture,
         name: Name::Mouse(operation),
-        ..read_by_view(id, "", "")
+        ..read_by_view(id, |_| "")
     }
 }
 
-const fn fixed(id: &'static str, key: Key, ja: &'static str, en: &'static str) -> Command {
+const fn fixed(id: &'static str, key: Key, name: fn(Lang) -> &'static str) -> Command {
     Command {
         kind: Kind::Fixed(key),
         locked: true,
-        ..read_by_view(id, ja, en)
+        ..read_by_view(id, name)
     }
 }
 
@@ -220,6 +289,10 @@ fn object(a: ObjectAction) -> Action {
     Action::Object(a)
 }
 
+fn hide(a: HideAction) -> Action {
+    Action::Hide(a)
+}
+
 fn pie(id: &str) -> Action {
     Action::Pie(PieAction::Open(id.to_owned()))
 }
@@ -231,86 +304,243 @@ fn edit(e: SelEdit) -> Action {
 /// 操作の全部（ID の重複・形・名前・表の行の指す先は試験が見る）。
 pub static COMMANDS: &[Command] = &[
     // ファイル
-    press("file.new_project", || Action::NewProjectDialog),
-    press("file.open", || Action::OpenProjectDialog),
-    press("file.save", || Action::SaveProject),
-    press("file.save_as", || Action::SaveProjectAsDialog),
+    press_named(
+        "file.new_project",
+        |l| l.t("commands-new-project"),
+        || Action::NewProjectDialog,
+    ),
+    press_named(
+        "file.open",
+        |l| l.t("commands-open"),
+        || Action::OpenProjectDialog,
+    ),
+    press_named(
+        "file.save",
+        |l| l.t("commands-save"),
+        || Action::SaveProject,
+    ),
+    press_named(
+        "file.save_as",
+        |l| l.t("commands-save-as"),
+        || Action::SaveProjectAsDialog,
+    ),
     // 書き出しのウィンドウ。既定のキーは無い（Ctrl+Shift+E は表示レイヤーの結合が使っている）。設定の画面で割り当てられる
-    press("file.export", || {
-        Action::Export(crate::export::ExportAction::OpenWindow)
-    }),
-    press("app.quit", || Action::Quit),
-    press("app.settings", || Action::Prefs(PrefsAction::Open)),
+    press_named(
+        "file.export",
+        |l| l.t("commands-export-textures"),
+        || Action::Export(crate::export::ExportAction::OpenWindow),
+    ),
+    // 前に書き出したときと同じ設定で、ウィンドウを開かずに書き出す。既定のキーは無い
+    press_named(
+        "file.export_again",
+        |l| l.t("commands-export-again"),
+        || Action::Export(crate::export::ExportAction::Again),
+    ),
+    press_named("app.quit", |l| l.t("commands-quit"), || Action::Quit),
+    press_named(
+        "app.settings",
+        |l| l.t("commands-settings"),
+        || Action::Prefs(PrefsAction::Open),
+    ),
     // メッシュマップをベイクするウィンドウ（既定のキーは無い。割り当てると、パイメニューからも呼べる。入口は、テクスチャセットの帯のボタンと、セットの右クリック）
     no_repeat(press_named(
         "bake.open",
-        "メッシュマップをベイク…",
-        "Bake Mesh Maps…",
+        |l| l.t("commands-bake-mesh-maps"),
         || Action::Bake(crate::bake::BakeAction::OpenWindow),
     )),
     // 編集
-    press("edit.undo", || Action::Undo),
-    press("edit.redo", || Action::Redo),
+    press_named("edit.undo", |l| l.t("commands-undo"), || Action::Undo),
+    press_named("edit.redo", |l| l.t("commands-redo"), || Action::Redo),
     // レイヤー
-    press("layer.new", || Action::NewLayer),
-    press("layer.duplicate", || Action::M2(Edit::DuplicateSelected)),
-    press("layer.group", || Action::M2(Edit::GroupSelected)),
-    press("layer.ungroup", || Action::M2(Edit::UngroupSelected)),
-    press("layer.merge_down", || Action::M2(Edit::MergeDown)),
-    press("layer.merge_visible", || Action::M2(Edit::MergeVisible)),
+    press_named(
+        "layer.new",
+        |l| l.t("commands-new-layer"),
+        || Action::NewLayer,
+    ),
+    by_layer("layer.duplicate", duplicate_name, || {
+        Action::M2(Edit::DuplicateSelected)
+    }),
+    press_named(
+        "layer.group",
+        |l| l.t("commands-group-layers"),
+        || Action::M2(Edit::GroupSelected),
+    ),
+    press_named(
+        "layer.ungroup",
+        |l| l.t("commands-ungroup"),
+        || Action::M2(Edit::UngroupSelected),
+    ),
+    by_layer("layer.merge_down", merge_down_name, || {
+        Action::M2(Edit::MergeDown)
+    }),
+    press_named(
+        "layer.merge_visible",
+        |l| l.t("commands-merge-visible"),
+        || Action::M2(Edit::MergeVisible),
+    ),
     // 選択範囲
-    press("selection.all", || edit(SelEdit::All)),
-    press("selection.deselect", || edit(SelEdit::Clear)),
-    press("selection.invert", || edit(SelEdit::Invert)),
-    press("selection.erase", || edit(SelEdit::Erase)),
-    press("selection.to_new_layer", || edit(SelEdit::ToNewLayer)),
-    press("selection.quick_mask", || {
-        Action::Sel(SelAction::Ui(SelUiOp::QuickMask(None)))
-    }),
+    press_named(
+        "selection.all",
+        |l| l.t("commands-select-all"),
+        || edit(SelEdit::All),
+    ),
+    press_named(
+        "selection.deselect",
+        |l| l.t("commands-deselect"),
+        || edit(SelEdit::Clear),
+    ),
+    press_named(
+        "selection.invert",
+        |l| l.t("commands-invert-selection"),
+        || edit(SelEdit::Invert),
+    ),
+    press_named(
+        "selection.erase",
+        |l| l.t("commands-erase-selection"),
+        || edit(SelEdit::Erase),
+    ),
+    press_named(
+        "selection.to_new_layer",
+        |l| l.t("commands-copy-to-a-new-layer"),
+        || edit(SelEdit::ToNewLayer),
+    ),
+    press_named(
+        "selection.quick_mask",
+        |l| l.t("commands-quick-mask"),
+        || Action::Sel(SelAction::Ui(SelUiOp::QuickMask(None))),
+    ),
     // クリップボード（キーの受け口は `clipboard::keys`。割り当てを替えさせない）
-    press_locked("clip.copy_merged", || Action::Clip(ClipAction::CopyMerged)),
-    press_locked("clip.copy", || Action::Clip(ClipAction::Copy)),
-    press_locked("clip.cut", || Action::Clip(ClipAction::Cut)),
-    press_locked("clip.paste", || Action::Clip(ClipAction::Paste)),
+    press_locked(
+        "clip.copy_merged",
+        |l| l.t("commands-copy-merged"),
+        || Action::Clip(ClipAction::CopyMerged),
+    ),
+    press_locked(
+        "clip.copy",
+        |l| l.t("commands-copy"),
+        || Action::Clip(ClipAction::Copy),
+    ),
+    press_locked(
+        "clip.cut",
+        |l| l.t("commands-cut"),
+        || Action::Clip(ClipAction::Cut),
+    ),
+    press_locked(
+        "clip.paste",
+        |l| l.t("commands-paste"),
+        || Action::Clip(ClipAction::Paste),
+    ),
     // 表示
-    press("view.fit", || Action::FitView),
-    press("view.zoom_in", || Action::ZoomIn),
-    press("view.zoom_out", || Action::ZoomOut),
-    press("view.rotate_left", || Action::RotateLeft),
-    press("view.rotate_right", || Action::RotateRight),
-    press("view.reset_rotation", || Action::ResetRotation),
-    press("view.flip", || Action::FlipView),
-    press("view.ruler_snap", || {
-        Action::Ruler(crate::rulers::RulerAction::ToggleSnapRuler)
-    }),
-    press("view.special_ruler_snap", || {
-        Action::Ruler(crate::rulers::RulerAction::ToggleSnapSpecial)
-    }),
-    press("view.switch_special_ruler", || {
-        Action::Ruler(crate::rulers::RulerAction::SwitchSpecial)
-    }),
+    press_named(
+        "view.fit",
+        |l| l.t("commands-fit-to-screen"),
+        || Action::FitView,
+    ),
+    press_named(
+        "view.zoom_in",
+        |l| l.t("commands-zoom-in"),
+        || Action::ZoomIn,
+    ),
+    press_named(
+        "view.zoom_out",
+        |l| l.t("commands-zoom-out"),
+        || Action::ZoomOut,
+    ),
+    press_named(
+        "view.rotate_left",
+        |l| l.t("commands-rotate-view-left"),
+        || Action::RotateLeft,
+    ),
+    press_named(
+        "view.rotate_right",
+        |l| l.t("commands-rotate-view-right"),
+        || Action::RotateRight,
+    ),
+    press_named(
+        "view.reset_rotation",
+        |l| l.t("commands-reset-rotation"),
+        || Action::ResetRotation,
+    ),
+    press_named(
+        "view.flip",
+        |l| l.t("commands-flip-view"),
+        || Action::FlipView,
+    ),
+    press_named(
+        "view.ruler_snap",
+        |l| l.t("commands-snap-to-ruler"),
+        || Action::Ruler(crate::rulers::RulerAction::ToggleSnapRuler),
+    ),
+    press_named(
+        "view.special_ruler_snap",
+        |l| l.t("commands-snap-to-special-ruler"),
+        || Action::Ruler(crate::rulers::RulerAction::ToggleSnapSpecial),
+    ),
+    press_named(
+        "view.switch_special_ruler",
+        |l| l.t("commands-switch-the-snapping-special-ruler"),
+        || Action::Ruler(crate::rulers::RulerAction::SwitchSpecial),
+    ),
+    // UI を隠す・戻す（既定のキーは Tab）
+    press_named(
+        "view.toggle_ui",
+        |l| l.t("commands-hide-or-show-the-ui"),
+        || Action::ToggleUi,
+    ),
     // 色・ブラシ・塗りつぶし・パス
-    press("color.swap", || Action::SwapColors),
-    press("color.default", || Action::DefaultColors),
+    press_named(
+        "color.swap",
+        |l| l.t("commands-swap-main-and-sub-colors"),
+        || Action::SwapColors,
+    ),
+    press_named(
+        "color.default",
+        |l| l.t("commands-default-colors"),
+        || Action::DefaultColors,
+    ),
     press("color.pick_screen", || {
         Action::ScreenPick(crate::screen_pick::Mode::Visible)
     }),
     press("color.pick_screen_hidden", || {
         Action::ScreenPick(crate::screen_pick::Mode::HideWindow)
     }),
-    press("brush.smaller", || Action::BrushSmaller),
-    press("brush.larger", || Action::BrushLarger),
+    press_named(
+        "brush.smaller",
+        |l| l.t("commands-smaller-brush"),
+        || Action::BrushSmaller,
+    ),
+    press_named(
+        "brush.larger",
+        |l| l.t("commands-larger-brush"),
+        || Action::BrushLarger,
+    ),
+    // 消すモード（既定のキーは無い。設定の画面で割り当てる）。切り替えは、押したままの繰り返しで出たり消えたりしない
+    no_repeat(press_named(
+        "brush.erase_mode",
+        |l| l.t("commands-erase-mode"),
+        || Action::ToggleEraseMode,
+    )),
     // 切り替えは、押したままの繰り返しで出たり消えたりしない
-    no_repeat(press("fill.toggle_handles", || {
-        Action::Fill(crate::fillfx::FillOp::ToggleHandles)
-    })),
-    press("fill.delete_point", || {
-        Action::Fill(crate::fillfx::FillOp::DeletePoint)
-    }),
-    press("path.delete_point", || {
-        Action::Path(PathAction::DeleteSelected)
-    }),
-    press("path.finish", || Action::Path(PathAction::SelectPath(None))),
+    no_repeat(press_named(
+        "fill.toggle_handles",
+        |l| l.t("commands-projection-handles"),
+        || Action::Fill(crate::fillfx::FillOp::ToggleHandles),
+    )),
+    press_named(
+        "fill.delete_point",
+        |l| l.t("commands-delete-gradient-point"),
+        || Action::Fill(crate::fillfx::FillOp::DeletePoint),
+    ),
+    press_named(
+        "path.delete_point",
+        |l| l.t("commands-delete-path-point"),
+        || Action::Path(PathAction::DeleteSelected),
+    ),
+    press_named(
+        "path.finish",
+        |l| l.t("commands-finish-path"),
+        || Action::Path(PathAction::SelectPath(None)),
+    ),
     // ツール（`tool.<ツールの id>`。ツールのキーはツールの表のとおり）
     press("tool.brush", || Action::SelectTool(Tool::Brush)),
     press("tool.eraser", || Action::SelectTool(Tool::Eraser)),
@@ -340,73 +570,43 @@ pub static COMMANDS: &[Command] = &[
     // ビューが押しを読む `Press`
     Command {
         run: Some(|| Action::View3dNav(NavOp::FrameSelected)),
-        short: Some(("収める", "Frame")),
-        ..read_by_view(
-            "view3d.frame_selected",
-            "選んだセットを収める",
-            "Frame Selected Set",
-        )
+        short: Some(|l| l.t("commands-frame")),
+        ..read_by_view("view3d.frame_selected", |l| {
+            l.t("commands-frame-selected-set")
+        })
     },
-    read_by_view("transform.nudge_left", "移動 ←（1 px）", "Move ← (1 px)"),
-    read_by_view("transform.nudge_right", "移動 →（1 px）", "Move → (1 px)"),
-    read_by_view("transform.nudge_up", "移動 ↑（1 px）", "Move ↑ (1 px)"),
-    read_by_view("transform.nudge_down", "移動 ↓（1 px）", "Move ↓ (1 px)"),
-    read_by_view(
-        "transform.nudge_left_10",
-        "移動 ←（10 px）",
-        "Move ← (10 px)",
-    ),
-    read_by_view(
-        "transform.nudge_right_10",
-        "移動 →（10 px）",
-        "Move → (10 px)",
-    ),
-    read_by_view("transform.nudge_up_10", "移動 ↑（10 px）", "Move ↑ (10 px)"),
-    read_by_view(
-        "transform.nudge_down_10",
-        "移動 ↓（10 px）",
-        "Move ↓ (10 px)",
-    ),
+    read_by_view("transform.nudge_left", |l| l.t("commands-move-1-px")),
+    read_by_view("transform.nudge_right", |l| l.t("commands-move-1-px-2")),
+    read_by_view("transform.nudge_up", |l| l.t("commands-move-1-px-3")),
+    read_by_view("transform.nudge_down", |l| l.t("commands-move-1-px-4")),
+    read_by_view("transform.nudge_left_10", |l| l.t("commands-move-10-px")),
+    read_by_view("transform.nudge_right_10", |l| l.t("commands-move-10-px-2")),
+    read_by_view("transform.nudge_up_10", |l| l.t("commands-move-10-px-4")),
+    read_by_view("transform.nudge_down_10", |l| l.t("commands-move-10-px-3")),
     // 押している間だけ効くキー（`view.rotate_hold` は既定では割り当てが無い）
-    hold("view.rotate_hold", "回転", "Rotate"),
-    hold("view.pan_hold", "パン / Ctrl: ズーム", "Pan / Ctrl: Zoom"),
-    hold("stencil.transform_hold", "ステンシル", "Stencil"),
-    hold(
-        "stencil.bypass_hold",
-        "ステンシルを一時解除",
-        "Bypass Stencil",
-    ),
+    hold("view.rotate_hold", |l| l.t("commands-rotate")),
+    hold("view.pan_hold", |l| l.t("commands-pan-ctrl-zoom")),
+    hold("stencil.transform_hold", |l| l.t("commands-stencil")),
+    hold("stencil.bypass_hold", |l| l.t("commands-bypass-stencil")),
     // 3D ビューで右ボタン（ペンのサイドボタン）を押している間の視点の移動
-    hold(
-        "view3d.fly_forward",
-        "前へ移動（右ボタン中）",
-        "Move Forward (While Right Button Held)",
-    ),
-    hold(
-        "view3d.fly_back",
-        "後ろへ移動（右ボタン中）",
-        "Move Back (While Right Button Held)",
-    ),
-    hold(
-        "view3d.fly_left",
-        "左へ移動（右ボタン中）",
-        "Move Left (While Right Button Held)",
-    ),
-    hold(
-        "view3d.fly_right",
-        "右へ移動（右ボタン中）",
-        "Move Right (While Right Button Held)",
-    ),
-    hold(
-        "view3d.fly_down",
-        "下へ移動（右ボタン中）",
-        "Move Down (While Right Button Held)",
-    ),
-    hold(
-        "view3d.fly_up",
-        "上へ移動（右ボタン中）",
-        "Move Up (While Right Button Held)",
-    ),
+    hold("view3d.fly_forward", |l| {
+        l.t("commands-move-forward-while-right-button")
+    }),
+    hold("view3d.fly_back", |l| {
+        l.t("commands-move-back-while-right-button")
+    }),
+    hold("view3d.fly_left", |l| {
+        l.t("commands-move-left-while-right-button")
+    }),
+    hold("view3d.fly_right", |l| {
+        l.t("commands-move-right-while-right-button")
+    }),
+    hold("view3d.fly_down", |l| {
+        l.t("commands-move-down-while-right-button")
+    }),
+    hold("view3d.fly_up", |l| {
+        l.t("commands-move-up-while-right-button")
+    }),
     // マウスの組み合わせ（`keymap::GESTURES`）
     gesture("view.orbit", Operation::Orbit),
     gesture("view.pan", Operation::Pan),
@@ -424,61 +624,51 @@ pub static COMMANDS: &[Command] = &[
     gesture("stencil.scale", Operation::ScaleStencil),
     gesture("stencil.snap_rotation", Operation::SnapStencilRotation),
     // 画面の部品の決まった働き
-    fixed(
-        "canvas.cancel",
-        Key::Escape,
-        "操作をキャンセル / 選択を解除",
-        "Cancel Operation / Deselect",
-    ),
-    fixed(
-        "canvas.confirm",
-        Key::Enter,
-        "変形・多角形選択を確定",
-        "Confirm Transform / Polygon Selection",
-    ),
-    fixed(
-        "canvas.remove_last_point",
-        Key::Backspace,
-        "多角形選択の最後の点を削除",
-        "Delete Last Polygon Selection Point",
-    ),
-    fixed(
-        "view3d.cancel",
-        Key::Escape,
-        "操作をキャンセル",
-        "Cancel Operation",
-    ),
-    fixed(
-        "stencil.cancel",
-        Key::Escape,
-        "操作をキャンセル",
-        "Cancel Operation",
-    ),
+    fixed("canvas.cancel", Key::Escape, |l| {
+        l.t("commands-cancel-operation-deselect")
+    }),
+    fixed("canvas.confirm", Key::Enter, |l| {
+        l.t("commands-confirm-transform-polygon-selection")
+    }),
+    fixed("canvas.remove_last_point", Key::Backspace, |l| {
+        l.t("commands-delete-last-polygon-selection-point")
+    }),
+    fixed("view3d.cancel", Key::Escape, |l| {
+        l.t("commands-cancel-operation")
+    }),
+    fixed("stencil.cancel", Key::Escape, |l| {
+        l.t("commands-cancel-operation")
+    }),
     // モード（ペイント・編集・ポーズ）とモードのパイ
     press_short(
         "mode.paint",
-        ("ペイントのモード", "Paint Mode"),
-        ("ペイント", "Paint"),
+        |l| l.t("commands-paint-mode"),
+        |l| l.t("commands-paint"),
         || mode(EditorMode::Paint),
     ),
     press_short(
         "mode.edit",
-        ("編集のモード", "Edit Mode"),
-        ("編集", "Edit"),
+        |l| l.t("commands-edit-mode"),
+        |l| l.t("commands-edit"),
         || mode(EditorMode::Edit),
     ),
     press_short(
         "mode.pose",
-        ("ポーズのモード", "Pose Mode"),
-        ("ポーズ", "Pose"),
+        |l| l.t("commands-pose-mode"),
+        |l| l.t("commands-pose"),
         || mode(EditorMode::Pose),
+    ),
+    press_short(
+        "mode.hide",
+        |l| l.t("commands-hide-mode"),
+        |l| l.t("commands-hide"),
+        || mode(EditorMode::Hide),
     ),
     Command {
         repeats: false,
         ..press_named(
             "mode.pie",
-            "モードのパイメニュー",
-            "Mode Pie Menu",
+            |l| l.t("commands-mode-pie-menu"),
             || pie("mode"),
         )
     },
@@ -487,45 +677,44 @@ pub static COMMANDS: &[Command] = &[
         repeats: false,
         ..press_named(
             "view3d.pie",
-            "視点のパイメニュー",
-            "View Pie Menu",
+            |l| l.t("commands-view-pie-menu"),
             || pie("view"),
         )
     },
     press_short(
         "view3d.view_front",
-        ("正面の視点", "Front View"),
-        ("正面", "Front"),
+        |l| l.t("commands-front-view"),
+        |l| l.t("commands-front"),
         || axis(AxisView::Front),
     ),
     press_short(
         "view3d.view_back",
-        ("背面の視点", "Back View"),
-        ("背面", "Back"),
+        |l| l.t("commands-back-view"),
+        |l| l.t("commands-back"),
         || axis(AxisView::Back),
     ),
     press_short(
         "view3d.view_right",
-        ("右の視点", "Right View"),
-        ("右", "Right"),
+        |l| l.t("commands-right-view"),
+        |l| l.t("commands-right"),
         || axis(AxisView::Right),
     ),
     press_short(
         "view3d.view_left",
-        ("左の視点", "Left View"),
-        ("左", "Left"),
+        |l| l.t("commands-left-view"),
+        |l| l.t("commands-left"),
         || axis(AxisView::Left),
     ),
     press_short(
         "view3d.view_top",
-        ("上の視点", "Top View"),
-        ("上", "Top"),
+        |l| l.t("commands-top-view"),
+        |l| l.t("commands-top"),
         || axis(AxisView::Top),
     ),
     press_short(
         "view3d.view_bottom",
-        ("下の視点", "Bottom View"),
-        ("下", "Bottom"),
+        |l| l.t("commands-bottom-view"),
+        |l| l.t("commands-bottom"),
         || axis(AxisView::Bottom),
     ),
     // 編集・ポーズのモードの物（選んだ物・ボーン。キーは編集とポーズの段）
@@ -533,8 +722,7 @@ pub static COMMANDS: &[Command] = &[
         repeats: false,
         ..press_named(
             "object.grab",
-            "選んだ物を移動",
-            "Move Selected",
+            |l| l.t("commands-move-selected"),
             || object(ObjectAction::Transform(TransformKind::Grab)),
         )
     },
@@ -542,8 +730,7 @@ pub static COMMANDS: &[Command] = &[
         repeats: false,
         ..press_named(
             "object.rotate",
-            "選んだ物を回転",
-            "Rotate Selected",
+            |l| l.t("commands-rotate-selected"),
             || object(ObjectAction::Transform(TransformKind::Rotate)),
         )
     },
@@ -551,58 +738,70 @@ pub static COMMANDS: &[Command] = &[
         repeats: false,
         ..press_named(
             "object.scale",
-            "選んだ物を拡縮",
-            "Scale Selected",
+            |l| l.t("commands-scale-selected"),
             || object(ObjectAction::Transform(TransformKind::Scale)),
         )
     },
     press_named(
         "object.reset_position",
-        "選んだ物の位置を戻す",
-        "Reset Position of Selected",
+        |l| l.t("commands-reset-position-of-selected"),
         || object(ObjectAction::Reset(TransformKind::Grab)),
     ),
     press_named(
         "object.reset_rotation",
-        "選んだ物の回転を戻す",
-        "Reset Rotation of Selected",
+        |l| l.t("commands-reset-rotation-of-selected"),
         || object(ObjectAction::Reset(TransformKind::Rotate)),
     ),
     press_named(
         "object.reset_scale",
-        "選んだ物の大きさを戻す",
-        "Reset Scale of Selected",
+        |l| l.t("commands-reset-scale-of-selected"),
         || object(ObjectAction::Reset(TransformKind::Scale)),
     ),
     no_repeat(press_named(
         "object.snap_toggle",
-        "スナップの切り替え",
-        "Toggle Snapping",
+        |l| l.t("commands-toggle-snapping"),
         || object(ObjectAction::ToggleSnap),
     )),
     no_repeat(press_named(
         "object.hide",
-        "選んだ物の印を隠す",
-        "Hide Selected Marker",
+        |l| l.t("commands-hide-selected-marker"),
         || object(ObjectAction::Hide),
     )),
     no_repeat(press_named(
         "object.reveal",
-        "隠した印を出す",
-        "Reveal Hidden Markers",
+        |l| l.t("commands-reveal-hidden-markers"),
         || object(ObjectAction::Reveal),
     )),
     no_repeat(press_named(
+        "hide.hide_selected",
+        |l| l.t("hide-hide-selected-faces"),
+        || hide(HideAction::HideSelected),
+    )),
+    no_repeat(press_named(
+        "hide.show_all",
+        |l| l.t("hide-show-all"),
+        || hide(HideAction::ShowAll),
+    )),
+    no_repeat(press_named(
+        "hide.select_all",
+        |l| l.t("hide-select-all"),
+        || hide(HideAction::SelectAll),
+    )),
+    no_repeat(press_named(
+        "hide.deselect",
+        |l| l.t("hide-deselect"),
+        || hide(HideAction::Deselect),
+    )),
+    no_repeat(press_named(
         "object.delete",
-        "選んだ物を削除",
-        "Delete Selected",
+        |l| l.t("commands-delete-selected"),
         || object(ObjectAction::Delete),
     )),
     // 透視と正投影の切り替え（視点のパイ・3D ビューの軸の印の真ん中。既定のキーは無い）
     no_repeat(press_short(
         "view3d.ortho",
-        ("正投影の切り替え", "Toggle Orthographic"),
-        ("正投影", "Orthographic"),
+        |l| l.t("commands-toggle-orthographic"),
+        |l| l.t("commands-orthographic"),
         || Action::View3dNav(NavOp::ToggleOrthographic),
     )),
 ];
@@ -690,7 +889,7 @@ impl Operation {
             .iter()
             .find(|c| matches!(c.name, Name::Mouse(operation) if operation == self))
             .map(|c| c.id)
-            .expect("すべての組み合わせに操作がある（試験が見る）")
+            .expect("すべての組み合わせに操作がある（テストが見る）")
     }
 }
 
@@ -807,7 +1006,7 @@ mod tests {
         let mut app = AppState::new(32, 32);
         for lang in Lang::ALL {
             app.lang = lang;
-            app.selected_layer = None;
+            app.session.selected_layer = None;
             for c in COMMANDS {
                 let label = c
                     .label(&app)
@@ -889,13 +1088,16 @@ mod tests {
         // 既定のキーが無い Press: 液化（ツールの帯から）・モードを 1 つずつ選ぶ操作（ドロップダウン・パイ・メニューから）・視点のパイと
         // その中身（設定で割り当てる）・メッシュマップをベイクするウィンドウ（帯のボタンとセットの右クリックから。設定で割り当てる）・
         // 書き出しのウィンドウ（Ctrl+Shift+E は表示レイヤーの結合が使っているので、設定で割り当てる）
-        const NO_DEFAULT_KEY: [&str; 14] = [
+        const NO_DEFAULT_KEY: [&str; 17] = [
             "bake.open",
+            "brush.erase_mode",
             "file.export",
+            "file.export_again",
             "tool.liquify",
             "mode.paint",
             "mode.edit",
             "mode.pose",
+            "mode.hide",
             "view3d.pie",
             "view3d.view_front",
             "view3d.view_back",
@@ -954,11 +1156,11 @@ mod tests {
     #[test]
     fn the_command_kinds_add_up() {
         let count = |f: fn(&Command) -> bool| COMMANDS.iter().filter(|c| f(c)).count();
-        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_some()), 87);
+        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_some()), 95);
         assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_none()), 9);
         assert_eq!(count(|c| c.kind == Kind::Hold), 10);
         assert_eq!(count(|c| c.kind == Kind::Gesture), 14);
         assert_eq!(count(|c| matches!(c.kind, Kind::Fixed(_))), 5);
-        assert_eq!(COMMANDS.len(), 125);
+        assert_eq!(COMMANDS.len(), 133);
     }
 }

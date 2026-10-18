@@ -1,6 +1,7 @@
 //! 配布用に保存（ファイルのメニュー）: 今のプロジェクトの写しを、作った人が気づかないまま残る物（取り込んだ PSD の原本・使っていない棚の素材・
-//! 出どころのパス・モデルの参照・メッシュマップ・Unity の値・古い状態・知らないエントリ）を除いて別のファイルに書く。除く物は書く前のウィンドウ
-//! （`window`）に種類ごとに並べ、種類ごとに外せる（既定は全部除く）。何を除くかの判断と写しの組み立ては `yolu_io::Project::for_distribution`
+//! 出どころのパス・モデルの参照・メッシュマップ・Unity の値・古い状態・知らないエントリ）を除いて別のファイルに書く。書く前のウィンドウ
+//! （`window`）に並べ、写しに含める物にチェックを入れる。アセットは種類ごとの区分に 1 つずつ並べ（既定は使っている物を含め、使っていない物を外す）、
+//! アセット以外は種類ごとに 1 行（既定は全部含めない）。何を除くかの判断と写しの組み立ては `yolu_io::Project::for_distribution`
 //! （ここは仕事の運びとウィンドウの状態だけ）。
 //!
 //! - **開いているものは変えない**: 文書・プロジェクト・未保存の印・Undo・開いているファイルのどれも変えない。始めるときに、描いていない区切りで
@@ -20,16 +21,20 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use egui::Vec2;
+use std::collections::BTreeSet;
+
+use yolu_io::shelf::ResourceKind;
 use yolu_io::{BackupKeep, Inventory, Project, Removal, SaveTarget};
 
 use crate::dialog::places::Place;
+use crate::features::{Feature, PollStage};
+use crate::jobs::CloseJob;
 use crate::jobs::{JobCard, JobSpec, Polled, Worker};
 use crate::lang::Lang;
 use crate::newproject::relative_model_path;
 use crate::notice::Source;
 use crate::state::{Action, AppState, DialogRequest};
-use crate::windows::CloseJob;
+use crate::userfiles::same_file;
 
 /// 準備・書き込みのスレッドのスタック（正本への詰め直しと合成の再帰に足りる大きさ）。
 const THREAD_STACK: usize = 8 * 1024 * 1024;
@@ -46,8 +51,12 @@ fn thread(name: &str) -> std::thread::Builder {
 pub enum DistributeAction {
     /// ファイルのメニュー「配布用に保存…」: 準備を始める。
     Start,
-    /// ウィンドウで、種類ごとに除く・残すを切り替える。
+    /// ウィンドウで、アセット以外の種類を写しに含める・含めないを切り替える。
     Toggle(Removal),
+    /// ウィンドウで、アセット 1 つを写しに含める・含めないを切り替える（ID はアセットの項目の ID）。
+    ToggleResource(String),
+    /// ウィンドウで、アセットの 1 つの種類（画像・スマート素材…）のアセット全部を写しに含める（`true`）・外す（`false`）。
+    SetKind(ResourceKind, bool),
     /// ウィンドウの「やめる」。
     CancelWindow,
     /// ウィンドウの「保存…」: 保存先を選ぶウィンドウを頼む。
@@ -73,28 +82,60 @@ pub struct Prepared {
 /// 書く前のウィンドウの状態。
 pub struct Window {
     prepared: Arc<Prepared>,
-    selected: Vec<Removal>,
+    /// 写しに含める、アセット以外の種類（含めない種類は写しから除く）。
+    kept: BTreeSet<Removal>,
+    /// 写しに含めるアセットの ID（プロジェクトにあってここに無い物は、写しから外す）。
+    kept_resources: BTreeSet<String>,
     inventory: Inventory,
     /// ウィンドウを出しているか（書いている間・除く物が無いとき・保存先を選んでいる間の、ウィンドウなしの流れでは出さない）。
     visible: bool,
 }
 
 impl Window {
+    /// 既定: アセット以外は全部含めず、アセットは使っている物を含め、使っていない物を外す（使っているかは、アセット以外を全部除いたときの目録で決める）。
     fn new(prepared: Prepared) -> Self {
-        let selected = Removal::ALL.to_vec();
-        let inventory = prepared.project.distribution_inventory(&selected);
+        let remove = Removal::ALL.to_vec();
+        let inventory = prepared.project.distribution_inventory(&remove);
+        let kept_resources = inventory
+            .shelf
+            .iter()
+            .filter(|i| i.used)
+            .map(|i| i.id.clone())
+            .collect();
         Self {
             prepared: Arc::new(prepared),
-            selected,
+            kept: BTreeSet::new(),
+            kept_resources,
             inventory,
             visible: false,
         }
     }
-    /// 除く種類の選び（既定は全部）。
-    pub fn selected(&self) -> &[Removal] {
-        &self.selected
+    /// 写しに含める、アセット以外の種類か。
+    pub fn includes(&self, removal: Removal) -> bool {
+        self.kept.contains(&removal)
     }
-    /// 今の選びでの目録（当たる物が無い種類は含まない）。
+    /// 写しに含めるアセットか。
+    pub fn includes_resource(&self, id: &str) -> bool {
+        self.kept_resources.contains(id)
+    }
+    /// 写しから除く種類（含めない種類。`Removal::ALL` の並び）。
+    pub fn removed(&self) -> Vec<Removal> {
+        Removal::ALL
+            .into_iter()
+            .filter(|r| !self.kept.contains(r))
+            .collect()
+    }
+    /// 写しから外すアセットの ID（プロジェクトにあって、含めない物）。
+    pub fn excluded_resources(&self) -> BTreeSet<String> {
+        self.prepared
+            .project
+            .resources()
+            .iter()
+            .filter(|r| !self.kept_resources.contains(&r.id))
+            .map(|r| r.id.clone())
+            .collect()
+    }
+    /// 今の選びでの目録（当たる物が無い種類は含まない。アセットの「使っている」は、除く種類の選びで決まる）。
     pub fn inventory(&self) -> &Inventory {
         &self.inventory
     }
@@ -142,11 +183,11 @@ pub struct Progress {
 pub struct DistributeState {
     /// 準備が済んだ写しとウィンドウの選び（書き込みが済むか、やめるまで持つ）。
     window: Option<Window>,
-    pub window_offset: Vec2,
     pub window_scroll: f32,
+    /// ウィンドウでたたんでいるアセットの種類（画面の状態。写しには関わらない）。
+    pub folded: Vec<ResourceKind>,
     /// 置き換えを確かめている保存先。
     pub replace: Option<PathBuf>,
-    pub replace_offset: Vec2,
     job: Option<Job>,
     /// 試験用: 次の準備を、取消が来るまで始めずに止めておく。
     #[doc(hidden)]
@@ -192,12 +233,9 @@ pub(crate) const JOB: JobSpec = JobSpec {
             text: format!(
                 "{} — {}",
                 if p.writing {
-                    lang.pick("配布用に保存中", "Saving for distribution")
+                    lang.t("distribute-saving-for-distribution")
                 } else {
-                    lang.pick(
-                        "配布用の写しを準備中",
-                        "Preparing the copy for distribution",
-                    )
+                    lang.t("distribute-preparing-the-copy-for-distribution")
                 },
                 p.file
             ),
@@ -215,18 +253,15 @@ pub(crate) const JOB: JobSpec = JobSpec {
 
 /// 保存先を選ぶウィンドウに出す初めのファイル名（今の名前に短い接尾辞を付けて、開いている作業用のファイルと区別する）。
 pub fn default_name(state: &AppState) -> String {
-    format!("{}-dist.ylp", state.project_name)
+    format!("{}-dist.ylp", state.session.project_name)
 }
 
 /// 保存先を選ぶウィンドウ（`DialogRequest::DistributeSave`）を出す。選ばなければ何もしない（ウィンドウは開いたまま）。
 pub fn run_dialog(state: &mut AppState) {
     let lang = state.lang;
     let dialog = crate::dialog::file(state, Place::Distribute)
-        .set_title(lang.pick("配布用に保存", "Save for Distribution"))
-        .add_filter(
-            lang.pick("YoluPainter プロジェクト", "YoluPainter Project"),
-            &["ylp"],
-        )
+        .set_title(lang.t("distribute-save-for-distribution"))
+        .add_filter(lang.t("distribute-yolupainter-project"), &["ylp"])
         .set_file_name(default_name(state));
     match dialog.save_file() {
         Some(path) => {
@@ -235,13 +270,6 @@ pub fn run_dialog(state: &mut AppState) {
         }
         // ウィンドウなしの流れ（除く物が無かった）で選ばなかったら、準備した写しを閉じる（ウィンドウがあるときはウィンドウに戻る）
         None => state.settle_distribute_window(),
-    }
-}
-
-fn same_file(a: &Path, b: &Path) -> bool {
-    match (a.canonicalize(), b.canonicalize()) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => a == b,
     }
 }
 
@@ -286,20 +314,45 @@ impl AppState {
                 let Some(window) = self.distribute.window.as_mut() else {
                     return;
                 };
-                match window.selected.iter().position(|r| *r == removal) {
-                    Some(at) => {
-                        window.selected.remove(at);
-                    }
-                    None => {
-                        window.selected.push(removal);
-                        window.selected.sort();
-                    }
+                if !window.kept.remove(&removal) {
+                    window.kept.insert(removal);
                 }
                 // 使っているかは、除いた後に残る見た目の設定で決まる（目録と写しが食い違わない）
                 window.inventory = window
                     .prepared
                     .project
-                    .distribution_inventory(&window.selected);
+                    .distribution_inventory(&window.removed());
+            }
+            DistributeAction::ToggleResource(id) => {
+                let Some(window) = self.distribute.window.as_mut() else {
+                    return;
+                };
+                // プロジェクトにある物だけ（古い ID を受けても、写しの選びに無い物を足さない）
+                if window.inventory.shelf_item(&id).is_none() {
+                    return;
+                }
+                if !window.kept_resources.remove(&id) {
+                    window.kept_resources.insert(id);
+                }
+            }
+            DistributeAction::SetKind(kind, include) => {
+                let Some(window) = self.distribute.window.as_mut() else {
+                    return;
+                };
+                let ids: Vec<String> = window
+                    .inventory
+                    .shelf
+                    .iter()
+                    .filter(|i| i.kind == kind)
+                    .map(|i| i.id.clone())
+                    .collect();
+                for id in ids {
+                    if include {
+                        window.kept_resources.insert(id);
+                    } else {
+                        window.kept_resources.remove(&id);
+                    }
+                }
             }
             DistributeAction::CancelWindow => {
                 if self.distribute.job.is_none() {
@@ -312,7 +365,7 @@ impl AppState {
                     return refuse(self);
                 }
                 if self.distribute.window.is_some() && self.distribute.job.is_none() {
-                    self.dialog_request = Some(DialogRequest::DistributeSave);
+                    self.outbox.dialog_request = Some(DialogRequest::DistributeSave);
                 }
             }
             DistributeAction::Save(path) => {
@@ -336,10 +389,7 @@ impl AppState {
                 if self.distribute.replace.take().is_some() {
                     self.info(
                         Source::Distribute,
-                        lang.pick(
-                            "配布用の保存をやめました。",
-                            "Save for distribution canceled.",
-                        ),
+                        lang.t("distribute-save-for-distribution-canceled"),
                     );
                     self.settle_distribute_window();
                 }
@@ -349,10 +399,7 @@ impl AppState {
                     job.worker.cancel();
                     self.info(
                         Source::Distribute,
-                        lang.pick(
-                            "配布用の保存を取り消しています…",
-                            "Canceling the save for distribution…",
-                        ),
+                        lang.t("distribute-canceling-the-save-for-distribution"),
                     );
                 }
             }
@@ -385,7 +432,7 @@ impl AppState {
         if self.psd.is_busy() || self.psd.import_check.is_some() {
             self.refuse(
                 Source::Distribute,
-                lang.pick("PSD を処理中です。", "A PSD job is running."),
+                lang.t("distribute-a-psd-job-is-running"),
             );
             return;
         }
@@ -394,7 +441,7 @@ impl AppState {
             self.refuse(
                 Source::Distribute,
                 lang.with_reason(
-                    lang.pick("配布用に保存できません", "Cannot save for distribution"),
+                    lang.t("distribute-cannot-save-for-distribution"),
                     crate::lang::refusals::saving(lang),
                 ),
             );
@@ -405,10 +452,7 @@ impl AppState {
             Err(text) => {
                 self.fail(
                     Source::Distribute,
-                    lang.with_reason(
-                        lang.pick("配布用に保存できません", "Cannot save for distribution"),
-                        text,
-                    ),
+                    lang.with_reason(lang.t("distribute-cannot-save-for-distribution"), text),
                 );
                 return;
             }
@@ -431,10 +475,7 @@ impl AppState {
                 self.fail(
                     Source::Distribute,
                     lang.with_reason(
-                        lang.pick(
-                            "配布用の写しを準備できません",
-                            "Cannot prepare the copy for distribution",
-                        ),
+                        lang.t("distribute-cannot-prepare-the-copy-for"),
                         lang.thread_error(&e),
                     ),
                 );
@@ -443,14 +484,11 @@ impl AppState {
         };
         self.info(
             Source::Distribute,
-            lang.pick(
-                "配布用の写しを準備中…",
-                "Preparing the copy for distribution…",
-            ),
+            lang.t("distribute-preparing-the-copy-for-distribution-2"),
         );
         self.distribute.job = Some(Job {
             kind: Kind::Prepare,
-            file: self.project_name.clone(),
+            file: self.session.project_name.clone(),
             worker,
         });
     }
@@ -462,16 +500,14 @@ impl AppState {
             return;
         }
         if self
+            .session
             .project
             .as_ref()
             .is_some_and(|p| p.is_file() && same_file(p.path(), &path))
         {
             self.refuse(
                 Source::Distribute,
-                lang.pick(
-                    "開いているファイルには書けません",
-                    "Cannot write over the open file",
-                ),
+                lang.t("distribute-cannot-write-over-the-open"),
             );
             // ウィンドウなしの流れなら閉じ、ウィンドウがあれば除く物のウィンドウに戻る（選び直せる）
             self.settle_distribute_window();
@@ -492,7 +528,8 @@ impl AppState {
         };
         window.visible = false;
         let prepared = window.prepared.clone();
-        let remove = window.selected.clone();
+        let remove = window.removed();
+        let excluded = window.excluded_resources();
         let park = std::mem::take(&mut self.distribute.park_write);
         let target = path.clone();
         let spawned = Worker::spawn_on(
@@ -503,8 +540,16 @@ impl AppState {
                     crate::windows::park_until_canceled(flag.flag());
                 }
                 let _ = tx.send(
-                    write(&prepared, &remove, &target, replacing, lang, flag.flag())
-                        .map(Output::Written),
+                    write(
+                        &prepared,
+                        &remove,
+                        &excluded,
+                        &target,
+                        replacing,
+                        lang,
+                        flag.flag(),
+                    )
+                    .map(Output::Written),
                 );
             },
         );
@@ -514,7 +559,7 @@ impl AppState {
                 self.fail(
                     Source::Distribute,
                     lang.with_reason(
-                        lang.pick("配布用に保存できません", "Cannot save for distribution"),
+                        lang.t("distribute-cannot-save-for-distribution"),
                         lang.thread_error(&e),
                     ),
                 );
@@ -526,10 +571,7 @@ impl AppState {
         let file = file_name(&path);
         self.info(
             Source::Distribute,
-            lang.pick(
-                format!("配布用に保存中: {file}"),
-                format!("Saving for distribution: {file}"),
-            ),
+            lang.f("distribute-saving-for-distribution-2", &[("file", &file)]),
         );
         self.distribute.job = Some(Job {
             kind: Kind::Write,
@@ -555,10 +597,11 @@ impl AppState {
                 let mut window = Window::new(*prepared);
                 // 除く物が無ければウィンドウを出さず、すぐ保存先を選ぶ
                 if window.inventory.is_empty() {
-                    self.dialog_request = Some(DialogRequest::DistributeSave);
+                    self.outbox.dialog_request = Some(DialogRequest::DistributeSave);
                 } else {
                     window.visible = true;
                     self.distribute.window_scroll = 0.0;
+                    self.distribute.folded.clear();
                 }
                 self.distribute.window = Some(window);
                 self.clear_message();
@@ -570,16 +613,16 @@ impl AppState {
                     .take()
                     .map(|w| w.prepared.left_out.clone())
                     .unwrap_or_default();
-                let mut text = lang.pick(
-                    format!("配布用に保存しました: {}", path.display()),
-                    format!("Saved for distribution: {}", path.display()),
+                let mut text = lang.f(
+                    "distribute-saved-for-distribution",
+                    &[("path", &path.display())],
                 );
                 if left_out.is_empty() {
                     self.info(Source::Distribute, text);
                 } else {
                     // パスのあとで文を区切ってから続ける（保存の知らせと同じ形。パスに空白があっても、どこまでがパスか読み分けられる）。
                     // 入れなかったセットがあるので注意としてログにも残す
-                    text += lang.pick("。 ", ". ");
+                    text += lang.t("distribute-text");
                     text += &crate::project::capture::left_out_note(lang, &left_out);
                     self.warn(Source::Distribute, text);
                 }
@@ -593,24 +636,15 @@ impl AppState {
                 match failure {
                     Failure::Canceled => self.info(
                         Source::Distribute,
-                        lang.pick(
-                            "配布用の保存を取り消しました。",
-                            "Save for distribution canceled.",
-                        ),
+                        lang.t("distribute-save-for-distribution-canceled-2"),
                     ),
                     Failure::Stopped => self.fail(
                         Source::Distribute,
-                        lang.pick(
-                            "配布用に保存できません（処理が止まりました）。",
-                            "Cannot save for distribution (the job stopped).",
-                        ),
+                        lang.t("distribute-cannot-save-for-distribution-the"),
                     ),
                     Failure::Message(text) => self.fail(
                         Source::Distribute,
-                        lang.with_reason(
-                            lang.pick("配布用に保存できません", "Cannot save for distribution"),
-                            text,
-                        ),
+                        lang.with_reason(lang.t("distribute-cannot-save-for-distribution"), text),
                     ),
                 }
             }
@@ -636,6 +670,7 @@ impl AppState {
 /// 基準にして組み、書くときに選んだ保存先に合わせて付け直す。
 fn capture(state: &AppState) -> Result<crate::project::capture::Capture, String> {
     let anchor = state
+        .session
         .project
         .as_ref()
         .filter(|p| p.is_file())
@@ -661,11 +696,12 @@ fn build(
     })
 }
 
-/// ウィンドウの選びで種類を除いた写しを、`dest` へ書く（別のスレッドで動かす）。モデルの参照を残すなら、保存先からの相対に付け直す。
+/// ウィンドウの選びで種類とアセットを除いた写しを、`dest` へ書く（別のスレッドで動かす）。モデルの参照を残すなら、保存先からの相対に付け直す。
 /// 書くのは検証した一時ファイルから 1 回の置き換え（退避は作らない）。置き換えるのは、確かめを終えた .ylp として読める既存のファイルだけ。
 fn write(
     prepared: &Prepared,
     remove: &[Removal],
+    excluded: &BTreeSet<String>,
     dest: &Path,
     replacing: bool,
     lang: Lang,
@@ -684,7 +720,7 @@ fn write(
         _ => &prepared.project,
     };
     let copy = source
-        .for_distribution(crate::project::writer(), remove)
+        .for_distribution(crate::project::writer(), remove, excluded)
         .map_err(io)?;
     if cancel.load(Ordering::Relaxed) {
         return Err(Failure::Canceled);
@@ -694,10 +730,7 @@ fn write(
         SaveTarget::open_within(dest, &yolu_io::Limits::unbounded())
             .map_err(|e| {
                 Failure::Message(lang.with_reason(
-                    lang.pick(
-                        "置き換える先を .ylp として読めません",
-                        "The file to replace is not a readable .ylp",
-                    ),
+                    lang.t("distribute-the-file-to-replace-is"),
                     lang.io_error(&e),
                 ))
             })?
@@ -709,3 +742,9 @@ fn write(
     target.save_with(&copy, BackupKeep::Count(0)).map_err(io)?;
     Ok(dest.to_path_buf())
 }
+
+/// 機能の表の行（毎フレーム、配布用に保存の仕事の終わりを受ける）。
+pub(crate) const FEATURE: Feature = Feature {
+    poll: Some((PollStage::BeforeSaving, AppState::poll_distribute)),
+    ..Feature::new("distribute")
+};

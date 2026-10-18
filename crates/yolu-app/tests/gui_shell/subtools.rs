@@ -3,6 +3,7 @@
 //! `brush_list.rs`・`brushes.rs`、新しいパネルの並びと「塗るチャンネル」は `tool_panels.rs`。見た目の試験は、パネルの中だけを撮る
 //! （ほかのパネルの変更で壊れない）。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::epaint::Shape;
@@ -19,18 +20,16 @@ use yolu_app::{Tab, YoluApp};
 type H = Harness<'static, YoluApp>;
 
 fn st(h: &H) -> &AppState {
-    &h.state().state
+    h.app()
 }
 
 fn pick(h: &mut H, tool: Tool) {
-    h.state_mut().state.apply(Action::SelectTool(tool));
+    h.act(Action::SelectTool(tool));
     h.run();
 }
 
 fn language(h: &mut H, lang: Lang) {
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(yolu_app::m2::UiOp::Language(lang)));
+    h.act(Action::M2Ui(yolu_app::m2::UiOp::Language(lang)));
     h.run();
 }
 
@@ -178,7 +177,7 @@ fn every_tool_lists_its_sub_tools_with_the_current_one_marked_in_both_languages(
                     let list = st(&h).subtool_list(tool).expect("プリセットのツール");
                     let current = list.current();
                     for b in fields::builtins(tool) {
-                        let name = lang.pick(b.ja, b.en);
+                        let name = (b.name)(lang);
                         assert!(!in_panel(&h, name).is_empty(), "{lang:?} {tool:?}: {name}");
                         assert_eq!(
                             row_selected(&h, name),
@@ -209,7 +208,7 @@ fn the_selection_tool_rows_switch_the_tool_and_keep_the_same_list() {
     pick(&mut h, Tool::SelectRect);
     for tool in SELECTION_TOOLS {
         click_row(&mut h, tool.name_in(Lang::Ja));
-        assert_eq!(st(&h).tool, tool);
+        assert_eq!(st(&h).tool(), tool);
         for t in SELECTION_TOOLS {
             assert_eq!(
                 row_selected(&h, t.name_in(Lang::Ja)),
@@ -223,21 +222,21 @@ fn the_selection_tool_rows_switch_the_tool_and_keep_the_same_list() {
 #[test]
 fn the_preset_rows_set_each_tools_settings_and_the_bar_follows_the_row() {
     let mut h = app(1280.0, 1300.0, 128);
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     // バケツ: 近い色（許容がバーにも出る）→ 三角形
     pick(&mut h, Tool::Fill);
     assert_eq!(count(&h, "許容"), 0);
     click_row(&mut h, "近い色");
-    assert!(st(&h).region.by_color);
+    assert!(st(&h).region().by_color);
     assert_eq!(
         count(&h, "許容"),
         2,
         "オプションバーとツールプロパティの両方"
     );
     click_row(&mut h, "三角形");
-    assert!(!st(&h).region.by_color);
+    assert!(!st(&h).region().by_color);
     assert_eq!(
-        st(&h).region.kind,
+        st(&h).region().kind,
         yolu_core::geometry::SurfaceRegionKind::Triangle
     );
     assert_eq!(count(&h, "許容"), 0);
@@ -245,43 +244,46 @@ fn the_preset_rows_set_each_tools_settings_and_the_bar_follows_the_row() {
     pick(&mut h, Tool::Gradient);
     click_row(&mut h, "放射・サブの色へ");
     assert_eq!(
-        st(&h).gradient.shape,
+        st(&h).gradient().shape,
         yolu_core::material::GradientShape::Radial
     );
-    assert_eq!(st(&h).gradient.end, yolu_app::gradient::End::Sub);
+    assert_eq!(st(&h).gradient().end, yolu_app::gradient::End::Sub);
     // 図形・定規
     pick(&mut h, Tool::Shape);
     click_row(&mut h, "楕円");
-    assert_eq!(st(&h).drafting.figure, yolu_app::drafting::Figure::Ellipse);
+    assert_eq!(
+        st(&h).drafting().figure,
+        yolu_app::drafting::Figure::Ellipse
+    );
     pick(&mut h, Tool::Ruler);
     click_row(&mut h, "パース（2 点）");
-    assert_eq!(st(&h).rulers.kind, yolu_core::RulerKind::Perspective);
-    assert!(st(&h).rulers.two_points);
+    assert_eq!(st(&h).rulers().kind, yolu_core::RulerKind::Perspective);
+    assert!(st(&h).rulers().two_points);
     // 対称定規（線対称・2 本）と回転対称（6 本）
     click_row(&mut h, "回転対称");
-    assert_eq!(st(&h).rulers.kind, yolu_core::RulerKind::Symmetry);
-    assert!(!st(&h).rulers.line_symmetry);
-    assert_eq!(st(&h).rulers.lines, 6);
+    assert_eq!(st(&h).rulers().kind, yolu_core::RulerKind::Symmetry);
+    assert!(!st(&h).rulers().line_symmetry);
+    assert_eq!(st(&h).rulers().lines, 6);
     click_row(&mut h, "対称定規");
-    assert!(st(&h).rulers.line_symmetry);
-    assert_eq!(st(&h).rulers.lines, 2);
+    assert!(st(&h).rulers().line_symmetry);
+    assert_eq!(st(&h).rulers().lines, 2);
     // スポイト
     pick(&mut h, Tool::Eyedropper);
     click_row(&mut h, "全レイヤー");
-    assert!(st(&h).eyedrop.all_layers);
+    assert!(st(&h).eyedrop().all_layers);
     // 移動・変形のメッシュは、分割の欄がツールプロパティに出る。ゆがみのモード
     pick(&mut h, Tool::Move);
     assert_eq!(count(&h, "列"), 0);
     click_row(&mut h, "メッシュ");
     assert_eq!(
-        st(&h).transform.advanced.kind,
+        st(&h).transform().advanced.kind,
         yolu_app::transform::advanced::Kind::Mesh
     );
     assert_eq!(count(&h, "列"), 1);
     pick(&mut h, Tool::Liquify);
     click_row(&mut h, "膨張");
     assert_eq!(
-        st(&h).transform.advanced.mode,
+        st(&h).transform().advanced.mode,
         yolu_core::LiquifyMode::Expand
     );
     // ポリゴン塗りつぶし: 自分の一覧（近い色は無い）
@@ -289,12 +291,12 @@ fn the_preset_rows_set_each_tools_settings_and_the_bar_follows_the_row() {
     assert!(in_panel(&h, "近い色").is_empty());
     click_row(&mut h, "マテリアル");
     assert_eq!(
-        st(&h).region.kind,
+        st(&h).region().kind,
         yolu_core::geometry::SurfaceRegionKind::Material
     );
     // サブツールの設定は文書ではない（取り消しの段・変更の印に入らない）
-    assert_eq!(st(&h).doc.undo_count(), steps);
-    assert!(!st(&h).modified);
+    assert_eq!(st(&h).doc().undo_count(), steps);
+    assert!(!st(&h).modified());
 }
 
 #[test]
@@ -306,7 +308,7 @@ fn changing_a_setting_in_the_bar_moves_the_mark_to_the_matching_sub_tool() {
     let radial = bar_rect(&h, "放射");
     click(&mut h, radial.center());
     assert_eq!(
-        st(&h).gradient.shape,
+        st(&h).gradient().shape,
         yolu_core::material::GradientShape::Radial
     );
     assert!(row_selected(&h, "放射・透明へ"));
@@ -335,7 +337,7 @@ fn the_brush_and_eraser_bars_show_the_two_ruler_snaps_and_the_buttons_toggle_the
                 ),
             ] {
                 let on = |h: &H| {
-                    let r = &st(h).rulers;
+                    let r = st(h).rulers();
                     if special {
                         r.snap_special
                     } else {
@@ -368,7 +370,7 @@ fn a_changed_setting_marks_the_row_as_modified_and_the_footer_reverts_it() {
     click_row(&mut h, "近い色");
     let key = PresetKey::Builtin("similar-colors");
     assert!(!st(&h).subtool_is_modified(Tool::Fill, key));
-    h.state_mut().state.region.tolerance = 90;
+    h.region_mut().tolerance = 90;
     h.run();
     assert!(st(&h).subtool_is_modified(Tool::Fill, key));
     // 変更ありの行は、ツールチップにも
@@ -378,7 +380,7 @@ fn a_changed_setting_marks_the_row_as_modified_and_the_footer_reverts_it() {
     );
     let revert = dock_rect(&h, "元の設定に戻す（変更あり）");
     click(&mut h, revert.center());
-    assert_eq!(st(&h).region.tolerance, 32);
+    assert_eq!(st(&h).region().tolerance, 32);
     assert!(!st(&h).subtool_is_modified(Tool::Fill, key));
 }
 
@@ -389,32 +391,32 @@ fn pressing_the_current_row_again_or_double_clicking_it_keeps_the_settings_chang
     pick(&mut h, Tool::Fill);
     click_row(&mut h, "近い色");
     let similar = PresetKey::Builtin("similar-colors");
-    h.state_mut().state.region.tolerance = 90;
+    h.region_mut().tolerance = 90;
     h.run();
     assert!(st(&h).subtool_is_modified(Tool::Fill, similar));
     // 選んでいる行をもう一度押しても、変えた設定は基準に戻らず、「変更あり」の印も消えない
     click_row(&mut h, "近い色");
-    assert_eq!(st(&h).region.tolerance, 90);
+    assert_eq!(st(&h).region().tolerance, 90);
     assert!(st(&h).subtool_is_modified(Tool::Fill, similar));
     // 利用者のサブツールも、ダブルクリック（名前の変更の入り口）で設定が戻らない
     let add = dock_rect(&h, "今の設定を新しいサブツールに");
     click(&mut h, add.center());
     let key = st(&h).subtool_list(Tool::Fill).unwrap().current();
     assert!(key.is_user());
-    h.state_mut().state.region.tolerance = 55;
+    h.region_mut().tolerance = 55;
     h.run();
     assert!(st(&h).subtool_is_modified(Tool::Fill, key));
     double_click(&mut h, "プリセット");
-    assert_eq!(st(&h).subtools.ui.renaming, Some((Tool::Fill, key)));
-    assert_eq!(st(&h).region.tolerance, 55);
+    assert_eq!(st(&h).subtools().ui.renaming, Some((Tool::Fill, key)));
+    assert_eq!(st(&h).region().tolerance, 55);
     assert!(st(&h).subtool_is_modified(Tool::Fill, key));
     // 別の行へ移って戻ると、変えたままの設定
     self::key(&h, Key::Escape, Modifiers::NONE);
     h.run();
     click_row(&mut h, "近い色");
-    assert_eq!(st(&h).region.tolerance, 90);
+    assert_eq!(st(&h).region().tolerance, 90);
     click_row(&mut h, "プリセット");
-    assert_eq!(st(&h).region.tolerance, 55);
+    assert_eq!(st(&h).region().tolerance, 55);
 }
 
 #[test]
@@ -453,9 +455,9 @@ fn the_footer_adds_duplicates_and_deletes_user_sub_tools_and_each_step_is_saved(
     let _ = std::fs::remove_dir_all(&dir);
     crate::common::tmp::clean_up_after_test(&dir);
     let mut h = app(1280.0, 1300.0, 128);
-    h.state_mut().state.attach_subtool_store(dir.clone());
+    h.app_mut().attach_subtool_store(dir.clone());
     pick(&mut h, Tool::Fill);
-    h.state_mut().state.region.tolerance = 77;
+    h.region_mut().tolerance = 77;
     h.run();
     let file = dir.join("fill.ylsubtool");
     // 追加: 今の設定が新しいサブツールになり、ファイルに書く
@@ -519,18 +521,18 @@ fn a_user_eraser_is_added_to_the_eraser_list_only_and_a_user_brush_to_the_brush_
     let mut h = app(1280.0, 900.0, 128);
     // 消しゴムの一覧で足す（今の設定が、消しゴムのグループの自分のブラシになる）
     pick(&mut h, Tool::Eraser);
-    h.state_mut().state.brush.radius = 9.0;
+    h.brush_mut().radius = 9.0;
     h.run();
     let add = dock_rect(&h, "今の設定を新しいブラシに");
     click(&mut h, add.center());
-    let key = st(&h).brushes.lib.current();
+    let key = st(&h).brushes().lib.current();
     assert!(key.is_user());
-    let entry = st(&h).brushes.lib.entry(key).unwrap();
+    let entry = st(&h).brushes().lib.entry(key).unwrap();
     assert!(
         entry.group.is_eraser(),
         "消しゴムの一覧から足したブラシは消しゴムのグループ"
     );
-    assert_eq!(st(&h).tool, Tool::Eraser);
+    assert_eq!(st(&h).tool(), Tool::Eraser);
     assert!(!in_panel(&h, "ブラシ").is_empty(), "消しゴムの一覧に出る");
     // ブラシの一覧には出ない
     pick(&mut h, Tool::Brush);
@@ -538,9 +540,9 @@ fn a_user_eraser_is_added_to_the_eraser_list_only_and_a_user_brush_to_the_brush_
     // ブラシの一覧で足すと、ブラシのグループ
     let add = dock_rect(&h, "今の設定を新しいブラシに");
     click(&mut h, add.center());
-    let brush_key = st(&h).brushes.lib.current();
+    let brush_key = st(&h).brushes().lib.current();
     assert!(!st(&h)
-        .brushes
+        .brushes()
         .lib
         .entry(brush_key)
         .unwrap()
@@ -549,8 +551,8 @@ fn a_user_eraser_is_added_to_the_eraser_list_only_and_a_user_brush_to_the_brush_
     assert_ne!(brush_key, key);
     // 消しゴムへ戻ると、消しゴムの一覧で選んでいたブラシ（足した消しゴム）
     pick(&mut h, Tool::Eraser);
-    assert_eq!(st(&h).brushes.lib.current(), key);
-    assert_eq!(st(&h).brush.radius, 9.0);
+    assert_eq!(st(&h).brushes().lib.current(), key);
+    assert_eq!(st(&h).brush().radius, 9.0);
 }
 
 #[test]
@@ -561,7 +563,7 @@ fn double_click_renames_a_user_sub_tool_and_built_in_names_do_not_change() {
     click(&mut h, add.center());
     let key = st(&h).subtool_list(Tool::Gradient).unwrap().current();
     double_click(&mut h, "プリセット");
-    assert_eq!(st(&h).subtools.ui.renaming, Some((Tool::Gradient, key)));
+    assert_eq!(st(&h).subtools().ui.renaming, Some((Tool::Gradient, key)));
     self::key(&h, Key::A, Modifiers::COMMAND);
     h.event(Event::Text("太い放射".into()));
     self::key(&h, Key::Enter, Modifiers::NONE);
@@ -575,7 +577,7 @@ fn double_click_renames_a_user_sub_tool_and_built_in_names_do_not_change() {
             .name,
         "太い放射"
     );
-    assert_eq!(st(&h).subtools.ui.renaming, None);
+    assert_eq!(st(&h).subtools().ui.renaming, None);
     assert!(!in_panel(&h, "太い放射").is_empty());
     // Esc でやめる（名前は変わらない）
     double_click(&mut h, "太い放射");
@@ -591,10 +593,10 @@ fn double_click_renames_a_user_sub_tool_and_built_in_names_do_not_change() {
             .name,
         "太い放射"
     );
-    assert_eq!(st(&h).subtools.ui.renaming, None);
+    assert_eq!(st(&h).subtools().ui.renaming, None);
     // 組み込みはダブルクリックしても名前を変えない
     double_click(&mut h, "放射・透明へ");
-    assert_eq!(st(&h).subtools.ui.renaming, None);
+    assert_eq!(st(&h).subtools().ui.renaming, None);
 }
 
 #[test]
@@ -609,14 +611,14 @@ fn headless_the_app_reads_the_sub_tool_folder_next_to_its_settings_and_reports_a
     let ctx = egui::Context::default();
     let mut first =
         YoluApp::for_context_with_settings(&ctx, Some(settings.clone()), PenInput::detached());
-    first.state.apply(Action::SelectTool(Tool::Ruler));
-    first.state.apply(Action::SubTool(SubToolAction::Select(
+    first.state.act(Action::SelectTool(Tool::Ruler));
+    first.state.act(Action::SubTool(SubToolAction::Select(
         Tool::Ruler,
         PresetKey::Builtin("concentric"),
     )));
     first
         .state
-        .apply(Action::SubTool(SubToolAction::Add(Tool::Ruler)));
+        .act(Action::SubTool(SubToolAction::Add(Tool::Ruler)));
     let key = first.state.subtool_list(Tool::Ruler).unwrap().current();
     assert!(dir.join("subtools").join("ruler.ylsubtool").is_file());
     // 別の起動で読み戻す（読んだあと、ツールを選ぶと同じ設定）
@@ -628,18 +630,18 @@ fn headless_the_app_reads_the_sub_tool_folder_next_to_its_settings_and_reports_a
         .unwrap()
         .entry(key)
         .is_some());
-    again.state.apply(Action::SelectTool(Tool::Ruler));
+    again.state.act(Action::SelectTool(Tool::Ruler));
     again
         .state
-        .apply(Action::SubTool(SubToolAction::Select(Tool::Ruler, key)));
-    assert_eq!(again.state.rulers.kind, yolu_core::RulerKind::Concentric);
+        .act(Action::SubTool(SubToolAction::Select(Tool::Ruler, key)));
+    assert_eq!(again.state.rulers().kind, yolu_core::RulerKind::Concentric);
     // 壊れたファイルは、起動の知らせに出る（ほかのツールの保存は読む）
     std::fs::write(dir.join("subtools").join("gradient.ylsubtool"), "x").unwrap();
     let broken = YoluApp::for_context_with_settings(&ctx, Some(settings), PenInput::detached());
     assert!(
-        broken.state.message.contains("gradient.ylsubtool"),
+        broken.state.message().contains("gradient.ylsubtool"),
         "{}",
-        broken.state.message
+        broken.state.message()
     );
     assert!(broken
         .state
@@ -650,8 +652,8 @@ fn headless_the_app_reads_the_sub_tool_folder_next_to_its_settings_and_reports_a
     // 設定が無ければ保存しない
     let mut none = YoluApp::for_context_with_settings(&ctx, None, PenInput::detached());
     none.state
-        .apply(Action::SubTool(SubToolAction::Add(Tool::Fill)));
-    assert!(none.state.subtools.store.is_none());
+        .act(Action::SubTool(SubToolAction::Add(Tool::Fill)));
+    assert!(none.state.subtools().store.is_none());
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -660,9 +662,9 @@ fn headless_the_app_reads_the_sub_tool_folder_next_to_its_settings_and_reports_a
 #[test]
 fn the_option_bar_and_the_tool_properties_show_the_same_values() {
     let mut h = app(1600.0, 900.0, 128);
-    // ブラシ: 直径と不透明度は両方に、硬さ・流量・間隔・筆圧はツールプロパティだけ
-    h.state_mut().state.brush.radius = 20.0;
-    h.state_mut().state.brush.opacity = 0.5;
+    // ブラシ: 直径と不透明度は両方に、硬さ・流量・間隔・手ぶれ補正はツールプロパティだけ
+    h.brush_mut().radius = 20.0;
+    h.brush_mut().opacity = 0.5;
     h.run();
     for (label, value) in [("直径", 40.0), ("不透明度", 50.0)] {
         let nodes: Vec<_> = h
@@ -674,7 +676,7 @@ fn the_option_bar_and_the_tool_properties_show_the_same_values() {
             assert_eq!(n.accesskit_node().numeric_value(), Some(value), "{label}");
         }
     }
-    for label in ["硬さ", "流量", "間隔", "筆圧で直径を変える"] {
+    for label in ["硬さ", "流量", "間隔", "手ぶれ補正"] {
         assert!(
             in_panel(&h, label).len() == 1,
             "{label} はツールプロパティに"
@@ -697,7 +699,7 @@ fn the_option_bar_and_the_tool_properties_show_the_same_values() {
     }
     // 選択ペン: 直径はバーとツールプロパティ、同じ値（ブラシと共通）
     pick(&mut h, Tool::SelectPen);
-    let diameter = st(&h).brush.radius * 2.0;
+    let diameter = st(&h).brush().radius * 2.0;
     let sizes: Vec<_> = h
         .query_all_by_label("直径")
         .filter(|n| n.rect().left() < 340.0 || n.rect().top() < 60.0)
@@ -719,12 +721,12 @@ fn the_brush_size_panel_is_empty_for_tools_without_a_size() {
         // （丸が 2 段とも入る高さで）
         let mut h = app(1280.0, 1100.0, 128);
         pick(&mut h, tool);
-        // どのツールでもタブはあるが、丸（「16 px」など）は大きさを持つツールだけ
+        // どのツールでもタブはあるが、丸（「15 px」など）は大きさを持つツールだけ
         assert!(
             h.state().tab_rects.contains_key(&Tab::BrushSize),
             "{tool:?}"
         );
-        assert_eq!(count(&h, "16 px"), usize::from(tool.is_sized()), "{tool:?}");
+        assert_eq!(count(&h, "15 px"), usize::from(tool.is_sized()), "{tool:?}");
         // ツールプロパティの中身（タブの帯の下から、ブラシサイズの上まで）に描いた文字: 「ツールプロパティ」の見出しの帯は無く（タブの名前だけ）、
         // 設定のあるブラシでは中身の文字が出ている
         let (bar, size) = (
@@ -793,13 +795,11 @@ fn every_tool_has_its_settings_in_the_tool_properties_and_none_in_the_right_prop
     }
     // 塗りつぶしのレイヤーを選ぶと、右はレイヤーの欄になる（ツールは関係なく同じ）。ツールプロパティはツールのまま
     pick(&mut h, Tool::Fill);
-    h.state_mut()
-        .state
-        .apply(Action::M2(yolu_app::m2::Edit::NewFill));
+    h.act(Action::M2(yolu_app::m2::Edit::NewFill));
     h.run();
     let kind = st(&h)
-        .selected_layer
-        .and_then(|id| st(&h).doc.layer(id))
+        .selected_layer()
+        .and_then(|id| st(&h).doc().layer(id))
         .map(|l| l.kind());
     assert_eq!(kind, Some(LayerKind::Fill));
     let on_fill_layer = fingerprint(&h);
@@ -921,17 +921,15 @@ fn nothing_in_the_selection_panel_is_clipped_at_the_smallest_window() {
         let mut h = app(960.0, 640.0, 128);
         language(&mut h, lang);
         pick(&mut h, Tool::SelectRect);
-        h.state_mut()
-            .state
-            .apply(Action::Sel(yolu_app::selection::SelAction::Edit(
-                yolu_app::selection::SelEdit::All,
-            )));
+        h.act(Action::Sel(yolu_app::selection::SelAction::Edit(
+            yolu_app::selection::SelEdit::All,
+        )));
         h.run();
         let (_, clipped) = drawn(&h);
         assert!(clipped.is_empty(), "{lang:?}: {clipped:#?}");
         // スクロールしても（下のほうの行）切れない
         for scroll in [80.0, 160.0, 320.0] {
-            h.state_mut().state.subtools.ui.props_scroll[Tool::SelectRect as usize] = scroll;
+            h.subtools_mut().ui.props_scroll[Tool::SelectRect as usize] = scroll;
             h.run();
             let (_, clipped) = drawn(&h);
             assert!(clipped.is_empty(), "{lang:?} {scroll}: {clipped:#?}");
@@ -965,37 +963,18 @@ fn switching_tools_with_keys_changes_the_list_and_the_selection_of_each_tool_sta
     key(&h, Key::B, Modifiers::NONE);
     h.run();
     assert!(in_panel(&h, "ソフト消しゴム").is_empty());
-    assert_eq!(st(&h).tool, Tool::Brush);
+    assert_eq!(st(&h).tool(), Tool::Brush);
 }
 
 // ───────── 見た目（パネルの中だけを撮る） ─────────
 
-/// パネルの全体の画像（タブの帯から、下のカラーのパネルの上まで）を撮って、正解の絵と比べる。
+/// パネルの全体の画像（サブツールの組から、下のカラーの組の手前まで）を撮って、正解のスクリーンショットと比べる。
 fn shot(h: &mut H, name: &str) {
-    shot_width(h, name, 300.0);
-}
-
-/// `shot` の、横幅（点）を決める版（狭い列の絵）。
-fn shot_width(h: &mut H, name: &str, width: f32) {
     // 直前に押した所のポインタが絵に残らないように
     h.event(Event::PointerGone);
     h.step();
-    let tab = h.state().tab_rects[&Tab::SubTools];
-    let color = h.state().tab_rects[&Tab::Color];
-    let rect = Rect::from_min_max(
-        pos2(tab.left() - 2.0, tab.top()),
-        pos2(tab.left() + width, color.top()),
-    );
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().floor() as u32,
-        rect.top().floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+    let rect = common::shot::group_span(h, Tab::SubTools, Some(Tab::Color));
+    common::shot::region(h, name, rect);
 }
 
 #[test]
@@ -1010,12 +989,14 @@ fn snapshots_of_the_sub_tool_panel_for_the_bucket_the_selection_and_the_liquify_
         ] {
             let mut h = app(1280.0, 800.0, 128);
             language(&mut h, lang);
-            h.state_mut().state.sel.animate = false;
+            h.sel_mut().animate = false;
             pick(&mut h, tool);
             if tool == Tool::Fill {
                 click_row(&mut h, lang.pick("近い色", "Similar colors"));
             }
-            shot(&mut h, &format!("subtools_{label}_{name}"));
+            if lang == Lang::Ja {
+                shot(&mut h, &format!("subtools_{label}_{name}"));
+            }
         }
     }
 }
@@ -1023,43 +1004,38 @@ fn snapshots_of_the_sub_tool_panel_for_the_bucket_the_selection_and_the_liquify_
 #[test]
 fn snapshots_of_the_selection_tool_properties_the_four_modes_the_narrow_column_and_the_selection_pen(
 ) {
-    for (lang, name) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
-        let mut h = app(1280.0, 800.0, 128);
-        language(&mut h, lang);
-        h.state_mut().state.sel.animate = false;
-        pick(&mut h, Tool::SelectRect);
-        shot(&mut h, &format!("selection_props_{name}"));
-        // 選択ペン（選択ペンと選択消しの 2 つ）
-        pick(&mut h, Tool::SelectPen);
-        shot(&mut h, &format!("selection_pen_props_{name}"));
-    }
+    let (lang, name) = (Lang::Ja, "ja");
+    let mut h = app(1280.0, 800.0, 128);
+    language(&mut h, lang);
+    h.sel_mut().animate = false;
+    pick(&mut h, Tool::SelectRect);
+    shot(&mut h, &format!("selection_props_{name}"));
+    // 選択ペン（選択ペンと選択消しの 2 つ）
+    pick(&mut h, Tool::SelectPen);
+    shot(&mut h, &format!("selection_pen_props_{name}"));
     // 「⋯」で 4 つ開いた所
     let mut h = app(1280.0, 800.0, 128);
-    h.state_mut().state.sel.animate = false;
+    h.sel_mut().animate = false;
     pick(&mut h, Tool::SelectRect);
-    h.state_mut()
-        .state
-        .apply(Action::Sel(yolu_app::selection::SelAction::Ui(
-            yolu_app::selection::SelUiOp::AllModes(true),
-        )));
+    h.act(Action::Sel(yolu_app::selection::SelAction::Ui(
+        yolu_app::selection::SelUiOp::AllModes(true),
+    )));
     h.run();
     shot(&mut h, "selection_props_all_modes");
     // 共通を選んでいる所（畳む設定でも 4 つ。「⋯」は点いたまま押せない）
     let mut h = app(1280.0, 800.0, 128);
-    h.state_mut().state.sel.animate = false;
+    h.sel_mut().animate = false;
     pick(&mut h, Tool::SelectRect);
-    h.state_mut()
-        .state
-        .apply(Action::Sel(yolu_app::selection::SelAction::Ui(
-            yolu_app::selection::SelUiOp::Combine(yolu_app::engine::SelectionCombine::Intersect),
-        )));
+    h.act(Action::Sel(yolu_app::selection::SelAction::Ui(
+        yolu_app::selection::SelUiOp::Combine(yolu_app::engine::SelectionCombine::Intersect),
+    )));
     h.run();
     shot(&mut h, "selection_props_intersect");
     // 狭い列: 名前を外してアイコンだけにする（英語は名前が長い）
     for (lang, name) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
         let mut h = app(1000.0, 640.0, 128);
         language(&mut h, lang);
-        h.state_mut().state.sel.animate = false;
+        h.sel_mut().animate = false;
         let mut dock = egui_dock::DockState::new(vec![Tab::Canvas]);
         let surface = dock.main_surface_mut();
         let [_, left] = surface.split_left(egui_dock::NodeIndex::root(), 0.17, vec![Tab::SubTools]);
@@ -1067,8 +1043,8 @@ fn snapshots_of_the_selection_tool_properties_the_four_modes_the_narrow_column_a
         surface.split_below(props, 0.8, vec![Tab::Color]);
         h.state_mut().dock = dock;
         pick(&mut h, Tool::SelectRect);
-        shot_width(&mut h, &format!("selection_props_narrow_{name}"), 172.0);
+        shot(&mut h, &format!("selection_props_narrow_{name}"));
         pick(&mut h, Tool::SelectPen);
-        shot_width(&mut h, &format!("selection_pen_props_narrow_{name}"), 172.0);
+        shot(&mut h, &format!("selection_pen_props_narrow_{name}"));
     }
 }

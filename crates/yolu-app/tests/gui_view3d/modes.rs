@@ -3,6 +3,7 @@
 //! 押したまま離す）・数字・Esc・右クリック、視点のパイの各向き、描いている間は替えない、ギズモのドラッグは確定してから替える。絵は
 //! ドロップダウンとパイ（日英）。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::{pos2, vec2, Event, Key, Modifiers, PointerButton, Pos2, Rect};
@@ -29,26 +30,19 @@ fn figure_view() -> (H, Rect) {
 }
 
 fn mode(h: &H) -> EditorMode {
-    h.state().state.mode
+    h.mode()
 }
 
 fn pie_open(h: &H) -> Option<String> {
-    let app = &h.state().state;
-    match app.popup.as_ref().map(|p| p.kind) {
-        Some(PopupKind::Pie) => app.pie.open.as_ref().map(|o| o.menu.clone()),
+    let app = h.app();
+    match app.popup().as_ref().map(|p| p.kind) {
+        Some(PopupKind::Pie) => app.pie().open.as_ref().map(|o| o.menu.clone()),
         _ => None,
     }
 }
 
 fn pie_center(h: &H) -> Pos2 {
-    h.state()
-        .state
-        .pie
-        .open
-        .as_ref()
-        .expect("パイが開いている")
-        .run
-        .center
+    h.pie().open.as_ref().expect("パイが開いている").run.center
 }
 
 /// 開いているパイの項目（真ん中の近く。同じ名前のメニューの見出し・ドックのタブと取り違えない）。
@@ -77,11 +71,11 @@ fn tap_mode_pie(h: &mut H, at: Pos2) {
 
 /// 3D の面の上の点（試しの人形の胴。カメラに向いた三角形の真ん中）。
 fn body_point(h: &H, rect: Rect) -> Pos2 {
-    let app = &h.state().state;
-    let model = app.view3d.model.clone().unwrap();
-    let s = app.view3d.pose.session.as_ref().unwrap();
+    let app = h.app();
+    let model = app.view3d().model.clone().unwrap();
+    let s = app.view3d().pose.session.as_ref().unwrap();
     let n = s.rig.meshes()[0].mesh.triangle_count();
-    let cam = app.view3d.camera.position();
+    let cam = app.view3d().view.camera.position();
     let t = model.geometry.triangles()[..n]
         .iter()
         .find(|t| {
@@ -90,7 +84,7 @@ fn body_point(h: &H, rect: Rect) -> Pos2 {
         })
         .copied()
         .unwrap();
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d().view.camera.view(rect.width(), rect.height());
     let s = view.to_screen((t.a + t.b + t.c) / 3.0).unwrap();
     pos2(rect.left() + s.x, rect.top() + s.y)
 }
@@ -107,14 +101,11 @@ fn the_dropdown_switches_modes_and_the_edit_and_pose_screens_swap_the_tool_strip
     let dropdown = bar_rect(&h, "モード: ペイント");
     assert!(dropdown.left() < 20.0, "左端: {dropdown:?}");
     click(&mut h, dropdown.center());
-    assert_eq!(
-        h.state().state.popup.as_ref().map(|p| p.kind),
-        Some(PopupKind::Mode)
-    );
+    assert_eq!(h.popup().as_ref().map(|p| p.kind), Some(PopupKind::Mode));
     let at = popup_item(&h, "編集").center();
     click(&mut h, at);
     assert_eq!(mode(&h), EditorMode::Edit);
-    assert!(h.state().state.popup.is_none());
+    assert!(h.popup().is_none());
     let dropdown = bar_rect(&h, "モード: 編集");
     // 編集のツールの帯: 選択・移動・回転・拡縮（ブラシのツールは出ない）
     for name in ["選択", "移動", "回転", "拡縮"] {
@@ -129,7 +120,7 @@ fn the_dropdown_switches_modes_and_the_edit_and_pose_screens_swap_the_tool_strip
     );
     let at = rect_of(&h, "移動", |r| r.left() < 44.0).center();
     click(&mut h, at);
-    assert_eq!(h.state().state.edit_tool, EditTool::Move);
+    assert_eq!(h.edit_tool(), EditTool::Move);
     // ポーズへ
     click(&mut h, dropdown.center());
     let at = popup_item(&h, "ポーズ").center();
@@ -140,7 +131,7 @@ fn the_dropdown_switches_modes_and_the_edit_and_pose_screens_swap_the_tool_strip
     let dropdown = bar_rect(&h, "モード: ポーズ");
     click(&mut h, dropdown.center());
     click(&mut h, pos2(700.0, 500.0));
-    assert!(h.state().state.popup.is_none());
+    assert!(h.popup().is_none());
     assert_eq!(mode(&h), EditorMode::Pose);
 }
 
@@ -167,7 +158,7 @@ fn the_view_menu_and_a_drawing_tool_switch_modes_and_a_bone_in_the_tree_enters_p
     click(&mut h, at);
     let at = popup_item(&h, "モード").center();
     click(&mut h, at);
-    let sub = h.state().state.popup.as_ref().unwrap().state.sub_rects()[0];
+    let sub = h.popup().as_ref().unwrap().state.sub_rects()[0];
     let at = rect_of(&h, "編集", |r| sub.contains_rect(r)).center();
     click(&mut h, at);
     assert_eq!(mode(&h), EditorMode::Edit);
@@ -177,7 +168,7 @@ fn the_view_menu_and_a_drawing_tool_switch_modes_and_a_bone_in_the_tree_enters_p
     let at = popup_item(&h, "消しゴム").center();
     click(&mut h, at);
     assert_eq!(mode(&h), EditorMode::Paint);
-    assert_eq!(h.state().state.tool, Tool::Eraser);
+    assert_eq!(h.tool(), Tool::Eraser);
     // 骨の木でボーンを選ぶとポーズへ
     click_tab(&mut h, yolu_app::Tab::Pose);
     h.run();
@@ -194,8 +185,8 @@ fn edit_and_pose_modes_do_not_draw_in_3d_or_2d_but_the_view_and_the_eyedropper_s
         h.state_mut().apply(Action::Mode(ModeAction::Set(m)));
         h.run();
         drag(&mut h, &[at, at + vec2(8.0, 0.0), at + vec2(16.0, 0.0)]);
-        let app = &h.state().state;
-        assert!(!app.doc.can_undo(), "{m:?}: 3D に描かない");
+        let app = h.app();
+        assert!(!app.doc().can_undo(), "{m:?}: 3D に描かない");
         assert!(!app.is_stroking());
     }
     // 2D: 見るだけ（描かない・選択範囲も作らない）
@@ -211,11 +202,11 @@ fn edit_and_pose_modes_do_not_draw_in_3d_or_2d_but_the_view_and_the_eyedropper_s
         h.state_mut().apply(Action::Mode(ModeAction::Set(m)));
         h.run();
         drag(&mut h, &[offset(c, -30.0, -20.0), offset(c, 30.0, 20.0)]);
-        let app = &h.state().state;
+        let app = h.app();
         assert_eq!(canvas_pixel(&h, c)[3], 0, "{m:?} {tool:?}: 描かない");
-        assert!(!app.doc.can_undo(), "{m:?} {tool:?}");
+        assert!(!app.doc().can_undo(), "{m:?} {tool:?}");
         assert!(
-            app.doc.selection().is_none(),
+            app.doc().selection().is_none(),
             "{m:?} {tool:?}: 選択範囲を作らない"
         );
     }
@@ -242,16 +233,13 @@ fn edit_and_pose_modes_do_not_draw_in_3d_or_2d_but_the_view_and_the_eyedropper_s
     });
     h.event(Event::ModifiersChanged(Modifiers::NONE));
     h.run();
-    assert!(h.state().state.view.angle != 0.0, "表示が回った");
+    assert!(h.view().angle != 0.0, "表示が回った");
     press(&h, c, PointerButton::Secondary);
     h.step();
-    assert!(
-        h.state().state.canvas.eyedrop.is_some(),
-        "右ボタンのスポイト"
-    );
+    assert!(h.canvas().eyedrop.is_some(), "右ボタンのスポイト");
     release(&h, c, PointerButton::Secondary);
     h.run();
-    assert!(!h.state().state.doc.can_undo());
+    assert!(!h.doc().can_undo());
 }
 
 #[test]
@@ -263,7 +251,7 @@ fn paint_keys_do_nothing_outside_paint_mode_and_everywhere_keys_still_work() {
     for k in [Key::E, Key::G, Key::B] {
         key(&h, k, Modifiers::NONE);
         h.run();
-        assert_eq!(h.state().state.tool, Tool::Brush, "{k:?}");
+        assert_eq!(h.tool(), Tool::Brush, "{k:?}");
         assert_eq!(mode(&h), EditorMode::Edit, "{k:?}");
     }
     // どこでもの段: Ctrl+Tab のパイは編集でも開く
@@ -278,7 +266,7 @@ fn paint_keys_do_nothing_outside_paint_mode_and_everywhere_keys_still_work() {
         .apply(Action::Mode(ModeAction::Set(EditorMode::Paint)));
     key(&h, Key::E, Modifiers::NONE);
     h.run();
-    assert_eq!(h.state().state.tool, Tool::Eraser);
+    assert_eq!(h.tool(), Tool::Eraser);
 }
 
 #[test]
@@ -299,16 +287,13 @@ fn a_quick_ctrl_tab_opens_the_mode_pie_at_the_pointer_and_a_click_chooses() {
     // 開いている間は下の入力を止める（キーの表にも、3D ビューにも届かない）
     key(&h, Key::E, Modifiers::NONE);
     h.run();
-    assert_eq!(h.state().state.tool, Tool::Brush);
+    assert_eq!(h.tool(), Tool::Brush);
     assert_eq!(pie_open(&h).as_deref(), Some("mode"));
     click(&mut h, edit.center());
     assert_eq!(mode(&h), EditorMode::Edit);
     assert!(pie_open(&h).is_none());
-    assert!(h.state().state.popup.is_none());
-    assert!(
-        !h.state().state.doc.can_undo(),
-        "パイを押した押しで描かない"
-    );
+    assert!(h.popup().is_none());
+    assert!(!h.doc().can_undo(), "パイを押した押しで描かない");
 }
 
 #[test]
@@ -321,8 +306,8 @@ fn holding_ctrl_tab_and_releasing_toward_an_item_runs_it_and_a_long_hold_in_the_
     h.step();
     assert_eq!(pie_open(&h).as_deref(), Some("mode"));
     assert_eq!(
-        h.state().state.pie.open.as_ref().unwrap().run.key,
-        Some(Key::Tab),
+        h.pie().open.as_ref().unwrap().run.key,
+        Some(Key::Tab.into()),
         "押しているキーを覚える"
     );
     // 右（ポーズ）の向きへ動かして離す: 箱に届かなくても、向きで指す
@@ -358,10 +343,11 @@ fn holding_ctrl_tab_and_releasing_toward_an_item_runs_it_and_a_long_hold_in_the_
 fn digits_choose_and_escape_a_right_click_or_a_click_in_the_middle_close_the_pie() {
     let (mut h, rect) = figure_view();
     let at = rect.center();
-    // 数字は上から時計回り: 1 = 上（編集）、3 = 右（ポーズ）、7 = 左（ペイント）
+    // 数字は上から時計回り: 1 = 上（編集）、3 = 右（ポーズ）、5 = 下（ハイド）、7 = 左（ペイント）
     for (digit, wanted) in [
         (Key::Num1, EditorMode::Edit),
         (Key::Num3, EditorMode::Pose),
+        (Key::Num5, EditorMode::Hide),
         (Key::Num7, EditorMode::Paint),
     ] {
         tap_mode_pie(&mut h, at);
@@ -372,7 +358,7 @@ fn digits_choose_and_escape_a_right_click_or_a_click_in_the_middle_close_the_pie
     }
     // 空いている向きの数字は何もしない（開いたまま）
     tap_mode_pie(&mut h, at);
-    key(&h, Key::Num5, Modifiers::NONE);
+    key(&h, Key::Num2, Modifiers::NONE);
     h.run();
     assert_eq!(pie_open(&h).as_deref(), Some("mode"));
     // Esc
@@ -386,13 +372,13 @@ fn digits_choose_and_escape_a_right_click_or_a_click_in_the_middle_close_the_pie
     release(&h, at + vec2(0.0, 60.0), PointerButton::Secondary);
     h.run();
     assert!(pie_open(&h).is_none());
-    assert!(h.state().state.view3d.input.eyedrop.is_none());
+    assert!(h.view3d().view.input.eyedrop.is_none());
     // 真ん中のクリック
     tap_mode_pie(&mut h, at);
     click(&mut h, at);
     assert!(pie_open(&h).is_none());
     assert_eq!(mode(&h), EditorMode::Paint);
-    assert!(!h.state().state.doc.can_undo(), "閉じた押しで描かない");
+    assert!(!h.doc().can_undo(), "閉じた押しで描かない");
 }
 
 #[test]
@@ -418,7 +404,7 @@ fn the_view_pie_turns_the_camera_to_each_axis_and_frames_the_set() {
         open(&mut h);
         let item = pie_item(&h, label);
         click(&mut h, item.center());
-        let camera = h.state().state.view3d.camera;
+        let camera = h.view3d().view.camera;
         let (yaw, pitch) = view.orientation();
         assert_eq!(camera.pitch, pitch, "{label}");
         assert!(
@@ -435,16 +421,16 @@ fn the_view_pie_turns_the_camera_to_each_axis_and_frames_the_set() {
     let ortho = pie_item(&h, "正投影");
     click(&mut h, ortho.center());
     assert!(pie_open(&h).is_none());
-    assert!(!h.state().state.view3d.camera.is_orthographic());
+    assert!(!h.view3d().view.camera.is_orthographic());
     // 収める: 3D の . と同じ（選んだセットを画面に収める）
-    h.state_mut().state.view3d.camera.distance *= 3.0;
-    let mut expected = h.state().state.view3d.camera;
-    let bounds = yolu_app::view3d::navigation::selected_bounds(&h.state().state.view3d).unwrap();
+    h.view3d_mut().view.camera.distance *= 3.0;
+    let mut expected = h.view3d().view.camera;
+    let bounds = yolu_app::view3d::navigation::selected_bounds(h.view3d()).unwrap();
     expected.frame_bounds(&bounds, rect.width(), rect.height());
     open(&mut h);
     let frame = pie_item(&h, "収める");
     click(&mut h, frame.center());
-    let camera = h.state().state.view3d.camera;
+    let camera = h.view3d().view.camera;
     assert!(
         (camera.distance - expected.distance).abs() < 1e-4,
         "{camera:?}"
@@ -460,18 +446,18 @@ fn the_mode_does_not_change_while_drawing() {
     h.step();
     move_to(&h, at + vec2(6.0, 0.0));
     h.step();
-    assert!(h.state().state.is_stroking());
+    assert!(h.app().is_stroking());
     // Ctrl+Tab のパイは開かない・メニューからも替えない
     key(&h, Key::Tab, Modifiers::CTRL);
     h.step();
     assert!(pie_open(&h).is_none());
-    assert_eq!(h.state().state.message, "描いている間はできません。");
+    assert_eq!(h.message(), "描いている間はできません。");
     h.state_mut()
         .apply(Action::Mode(ModeAction::Set(EditorMode::Edit)));
     assert_eq!(mode(&h), EditorMode::Paint);
     release(&h, at + vec2(6.0, 0.0), PointerButton::Primary);
     h.run();
-    assert!(!h.state().state.is_stroking());
+    assert!(!h.app().is_stroking());
     h.state_mut()
         .apply(Action::Mode(ModeAction::Set(EditorMode::Edit)));
     assert_eq!(mode(&h), EditorMode::Edit);
@@ -487,27 +473,17 @@ fn switching_modes_commits_a_gizmo_drag_first() {
     // ペイントへ: ドラッグをそこまでで確定してから替える（取り消しに 1 つ）
     h.state_mut()
         .apply(Action::Mode(ModeAction::Set(EditorMode::Paint)));
-    let app = &h.state().state;
-    assert_eq!(app.mode, EditorMode::Paint);
-    assert!(app.view3d.pose.drag.is_none());
-    let s = app.view3d.pose.session.as_ref().unwrap();
+    let app = h.app();
+    assert_eq!(app.mode(), EditorMode::Paint);
+    assert!(app.view3d().pose.drag.is_none());
+    let s = app.view3d().pose.session.as_ref().unwrap();
     assert!(!s.is_editing());
     assert_eq!(s.undo_len(), 1);
     assert!(s.is_posed());
     release(&h, grab + vec2(20.0, 10.0), PointerButton::Primary);
     h.run();
-    assert_eq!(
-        h.state()
-            .state
-            .view3d
-            .pose
-            .session
-            .as_ref()
-            .unwrap()
-            .undo_len(),
-        1
-    );
-    assert!(!h.state().state.doc.can_undo(), "離した押しで描かない");
+    assert_eq!(h.view3d().pose.session.as_ref().unwrap().undo_len(), 1);
+    assert!(!h.doc().can_undo(), "離した押しで描かない");
 }
 
 #[test]
@@ -520,9 +496,9 @@ fn the_brush_and_color_panels_are_dimmed_with_a_reason_outside_paint_mode() {
     hover_and_wait(&mut h, at);
     assert!(h.query_by_label("ペイントのモードで使います").is_some());
     // 押しても変わらない
-    let radius = h.state().state.brush.radius;
+    let radius = h.brush().radius;
     click(&mut h, at + vec2(40.0, 0.0));
-    assert_eq!(h.state().state.brush.radius, radius);
+    assert_eq!(h.brush().radius, radius);
 }
 
 /// ポーズのモードで右上腕を選び、Z の輪を掴んで少し回している途中にする（掴んだ点を返す）。
@@ -530,23 +506,16 @@ fn grab_upper_arm_ring(h: &mut H, rect: Rect) -> (usize, Pos2) {
     h.state_mut().apply(Action::Pose(PoseAction::ToggleMode));
     h.run();
     let upper = {
-        let s = h.state().state.view3d.pose.session.as_ref().unwrap();
+        let s = h.view3d().pose.session.as_ref().unwrap();
         s.rig
             .bones()
             .iter()
             .position(|b| b.name == "右上腕")
             .unwrap()
     };
-    h.state_mut()
-        .state
-        .view3d
-        .pose
-        .session
-        .as_mut()
-        .unwrap()
-        .selected = Some(upper);
+    h.view3d_mut().pose.session.as_mut().unwrap().selected = Some(upper);
     h.run();
-    let r = gizmo::current_rings(&h.state().state, rect).expect("輪");
+    let r = gizmo::current_rings(h.app(), rect).expect("輪");
     let (_, s, _) = r.points[2]
         .iter()
         .find(|(_, _, front)| *front)
@@ -555,23 +524,14 @@ fn grab_upper_arm_ring(h: &mut H, rect: Rect) -> (usize, Pos2) {
     let grab = pos2(rect.left() + s.x, rect.top() + s.y);
     press(h, grab, PointerButton::Primary);
     h.step();
-    assert!(h.state().state.view3d.pose.drag.is_some(), "輪を掴んだ");
+    assert!(h.view3d().pose.drag.is_some(), "輪を掴んだ");
     move_to(h, grab + vec2(20.0, 20.0));
     h.step();
     (upper, grab + vec2(20.0, 20.0))
 }
 
 fn bone_rotation(h: &H, bone: usize) -> yolu_core::glam::Quat {
-    h.state()
-        .state
-        .view3d
-        .pose
-        .session
-        .as_ref()
-        .unwrap()
-        .pose()
-        .locals[bone]
-        .rotation
+    h.view3d().pose.session.as_ref().unwrap().pose().locals[bone].rotation
 }
 
 #[test]
@@ -584,14 +544,14 @@ fn a_pie_does_not_open_during_a_drag_and_the_drag_goes_on_unchanged() {
     h.step();
     assert!(pie_open(&h).is_none());
     assert_eq!(
-        h.state().state.message,
+        h.message(),
         "パイメニューを開けません（ほかの操作の途中です）。"
     );
     {
-        let app = &h.state().state;
-        assert_eq!(app.mode, EditorMode::Pose);
-        assert!(app.view3d.pose.drag.is_some(), "ドラッグは続く");
-        let s = app.view3d.pose.session.as_ref().unwrap();
+        let app = h.app();
+        assert_eq!(app.mode(), EditorMode::Pose);
+        assert!(app.view3d().pose.drag.is_some(), "ドラッグは続く");
+        let s = app.view3d().pose.session.as_ref().unwrap();
         assert!(s.is_editing() && s.undo_len() == 0, "確定していない");
     }
     assert!(
@@ -606,14 +566,7 @@ fn a_pie_does_not_open_during_a_drag_and_the_drag_goes_on_unchanged() {
     release(&h, at + vec2(-120.0, 0.0), PointerButton::Primary);
     h.run();
     assert_eq!(
-        h.state()
-            .state
-            .view3d
-            .pose
-            .session
-            .as_ref()
-            .unwrap()
-            .undo_len(),
+        h.view3d().pose.session.as_ref().unwrap().undo_len(),
         1,
         "離したときに 1 回の取り消し"
     );
@@ -623,12 +576,12 @@ fn a_pie_does_not_open_during_a_drag_and_the_drag_goes_on_unchanged() {
     h.step();
     move_to(&h, c + vec2(30.0, 10.0));
     h.step();
-    assert!(h.state().state.view3d.input.nav.is_some());
-    let camera = h.state().state.view3d.camera;
+    assert!(h.view3d().view.input.nav.is_some());
+    let camera = h.view3d().view.camera;
     key(&h, Key::Tab, Modifiers::CTRL);
     h.step();
     assert!(pie_open(&h).is_none());
-    assert_eq!(h.state().state.view3d.camera, camera);
+    assert_eq!(h.view3d().view.camera, camera);
     release(&h, c + vec2(30.0, 10.0), PointerButton::Secondary);
     h.run();
     // 何も押していなければ開く
@@ -645,26 +598,26 @@ fn escape_that_closes_a_pie_or_a_menu_does_not_reach_the_canvas() {
     let c = canvas_rect(&h).center();
     click(&mut h, offset(c, -60.0, -40.0));
     click(&mut h, offset(c, 60.0, -40.0));
-    assert_eq!(h.state().state.sel.polygon.len(), 2, "多角形の点を 2 つ");
+    assert_eq!(h.sel().polygon.len(), 2, "多角形の点を 2 つ");
     // パイを Esc で閉じても、多角形の点はそのまま
     tap_mode_pie(&mut h, offset(c, 0.0, 60.0));
     assert_eq!(pie_open(&h).as_deref(), Some("mode"));
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
     assert!(pie_open(&h).is_none());
-    assert_eq!(h.state().state.sel.polygon.len(), 2);
+    assert_eq!(h.sel().polygon.len(), 2);
     // メニューを Esc で閉じても同じ
     let at = menu_title(&h, "表示").center();
     click(&mut h, at);
-    assert!(h.state().state.popup.is_some());
+    assert!(h.popup().is_some());
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
-    assert!(h.state().state.popup.is_none());
-    assert_eq!(h.state().state.sel.polygon.len(), 2);
+    assert!(h.popup().is_none());
+    assert_eq!(h.sel().polygon.len(), 2);
     // 何も開いていなければ、Esc は多角形の途中をやめる（今までどおり）
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
-    assert!(h.state().state.sel.polygon.is_empty());
+    assert!(h.sel().polygon.is_empty());
 }
 
 #[test]
@@ -763,7 +716,7 @@ fn shift_click(h: &mut H, at: Pos2) {
 fn clone_sources_the_shift_line_and_the_bucket_do_nothing_outside_paint_mode() {
     let (mut h, rect) = figure_view();
     let at = body_point(&h, rect);
-    h.state_mut().state.m2.brush.effect = yolu_app::engine::BrushEffect::Clone {
+    h.m2_mut().brush.effect = yolu_app::engine::BrushEffect::Clone {
         offset: Default::default(),
     };
     for m in [EditorMode::Edit, EditorMode::Pose] {
@@ -771,10 +724,10 @@ fn clone_sources_the_shift_line_and_the_bucket_do_nothing_outside_paint_mode() {
         h.run();
         // 3D: Alt＋クリックのクローンの元・Shift＋クリックの直線
         alt_click(&mut h, at);
-        assert!(h.state().state.clone.source.is_none(), "{m:?}: 3D の元");
+        assert!(h.clone().source.is_none(), "{m:?}: 3D の元");
         shift_click(&mut h, at);
-        assert!(!h.state().state.doc.can_undo(), "{m:?}: 3D の直線");
-        assert!(!h.state().state.is_stroking());
+        assert!(!h.doc().can_undo(), "{m:?}: 3D の直線");
+        assert!(!h.app().is_stroking());
     }
     // 2D: Alt＋クリックのクローンの元・Shift＋クリックの直線
     click_tab(&mut h, yolu_app::Tab::Canvas);
@@ -784,13 +737,10 @@ fn clone_sources_the_shift_line_and_the_bucket_do_nothing_outside_paint_mode() {
         h.state_mut().apply(Action::Mode(ModeAction::Set(m)));
         h.run();
         alt_click(&mut h, c);
-        let doc = h.state().state.doc.id();
-        assert!(
-            h.state().state.clone.canvas_source_for(doc).is_none(),
-            "{m:?}: 2D の元"
-        );
+        let doc = h.doc().id();
+        assert!(h.clone().canvas_source_for(doc).is_none(), "{m:?}: 2D の元");
         shift_click(&mut h, offset(c, 40.0, 0.0));
-        assert!(!h.state().state.doc.can_undo(), "{m:?}: 2D の直線");
+        assert!(!h.doc().can_undo(), "{m:?}: 2D の直線");
     }
     // 近い色のバケツ（2D と 3D）
     h.state_mut().apply(Action::SelectTool(Tool::Fill));
@@ -798,39 +748,23 @@ fn clone_sources_the_shift_line_and_the_bucket_do_nothing_outside_paint_mode() {
         .apply(Action::Mode(ModeAction::Set(EditorMode::Edit)));
     h.run();
     click(&mut h, c);
-    assert!(!h.state().state.doc.can_undo(), "2D のバケツ");
+    assert!(!h.doc().can_undo(), "2D のバケツ");
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     click(&mut h, at);
-    assert!(!h.state().state.doc.can_undo(), "3D のバケツ");
-    assert!(!h.state().state.is_stroking());
+    assert!(!h.doc().can_undo(), "3D のバケツ");
+    assert!(!h.app().is_stroking());
     // ペイントへ戻すと、同じ Alt＋クリックで 3D の元が決まる
     h.state_mut().apply(Action::SelectTool(Tool::Brush));
-    h.state_mut().state.m2.brush.effect = yolu_app::engine::BrushEffect::Clone {
+    h.m2_mut().brush.effect = yolu_app::engine::BrushEffect::Clone {
         offset: Default::default(),
     };
     assert_eq!(mode(&h), EditorMode::Paint);
     alt_click(&mut h, at);
-    assert!(
-        h.state().state.clone.source.is_some(),
-        "ペイントでは元が決まる"
-    );
+    assert!(h.clone().source.is_some(), "ペイントでは元が決まる");
 }
 
 // ───────── 絵 ─────────
-
-fn crop(h: &mut H, rect: Rect, name: &str) {
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().max(0.0).floor() as u32,
-        rect.top().max(0.0).floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
-}
 
 #[test]
 fn snapshot_the_mode_dropdown_in_both_languages() {
@@ -839,7 +773,7 @@ fn snapshot_the_mode_dropdown_in_both_languages() {
         (Lang::En, "mode_dropdown_en", "Mode: Edit"),
     ] {
         let (mut h, _) = figure_view();
-        h.state_mut().state.set_language(lang);
+        h.app_mut().set_language(lang);
         h.state_mut()
             .apply(Action::Mode(ModeAction::Set(EditorMode::Edit)));
         h.run();
@@ -847,8 +781,8 @@ fn snapshot_the_mode_dropdown_in_both_languages() {
         click(&mut h, dropdown.center());
         move_to(&h, pos2(700.0, 500.0));
         h.run();
-        let popup = h.state().state.popup.as_ref().unwrap().state.rect;
-        crop(&mut h, dropdown.union(popup).expand(4.0), name);
+        let popup = h.popup().as_ref().unwrap().state.rect;
+        crate::common::shot::region(&mut h, name, dropdown.union(popup));
     }
 }
 
@@ -861,7 +795,7 @@ fn snapshot_the_mode_and_view_pies_in_both_languages() {
         (Lang::En, "view", "view_pie_en"),
     ] {
         let (mut h, rect) = figure_view();
-        h.state_mut().state.set_language(lang);
+        h.app_mut().set_language(lang);
         move_to(&h, rect.center());
         h.run();
         h.state_mut()
@@ -869,6 +803,6 @@ fn snapshot_the_mode_and_view_pies_in_both_languages() {
         h.run();
         assert_eq!(pie_open(&h).as_deref(), Some(menu));
         let c = pie_center(&h);
-        crop(&mut h, Rect::from_center_size(c, vec2(480.0, 300.0)), name);
+        crate::common::shot::region(&mut h, name, Rect::from_center_size(c, vec2(480.0, 300.0)));
     }
 }

@@ -51,7 +51,7 @@ impl Fixture {
         let spec = SetSpec {
             id: "11111111-1111-4111-8111-111111111111".into(),
             name: name.clone(),
-            material: MaterialRef::Material { name, asset: None },
+            materials: vec![MaterialRef::Material { name, asset: None }],
             document: Some(DocumentSource::from_core(Arc::new(doc)).unwrap()),
             composites,
         };

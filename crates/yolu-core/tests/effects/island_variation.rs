@@ -66,7 +66,10 @@ fn islands(swapped: bool) -> Arc<UvTopology> {
     t.extend(quad(10., c));
     t.extend(quad(15., |x, y| Vec2::new(0.75 + 0.2 * x, 0.3 + 0.3 * y)));
     let g = SurfaceGeometry::new(t, 1, DEFAULT_WELD_TOLERANCE).unwrap();
-    Arc::new(UvTopology::new(Arc::new(g), Some(0)))
+    Arc::new(UvTopology::new(
+        Arc::new(g),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
+    ))
 }
 
 /// 64² のアイランドごとの代表のテクセル（A・B・C・D の重ならない所）と、B と D が重なるテクセル・アイランドの外のテクセル。

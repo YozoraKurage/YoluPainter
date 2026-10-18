@@ -2,6 +2,7 @@
 //! グループへ移す ▸・削除。押せない項目はその理由をツールチップに。ブラシを引いている間は落とせるグループのタブが光る（egui_kittest）。
 //! メニューの項目そのものの試験（画面を描かない）は `headless/brush_list.rs`。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::{pos2, Event, Key, Modifiers, PointerButton, Rect};
@@ -21,7 +22,7 @@ fn window() -> H {
 }
 
 fn st(h: &H) -> &AppState {
-    &h.state().state
+    h.app()
 }
 
 fn b(id: &'static str) -> BrushKey {
@@ -29,9 +30,7 @@ fn b(id: &'static str) -> BrushKey {
 }
 
 fn language(h: &mut H, lang: Lang) {
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(yolu_app::m2::UiOp::Language(lang)));
+    h.act(Action::M2Ui(yolu_app::m2::UiOp::Language(lang)));
     h.run();
 }
 
@@ -52,7 +51,7 @@ fn right_click(h: &mut H, at: egui::Pos2) {
 fn open_menu(h: &mut H, name: &str) {
     let row = row_of(h, name);
     right_click(h, row.center());
-    assert!(st(h).popup.is_some(), "{name}: メニューが開く");
+    assert!(st(h).popup().is_some(), "{name}: メニューが開く");
 }
 
 fn group_tab(h: &H, name: &str) -> Rect {
@@ -71,8 +70,8 @@ fn the_row_menu_starts_with_the_brush_settings_and_opens_the_detail_of_that_brus
             ("Brush Settings…", "Rename", "Duplicate"),
         );
         let pencil = lang.pick("鉛筆", "Pencil");
-        assert_eq!(st(&h).brushes.lib.current(), b("standard"));
-        assert!(!st(&h).brushes.ui.detail.open);
+        assert_eq!(st(&h).brushes().lib.current(), b("standard"));
+        assert!(!st(&h).brushes().ui.detail.open);
         open_menu(&mut h, pencil);
         // 先頭に「ブラシの設定…」。名前の変更・複製はその下
         let first = popup_item(&h, settings);
@@ -80,9 +79,9 @@ fn the_row_menu_starts_with_the_brush_settings_and_opens_the_detail_of_that_brus
         assert!(popup_item(&h, rename).top() < popup_item(&h, duplicate).top());
         // 押すと、そのブラシに替わって詳細のウィンドウが開く（今のブラシではなかったブラシでも）
         click(&mut h, first.center());
-        assert!(st(&h).popup.is_none(), "{lang:?}: 閉じる");
-        assert_eq!(st(&h).brushes.lib.current(), b("pencil"), "{lang:?}");
-        assert!(st(&h).brushes.ui.detail.open, "{lang:?}");
+        assert!(st(&h).popup().is_none(), "{lang:?}: 閉じる");
+        assert_eq!(st(&h).brushes().lib.current(), b("pencil"), "{lang:?}");
+        assert!(st(&h).brushes().ui.detail.open, "{lang:?}");
         let window = yolu_app::ui::window::last_rect(&h.ctx, yolu_app::panels::brush_detail::id())
             .expect("ブラシの詳細のウィンドウを描いている");
         assert!(window.width() > 300.0);
@@ -95,19 +94,19 @@ fn the_row_menu_renames_in_the_row_and_escape_leaves_the_name_alone() {
     // 利用者のブラシを足して、メニューから名前を変える（行の中の入力欄。確定は Enter、Esc でやめる）
     h.get_by_label("今の設定を新しいブラシに").click();
     h.run();
-    let copy = st(&h).brushes.lib.current();
+    let copy = st(&h).brushes().lib.current();
     assert!(copy.is_user());
-    let name = st(&h).brushes.lib.entry(copy).unwrap().name.clone();
+    let name = st(&h).brushes().lib.entry(copy).unwrap().name.clone();
     open_menu(&mut h, &name);
     let at = popup_item(&h, "名前を変更").center();
     click(&mut h, at);
-    assert_eq!(st(&h).brushes.ui.renaming, Some(copy), "行の中でその場で");
+    assert_eq!(st(&h).brushes().ui.renaming, Some(copy), "行の中でその場で");
     h.event(Event::Text("線画".into()));
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
-    assert_eq!(st(&h).brushes.ui.renaming, None);
+    assert_eq!(st(&h).brushes().ui.renaming, None);
     assert_eq!(
-        st(&h).brushes.lib.entry(copy).unwrap().name,
+        st(&h).brushes().lib.entry(copy).unwrap().name,
         name,
         "Esc では変えない"
     );
@@ -119,7 +118,7 @@ fn the_row_menu_renames_in_the_row_and_escape_leaves_the_name_alone() {
     h.event(Event::Text("線画".into()));
     key(&h, Key::Enter, Modifiers::NONE);
     h.run();
-    assert_eq!(st(&h).brushes.lib.entry(copy).unwrap().name, "線画");
+    assert_eq!(st(&h).brushes().lib.entry(copy).unwrap().name, "線画");
     row_of(&h, "線画");
 }
 
@@ -129,47 +128,47 @@ fn the_row_menu_moves_a_brush_to_another_group_from_a_nested_list() {
         let mut h = window();
         language(&mut h, lang);
         let pencil = lang.pick("鉛筆", "Pencil");
-        let slot = st(&h).toolset.set.slot_of(b("pencil")).unwrap();
-        let own = st(&h).toolset.set.group_of(b("pencil")).unwrap();
-        let target = st(&h).toolset.set.slot(slot).unwrap().groups[1].id;
-        let target_name = st(&h).toolset.set.group(target).unwrap().1.name_in(lang);
+        let slot = st(&h).toolset().set.slot_of(b("pencil")).unwrap();
+        let own = st(&h).toolset().set.group_of(b("pencil")).unwrap();
+        let target = st(&h).toolset().set.slot(slot).unwrap().groups[1].id;
+        let target_name = st(&h).toolset().set.group(target).unwrap().1.name_in(lang);
         open_menu(&mut h, pencil);
         h.get_by_label(lang.pick("グループへ移す", "Move to Group"))
             .click();
         h.run();
         // 今のグループは押せない（印だけ）。別のグループを選ぶと、そこへ動く
-        let own_name = st(&h).toolset.set.group(own).unwrap().1.name_in(lang);
+        let own_name = st(&h).toolset().set.group(own).unwrap().1.name_in(lang);
         let own_item = popup_item(&h, &own_name);
         click(&mut h, own_item.center());
         assert!(
-            st(&h).popup.is_some(),
+            st(&h).popup().is_some(),
             "{lang:?}: 今のグループの項目では閉じない"
         );
         let item = popup_item(&h, &target_name);
         click(&mut h, item.center());
-        assert!(st(&h).popup.is_none());
+        assert!(st(&h).popup().is_none());
         assert_eq!(
-            st(&h).toolset.set.group_of(b("pencil")),
+            st(&h).toolset().set.group_of(b("pencil")),
             Some(target),
             "{lang:?}"
         );
-        assert!(!st(&h).doc.can_undo(), "ブラシの並びは文書ではない");
+        assert!(!st(&h).doc().can_undo(), "ブラシの並びは文書ではない");
     }
 }
 
 #[test]
 fn a_blocked_row_menu_keeps_its_items_closed_and_names_the_reason() {
     let mut h = window();
-    h.state_mut().state.toolset.set.locked = Some(yolu_app::toolset::Lock::Newer(9));
+    h.toolset_mut().set.locked = Some(yolu_app::toolset::Lock::Newer(9));
     h.run();
     open_menu(&mut h, "鉛筆");
     // 押せない項目は、押しても閉じない
     for label in ["複製", "グループへ移す", "削除"] {
         let item = popup_item(&h, label);
         click(&mut h, item.center());
-        assert!(st(&h).popup.is_some(), "{label}: 押せない項目は閉じない");
+        assert!(st(&h).popup().is_some(), "{label}: 押せない項目は閉じない");
     }
-    assert!(!st(&h).doc.can_undo());
+    assert!(!st(&h).doc().can_undo());
     // 理由は、乗せると出るツールチップの文（ラベルには続けない）
     let reason = yolu_app::toolset::Refusal::Newer(9).describe(Lang::Ja);
     let entries = yolu_app::toolset::ui::brush_menu(st(&h));
@@ -203,7 +202,7 @@ fn a_blocked_row_menu_keeps_its_items_closed_and_names_the_reason() {
 #[test]
 fn the_eraser_rows_have_the_same_menu() {
     let mut h = window();
-    h.state_mut().state.apply(Action::SelectTool(Tool::Eraser));
+    h.act(Action::SelectTool(Tool::Eraser));
     h.run();
     open_menu(&mut h, "ソフト消しゴム");
     let settings = popup_item(&h, "ブラシの設定…");
@@ -211,8 +210,8 @@ fn the_eraser_rows_have_the_same_menu() {
         assert!(settings.top() < popup_item(&h, label).top(), "{label}");
     }
     click(&mut h, settings.center());
-    assert_eq!(st(&h).brushes.lib.current(), b("soft-eraser"));
-    assert!(st(&h).brushes.ui.detail.open);
+    assert_eq!(st(&h).brushes().lib.current(), b("soft-eraser"));
+    assert!(st(&h).brushes().ui.detail.open);
 }
 
 #[test]
@@ -220,8 +219,8 @@ fn dragging_a_brush_lights_the_group_tabs_it_can_drop_on_and_stops_when_released
     let mut h = window();
     let row = row_of(&h, "鉛筆");
     let start = pos2(row.left() + 30.0, row.center().y);
-    let slot = st(&h).toolset.set.slot_of(b("pencil")).unwrap();
-    let own = st(&h).toolset.set.group_of(b("pencil")).unwrap();
+    let slot = st(&h).toolset().set.slot_of(b("pencil")).unwrap();
+    let own = st(&h).toolset().set.group_of(b("pencil")).unwrap();
     // 引く前は光らない
     assert!(yolu_app::toolset::ui::droppable_groups(st(&h), b("pencil")).len() > 1);
     press(&h, start, PointerButton::Primary);
@@ -230,12 +229,12 @@ fn dragging_a_brush_lights_the_group_tabs_it_can_drop_on_and_stops_when_released
         h.step();
     }
     assert_eq!(
-        st(&h).toolset.ui.dragging(),
+        st(&h).toolset().ui.dragging(),
         Some(Dragged::Brush(b("pencil")))
     );
     let lit = yolu_app::toolset::ui::droppable_groups(st(&h), b("pencil"));
     assert!(!lit.contains(&own), "今のグループは落とす先ではない");
-    for g in &st(&h).toolset.set.slot(slot).unwrap().groups {
+    for g in &st(&h).toolset().set.slot(slot).unwrap().groups {
         assert_eq!(lit.contains(&g.id), g.id != own);
     }
     // 光った所のタブの絵: 引いている間と、離した後の違い
@@ -251,18 +250,9 @@ fn dragging_a_brush_lights_the_group_tabs_it_can_drop_on_and_stops_when_released
     key(&h, Key::Escape, Modifiers::NONE);
     release(&h, pos2(start.x, start.y + 14.0), PointerButton::Primary);
     h.run();
-    assert_eq!(st(&h).toolset.ui.dragging(), None);
+    assert_eq!(st(&h).toolset().ui.dragging(), None);
     let after = h.render().expect("描画");
-    let crop = |image: &image::RgbaImage| {
-        image::imageops::crop_imm(
-            image,
-            tabs.left() as u32,
-            tabs.top() as u32,
-            tabs.width() as u32,
-            tabs.height() as u32,
-        )
-        .to_image()
-    };
+    let crop = |image: &image::RgbaImage| common::shot::crop(image, tabs, 1.0);
     assert_ne!(
         crop(&during).as_raw(),
         crop(&after).as_raw(),
@@ -270,9 +260,9 @@ fn dragging_a_brush_lights_the_group_tabs_it_can_drop_on_and_stops_when_released
     );
     egui_kittest::image_snapshot(&crop(&during), "brush_drag_lights_group_tabs");
     // 落とすと、そのグループへ動く（今までの動き）
-    let target = st(&h).toolset.set.slot(slot).unwrap().groups[2].id;
+    let target = st(&h).toolset().set.slot(slot).unwrap().groups[2].id;
     let tab_name = st(&h)
-        .toolset
+        .toolset()
         .set
         .group(target)
         .unwrap()
@@ -288,7 +278,7 @@ fn dragging_a_brush_lights_the_group_tabs_it_can_drop_on_and_stops_when_released
             tab.center(),
         ],
     );
-    assert_eq!(st(&h).toolset.set.group_of(b("pencil")), Some(target));
+    assert_eq!(st(&h).toolset().set.group_of(b("pencil")), Some(target));
 }
 
 #[test]
@@ -300,22 +290,15 @@ fn snapshots_of_the_row_menu_with_the_group_list_in_both_languages() {
         h.get_by_label(lang.pick("グループへ移す", "Move to Group"))
             .click();
         h.run();
-        let body = st(&h).popup.as_ref().unwrap().state.rect;
+        let body = st(&h).popup().as_ref().unwrap().state.rect;
         let rect = Rect::from_min_max(
             pos2((body.left() - 30.0).max(0.0), (body.top() - 30.0).max(0.0)),
             pos2(body.right() + 260.0, body.bottom() + 30.0),
         );
+        // 端も大きさも切り捨てて撮る
+        let rect = Rect::from_min_size(rect.min.floor(), rect.size().floor());
         h.event(Event::PointerGone);
         h.step();
-        let image = h.render().expect("描画");
-        let cropped = image::imageops::crop_imm(
-            &image,
-            rect.left() as u32,
-            rect.top() as u32,
-            rect.width() as u32,
-            rect.height() as u32,
-        )
-        .to_image();
-        egui_kittest::image_snapshot(&cropped, format!("brush_row_menu_{name}"));
+        common::shot::region(&mut h, &format!("brush_row_menu_{name}"), rect);
     }
 }

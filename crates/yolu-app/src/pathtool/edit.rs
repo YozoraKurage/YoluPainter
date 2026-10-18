@@ -156,7 +156,7 @@ pub enum Refusal {
     /// 2D の場所を 3D のパスに（またはその逆）。
     OtherKind,
     /// 点の値が範囲外（core の検査の文）。
-    Invalid(&'static str),
+    Invalid(yolu_core::Reason),
 }
 
 pub fn is_closed<P: Pt>(points: &[P]) -> bool {
@@ -326,7 +326,7 @@ fn set_tangent<P: Pt>(
 fn invalid(e: yolu_core::paths::Error) -> Refusal {
     match e {
         yolu_core::paths::Error::Invalid(why) => Refusal::Invalid(why),
-        _ => Refusal::Invalid("点の値が範囲外です"),
+        _ => Refusal::Invalid(yolu_core::Reason::PathPointValueRange),
     }
 }
 

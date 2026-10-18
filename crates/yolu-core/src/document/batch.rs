@@ -17,6 +17,15 @@ impl Document {
         &mut self,
         edits: impl FnOnce(&mut Document) -> Result<T, CoreError>,
     ) -> Result<T, CoreError> {
+        self.batch_as(super::HistoryKind::Batch, edits)
+    }
+
+    /// `batch` の、まとめた段の履歴の種類を呼び手が決める形（複数の編集が 1 つの操作として履歴に出るとき。段が 1 つだけなら、その段の種類のまま）。
+    pub fn batch_as<T>(
+        &mut self,
+        kind: super::HistoryKind,
+        edits: impl FnOnce(&mut Document) -> Result<T, CoreError>,
+    ) -> Result<T, CoreError> {
         self.ensure_no_stroke()?;
         self.ensure_not_batching()?;
         // 前の連続した変更（スライダーのドラッグ）へ、まとめの中の変更を混ぜない
@@ -31,7 +40,7 @@ impl Document {
         self.batching = false;
         match outcome {
             Ok(Ok(value)) => {
-                self.finish_batch(start, saved_redo, redo_bytes);
+                self.finish_batch(kind, start, saved_redo, redo_bytes);
                 Ok(value)
             }
             Ok(Err(error)) => {
@@ -46,7 +55,13 @@ impl Document {
     }
 
     /// 積まれた段が 2 つ以上なら 1 段にして、履歴を整理する。
-    fn finish_batch(&mut self, start: usize, saved_redo: Vec<Entry>, redo_bytes: u64) {
+    fn finish_batch(
+        &mut self,
+        kind: super::HistoryKind,
+        start: usize,
+        saved_redo: Vec<Entry>,
+        redo_bytes: u64,
+    ) {
         let added = self.undo.len() - start;
         if added == 0 {
             self.redo = saved_redo;
@@ -56,7 +71,7 @@ impl Document {
             // 合計の大きさは同じなので history_bytes はそのまま
             let cost = steps.iter().map(|e| e.cost).sum();
             self.undo.push(Entry {
-                kind: super::HistoryKind::Batch,
+                kind,
                 command: Command::Compound(steps),
                 cost,
             });
@@ -86,6 +101,16 @@ impl Document {
     pub(super) fn execute_group(&mut self, steps: Vec<Entry>) -> Result<(), CoreError> {
         let cost = 32 + steps.iter().map(|e| e.cost).sum::<u64>();
         self.execute(Command::Compound(steps), cost)
+    }
+
+    /// `execute_group` の、履歴の種類を呼び手が決める形（複製・削除のように、複数の段が 1 つの操作として履歴に出るとき）。
+    pub(super) fn execute_group_as(
+        &mut self,
+        kind: super::HistoryKind,
+        steps: Vec<Entry>,
+    ) -> Result<(), CoreError> {
+        let cost = 32 + steps.iter().map(|e| e.cost).sum::<u64>();
+        self.execute_as(kind, Command::Compound(steps), cost)
     }
 
     /// まとまった段を当てる（先頭から）・戻す（末尾から）。途中で断ったら、済んだ分を反対向きに戻してから断る。

@@ -11,7 +11,9 @@ fn summary(b: &ImportedBrush) -> String {
     let notes: Vec<String> = b.unrepresented.iter().map(|n| format!("{n:?}")).collect();
     format!(
         "r={:.1} op={:.2} fl={:.2} hd={:.2} sp={:.2} rn={:.2} ang={:.1} tips={} tex={} \
-         prs={}{}{} tilt={}{}{} jit_ang={:.2} taper={:.0}/{:.0} stab={:.0} | notes: {}",
+         prs={}{}{} tilt={}{}{} jit_ang={:.2} taper={:.0}/{:.0} stab={:.0} \
+         clr=tip{}/sub{:.2}/stroke{}/{} clr_inf={}{}{}{} spray={} spray_inf={}{} \
+         dual={} dual_inf={}{}{}{} dual2={} scr={} tilt_max={:.2} | notes: {}",
         s.radius,
         s.opacity,
         s.flow,
@@ -21,16 +23,74 @@ fn summary(b: &ImportedBrush) -> String {
         br.tip.angle,
         tips,
         u8::from(br.texture.is_some()),
-        u8::from(s.pressure_size),
-        u8::from(s.pressure_opacity),
-        u8::from(s.pressure_flow),
-        u8::from(br.controls.tilt_size),
-        u8::from(br.controls.tilt_opacity),
-        u8::from(br.controls.tilt_flow),
+        u8::from(br.influences.size.pressure.on),
+        u8::from(br.influences.opacity.pressure.on),
+        u8::from(br.influences.flow.pressure.on),
+        u8::from(br.influences.size.tilt.on),
+        u8::from(br.influences.opacity.tilt.on),
+        u8::from(br.influences.flow.tilt.on),
         br.jitter.angle,
         br.assist.taper_in,
         br.assist.taper_out,
         br.assist.stabilizer,
+        u8::from(br.color.tip.is_some()),
+        br.color.sub_mix,
+        u8::from(br.color.stroke.is_some()),
+        br.color.target.id(),
+        u8::from(br.influences.color_hue.is_on()),
+        u8::from(br.influences.color_saturation.is_on()),
+        u8::from(br.influences.color_value.is_on()),
+        u8::from(br.influences.color_sub_mix.is_on()),
+        br.spray.map_or("-".to_string(), |p| format!(
+            "{:.1}/{}/{:.0}/{:.2}/{:.1}/{}",
+            p.size,
+            u8::from(p.link_size),
+            p.density,
+            p.bias,
+            p.angle,
+            p.random_angle
+                .map_or("-".to_string(), |r| format!("{r:.2}"))
+        )),
+        u8::from(br.influences.spray_size.is_on()),
+        u8::from(br.influences.spray_density.is_on()),
+        br.dual.as_ref().map_or("-".to_string(), |d| format!(
+            "{:.1}/{}/{}/{:.2}/{:.2}/{:?}/{}{}{}/{:.2}",
+            d.radius,
+            u8::from(d.tip.is_some()),
+            u8::from(d.link_size),
+            d.flow,
+            d.spacing,
+            d.mode,
+            u8::from(d.angle_tilt),
+            u8::from(d.angle_rotation),
+            u8::from(d.angle_line),
+            d.angle_random
+        )),
+        u8::from(br.influences.dual_size.is_on()),
+        u8::from(br.influences.dual_flow.is_on()),
+        u8::from(br.influences.dual_spacing.is_on()),
+        u8::from(br.influences.dual_thickness.is_on()),
+        br.dual.as_ref().map_or("-".to_string(), |d| format!(
+            "tips{}/{:?}/{:?}{:?}/dk{}/tex{}/spray{}",
+            d.tips.len(),
+            d.selection,
+            d.flip_x,
+            d.flip_y,
+            u8::from(d.darken_overlap),
+            d.texture.as_ref().map_or("-".to_string(), |t| format!(
+                "{:.2}/{:.2}/{:?}/{:.0}",
+                t.depth, t.scale, t.mode, t.angle
+            )),
+            d.spray.map_or("-".to_string(), |p| format!(
+                "{:.1}/{}/{:.0}/{:.2}",
+                p.size,
+                u8::from(p.link_size),
+                p.density,
+                p.bias
+            ))
+        )),
+        u8::from(br.controls.size_by_screen),
+        br.influences.size.tilt.response.max(),
         notes.join(", ")
     )
 }

@@ -104,7 +104,8 @@ pub struct GpuBakeOptions {
     /// 既定は入。環境変数 `YOLUPAINTER_BAKE_RAY_QUERY` が `0`・`false`・`off`・`no` なら既定が切になる（アプリは設定で切り替える）。
     /// 実験機能のドライバーが固まったり応答なし（TDR）になったときは、自己照合が同じ道の中で行われるので compute に戻せない:
     /// そのような PC では切にする。Vulkan（RTX 3050 Laptop）と Metal（Apple M4）で動かして確かめた。DX12 は DXC（新しいシェーダー
-    /// コンパイラー）が無いと ray query が出ないので、Windows では Vulkan のアダプターを先に選ぶ。
+    /// コンパイラー）のときだけ ray query が出る（Windows の msvc のビルドは DXC を組み込む。実機での通りは未確認）。
+    /// アダプターは種類（ディスクリートなど）、ray query の有無、backend（Vulkan が先）の順に選ぶので、Vulkan が ray query を持てば Vulkan になる。
     pub ray_query: bool,
     /// 1 回の dispatch の時間の目標（ミリ秒）。
     pub target_dispatch_ms: f64,
@@ -397,8 +398,7 @@ impl BakeGpu {
     async fn create(options: GpuBakeOptions) -> Result<Self, GpuBakeError> {
         // Instance はデバイスごとに作る。プロセスで共有すると、GL（EGL）では別のデバイスが 1 つの GL のコンテキストを分け合い、
         // 別のスレッドから同時に使うと make_current が失敗して落ちる（ベイクの裏のスレッドとキャンバスの合成が同時に動く）
-        let instance =
-            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let instance = wgpu::Instance::new(crate::instance_descriptor());
         let mut adapters = instance.enumerate_adapters(wgpu::Backends::all()).await;
         let found = adapters.len();
         adapters.retain(|a| {

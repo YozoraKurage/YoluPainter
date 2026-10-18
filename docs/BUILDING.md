@@ -10,7 +10,7 @@ Rust の stable ツールチェーンと C/C++ のビルド環境が必要です
 
 ## Windows
 
-64 ビットの Windows と、Visual Studio Build Tools の「C++ によるデスクトップ開発」（Windows SDK を含む）、Rust の MSVC ツールチェーンを用意します。PowerShell で実行します。
+64 ビットの Windows と、Visual Studio Build Tools（2022 の 17.11 以降）の「C++ によるデスクトップ開発」（Windows SDK を含む）と、個別のコンポーネントの C++ ATL（ID `Microsoft.VisualStudio.Component.VC.ATL`）、Rust の MSVC ツールチェーンを用意します。シェーダーのコンパイラー（DXC）を実行ファイルに組み込むため、ビルドのときに GitHub からそのライブラリを取得します（`curl.exe` と `tar.exe` が使えること）。PowerShell で実行します。
 
 ```powershell
 cargo build --release -p yolu-app --locked --target x86_64-pc-windows-msvc
@@ -36,7 +36,7 @@ cargo xtask build --target universal-apple-darwin --release
 cargo xtask bundle --target universal-apple-darwin
 ```
 
-`target/dist/yolupainter-<版>-macos-universal-experimental.zip` ができます。2 つのターゲットでビルドして `lipo` で 1 つにし（最低の macOS は 11.0 に揃えます）、今あるロゴからアイコンを作り、ad-hoc の署名（`codesign -s -`）をして `ditto` で zip にします。Apple の開発者の署名と公証はしません。署名なしの `.app` の開き方は [ダウンロードと更新の「Mac（試作）」](INSTALL.md#mac試作) にあります。
+`target/dist/yolupainter-<バージョン>-macos-universal-experimental.zip` ができます。2 つのターゲットでビルドして `lipo` で 1 つにし（最低の macOS は 11.0 に揃えます）、今あるロゴからアイコンを作り、ad-hoc の署名（`codesign -s -`）をして `ditto` で zip にします。Apple の開発者の署名と公証はしません。署名なしの `.app` の開き方は [ダウンロードと更新の「Mac（試作）」](INSTALL.md#mac試作) にあります。
 
 ペンタブレット（Wacom・XP-Pen など）は、ドライバーが macOS の標準のイベントで送る筆圧・傾き・消しゴムの端・サイドボタンを読みます（試し）。メーカーごとの SDK は使いません。おかしいときは「編集 → 設定…」の「ペン」の「タブレットの筆圧（試し）」を切ると、ペンはマウスと同じに描きます。ペンの筆圧が強すぎる・弱すぎるときは「編集 → 設定…」の「ペン」の「筆圧の調整」で直せます。
 

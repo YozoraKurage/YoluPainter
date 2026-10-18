@@ -7,11 +7,10 @@
 //!   名前つきで個人の設定のフォルダに残る。骨は名前の道で持つので、同じ骨の名前の組のモデルへ持ち越せる。合わない項目は、理由を
 //!   残して飛ばす）。プリセットは複数を同時に入れられ、全部の和で隠す。
 //! - 全部の面が隠れてしまう隠し方は断る（3D ビューに何も残さない状態にしない）。描いている最中は変えない。
-//! - 見せる形への入れ方は `View3dState::set_face_mask`（隠したマテリアルと同じ道。三角形の番号はマテリアルを隠す前の形のもの）。
+//! - 隠し方は 3D ビューごと（`ViewState::hide` の `bones`。操作は今のビューへ当たる）。見せる形への入れ方は `view3d::hide::refresh_view`
+//!   （UV アイランドで隠した面との和を `View3dState::set_view_face_mask` へ。三角形の番号はマテリアルを隠す前の形のもの）。
 
 pub mod store;
-
-use std::sync::Arc;
 
 use yolu_core::skin::{BonePathError, Rig};
 
@@ -82,11 +81,8 @@ pub struct Skipped {
 impl Skipped {
     pub fn describe(&self, lang: Lang) -> String {
         let reason = match self.reason {
-            SkipReason::NotFound => lang.pick("ボーンがありません", "Bone not found"),
-            SkipReason::Ambiguous => lang.pick(
-                "同じ名前のボーンが複数あります",
-                "Several bones share the name",
-            ),
+            SkipReason::NotFound => lang.t("view3d-bone-not-found"),
+            SkipReason::Ambiguous => lang.t("view3d-several-bones-share-the-name"),
         };
         format!("{}: {} ({reason})", self.preset, self.path)
     }
@@ -194,60 +190,14 @@ pub fn mask_for(rig: &Rig, entries: &[HideEntry]) -> Option<FaceMask> {
     Some(FaceMask::new(hidden))
 }
 
-enum Refresh {
-    Done,
-    /// 全部の面が隠れる。
-    AllHidden,
-}
-
-/// 今の隠し方から面の印を組み直して、3D ビューへ入れる（全部の面が隠れるなら入れずに断る）。
-fn refresh(app: &mut AppState) -> Refresh {
-    let Some(s) = app.view3d.pose.session.as_ref() else {
-        app.view3d.set_face_mask(None);
-        return Refresh::Done;
-    };
-    let (entries, skipped) = effective(&s.rig, &s.hide, &app.view3d.pose.hide_presets);
-    let mask = mask_for(&s.rig, &entries);
-    if let Some(m) = &mask {
-        if !m.is_empty() && m.hidden_count() >= m.len() {
-            return Refresh::AllHidden;
-        }
-    }
-    if let Some(s) = app.view3d.pose.session.as_mut() {
-        s.hide.skipped = skipped;
-    }
-    app.view3d.set_face_mask(mask.map(Arc::new));
-    Refresh::Done
-}
-
-/// 隠し方を変えて面の印を組み直す。描いている最中・全部の面が隠れる変え方は断って、元の隠し方へ戻す（理由を知らせる）。変えられたら true。
+/// 今のビューの、ボーンで隠す項目とプリセットを変えて面の印を作り直す（`view3d::hide::change`。描いている最中・全部の面が隠れる変え方は
+/// 断って、元の隠し方へ戻す）。ボーンのあるモデルが無ければ何もしない。変えられたら true。
 fn change(app: &mut AppState, f: impl FnOnce(&mut HideState)) -> bool {
-    let lang = app.lang;
-    if app.is_stroking() {
-        app.refuse(Source::Pose, lang.view_error(&ViewError::Stroking));
+    if app.view3d.pose.session.is_none() {
         return false;
     }
-    let Some(s) = app.view3d.pose.session.as_mut() else {
-        return false;
-    };
-    let before = s.hide.clone();
-    f(&mut s.hide);
-    match refresh(app) {
-        Refresh::Done => true,
-        Refresh::AllHidden => {
-            if let Some(s) = app.view3d.pose.session.as_mut() {
-                s.hide = before;
-            }
-            app.refuse(
-                Source::Pose,
-                lang.pick(
-                    "すべての面が隠れるため隠せません",
-                    "Cannot hide every surface",
-                ),
-            );
-            false
-        }
-    }
+    let id = app.view3d.active_view();
+    crate::view3d::hide::change_from(app, id, Source::Pose, |h| f(&mut h.bones))
 }
 
 /// 隠す項目を足す（同じ骨の項目があれば、しきい値と子を含めるかを入れ替える）。足した項目が単独で隠す面を 1 つも持たないときだけ知らせる
@@ -260,10 +210,11 @@ pub fn hide_bone(app: &mut AppState, bone: usize) {
     if bone >= s.rig.bones().len() {
         return;
     }
+    let next = &app.view3d.view.hide.bones;
     let entry = HideEntry {
         bone,
-        threshold: s.hide.threshold,
-        children: s.hide.children,
+        threshold: next.threshold,
+        children: next.children,
     };
     let changed = change(app, |h| {
         match h.entries.iter_mut().find(|e| e.bone == bone) {
@@ -278,14 +229,11 @@ pub fn hide_bone(app: &mut AppState, bone: usize) {
         mask_for(&s.rig, std::slice::from_ref(&entry)).is_none_or(|m| m.hidden_count() == 0)
     });
     if alone_hides_nothing {
-        app.warn(
-            Source::Pose,
-            lang.pick("隠れる面がありません", "No surfaces to hide"),
-        );
+        app.warn(Source::Pose, lang.t("view3d-no-surfaces-to-hide"));
     }
 }
 
-/// 今隠している面の数（見せる形に入れた印）。
+/// 今のビューで今隠している面の数（見せる形に入れた印。UV アイランドで隠した面も数える）。
 pub fn hidden_total(app: &AppState) -> usize {
     app.view3d.face_mask().map_or(0, |m| m.hidden_count())
 }
@@ -299,11 +247,13 @@ pub fn remove_entry(app: &mut AppState, index: usize) {
     });
 }
 
-/// すべて表示する（手で足した項目も、入れているプリセットも外す）。
+/// 今のビューですべて表示する（手で足した項目も、入れているプリセットも、UV アイランドで隠した面も外す。ハイドのモードの Alt+H と同じ）。
 pub fn show_all(app: &mut AppState) {
-    change(app, |h| {
-        h.entries.clear();
-        h.presets.clear();
+    let id = app.view3d.active_view();
+    crate::view3d::hide::change_from(app, id, Source::Pose, |h| {
+        h.islands.clear();
+        h.bones.entries.clear();
+        h.bones.presets.clear();
     });
 }
 
@@ -322,10 +272,9 @@ pub fn toggle_preset(app: &mut AppState, id: u32) {
 
 /// 次に足す項目の欄の値。
 pub fn set_next(app: &mut AppState, threshold: f32, children: bool) {
-    if let Some(s) = app.view3d.pose.session.as_mut() {
-        s.hide.threshold = threshold.clamp(0.0, 1.0);
-        s.hide.children = children;
-    }
+    let next = &mut app.view3d.view.hide.bones;
+    next.threshold = threshold.clamp(0.0, 1.0);
+    next.children = children;
 }
 
 /// 今の隠し方（手で足した項目と入れているプリセットの和）を、名前を付けてプリセットに保存する。骨の名前の道が決まらない骨は
@@ -333,7 +282,11 @@ pub fn set_next(app: &mut AppState, threshold: f32, children: bool) {
 pub fn save_preset(app: &mut AppState, name: &str) -> Option<u32> {
     let lang = app.lang;
     let s = app.view3d.pose.session.as_ref()?;
-    let (entries, _) = effective(&s.rig, &s.hide, &app.view3d.pose.hide_presets);
+    let (entries, _) = effective(
+        &s.rig,
+        &app.view3d.view.hide.bones,
+        &app.view3d.pose.hide_presets,
+    );
     let mut saved: Vec<PresetEntry> = Vec::new();
     let mut unsaved: Vec<String> = Vec::new();
     for e in &entries {
@@ -351,7 +304,7 @@ pub fn save_preset(app: &mut AppState, name: &str) -> Option<u32> {
             saved.push(entry);
         }
     }
-    let fallback = lang.pick("隠し方", "Hide Set");
+    let fallback = lang.t("view3d-hide-set");
     let name = if name.trim().is_empty() {
         fallback
     } else {
@@ -360,16 +313,10 @@ pub fn save_preset(app: &mut AppState, name: &str) -> Option<u32> {
     match app.view3d.pose.hide_presets.add(name, saved) {
         Ok(id) => {
             if !unsaved.is_empty() {
-                let names = unsaved.join(lang.pick("・", ", "));
+                let names = unsaved.join(lang.t("view3d-text"));
                 app.warn(
                     Source::Pose,
-                    lang.with_reason(
-                        lang.pick(
-                            "同じ名前のボーンがあるので、保存できない項目があります",
-                            "Some items are not saved because bones share a name",
-                        ),
-                        names,
-                    ),
+                    lang.with_reason(lang.t("view3d-some-items-are-not-saved"), names),
                 );
             }
             Some(id)
@@ -389,20 +336,33 @@ pub fn delete_preset(app: &mut AppState, id: u32) {
         app.refuse(Source::Pose, lang.view_error(&ViewError::Stroking));
         return;
     }
-    let used = app
+    // 入れているビューから外す（外せないビューがあれば、どれも外さずファイルも残す）
+    let users: Vec<crate::view3d::ViewId> = app
         .view3d
-        .pose
-        .session
-        .as_ref()
-        .is_some_and(|s| s.hide.presets.contains(&id));
-    if used && !change(app, |h| h.presets.retain(|p| *p != id)) {
-        return;
+        .views()
+        .filter(|v| v.hide.bones.presets.contains(&id))
+        .map(|v| v.id)
+        .collect();
+    let mut taken = Vec::new();
+    for view in users {
+        if crate::view3d::hide::change_from(app, view, Source::Pose, |h| {
+            h.bones.presets.retain(|p| *p != id)
+        }) {
+            taken.push(view);
+        } else {
+            for back in taken {
+                let _ = crate::view3d::hide::change_from(app, back, Source::Pose, |h| {
+                    h.bones.presets.push(id)
+                });
+            }
+            return;
+        }
     }
     if let Err(e) = app.view3d.pose.hide_presets.remove(id) {
         app.fail(
             Source::Pose,
             lang.with_reason(
-                lang.pick("隠し方を消せません", "Cannot delete the hide set"),
+                lang.t("view3d-cannot-delete-the-hide-set"),
                 e.describe(lang),
             ),
         );
@@ -414,6 +374,7 @@ mod tests {
     use super::*;
     use crate::state::{Action, AppState};
     use crate::view3d::pose::PoseAction;
+    use std::sync::Arc;
 
     fn app() -> AppState {
         let mut app = AppState::new(64, 64);
@@ -488,8 +449,8 @@ mod tests {
         // しきい値を下げて同じ骨へ足し直すと、入れ替わって隠れる面が増える（項目は 1 つのまま）
         set_next(&mut app, 0.05, false);
         hide_bone(&mut app, hand);
-        let s = app.view3d.pose.session.as_ref().unwrap();
-        assert_eq!(s.hide.entries.len(), 1);
+        let h = &app.view3d.view.hide.bones;
+        assert_eq!(h.entries.len(), 1);
         assert!(count(&app) > half, "しきい値が低いほど広く隠れる");
         // しきい値を 1 にすると、ウェイトが 100% の面だけ
         set_next(&mut app, 1.0, false);
@@ -517,8 +478,8 @@ mod tests {
         set_next(&mut app, 0.0, true);
         hide_bone(&mut app, root);
         assert_eq!(shown(&app), total, "全部は隠さない");
-        let s = app.view3d.pose.session.as_ref().unwrap();
-        assert!(s.hide.entries.is_empty(), "断った項目は残らない");
+        let h = &app.view3d.view.hide.bones;
+        assert!(h.entries.is_empty(), "断った項目は残らない");
         assert!(app.message.contains("すべての面"), "{}", app.message);
         // 影響する頂点が無い骨（手首より先の指などは無い）: 根の「首」は筒の継ぎ目で混ざるが、足の骨を 100% にすれば足の先だけ
         // 何も隠れない項目: どのメッシュにも掛からない骨は、無いものとして知らせる
@@ -533,8 +494,8 @@ mod tests {
             "{}",
             app2.message
         );
-        let s = app2.view3d.pose.session.as_ref().unwrap();
-        assert_eq!(s.hide.entries.len(), 1, "項目は残る（しきい値を直せる）");
+        let h = &app2.view3d.view.hide.bones;
+        assert_eq!(h.entries.len(), 1, "項目は残る（しきい値を直せる）");
         // 英語
         app2.lang = Lang::En;
         let before = app2.message.clone();
@@ -578,17 +539,17 @@ mod tests {
 
     /// 描き始める（ドキュメントのストロークと 3D ビューの入力の両方を立てる）。
     fn begin_stroke(app: &mut AppState) {
-        let layer = app.selected_layer.unwrap();
+        let layer = app.session.selected_layer.unwrap();
         let settings = app.stroke_settings(false);
-        let stroke = app.doc.begin_stroke(layer, &settings).unwrap();
-        app.stroke = Some(stroke);
-        app.view3d.input.stroke = Some(crate::state::StrokeSource::Mouse);
+        let stroke = app.session.doc.begin_stroke(layer, &settings).unwrap();
+        app.session.stroke = Some(stroke);
+        app.view3d.view.input.stroke = Some(crate::state::StrokeSource::Mouse);
     }
 
     /// 描き終える（取り消して、3D ビューへ終わりを知らせる）。
     fn end_stroke(app: &mut AppState) {
-        let stroke = app.stroke.take().unwrap();
-        app.doc.cancel_stroke(stroke);
+        let stroke = app.session.stroke.take().unwrap();
+        app.session.doc.cancel_stroke(stroke);
         app.view3d.stroke_ended();
     }
 
@@ -600,8 +561,8 @@ mod tests {
         begin_stroke(&mut app);
         hide_bone(&mut app, head);
         assert_eq!(app.message, ViewError::Stroking.to_string());
-        let s = app.view3d.pose.session.as_ref().unwrap();
-        assert!(s.hide.entries.is_empty());
+        let h = &app.view3d.view.hide.bones;
+        assert!(h.entries.is_empty());
         assert_eq!(shown(&app), total);
         end_stroke(&mut app);
         hide_bone(&mut app, head);
@@ -631,16 +592,16 @@ mod tests {
         assert_eq!(app.message, ViewError::Stroking.to_string());
         assert!(file.exists(), "ファイルは消えない");
         assert!(app.view3d.pose.hide_presets.get(id).is_some());
-        let s = app.view3d.pose.session.as_ref().unwrap();
-        assert_eq!(s.hide.presets, [id], "入れている印も残る");
+        let h = &app.view3d.view.hide.bones;
+        assert_eq!(h.presets, [id], "入れている印も残る");
         assert_eq!(hidden_total(&app), hidden, "面の印も変わらない");
         end_stroke(&mut app);
         // 終わったら消せる（ファイルも、入れている印も、面の印も）
         delete_preset(&mut app, id);
         assert!(!file.exists());
         assert!(app.view3d.pose.hide_presets.get(id).is_none());
-        let s = app.view3d.pose.session.as_ref().unwrap();
-        assert!(s.hide.presets.is_empty());
+        let h = &app.view3d.view.hide.bones;
+        assert!(h.presets.is_empty());
         assert_eq!(shown(&app), total);
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -713,8 +674,8 @@ mod tests {
         hide_bone(&mut app, hand);
         assert_eq!(hidden_total(&app), hidden);
         assert!(app.message.is_empty(), "{}", app.message);
-        let s = app.view3d.pose.session.as_ref().unwrap();
-        assert_eq!(s.hide.entries.len(), 1);
+        let h = &app.view3d.view.hide.bones;
+        assert_eq!(h.entries.len(), 1);
         // すでに隠れている面の内側へ別の骨を足して、隠す面の数が増えなくても、その骨の面はあるので知らせない
         show_all(&mut app);
         let lower = bone(&app, "右前腕");
@@ -826,24 +787,21 @@ mod tests {
             .unwrap();
         toggle_preset(&mut app, id);
         assert!(shown(&app) < total, "合う項目は効く");
-        let s = app.view3d.pose.session.as_ref().unwrap();
-        assert_eq!(s.hide.skipped.len(), 2, "合わない 2 項目は理由つきで飛ばす");
-        assert!(s
-            .hide
+        let h = &app.view3d.view.hide.bones;
+        assert_eq!(h.skipped.len(), 2, "合わない 2 項目は理由つきで飛ばす");
+        assert!(h
             .skipped
             .iter()
             .all(|k| k.reason == SkipReason::NotFound && k.preset == "混ぜ"));
-        assert_eq!(s.hide.skipped[0].path, "腰/背骨/右手");
-        assert!(s.hide.skipped[0]
-            .describe(Lang::En)
-            .contains("Bone not found"));
-        assert!(s.hide.skipped[0]
+        assert_eq!(h.skipped[0].path, "腰/背骨/右手");
+        assert!(h.skipped[0].describe(Lang::En).contains("Bone not found"));
+        assert!(h.skipped[0]
             .describe(Lang::Ja)
             .contains("ボーンがありません"));
         // 別のモデル（もう一度読み直した同じ人形）でも使える。隠し方は新しいセッションに引き継がれない
         app.apply(Action::Pose(PoseAction::LoadFigure));
-        let s = app.view3d.pose.session.as_ref().unwrap();
-        assert!(s.hide.is_clear());
+        let h = &app.view3d.view.hide.bones;
+        assert!(h.is_clear());
         assert_eq!(shown(&app), total, "前のモデルの隠す面は残らない");
         assert!(app.view3d.face_mask().is_none());
         toggle_preset(&mut app, id);

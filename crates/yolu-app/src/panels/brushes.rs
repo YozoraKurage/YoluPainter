@@ -7,11 +7,12 @@
 
 use egui::{pos2, vec2, Color32, Rect, Sense, Ui, WidgetInfo, WidgetType};
 
+use crate::brushes::rows;
 use crate::brushes::sample::SampleSpec;
-use crate::brushes::{BrushAction, BrushKey, DropAt};
-use crate::engine::{Brush, BrushEffect};
+use crate::brushes::{BrushAction, BrushKey, Category, DropAt, Row};
+use crate::engine::Brush;
 use crate::m2_menu::Popup;
-use crate::state::{Action, AppState};
+use crate::state::{Action, AppState, Tool};
 use crate::toolset::ui::{Dragged, Renaming, Target};
 use crate::toolset::{GroupId, SlotId, ToolsetAction};
 use crate::ui::menu::context_anchor;
@@ -19,21 +20,25 @@ use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align, NumberFormat, Rows, SliderSpec};
 
-/// 決まった直径（px）。アプリの直径の上限（256）まで。
-pub const SIZES: [u32; 15] = [1, 2, 3, 5, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256];
+/// 決まった直径（px）。直径の下限（1。半径 0.5）から上限（256。`state::MAX_RADIUS` の 2 倍）の内側まで。
+pub const SIZES: [f32; 28] = [
+    1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 12.0, 15.0, 17.0, 20.0, 25.0, 30.0,
+    40.0, 50.0, 60.0, 70.0, 80.0, 100.0, 120.0, 150.0, 170.0, 200.0, 250.0,
+];
+
+/// 大きさの名前（整数は「10 px」、小数は「1.5 px」）。
+pub fn size_name(size: f32) -> String {
+    format!("{size} px")
+}
 
 /// グループのタブの 1 段の高さ（入りきらなければ段を足す）。
 pub(super) const TAB_HEIGHT: f32 = 26.0;
 pub(super) const ROW_HEIGHT: f32 = 36.0;
 pub(super) const FOOTER_HEIGHT: f32 = 28.0;
-/// ツールプロパティの項目の行の高さと間。
-const FIELD_HEIGHT: f32 = 20.0;
-const FIELD_GAP: f32 = 3.0;
 const TOOL_SAMPLE_HEIGHT: f32 = 44.0;
 /// ブラシサイズの丸の 1 マスの最小の幅と、1 段の高さ。幅に入るだけ並べ、入りきらなければ段を足す。
 const SIZE_CELL_MIN: f32 = 30.0;
 const SIZE_ROW: f32 = 42.0;
-const PEN_BUTTON: f32 = 24.0;
 /// 大きさの数字（細い丸の幅に収める）。
 const SIZE_LABEL: t::TextStyle = t::TextStyle {
     size: 9.0,
@@ -48,7 +53,7 @@ pub fn nearest_size(diameter: f32) -> usize {
         .iter()
         .enumerate()
         .min_by(|(_, a), (_, b)| {
-            let (da, db) = ((d / **a as f32).ln().abs(), (d / **b as f32).ln().abs());
+            let (da, db) = ((d / **a).ln().abs(), (d / **b).ln().abs());
             da.total_cmp(&db)
         })
         .map(|(i, _)| i)
@@ -59,6 +64,7 @@ pub fn nearest_size(diameter: f32) -> usize {
 pub(super) fn live_brush(app: &AppState) -> Brush {
     let mut brush = app.m2.brush.clone();
     brush.base = app.brush.settings([1.0; 4], false);
+    brush.influences.set_pressure_switches(app.brush.pressure);
     brush
 }
 
@@ -87,10 +93,10 @@ pub(super) fn paint_sample(
     } else {
         Rect::from_center_size(inner.center(), vec2(inner.width(), inner.width() / aspect))
     };
-    let shown = app.brushes.samples.shown(place, brush, spec);
+    let shown = app.ui.samples.shown(place, brush, spec);
     if let Some(texture) = shown
         .key
-        .and_then(|key| app.brushes.samples.texture(ui.ctx(), key))
+        .and_then(|key| app.ui.samples.texture(ui.ctx(), key))
     {
         ui.painter().image(
             texture,
@@ -100,14 +106,14 @@ pub(super) fn paint_sample(
         );
     }
     // 別のスレッドで描いている最中なら、絵ができたときに描き直しが来る
-    if !shown.current && app.brushes.samples.needs_next_frame() {
+    if !shown.current && app.ui.samples.needs_next_frame() {
         ui.ctx().request_repaint();
     }
 }
 
-/// 今のツールが消すツールか（消しゴムのツールの中のブラシは消す）。
+/// 今のブラシが消す側か（消しゴムのツールの中のブラシは消す。消すモードの間は、ブラシのツールでも消す）。
 pub(super) fn is_eraser(app: &AppState) -> bool {
-    app.tool.erases()
+    app.tool.erases() || app.m2.erase_mode
 }
 
 /// グループのタブの 1 つ。
@@ -191,7 +197,7 @@ pub(super) fn group_tabs(ui: &mut Ui, r: Rect, app: &mut AppState, slot: SlotId)
                     tab,
                     ("brush.group.add", slot),
                     "add",
-                    lang.pick("グループを追加", "Add Group"),
+                    lang.t("panels-add-group-tip"),
                     false,
                     editable,
                     15.0,
@@ -236,7 +242,7 @@ pub(super) fn group_tabs(ui: &mut Ui, r: Rect, app: &mut AppState, slot: SlotId)
                 if response.double_clicked() && editable {
                     app.apply(Action::Tools(ToolsetAction::StartRenameGroup(group)));
                 }
-                if response.drag_started() && editable {
+                if response.drag_started_by(egui::PointerButton::Primary) && editable {
                     app.toolset.ui.start_drag(Dragged::Group(group));
                 }
                 if response.secondary_clicked() {
@@ -374,7 +380,7 @@ pub(super) fn list_body(ui: &mut Ui, app: &mut AppState, list: Rect, slot: SlotI
         app.brushes.ui.renaming = None;
     }
     w::fill(ui.painter(), list, t::CONTROL_BG);
-    app.brushes.ui.list_rect = Some(list);
+    app.ui.brushes_list_rect = Some(list);
     let content = rows.len() as f32 * ROW_HEIGHT;
     app.brushes.ui.list_content = content;
     // ブラシが替わったあとは、今のブラシの行が見えるところまで送る
@@ -500,7 +506,7 @@ fn brush_row(
     if response.double_clicked() || response.triple_clicked() {
         app.apply(Action::Brush(BrushAction::StartRename(key)));
     }
-    if response.drag_started() {
+    if response.drag_started_by(egui::PointerButton::Primary) {
         app.toolset.ui.start_drag(Dragged::Brush(key));
     }
     if response.secondary_clicked() {
@@ -606,7 +612,7 @@ pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bo
         button(x),
         "brush.delete",
         "delete",
-        lang.pick("ブラシを削除", "Delete Brush"),
+        lang.t("panels-delete-brush-tip"),
         false,
         free && layout && placed,
         17.0,
@@ -621,7 +627,7 @@ pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bo
         button(x),
         "brush.catalog",
         "add",
-        lang.pick("ブラシを追加", "Add Brushes"),
+        lang.t("panels-add-brushes-tip"),
         app.toolset.catalog.open,
         free && layout,
         18.0,
@@ -636,10 +642,7 @@ pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bo
         button(x),
         "brush.add",
         "copy_add",
-        lang.pick(
-            "今の設定を新しいブラシに",
-            "Add the Current Settings as a Brush",
-        ),
+        lang.t("panels-add-the-current-settings-as-tip"),
         false,
         free && layout,
         17.0,
@@ -655,10 +658,7 @@ pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bo
             button(x),
             "brush.import",
             "import",
-            lang.pick(
-                "ブラシを取り込む（ABR・GBR・GIH・VBR・PNG・PAT）",
-                "Import brushes (ABR, GBR, GIH, VBR, PNG, PAT)",
-            ),
+            lang.t("panels-import-brushes-abr-gbr-gih-tip"),
             app.brushes.import.is_busy(),
             !app.brushes.import.is_busy() && layout,
             17.0,
@@ -674,7 +674,7 @@ pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bo
             button(x),
             "brush.import_csp",
             "folder_open",
-            lang.pick("CLIP STUDIO から取り込む", "Import from CLIP STUDIO"),
+            lang.t("panels-import-from-clip-studio-tip"),
             app.brushes.csp.open,
             !app.brushes.import.is_busy() && layout,
             17.0,
@@ -690,7 +690,7 @@ pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bo
         button(x),
         "brush.duplicate",
         "content_copy",
-        lang.pick("ブラシを複製", "Duplicate Brush"),
+        lang.t("panels-duplicate-brush-tip"),
         false,
         free && layout,
         16.0,
@@ -706,12 +706,9 @@ pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bo
         "brush.revert",
         "restart_alt",
         if modified {
-            lang.pick(
-                "元の設定に戻す（変更あり）",
-                "Revert to the original settings (modified)",
-            )
+            lang.t("panels-revert-to-the-original-settings-tip")
         } else {
-            lang.pick("元の設定に戻す", "Revert to the original settings")
+            lang.t("panels-revert-to-the-original-settings-2-tip")
         },
         false,
         free && modified,
@@ -723,60 +720,10 @@ pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bo
     }
 }
 
-/// ツールプロパティの項目の行の数（効果のブラシなら 1 行増える）。
-pub(super) fn tool_fields(app: &AppState) -> usize {
-    6 + matches!(
-        app.m2.brush.effect,
-        BrushEffect::Blur { .. } | BrushEffect::Smudge { .. }
-    ) as usize
-}
-
-pub(super) fn tool_body_height(app: &AppState) -> f32 {
-    4.0 + TOOL_SAMPLE_HEIGHT + 6.0 + tool_fields(app) as f32 * (FIELD_HEIGHT + FIELD_GAP) + 4.0
-}
-
-/// 1 行のスライダー（右に筆圧のボタンを置く行は `pen` を渡す）。変わった値を返す。
-#[allow(clippy::too_many_arguments)]
-fn field(
-    ui: &mut Ui,
-    row: Rect,
-    id: &str,
-    spec: SliderSpec,
-    value: f32,
-    pen: Option<(&mut bool, &str)>,
-    editable: bool,
-) -> Option<f32> {
-    let slider_rect = match &pen {
-        Some(_) => Rect::from_min_max(row.min, pos2(row.right() - PEN_BUTTON - 4.0, row.bottom())),
-        None => row,
-    };
-    let out = w::slider(ui, slider_rect, id, value, &spec.enabled(editable));
-    if let Some((flag, tooltip)) = pen {
-        let button = Rect::from_min_size(
-            pos2(row.right() - PEN_BUTTON, row.top()),
-            vec2(PEN_BUTTON, row.height()),
-        );
-        if w::icon_button(
-            ui,
-            button,
-            (id, "pen"),
-            "stylus",
-            tooltip,
-            *flag,
-            editable,
-            15.0,
-        )
-        .clicked()
-        {
-            *flag = !*flag;
-        }
-    }
-    out.changed.then_some(out.value)
-}
-
-pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
-    let lang = app.lang;
-    let editable = !app.is_stroking();
+/// ブラシ・消しゴムのツールプロパティ: 今の設定の見本（右上に詳細のウィンドウのボタン）と、目のボタンで出した行（詳細の区分の順。値も影響元のボタンも、
+/// 詳細の欄と同じ行）。
+pub fn props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Context) {
+    let area = rows.full_row(4.0 + TOOL_SAMPLE_HEIGHT + 6.0, 0.0);
     // 今の設定の見本
     let sample = Rect::from_min_size(
         pos2(area.left() + t::PADDING, area.top() + 4.0),
@@ -791,145 +738,36 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
         SampleSpec::tool(is_eraser(app)),
         egui::Id::new("brush.sample.tool"),
     );
-    let mut y = sample.bottom() + 6.0;
-    let mut next = || {
-        let r = Rect::from_min_size(
-            pos2(area.left() + t::PADDING, y),
-            vec2(area.width() - 2.0 * t::PADDING, FIELD_HEIGHT),
-        );
-        y += FIELD_HEIGHT + FIELD_GAP;
-        r
-    };
-    let hardness_applies = super::brush_props::hardness_applies(app);
-    let b = &mut app.brush;
-    let size_tip = lang.pick("ブラシの直径（[ と ]）", "Brush diameter ([ and ])");
-    if let Some(v) = field(
-        ui,
-        next(),
-        "tool.size",
-        SliderSpec::new(
-            lang.pick("直径", "Size"),
-            1.0,
-            256.0,
-            NumberFormat::int(" px"),
-        )
-        .tooltip(size_tip),
-        b.radius * 2.0,
-        Some((
-            &mut b.pressure_size,
-            lang.pick("筆圧で直径を変える", "Pen pressure changes the size"),
-        )),
-        editable,
-    ) {
-        b.radius = (v / 2.0).max(0.5);
+    for category in Category::ALL {
+        for row in Row::of(category) {
+            if rows::is_shown(&app.m2.brush, row) && super::brush_rows::visible(app, row) {
+                super::brush_rows::show(ui, app, ctx, row, &mut super::brush_rows::At::Tool(rows));
+            }
+        }
     }
-    if let Some(v) = field(
-        ui,
-        next(),
-        "tool.opacity",
-        SliderSpec::new(
-            lang.pick("不透明度", "Opacity"),
-            0.0,
-            100.0,
-            NumberFormat::int("%"),
-        ),
-        b.opacity * 100.0,
-        Some((
-            &mut b.pressure_opacity,
-            lang.pick("筆圧で不透明度を変える", "Pen pressure changes the opacity"),
-        )),
-        editable,
-    ) {
-        b.opacity = v / 100.0;
-    }
-    if let Some(v) = field(
-        ui,
-        next(),
-        "tool.hardness",
-        SliderSpec::new(
-            lang.pick("硬さ", "Hardness"),
-            0.0,
-            100.0,
-            NumberFormat::int("%"),
-        )
-        .tooltip_reason(
-            (!hardness_applies)
-                .then(|| lang.pick("画像の筆先では効きません", "No effect on an image tip")),
-        ),
-        b.hardness * 100.0,
-        Some((
-            &mut app.m2.brush.controls.pressure_hardness,
-            lang.pick("筆圧で硬さを変える", "Pen pressure changes the hardness"),
-        )),
-        editable && hardness_applies,
-    ) {
-        b.hardness = v / 100.0;
-    }
-    if let Some(v) = field(
-        ui,
-        next(),
-        "tool.flow",
-        SliderSpec::new(
-            lang.pick("流量", "Flow"),
-            0.0,
-            100.0,
-            NumberFormat::int("%"),
-        ),
-        b.flow * 100.0,
-        Some((
-            &mut b.pressure_flow,
-            lang.pick("筆圧で流量を変える", "Pen pressure changes the flow"),
-        )),
-        editable,
-    ) {
-        b.flow = v / 100.0;
-    }
-    if let Some(v) = field(
-        ui,
-        next(),
-        "tool.spacing",
-        SliderSpec::new(
-            lang.pick("間隔", "Spacing"),
-            1.0,
-            100.0,
-            NumberFormat::int("%"),
-        ),
-        b.spacing * 100.0,
-        None,
-        editable,
-    ) {
-        b.spacing = v / 100.0;
-    }
-    let stabilizer = app.m2.brush.assist.stabilizer as f32;
-    // 手ぶれ補正の行の右端に、詳細のウィンドウのボタン
-    let row = next();
-    let detail = Rect::from_min_size(
-        pos2(row.right() - PEN_BUTTON, row.top()),
-        vec2(PEN_BUTTON, row.height()),
-    );
-    if let Some(v) = field(
-        ui,
-        Rect::from_min_max(row.min, pos2(detail.left() - 4.0, row.bottom())),
-        "tool.stabilizer",
-        SliderSpec::new(
-            lang.pick("手ぶれ補正", "Stabilizer"),
-            0.0,
-            200.0,
-            NumberFormat::int(" px"),
-        ),
-        stabilizer,
-        None,
-        editable,
-    ) {
-        app.m2.brush.assist.stabilizer = v as f64;
-    }
+}
+
+/// ツールプロパティの下の端の帯を出すツール（ブラシの詳細のボタンを置く）。
+pub fn has_detail_footer(tool: Tool) -> bool {
+    matches!(tool, Tool::Brush | Tool::Eraser)
+}
+
+/// ツールプロパティの下の端の帯: ブラシの詳細のウィンドウを開け閉めするボタン（右寄せ）。
+pub fn detail_footer(ui: &mut Ui, app: &mut AppState, bar: Rect) {
+    let lang = app.lang;
+    w::fill(ui.painter(), bar, t::PANEL_HEADER);
+    w::hline(ui.painter(), bar.left(), bar.right(), bar.top(), t::BORDER);
     let open = app.brushes.ui.detail.open;
+    let button = Rect::from_min_size(
+        pos2(bar.right() - 4.0 - 26.0, bar.top() + 2.0),
+        vec2(26.0, bar.height() - 4.0),
+    );
     if w::icon_button(
         ui,
-        detail,
+        button,
         "tool.detail",
         "tune",
-        lang.pick("ブラシの詳細", "Brush Details"),
+        lang.t("panels-brush-details-tip"),
         open,
         true,
         16.0,
@@ -938,62 +776,6 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
     {
         app.brushes.ui.detail.open = !open;
     }
-    // 効果のブラシの主な値
-    let tool_is_eraser = app.tool.erases();
-    // ぼかしの半径と指先の強さは、3D の面のダブも同じ値を使う
-    let effect_off = tool_is_eraser
-        .then(|| lang.pick("消しゴムでは使えません", "Not available with the eraser"));
-    match app.m2.brush.effect {
-        BrushEffect::Blur { radius } => {
-            if let Some(v) = field(
-                ui,
-                next(),
-                "tool.blur",
-                SliderSpec::new(
-                    lang.pick("ぼかしの半径", "Blur radius"),
-                    1.0,
-                    64.0,
-                    NumberFormat::int(" px"),
-                )
-                .tooltip_reason(effect_off),
-                radius as f32,
-                None,
-                editable && effect_off.is_none(),
-            ) {
-                app.m2.brush.effect = BrushEffect::Blur {
-                    radius: v.round().clamp(1.0, 64.0) as u32,
-                };
-            }
-        }
-        BrushEffect::Smudge { strength } => {
-            if let Some(v) = field(
-                ui,
-                next(),
-                "tool.smudge",
-                SliderSpec::new(
-                    lang.pick("指先の強さ", "Smudge strength"),
-                    0.0,
-                    100.0,
-                    NumberFormat::int("%"),
-                )
-                .tooltip_reason(effect_off),
-                strength as f32 * 100.0,
-                None,
-                editable && effect_off.is_none(),
-            ) {
-                app.m2.brush.effect = BrushEffect::Smudge {
-                    strength: (v as f64 / 100.0).clamp(0.0, 1.0),
-                };
-            }
-        }
-        _ => {}
-    }
-}
-
-/// ブラシ・消しゴムのツールプロパティ（今の設定の見本と主な項目。欄の中身は `tool_body`）。
-pub fn props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Context) {
-    let area = rows.full_row(tool_body_height(app), 0.0);
-    tool_body(ui, app, area);
 }
 
 /// オプションバー（ブラシ・消しゴム）: 定規へのスナップ 2 つ（入っているかが見える）、直径と不透明度（ツールプロパティと同じ値）。
@@ -1015,8 +797,8 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
         next(150.0),
         "options.size",
         b.radius * 2.0,
-        &SliderSpec::new(l.pick("直径", "Size"), 1.0, 256.0, NumberFormat::int(" px"))
-            .tooltip(l.pick("ブラシの直径（[ と ]）", "Brush diameter ([ and ])"))
+        &SliderSpec::new(l.t("panels-size"), 1.0, 256.0, NumberFormat::int(" px"))
+            .tooltip(l.t("panels-brush-diameter-and-tip"))
             .enabled(editable),
     );
     if out.changed {
@@ -1027,13 +809,8 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
         next(130.0),
         "options.opacity",
         b.opacity * 100.0,
-        &SliderSpec::new(
-            l.pick("不透明度", "Opacity"),
-            0.0,
-            100.0,
-            NumberFormat::int("%"),
-        )
-        .enabled(editable),
+        &SliderSpec::new(l.t("panels-opacity"), 0.0, 100.0, NumberFormat::int("%"))
+            .enabled(editable),
     );
     if out.changed {
         b.opacity = out.value / 100.0;
@@ -1054,9 +831,20 @@ pub(super) fn sizes_height(width: f32) -> f32 {
     rows as f32 * SIZE_ROW + 8.0
 }
 
+/// 段 `index` が全部見える `offset` を返す（もう見えているなら今の `offset` のまま。見えなければ、段が真ん中に来る位置）。
+/// `width` は丸を並べる幅（列の数が決まる）、`view` は見える範囲の高さ。範囲への収めは `Scroll` が行う。
+pub(super) fn size_row_offset(width: f32, index: usize, view: f32, offset: f32) -> f32 {
+    let top = (index / size_columns(width)) as f32 * SIZE_ROW + 4.0;
+    let bottom = top + SIZE_ROW;
+    if top >= offset && bottom <= offset + view {
+        offset
+    } else {
+        top + SIZE_ROW / 2.0 - view / 2.0
+    }
+}
+
 /// ブラシサイズの格子: 決まった大きさの丸（押すと直径を替える。今の直径に近い丸に印）。欄の幅に入るだけ並べ、入りきらなければ段を足す。
 pub(super) fn sizes_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
-    let lang = app.lang;
     let editable = !app.is_stroking();
     let diameter = app.brush.radius * 2.0;
     let near = nearest_size(diameter);
@@ -1076,10 +864,10 @@ pub(super) fn sizes_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
             ),
             vec2(cell_w, SIZE_ROW),
         );
-        let label = lang.pick(format!("{size} px"), format!("{size} px"));
+        let label = size_name(*size);
         let response = ui.interact(
             cell,
-            ui.make_persistent_id(("brush.size-cell", *size)),
+            ui.make_persistent_id(("brush.size-cell", i)),
             if editable {
                 Sense::click()
             } else {
@@ -1094,7 +882,7 @@ pub(super) fn sizes_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
             w::rounded(p, cell.shrink2(vec2(0.5, 0.0)), t::CONTROL_HOVER, 3.0);
         }
         // 丸は大きさの対数で 2〜16 点
-        let draw = 2.0 + 14.0 * (*size as f32).log2() / (SIZES[n - 1] as f32).log2();
+        let draw = 2.0 + 14.0 * size.log2() / SIZES[n - 1].log2();
         let center = pos2(cell.center().x, cell.top() + 15.0);
         p.circle_filled(
             center,
@@ -1123,7 +911,7 @@ pub(super) fn sizes_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
             WidgetInfo::selected(WidgetType::SelectableLabel, editable, on, &label)
         });
         if response.clicked() {
-            app.brush.radius = (*size as f32 / 2.0).max(0.5);
+            app.brush.radius = (*size / 2.0).max(0.5);
         }
         let _ = response.on_hover_text(label);
     }
@@ -1135,18 +923,36 @@ mod tests {
 
     #[test]
     fn the_size_nearest_to_the_diameter_is_marked() {
-        assert_eq!(SIZES[nearest_size(16.0)], 16);
-        assert_eq!(SIZES[nearest_size(1.0)], 1);
-        assert_eq!(SIZES[nearest_size(256.0)], 256);
-        assert_eq!(SIZES[nearest_size(300.0)], 256);
-        assert_eq!(SIZES[nearest_size(0.2)], 1);
-        // 比で近いほう（10 は 8 と 12 の間。12 のほうが比で近い）
-        assert_eq!(SIZES[nearest_size(10.0)], 12);
-        assert_eq!(SIZES[nearest_size(35.0)], 32);
-        assert_eq!(SIZES[nearest_size(45.0)], 48);
+        assert_eq!(SIZES[nearest_size(15.5)], 15.0);
+        assert_eq!(SIZES[nearest_size(16.0)], 17.0);
+        assert_eq!(SIZES[nearest_size(1.0)], 1.0);
+        assert_eq!(SIZES[nearest_size(250.0)], 250.0);
+        assert_eq!(SIZES[nearest_size(256.0)], 250.0);
+        assert_eq!(SIZES[nearest_size(300.0)], 250.0);
+        assert_eq!(SIZES[nearest_size(0.2)], 1.0);
+        // 比で近いほう（8 と 10 の幾何平均は約 8.94）
+        assert_eq!(SIZES[nearest_size(8.9)], 8.0);
+        assert_eq!(SIZES[nearest_size(9.0)], 10.0);
+        assert_eq!(SIZES[nearest_size(34.0)], 30.0);
+        assert_eq!(SIZES[nearest_size(35.0)], 40.0);
+        assert_eq!(SIZES[nearest_size(1.2)], 1.0);
+        assert_eq!(SIZES[nearest_size(1.3)], 1.5);
         for (i, s) in SIZES.iter().enumerate() {
-            assert_eq!(nearest_size(*s as f32), i);
+            assert_eq!(nearest_size(*s), i);
         }
+    }
+
+    #[test]
+    fn the_sizes_rise_inside_the_diameter_limits_and_are_named_by_their_number() {
+        assert_eq!(SIZES.len(), 28);
+        assert!(SIZES.windows(2).all(|w| w[0] < w[1]), "増えていく");
+        // 直径の下限は半径 0.5（直径 1）、上限は `MAX_RADIUS` の直径（256）。下限より小さい 0.7 や上限を超える 300 は入れない
+        assert_eq!(SIZES[0], 1.0);
+        assert!(SIZES[SIZES.len() - 1] <= crate::state::MAX_RADIUS * 2.0);
+        assert!(!SIZES.contains(&0.7) && !SIZES.iter().any(|s| *s >= 300.0));
+        assert_eq!(size_name(1.5), "1.5 px");
+        assert_eq!(size_name(10.0), "10 px");
+        assert_eq!(size_name(250.0), "250 px");
     }
 
     #[test]

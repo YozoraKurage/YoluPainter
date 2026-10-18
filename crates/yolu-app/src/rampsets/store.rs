@@ -62,42 +62,15 @@ impl StoreError {
     pub fn describe(&self, lang: Lang) -> String {
         match self {
             StoreError::Io(e) => lang.file_error(e),
-            StoreError::TooLarge => lang
-                .pick("ファイルが大きすぎます", "The file is too large")
-                .into(),
-            StoreError::NotGradients => lang
-                .pick(
-                    "グラデーションセットのファイルではありません",
-                    "Not a gradient set file",
-                )
-                .into(),
-            StoreError::NewerVersion(v) => lang.pick(
-                format!("新しい形式です（{v}）"),
-                format!("A newer format ({v})"),
-            ),
-            StoreError::Syntax(line) => lang.pick(
-                format!("{line} 行目が読めません"),
-                format!("Cannot read line {line}"),
-            ),
-            StoreError::UnknownKey(k) => lang.pick(
-                format!("知らない項目「{k}」があります"),
-                format!("Unknown item \"{k}\""),
-            ),
-            StoreError::DuplicateKey(k) => lang.pick(
-                format!("項目「{k}」が重なっています"),
-                format!("Repeated item \"{k}\""),
-            ),
-            StoreError::BadValue(k) => lang.pick(
-                format!("項目「{k}」の値が読めません"),
-                format!("Invalid value of \"{k}\""),
-            ),
-            StoreError::TooMany => lang.pick("セットが多すぎます", "Too many gradients").into(),
-            StoreError::Mismatch => lang
-                .pick(
-                    "書いた内容を読み戻せませんでした",
-                    "The written file did not read back the same",
-                )
-                .into(),
+            StoreError::TooLarge => lang.t("rampsets-the-file-is-too-large").into(),
+            StoreError::NotGradients => lang.t("rampsets-not-a-gradient-set-file").into(),
+            StoreError::NewerVersion(v) => lang.f("rampsets-a-newer-format", &[("v", &v)]),
+            StoreError::Syntax(line) => lang.f("rampsets-cannot-read-line", &[("line", &line)]),
+            StoreError::UnknownKey(k) => lang.f("rampsets-unknown-item", &[("k", &k)]),
+            StoreError::DuplicateKey(k) => lang.f("rampsets-repeated-item", &[("k", &k)]),
+            StoreError::BadValue(k) => lang.f("rampsets-invalid-value-of", &[("k", &k)]),
+            StoreError::TooMany => lang.t("rampsets-too-many-gradients").into(),
+            StoreError::Mismatch => lang.t("rampsets-the-written-file-did-not").into(),
         }
     }
 }

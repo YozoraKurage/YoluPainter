@@ -226,7 +226,7 @@ pub fn set_frame(app: &mut AppState, frame: i64) {
 /// 選んでいるテイクとフレームのポーズを、裏の仕事で求め始める（求めている途中のものは取り消す）。描いている最中・続けて変えている
 /// 操作の途中は断る。
 pub fn start(view3d: &mut View3dState) -> Result<(), ViewError> {
-    if view3d.input.stroke.is_some() {
+    if view3d.view.input.stroke.is_some() {
         return Err(ViewError::Stroking);
     }
     let s = view3d.pose.session.as_mut().ok_or(ViewError::NoPoseModel)?;
@@ -310,10 +310,7 @@ fn overlay(
 /// 「「名前」のフレーム N」（知らせの頭。数で終わるので、続く語との間に空白を置く）。
 fn what(lang: Lang, name: &str, frame: i64) -> String {
     let name = lang.quote(name);
-    lang.pick(
-        format!("{name}のフレーム {frame}"),
-        format!("frame {frame} of {name}"),
-    )
+    lang.f("view3d-frame-of", &[("name", &name), ("frame", &frame)])
 }
 
 /// フレームの初めに: 求め終えたテイクのポーズを当てて知らせる。描いている間・続けて変えている操作の途中は、終わるまで待つ。
@@ -349,18 +346,12 @@ pub fn poll(app: &mut AppState) {
     match applied {
         Ok(()) => app.info(
             Source::Pose,
-            lang.pick(
-                format!("{head} をポーズにしました。"),
-                format!("Posed from {head}."),
-            ),
+            lang.f("view3d-posed-from", &[("head", &head)]),
         ),
         Err(ViewError::Cancelled) => {}
         Err(e) => {
             let text = lang.with_reason(
-                lang.pick(
-                    format!("{head} をポーズにできません"),
-                    format!("Cannot pose from {head}"),
-                ),
+                lang.f("view3d-cannot-pose-from", &[("head", &head)]),
                 lang.view_error(&e),
             );
             app.notify(e.notice_kind(), Source::Pose, text);

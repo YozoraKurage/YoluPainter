@@ -1,5 +1,5 @@
 //! C# の MeshBaker（Unity 同梱 Mono）が焼いた、不規則な座標・数千面・高ポリ・名前・接線・頂点法線・ID の各元の結果との全バイト一致。
-//! 入力は tests/support が作る（C# の MeshGoldenRough.cs と同じ手順）。正解は SHA-256 だけを置く（中身は再生成できる）。
+//! 入力は tests/support が作る（前の C# 側と同じ手順）。正解は SHA-256 だけを置く。
 use crate::support;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;

@@ -7,39 +7,36 @@ use crate::state::AppState;
 
 impl AppState {
     fn no_selection_text(&self) -> String {
-        self.lang
-            .pick("選択範囲がありません。", "No selection.")
-            .into()
+        self.lang.t("selection-no-selection").into()
     }
 
     /// 選択範囲を、描画色（マテリアルで塗るなら組の全部。マスクを描いているならマスクの白）で塗りつぶす。`erase` なら消す
     /// （アルファを減らす。マスクなら隠す）。範囲の量の割合だけ効く（縁のぼかしはそのまま縁になる）。
     pub(super) fn sel_fill(&mut self, erase: bool) -> Result<String, String> {
         let lang = self.lang;
-        if self.doc.selection().is_none() {
+        if self.session.doc.selection().is_none() {
             return Err(self.no_selection_text());
         }
-        let layer = crate::region::tools::paint_gate(self)?;
+        let layer = crate::stroke_gate::paint(self)?;
         let result = if self.m2.edit_mask {
-            let reveal = crate::region::tools::mask_reveals(self, layer, erase);
-            self.doc.fill_mask(layer, 1.0, None, reveal)
+            let reveal = crate::m2::mask_reveals(self, layer, erase);
+            self.session.doc.fill_mask(layer, 1.0, None, reveal)
         } else {
             let channels = self.paint_channels();
-            self.doc.fill_material(layer, &channels, 1.0, None, erase)
+            self.session
+                .doc
+                .fill_material(layer, &channels, 1.0, None, erase)
         };
         let changed = result.map_err(|e| lang.core_error(&e))?;
         let (done, same) = if erase {
             (
-                lang.pick("選択範囲を消去しました。", "Erased the selection."),
-                lang.pick("消す画素がありません。", "Nothing to erase."),
+                lang.t("selection-erased-the-selection"),
+                lang.t("selection-nothing-to-erase"),
             )
         } else {
             (
-                lang.pick("選択範囲を塗りつぶしました。", "Filled the selection."),
-                lang.pick(
-                    "塗りつぶしは変わりません。",
-                    "The fill did not change anything.",
-                ),
+                lang.t("selection-filled-the-selection"),
+                lang.t("selection-the-fill-did-not-change"),
             )
         };
         Ok(if changed { done } else { same }.into())
@@ -50,13 +47,14 @@ impl AppState {
     /// 外すので、同じ選択へ戻す。全部 1 回の Undo）。
     pub(super) fn sel_to_new_layer(&mut self) -> Result<String, String> {
         let lang = self.lang;
-        let Some(selection) = self.doc.selection().cloned() else {
+        let Some(selection) = self.session.doc.selection().cloned() else {
             return Err(self.no_selection_text());
         };
         let (id, channel, mask) = self.clip_target()?;
-        let limit = self.doc.stroke_budget_bytes();
+        let limit = self.session.doc.stroke_budget_bytes();
         let name = self.layer_name_for_new();
         let result = self
+            .session
             .doc
             .batch(|doc| {
                 let clip = doc.copy_pixels(id, channel, mask, limit)?;
@@ -65,15 +63,12 @@ impl AppState {
                 Ok(pasted)
             })
             .map_err(|e| lang.core_error(&e))?;
-        self.selected_layer = Some(result.layer);
+        self.session.selected_layer = Some(result.layer);
         self.set_edit_mask(false);
         self.ensure_selection();
         Ok(format!(
             "{}: {name}",
-            lang.pick(
-                "コピーして新しいレイヤーにしました",
-                "Copied to a new layer"
-            )
+            lang.t("selection-copied-to-a-new-layer")
         ))
     }
 
@@ -81,22 +76,26 @@ impl AppState {
     /// 選択範囲の縁の量は、その分だけ隠さない）。マスクを描く状態にし、選択範囲は今のまま残す。
     pub(super) fn sel_to_mask(&mut self) -> Result<String, String> {
         let lang = self.lang;
-        let Some(selection) = self.doc.selection().cloned() else {
+        let Some(selection) = self.session.doc.selection().cloned() else {
             return Err(self.no_selection_text());
         };
         let Some(id) = self
+            .session
             .selected_layer
-            .filter(|id| self.doc.layer(*id).is_some())
+            .filter(|id| self.session.doc.layer(*id).is_some())
         else {
-            return Err(lang
-                .pick("レイヤーが選ばれていません。", "No layer is selected.")
-                .into());
+            return Err(lang.t("selection-no-layer-is-selected-2").into());
         };
-        let had_mask = self.doc.layer(id).is_some_and(|l| l.mask().is_some());
+        let had_mask = self
+            .session
+            .doc
+            .layer(id)
+            .is_some_and(|l| l.mask().is_some());
         let outside = selection.invert();
         // 外を「隠す」側へ書く値は、反転したマスクでは逆（保存値は隠す量。反転では 0 が隠れる）。足したばかりのマスクは反転していない
-        let reveal = crate::region::tools::mask_reveals(self, id, true);
-        self.doc
+        let reveal = crate::m2::mask_reveals(self, id, true);
+        self.session
+            .doc
             .batch(|doc| {
                 if !had_mask {
                     doc.add_layer_mask(id)?;
@@ -108,22 +107,13 @@ impl AppState {
                 Ok(())
             })
             .map_err(|e| lang.core_error(&e))?;
-        self.selected_layer = Some(id);
+        self.session.selected_layer = Some(id);
         self.set_edit_mask(true);
-        let kind = self.doc.layer(id).map(|l| l.kind());
+        let kind = self.session.doc.layer(id).map(|l| l.kind());
         Ok(match (had_mask, kind) {
-            (true, _) => lang.pick(
-                "選択範囲の外をマスクで隠しました。",
-                "Hid everything outside the selection in the mask.",
-            ),
-            (false, Some(LayerKind::Group)) => lang.pick(
-                "グループにマスクを追加しました。",
-                "Added a mask to the group.",
-            ),
-            _ => lang.pick(
-                "選択範囲からマスクを作りました。",
-                "Made a mask from the selection.",
-            ),
+            (true, _) => lang.t("selection-hid-everything-outside-the-selection"),
+            (false, Some(LayerKind::Group)) => lang.t("selection-added-a-mask-to-the"),
+            _ => lang.t("selection-made-a-mask-from-the"),
         }
         .into())
     }

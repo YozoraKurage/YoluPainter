@@ -108,13 +108,13 @@ pub fn run_checked(test: fn()) -> Result<(), Failure> {
         record_panic_locations();
         let (sender, receiver) = mpsc::channel::<Job>();
         std::thread::Builder::new()
-            .name("描画試験".into())
+            .name("描画テスト".into())
             .spawn(move || {
                 for job in receiver {
                     job();
                 }
             })
-            .expect("描画試験スレッドを作る");
+            .expect("描画テストスレッドを作る");
         sender
     });
     let (sender, receiver) = mpsc::sync_channel(1);
@@ -134,14 +134,14 @@ pub fn run_checked(test: fn()) -> Result<(), Failure> {
             crate::common::tmp::sweep();
             let _ = sender.send(result);
         }))
-        .expect("描画試験スレッドが生きている");
-    receiver.recv().expect("描画試験の結果を受け取る")
+        .expect("描画テストスレッドが生きている");
+    receiver.recv().expect("描画テストの結果を受け取る")
 }
 
 pub fn run(test: fn()) {
     if let Err(failure) = run_checked(test) {
         // ワーカーの出力捕捉先は最初の呼び手に属するので、失敗の本文と場所は今の試験にも残す。
-        eprintln!("描画試験に失敗: {}", failure.describe());
+        eprintln!("描画テストに失敗: {}", failure.describe());
         std::panic::resume_unwind(failure.payload);
     }
 }

@@ -12,6 +12,7 @@
 //! 環境光の反射の場面（`uniform_env`）は、3D ビューの環境を「なし」（一様な環境光）にし、Unity ではマテリアルのキューブマップの差し替え
 //! （`_ReflectionCubeOverride`）で同じ一様な色を映す（シーンの反射プローブの絵を揃えずに、反射の式だけを比べる）。
 use crate::common;
+use crate::common::drive::Drive;
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -1656,9 +1657,9 @@ fn render_as(
         );
     }
     {
-        let state = &mut h.state_mut().state;
-        let revision = state.view3d.next_revision();
-        state.view3d.material = 0;
+        let state = h.app_mut();
+        let revision = state.view3d_mut().next_revision();
+        state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
         let model = ViewModel::new(
             "場面",
             scene.meshes.clone(),
@@ -1667,8 +1668,8 @@ fn render_as(
         )
         .unwrap();
         model.tangents();
-        state.view3d.set_model(model);
-        state.view3d.camera = scene.camera;
+        state.view3d_mut().set_model(model);
+        state.view3d_mut().view.camera = scene.camera;
     }
     h.run();
     let light = scene_light(scene.name);
@@ -1681,20 +1682,20 @@ fn render_as(
     // Unity の参照の絵は多サンプルなし。縁の比べ（片方だけの画素・平均）が多サンプルでずれないよう、この比べは 1× で描く
     h.state_mut().apply(Action::View3d(Op::Antialias(1)));
     if uniform_env(scene.name) {
-        h.state_mut().state.view3d.display.ambient = [1.0; 3];
+        h.view3d_mut().view.display.ambient = [1.0; 3];
         h.state_mut().apply(Action::View3d(Op::Env(EnvKind::None)));
     } else {
         h.state_mut().apply(Action::View3d(Op::Env(EnvKind::Sky)));
     }
     {
-        let doc = &mut h.state_mut().state.doc;
+        let doc = h.doc_mut();
         (scene.paint)(doc);
         setup(doc);
     }
     // マットキャップの絵は文書の効果の入力の画像として渡す（棚の画像と同じ道）
     if let Some((id, (n, rgba))) = scene_image(scene.name) {
         let image = ImageInput::new(n, n, rgba, ImageColorSpace::Srgb).unwrap();
-        let doc = &mut h.state_mut().state.doc;
+        let doc = h.doc_mut();
         let inputs = doc.effect_inputs().clone().with_image(id, image);
         doc.set_effect_inputs(inputs).unwrap();
     }
@@ -1735,7 +1736,7 @@ fn export_and_render() {
         crop.save(dir.join(format!("ours_{}.png", scene.name)))
             .unwrap();
         // Unity の場面の記述
-        let display = h.state().state.view3d.display;
+        let display = h.view3d().view.display;
         let to_light = display.light_direction();
         let cam = scene.camera;
         let q = camera_rotation(&cam);
@@ -1769,7 +1770,7 @@ fn export_and_render() {
         let mesh_file = format!("{}.mesh.txt", scene.name);
         write_mesh(&dir.join(&mesh_file), &scene.meshes);
         writeln!(desc, "mesh {mesh_file}").unwrap();
-        let doc = &h.state().state.doc;
+        let doc = h.doc();
         let look = doc.look().clone();
         let standard = look.kind == LookKind::Standard;
         if standard {
@@ -1834,7 +1835,7 @@ fn diff(
     ours: &image::RgbaImage,
     unity: &image::RgbaImage,
     background: [u8; 3],
-    skip: Option<egui::Rect>,
+    skip: &[egui::Rect],
 ) -> Option<(f64, f64, u8, usize, usize)> {
     if ours.dimensions() != unity.dimensions() {
         return None;
@@ -1843,7 +1844,10 @@ fn diff(
     let mut diffs: Vec<u8> = Vec::new();
     let mut only_one = 0usize;
     for ((x, y, a), b) in ours.enumerate_pixels().zip(unity.pixels()) {
-        if skip.is_some_and(|r| r.contains(egui::pos2(x as f32, y as f32))) {
+        if skip
+            .iter()
+            .any(|r| r.contains(egui::pos2(x as f32, y as f32)))
+        {
             continue;
         }
         let (ba, bb) = (is_bg(a.0), is_bg(b.0));
@@ -1884,7 +1888,7 @@ fn compare() {
             continue;
         };
         let (ours, unity) = (ours.to_rgba8(), unity.to_rgba8());
-        match diff(&ours, &unity, background, None) {
+        match diff(&ours, &unity, background, &[]) {
             Some((mean, p95, max, n, only)) => println!(
                 "| {} | {mean:.2} | {p95:.0} | {max} | {n} | {only} |",
                 scene.name
@@ -2011,7 +2015,7 @@ fn compare_through_live_link() {
         });
         ours.save(dir.join(format!("link_{}.png", scene.name)))
             .unwrap();
-        match diff(&ours, &unity, background, axes_in_view(&h)) {
+        match diff(&ours, &unity, background, &overlays_in_view(&h)) {
             Some((mean, p95, max, n, only)) => println!(
                 "| {} | {mean:.2} | {p95:.0} | {max} | {n} | {only} | {images} |",
                 scene.name
@@ -2038,11 +2042,18 @@ fn unity_image(name: &str) -> image::RgbaImage {
         .to_rgba8()
 }
 
-/// 軸の印の、3D の表示域の絵（`render` の切り抜き）の中の矩形。
-fn axes_in_view(h: &Harness<'_, YoluApp>) -> Option<egui::Rect> {
-    let rect = h.state().view3d_rect()?;
+/// 3D の画像の上に重ねた印（軸の印と、左上の表示の種類のドロップダウンと、左下のシェルフ）の、3D の表示域の画像（`render` の切り抜き）の中の矩形。
+fn overlays_in_view(h: &Harness<'_, YoluApp>) -> Vec<egui::Rect> {
+    let Some(rect) = h.state().view3d_rect() else {
+        return Vec::new();
+    };
     let min = egui::pos2(rect.left().round(), rect.top().round());
-    view3d_axes_rect(h).map(|r| r.translate(-min.to_vec2()))
+    view3d_axes_rect(h)
+        .into_iter()
+        .chain(crate::view3d_shading_rect(h))
+        .chain(crate::view3d_shelf_rect(h))
+        .map(|r| r.translate(-min.to_vec2()))
+        .collect()
 }
 
 /// 場面ごとの差の上限: 平均（実 GPU）・平均（ソフトの描画）・95 % の値（0〜255）と、片方だけに物が写っている画素の数。
@@ -2119,7 +2130,7 @@ fn the_view_stays_within_the_measured_difference_from_unity_liltoon() {
         if scene.name == scenes[0].name {
             println!("{adapter}");
         }
-        let (mean, p95, max, n, only) = diff(&ours, &unity, background, axes_in_view(&h))
+        let (mean, p95, max, n, only) = diff(&ours, &unity, background, &overlays_in_view(&h))
             .unwrap_or_else(|| {
                 panic!(
                     "{}: 大きさが違う（{:?} と Unity の {:?}）",

@@ -81,10 +81,10 @@ impl Button {
     /// 名前（ツールチップと読み上げ。説明は付けない）。
     pub fn name(self, lang: Lang, maximized: bool) -> &'static str {
         match self {
-            Button::Minimize => lang.pick("最小化", "Minimize"),
-            Button::Maximize if maximized => lang.pick("元に戻す", "Restore"),
-            Button::Maximize => lang.pick("最大化", "Maximize"),
-            Button::Close => lang.pick("閉じる", "Close"),
+            Button::Minimize => lang.t("titlebar-minimize"),
+            Button::Maximize if maximized => lang.t("titlebar-restore"),
+            Button::Maximize => lang.t("titlebar-maximize"),
+            Button::Close => lang.t("titlebar-close"),
         }
     }
 

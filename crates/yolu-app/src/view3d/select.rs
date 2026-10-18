@@ -11,7 +11,7 @@
 //! 奪われて補った離し）は、離した位置が分からないので、図形・定規と同じく何も選ばずにやめる（2D のキャンバスの選択は最後の位置で選ぶ）。
 //! 状態は `AppState::sel.view3d`（`selection::SelState`）が持つので、ツールの切り替えと 2D のキャンバスの Esc も、2D の途中の形と同じ口で捨てる。
 
-use egui::{Modifiers, Painter, PointerButton, Pos2, Rect};
+use egui::{Painter, Pos2, Rect};
 use yolu_core::geometry::ScreenShape;
 use yolu_core::glam::DVec2;
 use yolu_core::selection::MAX_POLYGON_POINTS;
@@ -25,6 +25,7 @@ use crate::selection::canvas::{
     drag_mode, paint_polygon_draft, paint_shape_outline, CLICK_RADIUS, CLOSE_RADIUS, DOUBLE_CLICK,
 };
 use crate::selection::{combine_of, shape, SelAction, SelEdit};
+use crate::state::key::{Key, Modifiers};
 use crate::state::{Action, AppState, StrokeSource, Tool};
 
 /// 3D ビューで引いている形（長方形・楕円・なげなわ）。点は表示域の画面の点（左上が原点）。
@@ -136,7 +137,7 @@ pub(super) fn press(
 fn wand(app: &mut AppState, rect: Rect, at: Pos2, modifiers: Modifiers) {
     match surface_point(app, rect, at) {
         Ok((x, y)) => {
-            let mode = combine_of(app.sel.combine, PointerButton::Primary, modifiers);
+            let mode = combine_of(app.sel.combine, app.sel.press_button, modifiers);
             // 3D ビューでは対称定規の写しを使わない（種は押した面の点だけ）
             app.apply(Action::Sel(SelAction::Edit(SelEdit::Wand {
                 seeds: vec![(x.floor() as u32, y.floor() as u32)],
@@ -184,18 +185,18 @@ pub(super) fn finish_polygon(app: &mut AppState, rect: Rect, modifiers: Modifier
         crate::selection::canvas::refuse_too_few_points(app);
         return;
     }
-    let mode = combine_of(app.sel.combine, PointerButton::Primary, modifiers);
+    let mode = combine_of(app.sel.combine, app.sel.press_button, modifiers);
     select_shape(app, rect, ScreenShape::Polygon { points: &points }, mode);
 }
 
 /// Enter（多角形を閉じる）・Backspace（最後の点を消す）。扱ったか。
-pub(super) fn key(app: &mut AppState, rect: Rect, key: egui::Key, modifiers: Modifiers) -> bool {
+pub(super) fn key(app: &mut AppState, rect: Rect, key: Key, modifiers: Modifiers) -> bool {
     if app.tool != Tool::Polygon || app.sel.view3d.polygon.is_empty() {
         return false;
     }
     match key {
-        egui::Key::Enter => finish_polygon(app, rect, modifiers),
-        egui::Key::Backspace => {
+        Key::Enter => finish_polygon(app, rect, modifiers),
+        Key::Backspace => {
             app.sel.view3d.remove_last_point();
         }
         _ => return false,
@@ -278,11 +279,7 @@ pub(super) fn cancel(app: &mut AppState, ctx: &egui::Context) -> bool {
     let any = app.sel.view3d.cancel();
     if any {
         crate::ui::window::note_escape_taken(ctx);
-        app.info(
-            Source::Selection,
-            app.lang
-                .pick("選択の途中をやめました。", "Selection cancelled."),
-        );
+        app.info(Source::Selection, app.lang.t("view3d-selection-cancelled"));
     }
     any
 }
@@ -293,13 +290,13 @@ fn commit(app: &mut AppState, rect: Rect, drag: Drag) {
     let mode = drag_mode(
         app.sel.combine,
         drag.tool,
-        PointerButton::Primary,
+        app.sel.press_button,
         drag.pressed_with,
         drag.now,
     );
     if click {
         // 動かさずに離したら解除（新規のとき。追加・削除・共通では何もしない）
-        if mode == SelectionCombine::Replace && app.doc.selection().is_some() {
+        if mode == SelectionCombine::Replace && app.session.doc.selection().is_some() {
             app.apply(Action::Sel(SelAction::Edit(SelEdit::Clear)));
         }
         return;

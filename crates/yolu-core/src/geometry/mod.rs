@@ -15,6 +15,7 @@ mod build;
 mod camera;
 mod cover;
 mod dab;
+mod materials;
 mod model;
 mod paint;
 mod project;
@@ -28,6 +29,7 @@ pub(crate) mod seam_band;
 mod stencil;
 mod stroke;
 mod symmetry;
+mod tangent_dab;
 pub(crate) mod unity;
 mod uv_grid;
 mod uv_symmetry;
@@ -38,14 +40,14 @@ use std::sync::atomic::AtomicBool;
 use glam::{Vec2, Vec3};
 
 pub use camera::{
-    aligned_axis_view, nearest_axis_view, orbited, snap_orientation, visible_height, AxisView,
-    CameraView, OrbitCamera, Projection, Sight, Viewer, DEFAULT_PITCH, DEFAULT_YAW,
-    ORBIT_DEGREES_PER_POINT, SNAP_ANGLE,
+    aligned_axis_view, flicked_orientation, orbited, visible_height, AxisView, CameraView, Flick,
+    OrbitCamera, Projection, Sight, Viewer, DEFAULT_PITCH, DEFAULT_YAW, ORBIT_DEGREES_PER_POINT,
 };
 pub use cover::{CoverParams, CoverPixel, SurfaceCoverStroke};
 pub use dab::{
     DabRefusal, SurfaceBrushBudget, SurfaceDabResult, SurfacePixel, SurfaceVisibilityCache,
 };
+pub use materials::{admits, MaterialSet};
 pub use model::{cube_sphere, demo_cube, model_triangles, ModelMesh, Submesh};
 pub use paint::{
     pick, world_radius, SurfaceCloneSource, SurfaceEffect, SurfaceInput, SurfaceStroke,
@@ -67,6 +69,7 @@ pub use sampling::{
 pub use screen::{cover_screen, ScreenCoverSettings, ScreenCoverage, ScreenShape};
 pub use seam_band::{seam_band_width, SeamBand, SeamBandStats, MAX_CHART_TRIANGLES};
 pub use stencil::SurfaceStencil;
+pub use stroke::DualSink;
 pub use stroke::{
     ScreenDab, ScreenPoint, ScreenStrokeSampler, SegmentGaps, StrokeCurve, TooManyDabs,
     SURFACE_DABS_PER_SEGMENT,
@@ -77,6 +80,7 @@ pub use symmetry::{
     SymmetricSurfaceDab, SymmetryAxis, SymmetryError, MAX_CLOSEST_POINT_NODE_VISITS,
     ON_PLANE_FRACTION,
 };
+pub use tangent_dab::{SurfaceAlignment, FACING_TOLERANCE, MIN_FORESHORTENING};
 pub use unity::{Bounds, Ray};
 pub use uv_grid::UvGrid;
 pub use uv_symmetry::{ModelCopies, ModelSymmetry, UvCopy, MAX_CANVAS_COPY_PIXELS};

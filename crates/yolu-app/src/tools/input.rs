@@ -1,13 +1,14 @@
-//! ツールの入力の受け口。キャンバスの入力（`canvas`）と 3D ビューの入力（`view3d::input`）は、ツールごとの枝を持たず、ツールの表（`tools::TOOLS`）が
+//! ツールの入力の受け口。キャンバスの入力（`canvas`）と 3D ビューの入力（`view3d::input`）は、ツールごとの分岐を持たず、ツールの表（`tools::TOOLS`）が
 //! 指す受け口を引く。2D は `CanvasTool`（押す・動く・離す・ペン・Esc・Enter・取りこぼした離し・フォーカスを失う）。ドラッグの札を持つツール
 //! （移動・変形とゆがみ、図形と定規、グラデーション、パス、選択）がそれぞれ 1 つの実装で、ドラッグを始めた側が離す・Esc・フォーカスの喪失で終える
 //! （途中でツールを替えても、始めた側を終わらせる）ので、動き・離す・取りこぼしは、ツールでなくドラッグの持ち主で振り分ける。ブラシ・消しゴム・範囲のツール・
 //! スポイトはストロークで描くので `CanvasTool` を持たず、キャンバスの入力が直に扱う。3D は `Surface`（面の上で押したときの行き先）。
 //! 各ツールの実際の仕事は、ツールのモジュール（`transform::canvas` など）の関数。ここはその呼び出しを同じ形にそろえるだけ。
 
-use egui::{CursorIcon, Key, Modifiers, Pos2, Rect};
+use egui::{CursorIcon, Pos2, Rect};
 
 use crate::canvas::view::CanvasView;
+use crate::state::key::{Key, Modifiers};
 use crate::state::{AppState, StrokeSource};
 
 /// 入力の 1 回の前提（押した・動いた・離したときの修飾キーと時刻、キャンバスの表示域、描き直しの番号）。
@@ -89,10 +90,6 @@ pub trait CanvasTool: Sync {
     /// Enter・Backspace（文字を打っていない・ポップアップが無いとき）。扱ったら true。
     fn key(&self, _app: &mut AppState, _key: Key, _modifiers: Modifiers) -> bool {
         false
-    }
-    /// ステンシルを動かしている間は押しを渡さないツールか。
-    fn respects_stencil(&self) -> bool {
-        true
     }
 }
 
@@ -562,9 +559,6 @@ impl CanvasTool for SelectionInput {
             _ => return false,
         }
         true
-    }
-    fn respects_stencil(&self) -> bool {
-        false
     }
 }
 

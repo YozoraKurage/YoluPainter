@@ -389,13 +389,9 @@ pub fn stops_editor(
     let position_at = |x: f32| (f64::from(x - left) / f64::from(width)).clamp(0.0, 1.0);
     let mut result: Option<Ramp> = None;
     let pointer = ui.input(|i| i.pointer.interact_pos().or(i.pointer.hover_pos()));
-    let (pressed, secondary, down) = ui.input(|i| {
-        (
-            i.pointer.primary_pressed(),
-            i.pointer.secondary_pressed(),
-            i.pointer.primary_down(),
-        )
-    });
+    let (pressed, down) = ui.input(|i| (i.pointer.primary_pressed(), i.pointer.primary_down()));
+    // 点の削除は右クリック（動かさずに離したとき）。押した瞬間にしない: 一覧の中では右ドラッグが一覧のスクロールになるため
+    let secondary = response.secondary_clicked();
     // 離した直後は、文書が追いつくまで離した値を見せる（元の位置へ一瞬戻らない）
     let settled = settle::shown(ui, id, ramp);
     let shown_for_hit = drag

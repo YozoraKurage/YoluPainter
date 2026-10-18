@@ -144,8 +144,8 @@ impl YoluApp {
         windows.append(&mut self.detached.windows);
         self.detached.windows = windows;
         // 落としたファイルの行き先の矩形は、メインウィンドウで描いた物に戻す（別ウィンドウの分はウィンドウごとに控えた）
-        self.state.brushes.ui.list_rect = self.root_drops.brush_list;
-        self.state.library.grid_rect = self.root_drops.library_grid;
+        self.state.ui.brushes_list_rect = self.root_drops.brush_list;
+        self.state.ui.library_grid_rect = self.root_drops.library_grid;
         grabbed
     }
 
@@ -177,16 +177,12 @@ impl YoluApp {
             self.attach_native_mac(&ctx, win, &info);
             // WinTab の入切（設定「ペンの入力」）は、メインウィンドウと同じ札を、このウィンドウの文脈にも合わせる
             win.pen.sync_wintab();
-            let (drained, lost) = win.pen.drain_with_lost();
-            pen = drained;
-            self.state.pen_lost = lost;
+            pen = self
+                .state
+                .take_pen_samples(&win.pen, ctx.pixels_per_point());
             // 次のフレームの初めで、入力のあるフレームとして数える（別ウィンドウの egui の事象は、主のフレームの初めには見えない。`pacing`）
             if !pen.is_empty() || ctx.input(|i| !i.events.is_empty()) {
                 self.pacing.note_detached_input();
-            }
-            self.state.pressure_observe(ctx.pixels_per_point(), &pen);
-            for sample in &mut pen {
-                sample.pressure = self.state.adjust_pressure(sample.pressure);
             }
             // 自前の枠: 縁を押したら大きさを変える（描いている最中・ペンが触れている最中は受けない。メインウィンドウと同じ）
             if custom {
@@ -201,8 +197,8 @@ impl YoluApp {
                 crate::stencil::update_keys(&ctx, &mut self.state);
             }
             // 落としたファイル（ブラシの一覧・ライブラリの格子は、このウィンドウで描いたときだけ）
-            self.state.brushes.ui.list_rect = win.drops.brush_list;
-            self.open_dropped(&ctx);
+            self.state.ui.brushes_list_rect = win.drops.brush_list;
+            self.open_dropped(&ctx, win.drops);
             crate::panels::assets::import_dropped(&ctx, &mut self.state, win.drops.library_grid);
             if ctx.input(|i| i.key_pressed(egui::Key::Escape) && i.pointer.primary_down()) {
                 self.state.m2_cancel_drag();
@@ -210,8 +206,8 @@ impl YoluApp {
             // ほかのウィンドウで開いたポップアップは、このウィンドウを押したら閉じる
             close_foreign_popup(&ctx, &mut self.state);
         }
-        self.state.brushes.ui.list_rect = None;
-        self.state.library.grid_rect = None;
+        self.state.ui.brushes_list_rect = None;
+        self.state.ui.library_grid_rect = None;
         let mates = detach::leaf_mates(&win.dock);
         let lang = self.state.lang;
         let mut tabs = Tabs {
@@ -259,7 +255,7 @@ impl YoluApp {
                         ui,
                         titlebar::close_rect(row),
                         frame_ids[1],
-                        lang.pick("ドックに戻す", "Return to Dock"),
+                        lang.t("app-return-to-dock"),
                     );
                 }
                 (full, drag, close)
@@ -283,8 +279,9 @@ impl YoluApp {
         };
         win.tab_rects = tabs.tab_rects;
         win.drops = detach::DropRects {
-            brush_list: self.state.brushes.ui.list_rect.take(),
-            library_grid: self.state.library.grid_rect.take(),
+            brush_list: self.state.ui.brushes_list_rect.take(),
+            library_grid: self.state.ui.library_grid_rect.take(),
+            stencil_image: self.state.ui.stencil_image_rect.take(),
         };
         // 自分のウィンドウならウィンドウの全体、egui のウィンドウ（試験）ならドックの矩形の外で離したタブ
         let inside = if own { ctx.content_rect() } else { area };
@@ -404,7 +401,7 @@ pub(super) fn tab_events(
     }
     if let Some((tab, at)) = pass.context {
         if !state.is_stroking() {
-            state.popup = Some(OpenPopup {
+            state.ui.popup = Some(OpenPopup {
                 kind: PopupKind::DockTab(tab),
                 state: PopupState::new(ctx, Rect::from_min_size(at, Vec2::ZERO)),
             });
@@ -413,30 +410,46 @@ pub(super) fn tab_events(
 }
 
 impl YoluApp {
+    /// パイと G/R/S（変形）のポップアップは、自分で描いて入力を受ける（選んだ項目は閉じてから実行し、別のパイなら開き直す）。
+    /// ここで描いたら None（続けて開いたままにするものは戻してある）。ほかの種類は描かずにそのまま返す。
+    pub(super) fn show_self_drawn_popup(
+        &mut self,
+        ctx: &egui::Context,
+        mut open: OpenPopup,
+    ) -> Option<OpenPopup> {
+        let keep = match open.kind {
+            PopupKind::Pie => crate::pie::show(ctx, &mut self.state, &mut open.state),
+            PopupKind::Transform => {
+                crate::objects::transform::show(ctx, &mut self.state, &mut open.state)
+            }
+            _ => return Some(open),
+        };
+        if keep {
+            self.state.ui.popup.get_or_insert(open);
+        }
+        None
+    }
+
     /// 別ウィンドウで開いたポップアップを、そのウィンドウで描く（ほかのウィンドウのポップアップは描かない）。
     fn popup_in(&mut self, ctx: &egui::Context, id: ViewportId) {
-        let Some(mut open) = self.state.popup.take() else {
+        // 保存していない変更の問いが開いている間は、別ウィンドウのメニューから文書を変えない（開いていたメニューは閉じる）
+        if self.state.ui.discard_ask.is_some() {
+            self.state.ui.popup = None;
+            return;
+        }
+        let Some(open) = self.state.ui.popup.take() else {
             return;
         };
         if open.state.viewport != id {
-            self.state.popup = Some(open);
+            self.state.ui.popup = Some(open);
             return;
         }
-        if open.kind == PopupKind::Pie {
-            if crate::pie::show(ctx, &mut self.state, &mut open.state) {
-                self.state.popup.get_or_insert(open);
-            }
+        let Some(mut open) = self.show_self_drawn_popup(ctx, open) else {
             return;
-        }
-        if open.kind == PopupKind::Transform {
-            if crate::objects::transform::show(ctx, &mut self.state, &mut open.state) {
-                self.state.popup.get_or_insert(open);
-            }
-            return;
-        }
+        };
         let entries = crate::shell::popup_entries(&self.state, open.kind);
         match menu::show(ctx, Id::new("yolu.popup"), &mut open.state, &entries, &[]) {
-            PopupOutcome::Open | PopupOutcome::Step(_) => self.state.popup = Some(open),
+            PopupOutcome::Open | PopupOutcome::Step(_) => self.state.ui.popup = Some(open),
             PopupOutcome::Close => {}
             PopupOutcome::Chosen(action) => self.state.apply(action),
         }
@@ -449,11 +462,12 @@ impl YoluApp {
         };
         if self
             .state
+            .ui
             .popup
             .as_ref()
             .is_some_and(|p| !alive(p.state.viewport))
         {
-            self.state.popup = None;
+            self.state.ui.popup = None;
         }
     }
 
@@ -782,12 +796,13 @@ fn settle_and_record(ctx: &egui::Context, win: &mut OsWindow, info: &ViewportInf
 pub(super) fn close_foreign_popup(ctx: &egui::Context, state: &mut crate::state::AppState) {
     let here = ctx.viewport_id();
     if state
+        .ui
         .popup
         .as_ref()
         .is_some_and(|p| p.state.viewport != here)
         && ctx.input(|i| i.pointer.any_pressed())
     {
-        state.popup = None;
+        state.ui.popup = None;
     }
 }
 

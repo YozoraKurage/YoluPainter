@@ -8,16 +8,17 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use egui::{Color32, ColorImage, Painter, Pos2, Shape, Stroke, TextureHandle, TextureOptions};
-use yolu_core::geometry::SurfaceGeometry;
+use egui::{Color32, ColorImage, Painter, Pos2, Shape, Stroke, TextureOptions};
+use yolu_core::geometry::{MaterialSet, SurfaceGeometry};
 use yolu_core::glam::Vec2;
 use yolu_core::mesh_maps::{islands_of, uv_overlap, UvOverlap};
 
 use crate::canvas::display::{CanvasDisplay, NEAREST_FROM_PIXEL_SIZE, PAGE};
 use crate::canvas::view::CanvasView;
+use crate::features::{Feature, PollStage};
 use crate::jobs::{JobSpec, Polled, Worker};
 use crate::notice::Source;
-use crate::state::{Action, AppState};
+use crate::state::{ui_store, Action, AppState, UiSlot};
 
 /// 既定の色（警告の色 `t::WARNING` に近い橙。テクセルを塗る不透明度）。
 pub const DEFAULT_COLOR: [u8; 4] = [232, 176, 60, 120];
@@ -36,18 +37,19 @@ pub struct Built {
     pub edges: Vec<[Vec2; 2]>,
 }
 
-/// 重なりの色のテクスチャと、それが覆う図のテクセルの幅・高さ（まとめた分だけ図より大きいことがある）。
+/// 重なりの色のテクスチャの印（テクスチャは画面の側の `ui_store` にある）と、それが覆う図のテクセルの幅・高さ（まとめた分だけ
+/// 図より大きいことがある）。
 struct Page {
     width: u32,
     height: u32,
-    texture: TextureHandle,
+    texture: UiSlot,
 }
 
 /// 図の状態（モデル・マテリアル・大きさごと）。
 #[derive(Default)]
 pub struct OverlapState {
     /// 数えた（数えている）元: 幾何・マテリアル・文書の大きさ。
-    key: Option<(Arc<SurfaceGeometry>, i32, u32, u32)>,
+    key: Option<(Arc<SurfaceGeometry>, MaterialSet, u32, u32)>,
     worker: Option<Worker<Option<Result<Built, String>>>>,
     built: Option<Arc<Built>>,
     page: Option<Page>,
@@ -82,12 +84,18 @@ impl OverlapState {
         self.screen_for = None;
     }
 
-    fn start(&mut self, geometry: Arc<SurfaceGeometry>, material: i32, width: u32, height: u32) {
+    fn start(
+        &mut self,
+        geometry: Arc<SurfaceGeometry>,
+        material: MaterialSet,
+        width: u32,
+        height: u32,
+    ) {
         self.clear();
-        self.key = Some((geometry.clone(), material, width, height));
+        self.key = Some((geometry.clone(), material.clone(), width, height));
         self.counts += 1;
         let worker = Worker::spawn("yolu-uv-overlap", move |tx, cancel| {
-            let _ = tx.send(count(&geometry, material, width, height, cancel.flag()));
+            let _ = tx.send(count(&geometry, &material, width, height, cancel.flag()));
         });
         match worker {
             Ok(w) => self.worker = Some(w.cancel_on_drop()),
@@ -100,7 +108,7 @@ impl OverlapState {
 /// 別のスレッドで数える。取り消されたら None。
 fn count(
     geometry: &SurfaceGeometry,
-    material: i32,
+    material: &MaterialSet,
     width: u32,
     height: u32,
     cancel: &std::sync::atomic::AtomicBool,
@@ -117,7 +125,9 @@ fn count(
         }
         slots.push(t.material_slot);
     }
-    let mine: Vec<usize> = (0..n).filter(|&i| tris[i].material == material).collect();
+    let mine: Vec<usize> = (0..n)
+        .filter(|&i| material.contains(tris[i].material))
+        .collect();
     let map = match uv_overlap(&uvs, &mine, width, height, Some(cancel)) {
         Ok(Some(m)) => m,
         Ok(None) => return None,
@@ -195,13 +205,13 @@ impl AppState {
     /// 今のモデル（受けたままの形）・セットのマテリアル・文書の大きさで図を数え直す（元が替わったときだけ）と、数え終わりを受ける。
     /// 毎フレーム呼ぶ。
     pub fn poll_uv_overlap(&mut self) {
-        let material = self.view3d.material;
+        let material = self.view3d.material.clone();
         let target = self
             .view3d
             .full_model()
             .map(|m| m.geometry.clone())
-            .filter(|_| material >= 0);
-        let (width, height) = (self.doc.width(), self.doc.height());
+            .filter(|_| !material.is_empty());
+        let (width, height) = (self.session.doc.width(), self.session.doc.height());
         let s = &mut self.uv_overlap;
         let Some(geometry) = target else {
             s.clear();
@@ -211,7 +221,7 @@ impl AppState {
             *m == material
                 && (*w, *h) == (width, height)
                 && (Arc::ptr_eq(held, &geometry)
-                    || super::same_edges_source(held, &geometry, material))
+                    || super::same_edges_source(held, &geometry, &material))
         });
         if !same {
             s.start(geometry, material, width, height);
@@ -241,7 +251,7 @@ impl AppState {
 
     /// 塗りの知らせ: 2D の点（画素の座標、左下原点）と半径（画素）の中に重なったテクセルがあれば、テクスチャセットごとに 1 度だけ知らせる。
     pub fn note_overlap_canvas(&mut self, x: f64, y: f64, radius: f64) {
-        let uid = self.sets.current().uid;
+        let uid = self.session.sets.current().uid;
         let Some(built) = self.overlap_for_notice(uid) else {
             return;
         };
@@ -258,7 +268,7 @@ impl AppState {
 
     /// 塗りの知らせ: 3D で描いた面の UV（0〜1）の点のテクセルが重なっていれば、テクスチャセットごとに 1 度だけ知らせる。
     pub fn note_overlap_uv(&mut self, uv: Vec2) {
-        let uid = self.sets.current().uid;
+        let uid = self.session.sets.current().uid;
         let Some(built) = self.overlap_for_notice(uid) else {
             return;
         };
@@ -280,37 +290,33 @@ impl AppState {
         if s.noticed.contains(&uid) {
             return None;
         }
-        s.built
-            .clone()
-            .filter(|b| !b.map.is_empty())
-            .filter(|b| (b.map.width(), b.map.height()) == (self.doc.width(), self.doc.height()))
+        s.built.clone().filter(|b| !b.map.is_empty()).filter(|b| {
+            (b.map.width(), b.map.height()) == (self.session.doc.width(), self.session.doc.height())
+        })
     }
 
     fn notice_overlap(&mut self, uid: u32) {
         self.uv_overlap.noticed.insert(uid);
         self.info(
             Source::Brush,
-            self.lang.pick(
-                "重なった UV は同じテクセルを使うので、片側だけには描けません。",
-                "Overlapping UVs share the same texels, so one side cannot be painted alone.",
-            ),
+            self.lang.t("uv_wireframe-overlapping-uvs-share-the-same"),
         );
     }
 }
 
 /// 塗りの知らせ（3D）: 描いた点の下の今のセットの面の UV で `note_overlap_uv`。もう知らせたセット・図が無いときは、面を引かない。
 pub fn note_surface(app: &mut AppState, rect: egui::Rect, at: Pos2) {
-    let uid = app.sets.current().uid;
+    let uid = app.session.sets.current().uid;
     if app.overlap_for_notice(uid).is_none() {
         return;
     }
     let Some(model) = app.view3d.model.clone() else {
         return;
     };
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     let p = Vec2::new(at.x - rect.left(), at.y - rect.top());
     if let Some(hit) = yolu_core::geometry::pick(&model.geometry, &view, p) {
-        if hit.material == app.view3d.material {
+        if app.view3d.material.contains(hit.material) {
             app.note_overlap_uv(hit.uv);
         }
     }
@@ -319,7 +325,7 @@ pub fn note_surface(app: &mut AppState, rect: egui::Rect, at: Pos2) {
 /// 表示のメニューの入口（UV ワイヤーフレームの下）。
 pub fn menu_entry(app: &AppState) -> crate::ui::menu::Entry<Action> {
     crate::ui::menu::Entry::item(
-        app.lang.pick("重なった UV", "Overlapping UVs"),
+        app.lang.t("uv_wireframe-overlapping-uvs"),
         Action::ToggleUvOverlap,
     )
     .checked(app.prefs.settings.uv_overlap)
@@ -338,7 +344,7 @@ pub fn paint(painter: &Painter, app: &mut AppState, view: &CanvasView) {
         return;
     }
     let color = app.prefs.settings.uv_overlap_color;
-    let (doc_w, doc_h) = (app.doc.width(), app.doc.height());
+    let (doc_w, doc_h) = (app.session.doc.width(), app.session.doc.height());
     let nearest = view.pixel_size() >= NEAREST_FROM_PIXEL_SIZE;
     let id = Arc::as_ptr(&built) as usize;
     let s = &mut app.uv_overlap;
@@ -348,12 +354,14 @@ pub fn paint(painter: &Painter, app: &mut AppState, view: &CanvasView) {
     }
     let (mw, mh) = (built.map.width() as f64, built.map.height() as f64);
     let (dw, dh) = (doc_w as f64, doc_h as f64);
-    if let Some(page) = &s.page {
+    let page = s.page.as_ref();
+    let texture = page.and_then(|p| ui_store::texture_id(painter.ctx(), &p.texture));
+    if let (Some(page), Some(texture)) = (page, texture) {
         let x1 = page.width as f64 / mw * dw;
         let y1 = page.height as f64 / mh * dh;
         CanvasDisplay::quad(
             painter,
-            page.texture.id(),
+            texture,
             view,
             [(0.0, 0.0), (x1, 0.0), (x1, y1), (0.0, y1)],
             [
@@ -388,7 +396,8 @@ pub fn texture_for_map(
 ) -> Option<(egui::TextureId, [f32; 2])> {
     let built = app.uv_overlap.built.clone()?;
     if built.map.is_empty()
-        || (built.map.width(), built.map.height()) != (app.doc.width(), app.doc.height())
+        || (built.map.width(), built.map.height())
+            != (app.session.doc.width(), app.session.doc.height())
     {
         return None;
     }
@@ -404,7 +413,7 @@ pub fn texture_for_map(
     }
     let page = s.page.as_ref()?;
     Some((
-        page.texture.id(),
+        ui_store::texture_id(ctx, &page.texture)?,
         [
             page.width as f32 / built.map.width() as f32,
             page.height as f32 / built.map.height() as f32,
@@ -435,7 +444,10 @@ fn texture(ctx: &egui::Context, map: &UvOverlap, color: [u8; 4], nearest: bool) 
         .into_iter()
         .map(|m| if m { fill } else { Color32::TRANSPARENT })
         .collect();
-    let texture = ctx.load_texture(
+    let texture = UiSlot::new();
+    let _ = ui_store::load_texture(
+        ctx,
+        &texture,
         "uv-overlap",
         ColorImage::new([w as usize, h as usize], pixels),
         options,
@@ -462,6 +474,12 @@ fn mask(map: &UvOverlap, limit: u32) -> (u32, u32, u32, Vec<bool>) {
     }
     (w, h, step, marks)
 }
+
+/// 機能の表の行（毎フレーム、重なった UV の図を数え直す）。
+pub(crate) const FEATURE: Feature = Feature {
+    poll: Some((PollStage::AfterRecovery, AppState::poll_uv_overlap)),
+    ..Feature::new("uv.overlap")
+};
 
 #[cfg(test)]
 mod tests {

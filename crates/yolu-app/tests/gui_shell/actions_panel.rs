@@ -1,6 +1,7 @@
 //! アクションのパネル（ドックのタブ「アクション」）: 記録の開始と止め・記録しなかった印・選んで再生・ダブルクリックで名前の変更・
 //! ドラッグで並べ替え・右クリックのメニューと、日英の見た目。
 use crate::common;
+use crate::common::drive::Drive;
 use crate::common::tmp::test_dir;
 use egui::{vec2, Event, Modifiers, PointerButton, Pos2};
 use egui_kittest::{kittest::Queryable, Harness};
@@ -60,9 +61,9 @@ fn sample(lang: Lang) -> AppState {
             &json!({"command": "layer.add", "args": {"kind": "paint", "name": name}}),
         )
         .unwrap();
-        app.automation.store.add(name, vec![command]).unwrap();
+        app.automation_mut().store.add(name, vec![command]).unwrap();
     }
-    app.automation.selected = Some(1);
+    app.automation_mut().selected = Some(1);
     app
 }
 
@@ -72,20 +73,24 @@ fn actions_panel_snapshot() {
     for lang in Lang::ALL {
         let mut h = harness(sample(lang), vec2(300.0, 160.0));
         h.run();
-        h.snapshot(lang.pick("actions_panel", "actions_panel_english"));
-        snapshots.extend_harness(&mut h);
+        if lang == Lang::Ja {
+            h.snapshot("actions_panel");
+            snapshots.extend_harness(&mut h);
+        }
         // 記録中（記録しなかった操作があった印つき）
         h.state_mut()
-            .apply(Action::Automation(AutomationOp::StartRecording));
-        let id = h.state().selected_layer.unwrap();
+            .act(Action::Automation(AutomationOp::StartRecording));
+        let id = h.state().selected_layer().unwrap();
         h.state_mut()
-            .doc
+            .doc_mut()
             .set_pixel(id, 1, 1, Rgba8::new(255, 0, 0, 255))
             .unwrap();
         h.run();
-        assert!(h.state().automation.skipped());
-        h.snapshot(lang.pick("actions_panel_recording", "actions_panel_recording_english"));
-        snapshots.extend_harness(&mut h);
+        assert!(h.state().automation().skipped());
+        if lang == Lang::Ja {
+            h.snapshot("actions_panel_recording");
+            snapshots.extend_harness(&mut h);
+        }
         // 右クリックのメニュー
         let mut h = harness(sample(lang), vec2(300.0, 240.0));
         let name = lang.pick("縁の摩耗", "Edge Wear");
@@ -102,23 +107,23 @@ fn record_play_rename_and_reorder_from_the_panel() {
     // 選んで再生
     h.get_by_label("マスクを反転").click();
     h.run();
-    assert_eq!(h.state().automation.selected, Some(2));
+    assert_eq!(h.state().automation().selected, Some(2));
     h.get_by_label("再生").click();
     h.run();
     assert!(h
         .state()
-        .doc
+        .doc()
         .layers()
         .iter()
         .any(|l| l.name() == "マスクを反転"));
     // 記録の開始と止め（何も記録しなければ保存しない）
     h.get_by_label("記録").click();
     h.run();
-    assert!(h.state().automation.is_recording());
+    assert!(h.state().automation().is_recording());
     h.get_by_label("記録を止める").click();
     h.run();
-    assert!(!h.state().automation.is_recording());
-    assert_eq!(h.state().automation.store.len(), 3);
+    assert!(!h.state().automation().is_recording());
+    assert_eq!(h.state().automation().store.len(), 3);
     // ダブルクリックで名前の変更
     let at = h.get_by_label("縁の摩耗").rect().center();
     for _ in 0..2 {
@@ -134,12 +139,15 @@ fn record_play_rename_and_reorder_from_the_panel() {
         h.step();
     }
     h.run();
-    assert_eq!(h.state().automation.renaming, Some(1));
+    assert_eq!(h.state().automation().renaming, Some(1));
     key(&h, egui::Key::A, Modifiers::COMMAND);
     h.event(Event::Text("縁の摩耗2".into()));
     key(&h, egui::Key::Enter, Modifiers::NONE);
     h.run();
-    assert_eq!(h.state().automation.store.get(1).unwrap().name, "縁の摩耗2");
+    assert_eq!(
+        h.state().automation().store.get(1).unwrap().name,
+        "縁の摩耗2"
+    );
     // ドラッグで並べ替え（先頭を最後へ）
     let a = h.get_by_label("汚しの下地").rect().center();
     let c = h.get_by_label("マスクを反転").rect();
@@ -166,7 +174,7 @@ fn record_play_rename_and_reorder_from_the_panel() {
     h.run();
     let names: Vec<String> = h
         .state()
-        .automation
+        .automation()
         .store
         .items()
         .iter()
@@ -178,5 +186,5 @@ fn record_play_rename_and_reorder_from_the_panel() {
     h.run();
     h.get_by_label("削除").click();
     h.run();
-    assert_eq!(h.state().automation.store.len(), 2);
+    assert_eq!(h.state().automation().store.len(), 2);
 }

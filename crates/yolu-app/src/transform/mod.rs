@@ -17,6 +17,7 @@ use yolu_core::{Affine2D, Resampling};
 
 use crate::canvas::view::CanvasView;
 use crate::engine::LayerId;
+use crate::features::Feature;
 use crate::state::StrokeSource;
 
 /// 動かすものの範囲（キャンバスの座標。右・上は含まない）。
@@ -109,8 +110,8 @@ impl TransformState {
 
 pub fn resampling_name(lang: crate::lang::Lang, mode: Resampling) -> &'static str {
     match mode {
-        Resampling::Bilinear => lang.pick("バイリニア", "Bilinear"),
-        Resampling::Nearest => lang.pick("ニアレストネイバー", "Nearest"),
+        Resampling::Bilinear => lang.t("transform-bilinear"),
+        Resampling::Nearest => lang.t("transform-nearest"),
     }
 }
 
@@ -273,3 +274,15 @@ pub fn arrow_to_canvas(view: &CanvasView, screen: (f64, f64)) -> (i32, i32) {
 pub fn collapses(t: &Affine2D) -> bool {
     (t.a * t.d - t.b * t.c).abs() < 1e-6
 }
+
+/// 機能の表の行（移動・変形のドラッグの最中か。ツールを替えたとき・ペイントのモードを出るとき、途中のドラッグを捨てる）。
+pub(crate) const FEATURE: Feature = Feature {
+    stroking: Some(|app| app.transform.drag.is_some()),
+    tool_left: Some(|app| {
+        app.transform_cancel_drag();
+    }),
+    paint_left: Some(|app| {
+        app.transform_cancel_drag();
+    }),
+    ..Feature::new("transform")
+};

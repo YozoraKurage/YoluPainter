@@ -53,8 +53,8 @@ fn slider(
     } else {
         value
     };
-    // `w::slider` が部品の id にする値と同じ（欄ごとに違う）
-    let owner = ui.make_persistent_id(key);
+    // `w::slider` が部品の id にする値と同じ（欄ごとに違う）。同じ欄かを比べるだけなので、id の値で持つ
+    let owner = ui.make_persistent_id(key).value();
     let target = app.text_target();
     let out = w::slider(ui, at, key, current as f32, &spec);
     if !deferred {
@@ -100,9 +100,9 @@ fn slider(
 
 pub fn align_name(lang: Lang, align: TextAlign) -> &'static str {
     match align {
-        TextAlign::Left => lang.pick("左", "Left"),
-        TextAlign::Center => lang.pick("中央", "Center"),
-        TextAlign::Right => lang.pick("右", "Right"),
+        TextAlign::Left => lang.t("textlayer-left"),
+        TextAlign::Center => lang.t("textlayer-center"),
+        TextAlign::Right => lang.t("textlayer-right"),
     }
 }
 
@@ -149,17 +149,17 @@ pub fn font_entries(app: &AppState) -> Vec<Entry<Action>> {
         );
     }
     v.push(Entry::Separator);
-    let installed = lang.pick("インストール済みのフォント", "Installed Fonts");
+    let installed = lang.t("textlayer-installed-fonts");
     match list {
         None => v.push(
             Entry::submenu(installed, Vec::new())
                 .enabled(false)
-                .tooltip(lang.pick("読み込んでいます", "Loading")),
+                .tooltip(lang.t("textlayer-loading-tip")),
         ),
         Some(l) if l.is_empty() => v.push(
             Entry::submenu(installed, Vec::new())
                 .enabled(false)
-                .tooltip(lang.pick("見つかりません", "None found")),
+                .tooltip(lang.t("textlayer-none-found-tip")),
         ),
         Some(l) => {
             let mut families: Vec<(String, Entry<Action>)> = l
@@ -203,7 +203,7 @@ pub fn font_entries(app: &AppState) -> Vec<Entry<Action>> {
     }
     v.push(Entry::Separator);
     v.push(Entry::item(
-        lang.pick("ファイルから…", "From File…"),
+        lang.t("textlayer-from-file"),
         Action::Text(TextAction::PickFontFile),
     ));
     v
@@ -222,18 +222,9 @@ fn font_state(app: &mut AppState) -> (Option<String>, bool) {
         Target::Layer(id) => match app.text_font_status(id) {
             FontStatus::Ready => (None, false),
             FontStatus::Different => (None, true),
-            FontStatus::Missing => (
-                Some(
-                    lang.pick("フォントが見つかりません", "Font not found")
-                        .to_owned(),
-                ),
-                false,
-            ),
+            FontStatus::Missing => (Some(lang.t("textlayer-font-not-found").to_owned()), false),
             FontStatus::Searching => (
-                Some(
-                    lang.pick("フォントを探しています", "Searching for the font")
-                        .to_owned(),
-                ),
+                Some(lang.t("textlayer-searching-for-the-font").to_owned()),
                 false,
             ),
         },
@@ -303,7 +294,7 @@ pub fn fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, enabled: bool, t
     if let Some(reason) = &problem {
         status_row(ui, rows, reason);
     } else if different {
-        status_row(ui, rows, lang.pick("フォントが違います", "Font differs"));
+        status_row(ui, rows, lang.t("textlayer-font-differs"));
     }
     let value: TextSettings = app.text_value();
     let ctx = ui.ctx().clone();
@@ -311,25 +302,22 @@ pub fn fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, enabled: bool, t
     if let Some(anchor) = font_row(
         ui,
         rows,
-        lang.pick("フォント", "Font"),
+        lang.t("textlayer-font"),
         &label,
-        lang.pick(
-            "同梱のフォント・インストール済みのフォント・フォントのファイル（.ttf・.otf・.ttc）。フォントは .ylp に入らず、道と名前と中身の印だけを覚える",
-            "A bundled font, an installed font or a font file (.ttf, .otf, .ttc). The font is not stored in the .ylp; only its path, names and a fingerprint are kept",
-        ),
+        lang.t("textlayer-a-bundled-font-an-installed-tip"),
         enabled,
     ) {
         open_fonts(app, &ctx, anchor);
     }
     let at = rows.slider_row();
     let spec = SliderSpec::new(
-        lang.pick("サイズ", "Size"),
+        lang.t("textlayer-size"),
         1.0,
         512.0,
         NumberFormat::int(" px"),
     )
     .power(2.0)
-    .tooltip(lang.pick("1 文字の高さ（画素）", "Height of one em (pixels)"))
+    .tooltip(lang.t("textlayer-height-of-one-em-pixels-tip"))
     .enabled(enabled);
     if let Some(v) = slider(ui, app, at, SIZE, spec, value.size, deferred) {
         set(app, Field::Size(v.round().max(1.0)));
@@ -340,7 +328,7 @@ pub fn fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, enabled: bool, t
     }
     let row = rows.row(t::ROW_HEIGHT, 3.0);
     let label = Rect::from_min_size(row.min, vec2(80.0, row.height()));
-    let name = lang.pick("色", "Color");
+    let name = lang.t("textlayer-color");
     // 描いている間は、描き始める前の見た目のまま（`w::label_color`）
     let color = w::label_color(ui, "text.color.label", enabled);
     w::text(
@@ -366,13 +354,13 @@ pub fn fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, enabled: bool, t
         (Some(ColorSource::PaintColor), _) => egui::Id::new("text.color.paint"),
         (Some(ColorSource::ToolColor), _) => egui::Id::new("text.color.tool"),
         (None, Target::Layer(id)) => egui::Id::new(("text.color", id.0)),
-        (None, Target::Editing) => egui::Id::new(("text.color.editing", app.doc.id())),
+        (None, Target::Editing) => egui::Id::new(("text.color.editing", app.session.doc.id())),
         (None, Target::Defaults) => egui::Id::new("text.color.defaults"),
     };
     let tip = match source {
-        Some(ColorSource::PaintColor) => lang.pick("描画色", "Paint Color"),
-        Some(ColorSource::ToolColor) => lang.pick("ツールの色", "Tool Color"),
-        None => lang.pick("文字の色と不透明度", "Text color and opacity"),
+        Some(ColorSource::PaintColor) => lang.t("textlayer-paint-color-tip"),
+        Some(ColorSource::ToolColor) => lang.t("textlayer-tool-color-tip"),
+        None => lang.t("textlayer-text-color-and-opacity-tip"),
     };
     if let Some(u) = color_window::field(
         ui,
@@ -408,7 +396,7 @@ pub fn fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, enabled: bool, t
     }
     let at = rows.slider_row();
     let spec = SliderSpec::new(
-        lang.pick("行間", "Line Spacing"),
+        lang.t("textlayer-line-spacing"),
         0.5,
         3.0,
         NumberFormat {
@@ -417,17 +405,14 @@ pub fn fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, enabled: bool, t
             suffix: "",
         },
     )
-    .tooltip(lang.pick(
-        "行の送り（サイズに掛ける）",
-        "Line advance (times the size)",
-    ))
+    .tooltip(lang.t("textlayer-line-advance-times-the-size-tip"))
     .enabled(enabled);
     if let Some(v) = slider(ui, app, at, LINE_HEIGHT, spec, value.line_height, deferred) {
         set(app, Field::LineHeight(v));
     }
     let at = rows.slider_row();
     let spec = SliderSpec::new(
-        lang.pick("字間", "Tracking"),
+        lang.t("textlayer-tracking"),
         -0.5,
         1.0,
         NumberFormat {
@@ -436,10 +421,7 @@ pub fn fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, enabled: bool, t
             suffix: "",
         },
     )
-    .tooltip(lang.pick(
-        "字ごとに加える送り（サイズに掛ける。負は詰める）",
-        "Extra advance per character (times the size; negative tightens)",
-    ))
+    .tooltip(lang.t("textlayer-extra-advance-per-character-times-tip"))
     .enabled(enabled);
     if let Some(v) = slider(
         ui,
@@ -465,24 +447,21 @@ pub fn fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, enabled: bool, t
             label: align_name(lang, *a),
             selected: value.align == *a,
             enabled,
-            tooltip: Some(lang.pick("行の揃え", "Line alignment")),
+            tooltip: Some(lang.t("textlayer-line-alignment-tip")),
         })
         .collect();
     if let Some(i) = choice_buttons(ui, rows, &items) {
         set(app, Field::Align(names[i]));
     }
     let at = rows.slider_row();
-    let width = app.doc.width().max(1) as f32;
+    let width = app.session.doc.width().max(1) as f32;
     let spec = SliderSpec::new(
-        lang.pick("折り返しの幅", "Wrap Width"),
+        lang.t("textlayer-wrap-width"),
         0.0,
         width,
         NumberFormat::int(" px"),
     )
-    .tooltip(lang.pick(
-        "この幅で行を折り返す（0 は折り返さない）",
-        "Lines wrap at this width (0 does not wrap)",
-    ))
+    .tooltip(lang.t("textlayer-lines-wrap-at-this-width-tip"))
     .enabled(enabled);
     if let Some(v) = slider(ui, app, at, WRAP, spec, value.wrap_width, deferred) {
         set(app, Field::WrapWidth(v.round()));
@@ -492,7 +471,7 @@ pub fn fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, enabled: bool, t
 /// 「テキストの色」の見出しと、色の元（描画色・ツールの色）の選び。
 fn color_source_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let lang = app.lang;
-    group_label(ui, rows, lang.pick("テキストの色", "Text Color"));
+    group_label(ui, rows, lang.t("textlayer-text-color"));
     let sources = [ColorSource::PaintColor, ColorSource::ToolColor];
     let items: Vec<ChoiceButton> = sources
         .iter()
@@ -502,13 +481,13 @@ fn color_source_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
                 ColorSource::ToolColor => "text.color.source.tool",
             },
             label: match source {
-                ColorSource::PaintColor => lang.pick("描画色", "Paint Color"),
-                ColorSource::ToolColor => lang.pick("ツールの色", "Tool Color"),
+                ColorSource::PaintColor => lang.t("textlayer-paint-color"),
+                ColorSource::ToolColor => lang.t("textlayer-tool-color"),
             },
             selected: app.text.color_source == *source,
             // 色の元は、ツールの設定（文書を変えない）なので、描いている間も替えられる
             enabled: true,
-            tooltip: Some(lang.pick("テキストの色", "Text Color")),
+            tooltip: Some(lang.t("textlayer-text-color-tip")),
         })
         .collect();
     if let Some(i) = choice_buttons(ui, rows, &items) {
@@ -530,7 +509,7 @@ pub fn layer_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, enabled: 
         app,
         rows,
         "text",
-        lang.pick("テキスト", "Text"),
+        lang.t("textlayer-text-2"),
         "tools/text",
         None,
     );
@@ -556,7 +535,7 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
         "text.options.font",
         None,
         &label,
-        Some(lang.pick("フォント", "Font")),
+        Some(lang.t("textlayer-font-tip")),
         enabled,
         0.0,
     );
@@ -566,7 +545,7 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
     }
     let at = Rect::from_min_size(pos2(x + width + 10.0, y), vec2(150.0, h));
     let spec = SliderSpec::new(
-        lang.pick("サイズ", "Size"),
+        lang.t("textlayer-size"),
         1.0,
         512.0,
         NumberFormat::int(" px"),

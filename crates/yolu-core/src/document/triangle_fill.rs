@@ -3,6 +3,7 @@ use super::selection::{fill_pixel, mask_fill_pixel};
 use super::*;
 use crate::material::ChannelPaint;
 use crate::material_triangles::{add_samples, coverage, PixelTriangle, Samples};
+use crate::Reason;
 use crate::SelectionMask;
 use rayon::prelude::*;
 use std::collections::BTreeMap;
@@ -102,7 +103,7 @@ impl Document {
             .ok_or(CoreError::LayerNotFound)?
             .is_channel_enabled(channel)
         {
-            return Err(CoreError::Unsupported("無効のチャンネルには塗れない"));
+            return Err(CoreError::Unsupported(Reason::CannotFillDisabledChannel));
         }
         self.begin_material_triangle_fill(
             layer,
@@ -315,6 +316,7 @@ impl Document {
     }
     pub(super) fn finish_triangles(&mut self, cancel: bool) -> StrokeResult {
         let state = self.triangle_fill.take().unwrap();
+        self.saved.stroke_ended();
         let index = self.index_of(state.layer).unwrap();
         let mut parts = Vec::new();
         for (target, _, originals) in state.targets {

@@ -193,7 +193,7 @@ fn parse(bytes: &[u8], s: &mut State) -> Result<Option<Document>> {
     let mut r = Reader::new(bytes);
     check(r.key()? == *b"8BPS", "PSD シグネチャが不正です")?;
     let version = r.u16()?;
-    check(version == 1 || version == 2, "PSD 版が不正です")?;
+    check(version == 1 || version == 2, "PSD バージョンが不正です")?;
     r.zeros(6)?;
     let channels = r.u16()?;
     let height = r.u32()?;
@@ -1008,6 +1008,126 @@ fn check_rows_from(
         }
     }
 }
+/// チャンネルの矩形（幅 × 高さ）の中の範囲（x は `x0..x1`、y は `y0..y1`。矩形の左上が原点）。
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Window {
+    pub x0: usize,
+    pub x1: usize,
+    pub y0: usize,
+    pub y1: usize,
+}
+impl Window {
+    pub(super) fn width(&self) -> usize {
+        self.x1 - self.x0
+    }
+    pub(super) fn height(&self) -> usize {
+        self.y1 - self.y0
+    }
+}
+/// 矩形の 1 行（y 行目）の範囲の部分を `out` の component へ写す。範囲の外に 0 でない値があれば true。
+fn window_row(
+    window: Window,
+    out: &mut [u8],
+    component: usize,
+    stride: usize,
+    y: usize,
+    row: &[u8],
+) -> bool {
+    if (window.y0..window.y1).contains(&y) {
+        let dest = &mut out[(y - window.y0) * window.width() * stride..];
+        for (i, v) in row[window.x0..window.x1].iter().enumerate() {
+            dest[i * stride + component] = *v;
+        }
+        row[..window.x0].iter().any(|v| *v != 0) || row[window.x1..].iter().any(|v| *v != 0)
+    } else {
+        row.iter().any(|v| *v != 0)
+    }
+}
+/// `decode_window` の、無圧縮（圧縮 0）のチャンネルをファイルから 1 行ずつ読む形。`len` は圧縮の種類（2 バイト。呼び手が読み済み）を除いたバイト数。
+/// チャンネルの全バイトを持たず、持つのは行 1 本。書く値・誤りの文は `decode_window` の無圧縮と同じ。
+#[allow(clippy::too_many_arguments)]
+pub(super) fn decode_window_raw<R: Read>(
+    r: &mut R,
+    len: usize,
+    w: u32,
+    h: u32,
+    window: Window,
+    out: &mut [u8],
+    component: usize,
+    stride: usize,
+) -> Result<bool> {
+    let (w, h) = (w as usize, h as usize);
+    check(len == w * h, "raw チャンネル長が矩形と不一致です")?;
+    let mut outside = false;
+    let mut row = vec![0u8; w];
+    for y in 0..h {
+        r.read_exact(&mut row)?;
+        outside |= window_row(window, out, component, stride, y, &row);
+    }
+    Ok(outside)
+}
+/// `decode` の、矩形の中の範囲だけを `out`（範囲の幅 × stride のバイトの行が上から並ぶ面）の component へ書く形。矩形全体の面は持たず、1 行ずつ展開して範囲を写す
+/// （キャンバスよりずっと大きなレイヤーを、全画素のメモリを取らずに読む）。書く値・誤り・知らせは `decode` と同じ。範囲の外に 0 でない値があれば true。
+#[allow(clippy::too_many_arguments)]
+pub(super) fn decode_window(
+    mut r: Reader,
+    w: u32,
+    h: u32,
+    window: Window,
+    out: &mut [u8],
+    component: usize,
+    stride: usize,
+    s: &mut State,
+) -> Result<bool> {
+    let compression = r.u16()?;
+    let (w, h) = (w as usize, h as usize);
+    let mut outside = false;
+    let mut visit = |y: usize, row: &[u8]| {
+        outside |= window_row(window, out, component, stride, y, row);
+    };
+    match compression {
+        0 => {
+            check(r.remaining() == w * h, "raw チャンネル長が矩形と不一致です")?;
+            for y in 0..h {
+                visit(y, r.take(w)?);
+            }
+        }
+        1 => {
+            let mut table = r.slice(h * 2)?;
+            let mut row = vec![0u8; w];
+            for y in 0..h {
+                let n = table.u16()? as usize;
+                packbits(r.slice(n)?, w, &mut row, 0, 1)?;
+                visit(y, &row);
+            }
+            check(r.remaining() == 0, "RLE チャンネルに余分なデータ")?
+        }
+        2 | 3 if s.copy.is_some() => {
+            if w > 0 && h > 0 {
+                let mut zlib = flate2::read::ZlibDecoder::new(&r.data[r.pos..r.end]);
+                let mut row = vec![0u8; w];
+                for y in 0..h {
+                    zlib.read_exact(&mut row)
+                        .map_err(|_| Error::InvalidData("ZIP チャンネルを展開できません".into()))?;
+                    if compression == 3 {
+                        // 予測: 行の中で、左の画素との差で持っている
+                        for x in 1..w {
+                            row[x] = row[x].wrapping_add(row[x - 1])
+                        }
+                    }
+                    visit(y, &row);
+                }
+            }
+        }
+        _ => s.preserve(
+            "Compression",
+            format!("未対応の圧縮 {compression}"),
+            r.pos - 2,
+            0,
+        ),
+    }
+    Ok(outside)
+}
 /// `decode` の、無圧縮・RLE のチャンネルを行ごとに並べて復号する形（ほかの圧縮は `decode` で 1 本ずつ）。書く値・誤り・知らせは `decode` と同じ。
 pub(super) fn decode_rows(
     r: Reader,
@@ -1291,8 +1411,19 @@ fn tags(mut r: Reader, mut record: Option<&mut Record>, s: &mut State) -> Result
                     continue;
                 }
                 let n = b.u32()? as usize;
-                check_budget(n <= s.limits.max_name_code_units, "Unicode名長の予算超過")?;
-                rec.layer.name = b.utf16(n)?;
+                let max = s.limits.max_name_code_units;
+                // 写しとしての取り込みは、長すぎる名前でファイル全体を断らず、上限まで切り詰めて知らせる（原本を保つ読みは、原本の名前を変えられないので断る）
+                let cut = n > max && s.copy.is_some();
+                check_budget(n <= max || cut, "Unicode名長の予算超過")?;
+                // 切り詰めるときは上限までの単位だけを読む（長い名前の全体を String にしない）
+                rec.layer.name = if cut {
+                    b.utf16_prefix(n, max)?
+                } else {
+                    b.utf16(n)?
+                };
+                if cut {
+                    s.preserve("NameTruncated", "luni が長すぎます", start, length);
+                }
                 if b.remaining() > 3 {
                     s.preserve("UnicodeNameTail", "未知のluni末尾", b.pos, b.remaining())
                 } else {
@@ -1487,7 +1618,7 @@ fn tags(mut r: Reader, mut record: Option<&mut Record>, s: &mut State) -> Result
 fn levels(mut r: Reader, s: &mut State, start: usize, len: usize) -> Result<Option<Adjustment>> {
     check(r.remaining() >= 292, "levl が29レコードより短いです")?;
     if r.u16()? != 2 {
-        s.preserve("Levels", "未知のlevl版", start, len);
+        s.preserve("Levels", "未知のlevlバージョン", start, len);
         return Ok(None);
     }
     fn item(r: &mut Reader) -> Result<[u16; 5]> {
@@ -1558,7 +1689,7 @@ pub(super) const HUE_RANGES: [[i16; 4]; 6] = [
 fn hue(mut r: Reader, s: &mut State, start: usize, len: usize) -> Result<Option<Adjustment>> {
     check(r.remaining() >= 100, "hue2 が短すぎます")?;
     if r.u16()? != 2 {
-        s.preserve("HueSaturation", "未知のhue2版", start, len);
+        s.preserve("HueSaturation", "未知のhue2バージョン", start, len);
         return Ok(None);
     }
     let colorize = r.u8()?;
@@ -1661,7 +1792,7 @@ fn brit_record(mut r: Reader) -> Parsed<BritRecord> {
 fn cged_record(mut r: Reader) -> Parsed<CgedRecord> {
     use super::descriptor::Scalar;
     if r.remaining() < 4 || r.u32()? != 16 {
-        return unsupported("未知のCgEd版");
+        return unsupported("未知のCgEdバージョン");
     }
     let items = match super::descriptor::flat(&mut r) {
         Ok(Some(items)) => items,
@@ -1799,7 +1930,7 @@ fn curves(mut r: Reader) -> Parsed {
     let version = r.u16()?;
     let channels = r.u32()?;
     if is_map != 0 || version != 1 || channels & !0xf != 0 || channels == 0 {
-        return unsupported("表の形式・版・チャンネルが対応しません");
+        return unsupported("表の形式・バージョン・チャンネルが対応しません");
     }
     let mut curves: [Vec<[u8; 2]>; 4] = Default::default();
     for (i, curve) in curves.iter_mut().enumerate() {
@@ -1903,7 +2034,7 @@ fn gradient_map(mut r: Reader, s: &mut State, start: usize, len: usize) -> Parse
     }
     let name = r.utf16(name_len)?;
     if version != 1 || reverse > 1 || dither != 0 {
-        return unsupported("未知の版・ディザ・逆向きの印");
+        return unsupported("未知のバージョン・ディザ・逆向きの印");
     }
     let count = r.u16()? as usize;
     if !(1..=256).contains(&count) || r.remaining() < count * 20 + 2 {
@@ -1999,7 +2130,7 @@ fn gradient_map(mut r: Reader, s: &mut State, start: usize, len: usize) -> Parse
 }
 fn solid(mut r: Reader, s: &mut State, start: usize, len: usize) -> Result<Option<[u8; 3]>> {
     if r.u32()? != 16 {
-        s.preserve("FillLayer", "未知のSoCo版", start, len);
+        s.preserve("FillLayer", "未知のSoCoバージョン", start, len);
         return Ok(None);
     }
     match super::descriptor::color(&mut r) {

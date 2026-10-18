@@ -118,6 +118,8 @@ pub struct ScreenDab {
     pub pressure: f32,
     pub arc: f64,
     pub direction: f64,
+    /// `direction` の元の向きのベクトル（y は上向き、長さは問わない。まだ向きが無ければ 0）。
+    pub heading: DVec2,
     pub tilt: DVec2,
     pub rotation: f64,
     pub speed: f64,
@@ -138,8 +140,11 @@ pub struct ScreenStrokeSampler {
     /// 最後に置いたダブ（とデュアルブラシの 2 つ目のダブ）からの線の長さ（次の区間へ持ち越す余り）。
     since: f64,
     dual_since: f64,
-    /// 最後に測った線の向き（長さ 0 の区間では変えない）。
+    /// 次の 2 つ目のダブまでの間隔の係数（最後に置いた 2 つ目のダブの [`DualSink::put`] の値）。
+    dual_step: f64,
+    /// 最後に測った線の向き（長さ 0 の区間では変えない）と、その向きのベクトル。
     direction: f64,
+    heading: DVec2,
 }
 
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
@@ -152,6 +157,20 @@ fn distance(a: Vec2, b: Vec2) -> f32 {
 
 /// 区間の間隔: ダブの間隔と、デュアルブラシの 2 つ目のダブの間隔（無ければ None）。どちらも画面の単位。
 pub type SegmentGaps = (f32, Option<f32>);
+
+/// デュアルブラシの 2 つ目のダブを受け取る先。`put` は、そのダブから次の 2 つ目のダブまでの間隔の係数を返す（区間の間隔に掛ける。
+/// 1 は区間の間隔のまま。下限は区間の間隔の 0.01 倍）。
+pub trait DualSink {
+    fn put(&mut self, dab: ScreenDab) -> f64;
+}
+
+/// 位置と線の長さだけを集める（間隔はいつも区間の間隔のまま）。
+impl DualSink for Vec<(Vec2, f64)> {
+    fn put(&mut self, dab: ScreenDab) -> f64 {
+        self.push((dab.at, dab.arc));
+        1.0
+    }
+}
 
 impl ScreenStrokeSampler {
     /// 曲線で結ぶ道（今までの 3D のストローク）。
@@ -171,8 +190,15 @@ impl ScreenStrokeSampler {
             length: 0.0,
             since: 0.0,
             dual_since: 0.0,
+            dual_step: 1.0,
             direction: 0.0,
+            heading: DVec2::ZERO,
         }
+    }
+
+    /// 次の 2 つ目のダブまでの間隔の係数（押した点の 2 つ目のダブは呼ぶ側が置くので、その係数をここで渡す）。
+    pub fn set_dual_step(&mut self, factor: f64) {
+        self.dual_step = factor;
     }
 
     /// 最後に描いた点。
@@ -183,6 +209,16 @@ impl ScreenStrokeSampler {
     /// 描いた区間の長さの合計（画面の点。待たせている区間は入らない）。
     pub fn length(&self) -> f64 {
         self.length
+    }
+
+    /// 最後に測った線の向き（ラジアン。連続吹き付けの時刻のダブが使う）。
+    pub(crate) fn direction(&self) -> f64 {
+        self.direction
+    }
+
+    /// 最後に測った線の向きのベクトル（[`ScreenDab::heading`]）。
+    pub(crate) fn heading(&self) -> DVec2 {
+        self.heading
     }
 
     /// 新しい入力の点（[`ScreenStrokeSampler::add_point`] の、位置と筆圧だけで、ダブの位置と筆圧だけを返す形）。
@@ -224,7 +260,7 @@ impl ScreenStrokeSampler {
         point: ScreenPoint,
         gaps: impl FnMut(Vec2) -> SegmentGaps,
         out: &mut Vec<ScreenDab>,
-        dual: &mut Vec<(Vec2, f64)>,
+        dual: &mut impl DualSink,
     ) -> Result<(), TooManyDabs> {
         if !self.curve {
             if StrokeCurve::coincident(
@@ -283,7 +319,7 @@ impl ScreenStrokeSampler {
         &mut self,
         gaps: impl FnMut(Vec2) -> SegmentGaps,
         out: &mut Vec<ScreenDab>,
-        dual: &mut Vec<(Vec2, f64)>,
+        dual: &mut impl DualSink,
     ) -> Result<(), TooManyDabs> {
         if !self.has_held {
             return Ok(());
@@ -299,13 +335,27 @@ impl ScreenStrokeSampler {
         Ok(())
     }
 
+    /// 直線の終わり: 待たせている区間を [`ScreenStrokeSampler::finish_points`] と同じく描き切り、そこを角にして続ける（次の区間は、この点から
+    /// 曲線を始め直す。前の区間の向きを引き継がない）。続きの点は、またこの点から曲線で結ぶ。曲線でなければ待たせている区間は無いので、何も
+    /// 変わらない。
+    pub fn end_line(
+        &mut self,
+        gaps: impl FnMut(Vec2) -> SegmentGaps,
+        out: &mut Vec<ScreenDab>,
+        dual: &mut impl DualSink,
+    ) -> Result<(), TooManyDabs> {
+        self.finish_points(gaps, out, dual)?;
+        self.has_before = false;
+        Ok(())
+    }
+
     /// previous → held の区間（前は before、後は next で向きを決める）に、画面の間隔でダブを置く（C# の PaintSurfaceSegment）。
     fn segment(
         &mut self,
         next: Vec2,
         gaps: impl FnMut(Vec2) -> SegmentGaps,
         out: &mut Vec<ScreenDab>,
-        dual: &mut Vec<(Vec2, f64)>,
+        dual: &mut impl DualSink,
     ) -> Result<(), TooManyDabs> {
         let (a, b) = (self.previous, self.held);
         let before = if self.has_before {
@@ -354,7 +404,7 @@ impl ScreenStrokeSampler {
         points: &[Vec2],
         mut gaps: impl FnMut(Vec2) -> SegmentGaps,
         out: &mut Vec<ScreenDab>,
-        dual: &mut Vec<(Vec2, f64)>,
+        dual: &mut impl DualSink,
     ) -> Result<(), TooManyDabs> {
         let pieces = points.len() - 1;
         let mut lengths = vec![0f64; pieces + 1];
@@ -398,13 +448,37 @@ impl ScreenStrokeSampler {
             };
             if let Some(g) = dual_gap {
                 let mut j = 1usize;
-                walk(total, g as f64, &mut self.dual_since, |s| {
-                    let (at, _) = locate(s, &mut j);
-                    dual.push((at, base + s));
-                });
+                let mut direction = self.direction;
+                let mut heading = self.heading;
+                walk_steps(
+                    total,
+                    g as f64,
+                    &mut self.dual_since,
+                    &mut self.dual_step,
+                    |s| {
+                        let (at, f) = locate(s, &mut j);
+                        let t = ((j - 1) as f64 + f) / pieces as f64;
+                        let d = points[j] - points[j - 1];
+                        if d.x != 0.0 || d.y != 0.0 {
+                            direction = (-(d.y as f64)).atan2(d.x as f64);
+                            heading = DVec2::new(d.x as f64, -(d.y as f64));
+                        }
+                        dual.put(ScreenDab {
+                            at,
+                            pressure: lerp(a.pressure, b.pressure, t as f32),
+                            arc: base + s,
+                            direction,
+                            heading,
+                            tilt: a.tilt + (b.tilt - a.tilt) * t,
+                            rotation: crate::brush::lerp_angle(a.rotation, b.rotation, t),
+                            speed: a.speed + (b.speed - a.speed) * t,
+                        })
+                    },
+                )?;
             }
             let mut j = 1usize;
             let mut direction = self.direction;
+            let mut heading = self.heading;
             walk(total, gap as f64, &mut self.since, |s| {
                 let (at, f) = locate(s, &mut j);
                 let t = ((j - 1) as f64 + f) / pieces as f64;
@@ -412,12 +486,14 @@ impl ScreenStrokeSampler {
                 let d = points[j] - points[j - 1];
                 if d.x != 0.0 || d.y != 0.0 {
                     direction = (-(d.y as f64)).atan2(d.x as f64);
+                    heading = DVec2::new(d.x as f64, -(d.y as f64));
                 }
                 out.push(ScreenDab {
                     at,
                     pressure: lerp(a.pressure, b.pressure, t as f32),
                     arc: base + s,
                     direction,
+                    heading,
                     tilt: a.tilt + (b.tilt - a.tilt) * t,
                     rotation: crate::brush::lerp_angle(a.rotation, b.rotation, t),
                     speed: a.speed + (b.speed - a.speed) * t,
@@ -427,8 +503,10 @@ impl ScreenStrokeSampler {
             let d = points[pieces] - points[pieces - 1];
             if d.x != 0.0 || d.y != 0.0 {
                 direction = (-(d.y as f64)).atan2(d.x as f64);
+                heading = DVec2::new(d.x as f64, -(d.y as f64));
             }
             self.direction = direction;
+            self.heading = heading;
         }
         self.length = base + total;
         Ok(())
@@ -456,6 +534,39 @@ fn walk(total: f64, gap: f64, since: &mut f64, mut place: impl FnMut(f64)) {
         rest %= gap;
     }
     *since = rest;
+}
+
+/// [`walk`] の、置くごとに次の間隔の係数が変わる形（2 つ目のダブの間隔の影響元）。place は次の間隔の係数を返し、step は区間をまたいで
+/// 持ち越す係数。係数がいつも 1 なら [`walk`] と同じ位置・同じ余り。置く数が区間の上限を超えたら断る。
+fn walk_steps(
+    total: f64,
+    gap: f64,
+    since: &mut f64,
+    step: &mut f64,
+    mut place: impl FnMut(f64) -> f64,
+) -> Result<(), TooManyDabs> {
+    let next = |factor: f64| crate::brush::dual_step(gap, factor);
+    let mut g = next(*step);
+    let mut position = (g - *since).max(0.0);
+    let mut placed = 0u64;
+    while position <= total + ROUNDING {
+        placed += 1;
+        if placed > SURFACE_DABS_PER_SEGMENT as u64 + 1 {
+            return Err(TooManyDabs);
+        }
+        *step = place(position.min(total));
+        g = next(*step);
+        position += g;
+    }
+    let mut rest = total - (position - g);
+    if rest < ROUNDING {
+        rest = 0.0;
+    }
+    if rest >= g {
+        rest %= g;
+    }
+    *since = rest;
+    Ok(())
 }
 
 #[cfg(test)]

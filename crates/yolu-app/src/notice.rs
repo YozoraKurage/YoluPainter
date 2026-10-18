@@ -78,10 +78,10 @@ impl Kind {
     /// 画面の名前（ログのウィンドウの印のツールチップ・写した文）。
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            Kind::Info => lang.pick("情報", "Info"),
-            Kind::Refusal => lang.pick("断り", "Refused"),
-            Kind::Warning => lang.pick("注意", "Warning"),
-            Kind::Error => lang.pick("エラー", "Error"),
+            Kind::Info => lang.t("notice-info"),
+            Kind::Refusal => lang.t("notice-refused"),
+            Kind::Warning => lang.t("notice-warning"),
+            Kind::Error => lang.t("notice-error"),
         }
     }
 
@@ -200,44 +200,44 @@ impl Source {
     /// 画面の名前（ログのウィンドウの列）。
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            Source::Edit => lang.pick("編集", "Edit"),
-            Source::Save => lang.pick("保存", "Save"),
-            Source::Open => lang.pick("開く", "Open"),
-            Source::Project => lang.pick("プロジェクト", "Project"),
-            Source::TextureSet => lang.pick("テクスチャセット", "Texture Set"),
-            Source::Layer => lang.pick("レイヤー", "Layer"),
-            Source::Channel => lang.pick("チャンネル", "Channel"),
-            Source::Effect => lang.pick("効果", "Effects"),
-            Source::FillLayer => lang.pick("塗りつぶしレイヤー", "Fill Layer"),
-            Source::Fill => lang.pick("塗りつぶし", "Fill"),
-            Source::Material => lang.pick("マテリアル", "Material"),
-            Source::Brush => lang.pick("ブラシ", "Brush"),
-            Source::Canvas => lang.pick("キャンバス", "Canvas"),
-            Source::Selection => lang.pick("選択範囲", "Selection"),
-            Source::Path => lang.pick("パス", "Path"),
-            Source::Gradient => lang.pick("グラデーション", "Gradient"),
-            Source::Transform => lang.pick("移動・変形", "Transform"),
-            Source::Eyedropper => lang.pick("スポイト", "Eyedropper"),
-            Source::Stencil => lang.pick("ステンシル", "Stencil"),
-            Source::Ruler => lang.pick("図形と定規", "Shapes and Rulers"),
-            Source::Color => lang.pick("カラー", "Color"),
-            Source::Assets => lang.pick("アセット", "Assets"),
-            Source::Library => lang.pick("ライブラリ", "Library"),
-            Source::Clipboard => lang.pick("クリップボード", "Clipboard"),
+            Source::Edit => lang.t("notice-edit"),
+            Source::Save => lang.t("notice-save"),
+            Source::Open => lang.t("notice-open"),
+            Source::Project => lang.t("notice-project"),
+            Source::TextureSet => lang.t("notice-texture-set"),
+            Source::Layer => lang.t("notice-layer"),
+            Source::Channel => lang.t("notice-channel"),
+            Source::Effect => lang.t("notice-effects"),
+            Source::FillLayer => lang.t("notice-fill-layer"),
+            Source::Fill => lang.t("notice-fill"),
+            Source::Material => lang.t("notice-material"),
+            Source::Brush => lang.t("notice-brush"),
+            Source::Canvas => lang.t("notice-canvas"),
+            Source::Selection => lang.t("notice-selection"),
+            Source::Path => lang.t("notice-path"),
+            Source::Gradient => lang.t("notice-gradient"),
+            Source::Transform => lang.t("notice-transform"),
+            Source::Eyedropper => lang.t("notice-eyedropper"),
+            Source::Stencil => lang.t("notice-stencil"),
+            Source::Ruler => lang.t("notice-shapes-and-rulers"),
+            Source::Color => lang.t("notice-color"),
+            Source::Assets => lang.t("notice-assets"),
+            Source::Library => lang.t("notice-library"),
+            Source::Clipboard => lang.t("notice-clipboard"),
             Source::Psd => "PSD",
-            Source::Export => lang.pick("書き出し", "Export"),
-            Source::Distribute => lang.pick("配布用に保存", "Save for Distribution"),
-            Source::Bake => lang.pick("ベイク", "Bake"),
-            Source::View3d => lang.pick("3D ビュー", "3D View"),
-            Source::Pose => lang.pick("ポーズ", "Pose"),
-            Source::Settings => lang.pick("設定", "Settings"),
-            Source::Update => lang.pick("更新", "Updates"),
-            Source::Recovery => lang.pick("復旧", "Recovery"),
+            Source::Export => lang.t("notice-export"),
+            Source::Distribute => lang.t("notice-save-for-distribution"),
+            Source::Bake => lang.t("notice-bake"),
+            Source::View3d => lang.t("notice-3d-view"),
+            Source::Pose => lang.t("notice-pose"),
+            Source::Settings => lang.t("notice-settings"),
+            Source::Update => lang.t("notice-updates"),
+            Source::Recovery => lang.t("notice-recovery"),
             Source::LiveLink => "Live Link",
-            Source::Ops => lang.pick("外からの操作", "External Commands"),
-            Source::Display => lang.pick("表示", "Display"),
-            Source::Action => lang.pick("アクション", "Actions"),
-            Source::Text => lang.pick("テキスト", "Text"),
+            Source::Ops => lang.t("notice-external-commands"),
+            Source::Display => lang.t("notice-display"),
+            Source::Action => lang.t("notice-actions"),
+            Source::Text => lang.t("notice-text"),
         }
     }
 
@@ -442,19 +442,19 @@ impl AppState {
     /// 操作の中では、前の操作の文は見えない。
     pub fn message_begin(&mut self) -> String {
         let kind = self.message_kind();
-        self.toast.begin(&mut self.message, kind)
+        self.outbox.toast.begin(&mut self.message, kind)
     }
 
     /// `message_begin` の出口。書かれていれば新しい知らせとして出し、書かれていなければ前の文を戻す。
     pub fn message_end(&mut self, prior: String) {
         // 種類が要るのは書かれたとき（書かれていなければ前の文に戻すだけで、知らせは出し直さない）
         let kind = self.message_kind();
-        self.toast.end(&mut self.message, prior, kind);
+        self.outbox.toast.end(&mut self.message, prior, kind);
     }
 
     /// `message` を明示して空にする（操作の中では、空のまま終わっても前の文を戻さない。保存の結果が書かれたかを見分ける所が使う）。
     pub fn clear_message(&mut self) {
-        self.toast.clear(&mut self.message);
+        self.outbox.toast.clear(&mut self.message);
         self.last_notice = None;
     }
 
@@ -492,7 +492,7 @@ impl AppState {
     /// トーストへ、ここまでに書かれた `message` を渡す（フレームの中で、`apply` の外の書き込みもすぐ出す）。
     pub(crate) fn flush_message(&mut self) {
         let kind = self.message_kind();
-        self.toast.flush(&self.message, kind);
+        self.outbox.toast.flush(&self.message, kind);
     }
 
     /// 診断の記録へ、知らせを通さずに書かれた `message`（外からの直の書き込み）だけを渡す。`notify` の文は `notify` が書いた。
@@ -729,15 +729,15 @@ mod tests {
         let prior = app.message_begin();
         app.fail(Source::Save, "保存できません");
         app.message_end(prior);
-        app.toast.update(0.0);
-        assert_eq!(app.toast.kind(), Kind::Error);
-        assert_eq!(app.toast.lifetime(), crate::toast::LONG_SECONDS);
+        app.outbox.toast.update(0.0);
+        assert_eq!(app.outbox.toast.kind(), Kind::Error);
+        assert_eq!(app.outbox.toast.lifetime(), crate::toast::LONG_SECONDS);
         let prior = app.message_begin();
         app.info(Source::Save, "保存しました。");
         app.message_end(prior);
-        app.toast.update(1.0);
-        assert_eq!(app.toast.kind(), Kind::Info);
-        assert_eq!(app.toast.lifetime(), crate::toast::INFO_SECONDS);
+        app.outbox.toast.update(1.0);
+        assert_eq!(app.outbox.toast.kind(), Kind::Info);
+        assert_eq!(app.outbox.toast.lifetime(), crate::toast::INFO_SECONDS);
         // 何も書かない操作は、前の文と種類を戻す
         let prior = app.message_begin();
         app.message_end(prior);

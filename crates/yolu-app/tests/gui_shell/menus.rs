@@ -510,16 +510,7 @@ fn snapshot_popup(h: &mut Harness<'_, Bench>, name: &str) {
         .expect("開いている")
         .rect
         .expand(2.0);
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().max(0.0).floor() as u32,
-        rect.top().max(0.0).floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+    common::shot::region(h, name, rect);
 }
 
 #[test]

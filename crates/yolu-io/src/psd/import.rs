@@ -72,6 +72,8 @@ pub enum ImportFeature {
     LayerIds,
     /// レイヤーの名前の中の NUL・Unicode 名のない非 ASCII 名。
     LayerName,
+    /// レイヤーの名前が長すぎるので、上限（`Limits::max_name_code_units`）まで切り詰めた。
+    LayerNameTruncated,
     /// レイヤー効果（`lfx2` など）。評価しない。
     LayerEffects,
     /// 既定値以外のブレンド条件（Blend If）。
@@ -410,6 +412,7 @@ pub(super) fn sort_preserve(s: &mut State, code: &str) {
         | "LegacyNameEncoding" => (F::LayerName, Ignored, None),
         "LayerLocks" | "SheetColor" | "SectionDivider" | "GroupBlend" | "DividerPixels"
         | "DividerMask" | "AdjustmentPixels" | "MaskTail" => (F::LayerMetadata, Ignored, None),
+        "NameTruncated" => (F::LayerNameTruncated, Dropped, None),
         "LayerFlags" | "Clipping" => (F::LayerFlags, Ignored, None),
         "LayerChannel" => (F::LayerChannels, Ignored, None),
         "TransparencyShapes" => (F::TransparencyShapes, Ignored, None),
@@ -564,6 +567,30 @@ fn read_up_to<R: Read>(r: &mut R, buf: &mut [u8]) -> (usize, Option<std::io::Err
     }
     (filled, None)
 }
+/// レイヤーの矩形がキャンバスからはみ出すとき、キャンバスの中の範囲（レイヤーの左上が原点）。はみ出さなければ None。キャンバスにかからなければ空の範囲。
+fn canvas_window(l: &Layer, canvas_w: u32, canvas_h: u32) -> Option<read::Window> {
+    let (left, top) = (i64::from(l.left), i64::from(l.top));
+    let (right, bottom) = (left + i64::from(l.width), top + i64::from(l.height));
+    let (x0, x1) = (left.max(0), right.min(i64::from(canvas_w)));
+    let (y0, y1) = (top.max(0), bottom.min(i64::from(canvas_h)));
+    if (x0, x1, y0, y1) == (left, right, top, bottom) {
+        return None;
+    }
+    if x0 >= x1 || y0 >= y1 {
+        return Some(read::Window {
+            x0: 0,
+            x1: 0,
+            y0: 0,
+            y1: 0,
+        });
+    }
+    Some(read::Window {
+        x0: (x0 - left) as usize,
+        x1: (x1 - left) as usize,
+        y0: (y0 - top) as usize,
+        y1: (y1 - top) as usize,
+    })
+}
 fn tell<R: Seek>(r: &mut R) -> Step<u64> {
     Ok(r.stream_position()?)
 }
@@ -650,7 +677,7 @@ fn verify<R: Read + Seek>(r: &mut R, cancel: Option<&AtomicBool>) -> Step<Verifi
     r.read_exact(&mut head)?;
     let mut h = Reader::new(&head);
     if h.key()? != *b"8BPS" || h.u16()? != 1 {
-        return malformed("PSD シグネチャ・版が不正です");
+        return malformed("PSD シグネチャ・バージョンが不正です");
     }
     h.zeros(6)?;
     let channels = usize::from(h.u16()?);
@@ -827,7 +854,7 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
     }
     let version = h.u16()?;
     if version != 1 && version != 2 {
-        return malformed("PSD 版が不正です");
+        return malformed("PSD バージョンが不正です");
     }
     h.zeros(6)?;
     let channels = h.u16()?;
@@ -907,17 +934,21 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
     if count == 0 {
         return Err(Stop::Refused(CopyRefusal::NoLayers));
     }
-    if count > limits.max_layers {
-        return Err(Stop::Refused(CopyRefusal::TooManyLayers {
-            count,
-            limit: limits.max_layers,
-        }));
-    }
+    // 記録の数が予算から決めた上限を超えるかは、文書のレイヤーの数（.ylp の上限）を数えたあとで断る（記録を読み終えた後）。予算を上げても取り込めない数なら、
+    // 予算の上限でなく .ylp の上限で知らせるため。記録は区切りや落とすレイヤーも数えるので、文書のレイヤーの数は読み終えるまで分からない。
+    // 断ると決まった（記録の数が予算の上限を超えた、または文書のレイヤーが .ylp の上限を超えた）後の記録は、数えるだけで持たない
+    // （名前と知らせのメモリが、ファイルの大きさに比例して増えないように）
 
     // レイヤーの記録（付加情報は 1 枚ずつ読んで、知らせだけ残す）
-    let mut parsed: Vec<Parsed> = Vec::with_capacity(count);
+    let mut parsed: Vec<Parsed> = Vec::with_capacity(count.min(limits.max_layers));
+    let mut layers_seen = 0usize;
+    let mut doomed = false;
     for i in 0..count {
         cancelled(o.cancel)?;
+        doomed |= i >= limits.max_layers;
+        // 文書のレイヤーがもう .ylp の上限を超えている: 断る理由は「.ylp の上限」に決まっているので、以降の記録は数えるだけにして、
+        // 付加情報の大きさ・記録の誤りでは断らない（その記録は区切りでなくレイヤーとして数える）
+        let over_limit = layers_seen > crate::MAX_DOCUMENT_LAYERS;
         let mut head = [0u8; 18];
         r.read_exact(&mut head)?;
         let n = u16::from_be_bytes([head[16], head[17]]) as usize;
@@ -932,6 +963,11 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         }
         // 付加情報はレイヤーごとに全部メモリへ読む。固定の上限でなく、レイヤーの画素と同じ予算（設定の「レイヤーのメモリ」）に合わせる
         if u64::from(extra) > o.source_budget {
+            if over_limit {
+                skip(r, u64::from(extra))?;
+                layers_seen += 1;
+                continue;
+            }
             return Err(Stop::Refused(CopyRefusal::LayerDataTooLarge {
                 layer: format!("#{}", i + 1),
             }));
@@ -947,9 +983,17 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         c.drop_layer = false;
         s.key = [0; 4];
         let mut rd = Reader::lenient(&buf);
-        let mut rec = read::record(&mut rd, &mut s).map_err(|e| in_layer(e, i + 1))?;
+        let record = read::record(&mut rd, &mut s);
         let c = s.copy.as_mut().unwrap();
-        if let Some(why) = c.take_refusal() {
+        let refusal = c.take_refusal();
+        if over_limit && (record.is_err() || refusal.is_some()) {
+            c.discard_layer();
+            c.in_layer = false;
+            layers_seen += 1;
+            continue;
+        }
+        let mut rec = record.map_err(|e| in_layer(e, i + 1))?;
+        if let Some(why) = refusal {
             return Err(Stop::Refused(why));
         }
         // マスクの定義があってチャンネルが無ければ、値は分からないので、矩形を空にして既定値だけにする
@@ -989,10 +1033,34 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
                 let v = (u32::from(rec.layer.opacity) * u32::from(rec.fill_opacity) + 127) / 255;
                 rec.layer.opacity = v as u8;
             }
-            let name = rec.layer.name.clone();
-            s.copy.as_mut().unwrap().flush_layer(&name);
+            // 文書のレイヤーの数（グループは数え、区切りの記録と落としたレイヤーは数えない）
+            if !dropped {
+                layers_seen += 1;
+                doomed |= layers_seen > crate::MAX_DOCUMENT_LAYERS;
+            }
+            if doomed {
+                s.copy.as_mut().unwrap().discard_layer();
+            } else {
+                let name = rec.layer.name.clone();
+                s.copy.as_mut().unwrap().flush_layer(&name);
+            }
         }
-        parsed.push(Parsed { rec, dropped });
+        if !doomed {
+            parsed.push(Parsed { rec, dropped });
+        }
+    }
+    // .ylp の上限（予算を上げても変わらない）を先に、予算から決めた上限をその次に断る。画素は読まない
+    if layers_seen > crate::MAX_DOCUMENT_LAYERS {
+        return Err(Stop::Refused(CopyRefusal::LayerCountOverLimit {
+            count: layers_seen,
+            limit: crate::MAX_DOCUMENT_LAYERS,
+        }));
+    }
+    if count > limits.max_layers {
+        return Err(Stop::Refused(CopyRefusal::TooManyLayers {
+            count,
+            limit: limits.max_layers,
+        }));
     }
 
     // レイヤーの並び（下から上）と、グループの親。落としたレイヤーは並びに入れない
@@ -1043,13 +1111,7 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
     if !open.is_empty() {
         return malformed("閉じていないグループ区切り");
     }
-    // 文書のレイヤーの数（区切りの記録と、落としたレイヤーを除く）。.ylp に書ける数を超えれば、画素を読む前に断る
-    if items.len() > crate::MAX_DOCUMENT_LAYERS {
-        return Err(Stop::Refused(CopyRefusal::LayerCountOverLimit {
-            count: items.len(),
-            limit: crate::MAX_DOCUMENT_LAYERS,
-        }));
-    }
+    debug_assert_eq!(items.len(), layers_seen);
 
     // レイヤー ID: 欠落・重複・不正だけに新しい ID を振る（名前では補修しない）。
     // 先に全部のレイヤーを見て、正で最初に出た一意な ID（区切りの ID を含む）をすべて取っておき、そのあとで振る。
@@ -1105,7 +1167,18 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         let l = &mut p.rec.layer;
         let raster = kept && matches!(l.kind, LayerKind::Raster);
         let (w, hh) = (l.width, l.height);
-        let layer_bytes = u64::from(w) * u64::from(hh) * 4;
+        // キャンバスからはみ出すレイヤーは、キャンバスの中の範囲だけを持つ（外の画素は 1 行ずつ展開して、見える画素があるかだけを見て捨てる）。
+        // 持つ大きさと予算の確かめは範囲の大きさで行う
+        let window = if raster && w > 0 && hh > 0 {
+            canvas_window(l, width, height)
+        } else {
+            None
+        };
+        let (kept_w, kept_h) =
+            window.map_or((w, hh), |win| (win.width() as u32, win.height() as u32));
+        let layer_bytes = u64::from(kept_w) * u64::from(kept_h) * 4;
+        // 範囲の外に見える画素があったか（アルファのチャンネルを読んだときだけ決まる）
+        let mut alpha_outside: Option<bool> = None;
         if raster && layer_bytes > o.source_budget {
             return Err(Stop::Refused(CopyRefusal::LayerTooLarge {
                 layer: l.name.clone(),
@@ -1141,7 +1214,8 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         for (id, len) in channel_list {
             let wanted = match id {
                 -2 => kept && l.mask.as_ref().is_some_and(|m| m.width > 0 && m.height > 0),
-                -1..=2 => raster && layer_bytes > 0,
+                // 範囲が空のレイヤーも、アルファだけは外に見える画素があるかを見るために読む
+                -1..=2 => raster && (layer_bytes > 0 || id == -1 && window.is_some()),
                 _ => false,
             };
             if !wanted {
@@ -1161,14 +1235,64 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
             if tell(r)? + len as u64 > info_end {
                 return malformed("チャンネルがレイヤーの情報を超えています");
             }
-            let mut buf = vec![0u8; len];
-            r.read_exact(&mut buf)?;
-            if buf.len() < 2 {
-                continue;
+            // キャンバスからはみ出すレイヤーの無圧縮のチャンネルは、全バイトを持たずに 1 行ずつ読む（圧縮したチャンネルは、ファイルの中の大きさだけ持つ）
+            let mut buf = Vec::new();
+            let mut raw_window = None;
+            if let Some(win) = window.filter(|_| id != -2 && len >= 2) {
+                let compression = read_u16(r)?;
+                if compression == 0 {
+                    let component = if id == -1 { 3 } else { id as usize };
+                    raw_window = Some(
+                        read::decode_window_raw(
+                            r,
+                            len - 2,
+                            cw,
+                            ch,
+                            win,
+                            &mut l.pixels_rgba,
+                            component,
+                            4,
+                        )
+                        .map(|outside| {
+                            if id == -1 {
+                                alpha_outside = Some(outside)
+                            }
+                        }),
+                    );
+                } else {
+                    buf = vec![0u8; len];
+                    buf[..2].copy_from_slice(&compression.to_be_bytes());
+                    r.read_exact(&mut buf[2..])?;
+                }
+            } else {
+                buf = vec![0u8; len];
+                r.read_exact(&mut buf)?;
+                if buf.len() < 2 {
+                    continue;
+                }
             }
-            let decoded = if id == -2 {
+            let decoded = if let Some(done) = raw_window {
+                done
+            } else if id == -2 {
                 let m = l.mask.as_mut().unwrap();
                 read::decode_rows(Reader::lenient(&buf), cw, ch, &mut m.pixels, 0, 1, &mut s)
+            } else if let Some(win) = window {
+                let component = if id == -1 { 3 } else { id as usize };
+                read::decode_window(
+                    Reader::lenient(&buf),
+                    cw,
+                    ch,
+                    win,
+                    &mut l.pixels_rgba,
+                    component,
+                    4,
+                    &mut s,
+                )
+                .map(|outside| {
+                    if id == -1 {
+                        alpha_outside = Some(outside)
+                    }
+                })
             } else {
                 let component = if id == -1 { 3 } else { id as usize };
                 read::decode_rows(
@@ -1189,6 +1313,17 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         if !kept {
             continue;
         }
+        let mut cut_visible = false;
+        if let Some(win) = window {
+            // 範囲の外に見える画素があったか: アルファを読んだならその値で、読まなかった（アルファのない）レイヤーは全面が不透明なので範囲の外があれば
+            cut_visible = alpha_outside
+                .unwrap_or(u64::from(kept_w) * u64::from(kept_h) < u64::from(w) * u64::from(hh));
+            // 以降は範囲を、そのレイヤーの矩形として扱う（キャンバスの中に収まる）
+            l.left += win.x0 as i32;
+            l.top += win.y0 as i32;
+            l.width = kept_w;
+            l.height = kept_h;
+        }
         let name = l.name.clone();
         let budget_stop = |e: Error| match e {
             Error::Core(yolu_core::CoreError::SourceBudgetExceeded) => {
@@ -1199,6 +1334,9 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
             other => Stop::Error(other),
         };
         let mut note = Vec::new();
+        if cut_visible {
+            note.push(ImportFeature::OutsideCanvas)
+        }
         let id = match &l.kind {
             LayerKind::Raster => {
                 let id = d.add_layer(&l.name)?;

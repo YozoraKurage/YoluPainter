@@ -1,6 +1,7 @@
 //! 3D ビューの選択範囲の重ね（egui_kittest。描いた絵を読み出して、重ねだけの差を見る）: 縁（白と黒の点線）を見えている面の上にだけ描くこと・選択範囲が無ければ
 //! 何も描かないこと・取り消しで消えること・変わったタイルだけを上げること・GPU のメモリの予算（3D の絵の取り分）に入らなければ出さずに知らせること・
 //! クイックマスクの赤い重ねと選択ペンの途中の被覆・拡大・縮小しても線が太らないこと・トーンマッピングを通しても白いこと・絵（日英）。
+use crate::common::drive::{Drive, DriveApp};
 use crate::common::*;
 use crate::view3d_brush::{cube_view, press_with, screen_of};
 use crate::view3d_select::{
@@ -34,7 +35,7 @@ fn ellipse_on_front(h: &mut H, rect: Rect) {
 /// 点線を止めた（絵を同じにする）3D だけの画面。
 fn still_view() -> (H, Rect) {
     let (mut h, rect) = cube_view();
-    h.state_mut().state.sel.animate = false;
+    h.sel_mut().animate = false;
     h.run();
     (h, rect)
 }
@@ -63,9 +64,7 @@ fn differences(a: &RgbaImage, b: &RgbaImage) -> (usize, Option<Rect>) {
 }
 
 fn clear_selection(h: &mut H) {
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Edit(SelEdit::Clear)));
+    h.act(Action::Sel(SelAction::Edit(SelEdit::Clear)));
     h.run();
 }
 
@@ -73,7 +72,7 @@ fn clear_selection(h: &mut H) {
 fn the_edge_is_drawn_on_the_model_only_where_the_selection_is_and_undo_takes_it_away() {
     let (mut h, rect) = still_view();
     let base = shot(&mut h);
-    assert_eq!(st(&h).doc.undo_count(), 0);
+    assert_eq!(st(&h).doc().undo_count(), 0);
     let stats = h.state().view3d_stats().unwrap();
     assert_eq!(stats.overlay_bytes, 0, "選択範囲が無いときは何も持たない");
     // 選択範囲を作る: 縁が出る（楕円の画面の箱のまわりだけ）
@@ -150,7 +149,7 @@ fn a_selection_on_faces_the_camera_does_not_see_draws_nothing() {
     // 見えない面のアイランドだけを選ぶ
     let hidden: Vec<usize> = (0..6).filter(|&f| !face_visible(&h, f)).collect();
     assert!(!hidden.is_empty());
-    let mut mask = SelectionMask::none(&st(&h).doc);
+    let mut mask = SelectionMask::none(st(&h).doc());
     for f in &hidden {
         let texels = island_texels(*f, 6.0);
         let (x0, y0) = texels
@@ -160,10 +159,10 @@ fn a_selection_on_faces_the_camera_does_not_see_draws_nothing() {
             .iter()
             .fold((0, 0), |(a, b), t| (a.max(t.0), b.max(t.1)));
         let part =
-            SelectionMask::rectangle(&st(&h).doc, x0 as i64, y0 as i64, x1 as i64, y1 as i64);
+            SelectionMask::rectangle(st(&h).doc(), x0 as i64, y0 as i64, x1 as i64, y1 as i64);
         mask = mask.combine(&part, SelectionCombine::Add).unwrap();
     }
-    h.state_mut().state.doc.set_selection(Some(mask)).unwrap();
+    h.doc_mut().set_selection(Some(mask)).unwrap();
     let after = shot(&mut h);
     // 縁は引かれる（GPU に上げてある）が、見えない面には描かれない（面の上の絵は同じ）
     assert!(h.state().view3d_stats().unwrap().overlay_bytes > 0);
@@ -182,18 +181,16 @@ fn a_selection_on_faces_the_camera_does_not_see_draws_nothing() {
 fn an_edge_behind_another_face_is_hidden_by_it_and_shows_where_the_face_is_seen() {
     // 奥の板（UV の左半分）の真ん中は手前の板に隠れる
     let (mut h, rect) = crate::view3d_select::two_plates();
-    h.state_mut().state.sel.animate = false;
+    h.sel_mut().animate = false;
     let base = shot(&mut h);
     let edit = |h: &mut H, (x0, y0, x1, y1): (i64, i64, i64, i64)| {
-        h.state_mut()
-            .state
-            .apply(Action::Sel(SelAction::Edit(SelEdit::Rect {
-                x0,
-                y0,
-                x1,
-                y1,
-                mode: SelectionCombine::Replace,
-            })));
+        h.act(Action::Sel(SelAction::Edit(SelEdit::Rect {
+            x0,
+            y0,
+            x1,
+            y1,
+            mode: SelectionCombine::Replace,
+        })));
         h.run();
     };
     let in_view = |a: &RgbaImage, b: &RgbaImage| {
@@ -218,24 +215,22 @@ fn an_edge_behind_another_face_is_hidden_by_it_and_shows_where_the_face_is_seen(
 fn only_the_tiles_that_changed_are_uploaded_and_the_texture_is_released_with_the_selection() {
     // 文書 512²（タイル 256²）: 4 枚のタイル
     let mut h = app(1100.0, 760.0, 512);
-    h.state_mut().state.view3d.load_demo();
-    h.state_mut().state.view3d.camera.yaw = -40.0;
-    h.state_mut().state.view3d.camera.pitch = 15.0;
-    h.state_mut().state.sel.animate = false;
+    h.view3d_mut().load_demo();
+    h.view3d_mut().view.camera.yaw = -40.0;
+    h.view3d_mut().view.camera.pitch = 15.0;
+    h.sel_mut().animate = false;
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     let tiles = |h: &H| h.state().view3d_stats().unwrap().overlay_tiles;
     assert_eq!(tiles(&h), 0);
     let rect_edit = |h: &mut H, x0, y0, x1, y1, mode| {
-        h.state_mut()
-            .state
-            .apply(Action::Sel(SelAction::Edit(SelEdit::Rect {
-                x0,
-                y0,
-                x1,
-                y1,
-                mode,
-            })));
+        h.act(Action::Sel(SelAction::Edit(SelEdit::Rect {
+            x0,
+            y0,
+            x1,
+            y1,
+            mode,
+        })));
         h.run();
     };
     rect_edit(&mut h, 10, 10, 100, 100, SelectionCombine::Replace);
@@ -272,7 +267,7 @@ fn two_materials() -> (H, Rect) {
     use yolu_core::glam::Vec2;
     let mut h = app(1100.0, 760.0, 64);
     click_tab(&mut h, yolu_app::Tab::View3d);
-    h.state_mut().state.sel.animate = false;
+    h.sel_mut().animate = false;
     h.run();
     let plate = |cx: f32, material: i32| {
         let p = |x: f32, y: f32| Vec3::new(cx + x, y, 0.0);
@@ -293,8 +288,8 @@ fn two_materials() -> (H, Rect) {
         }
     };
     {
-        let state = &mut h.state_mut().state;
-        let revision = state.view3d.next_revision();
+        let state = h.app_mut();
+        let revision = state.view3d_mut().next_revision();
         let model = ViewModel::new(
             "二枚",
             vec![plate(-1.1, 0), plate(1.1, 1)],
@@ -302,9 +297,9 @@ fn two_materials() -> (H, Rect) {
             revision,
         )
         .unwrap();
-        state.view3d.set_model(model);
-        state.view3d.material = 0;
-        state.view3d.camera = OrbitCamera {
+        state.view3d_mut().set_model(model);
+        state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
+        state.view3d_mut().view.camera = OrbitCamera {
             target: Vec3::ZERO,
             yaw: 0.0,
             pitch: 0.0,
@@ -339,15 +334,13 @@ fn the_overlay_covers_the_faces_of_the_current_material_only() {
             .count()
     };
     let select = |h: &mut H| {
-        h.state_mut()
-            .state
-            .apply(Action::Sel(SelAction::Edit(SelEdit::Rect {
-                x0: 10,
-                y0: 10,
-                x1: 54,
-                y1: 54,
-                mode: SelectionCombine::Replace,
-            })));
+        h.act(Action::Sel(SelAction::Edit(SelEdit::Rect {
+            x0: 10,
+            y0: 10,
+            x1: 54,
+            y1: 54,
+            mode: SelectionCombine::Replace,
+        })));
         h.run();
     };
     // 今のセット（描くマテリアルは 0）の選択範囲: 左の板だけに縁が出る
@@ -363,14 +356,14 @@ fn many_changed_tiles_uploaded_in_one_go_draw_the_same_as_tile_by_tile() {
     // 引いた選択範囲を作り（まとめて上げる）、そのあと長方形を追加し直す（1 タイルだけ。タイルごとに上げる）。どちらも最後は同じ選択範囲で、絵も同じ
     let view = |two_steps: bool| {
         let mut h = app(1100.0, 760.0, 512);
-        h.state_mut().state.view3d.load_demo();
-        h.state_mut().state.view3d.camera.yaw = -40.0;
-        h.state_mut().state.view3d.camera.pitch = 15.0;
-        h.state_mut().state.sel.animate = false;
+        h.view3d_mut().load_demo();
+        h.view3d_mut().view.camera.yaw = -40.0;
+        h.view3d_mut().view.camera.pitch = 15.0;
+        h.sel_mut().animate = false;
         click_tab(&mut h, yolu_app::Tab::View3d);
         h.run();
         let edit = |h: &mut H, e: SelEdit| {
-            h.state_mut().state.apply(Action::Sel(SelAction::Edit(e)));
+            h.act(Action::Sel(SelAction::Edit(e)));
             h.run();
         };
         let ellipse = SelEdit::Ellipse {
@@ -396,7 +389,7 @@ fn many_changed_tiles_uploaded_in_one_go_draw_the_same_as_tile_by_tile() {
             let more = h.state().view3d_stats().unwrap().overlay_tiles - tiles;
             assert_eq!(more, 1, "追加し直しは 1 タイルだけ");
         }
-        let selection = st(&h).doc.selection().cloned();
+        let selection = st(&h).doc().selection().cloned();
         (shot(&mut h), selection)
     };
     let (direct, direct_mask) = view(false);
@@ -469,7 +462,7 @@ fn the_overlay_counts_in_the_bytes_the_view_held_at_its_peak() {
     // 同期の途中で GPU に持っていた絵のバイト（予算を超えていないかの記録）に、重ねの分も入る
     let (mut h, rect) = still_view();
     ellipse_on_front(&mut h, rect);
-    h.state_mut().state.view3d.camera.yaw += 3.0;
+    h.view3d_mut().view.camera.yaw += 3.0;
     h.run();
     let s = h.state().view3d_stats().unwrap();
     assert!(s.overlay_bytes > 0 && !s.overlay_skipped, "{s:?}");
@@ -480,7 +473,7 @@ fn the_overlay_counts_in_the_bytes_the_view_held_at_its_peak() {
 fn the_skipped_selection_is_told_by_a_corner_icon_in_both_languages() {
     for lang in Lang::ALL {
         let (mut h, rect) = still_view();
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         ellipse_on_front(&mut h, rect);
         let stats = h.state().view3d_stats().unwrap();
         h.state_mut()
@@ -508,9 +501,7 @@ fn quick_mask_shows_a_red_overlay_in_3d_and_the_ants_are_gone() {
     let (mut h, rect) = still_view();
     ellipse_on_front(&mut h, rect);
     let ants = shot(&mut h);
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
+    h.act(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
     h.run();
     let red = shot(&mut h);
     // 赤い重ね: 選択範囲の真ん中の画素が、重ねる前より赤くなる（青・緑が下がり、赤が保たれる）
@@ -530,9 +521,7 @@ fn quick_mask_shows_a_red_overlay_in_3d_and_the_ants_are_gone() {
         red.get_pixel(outside.x as u32, outside.y as u32)
     );
     // クイックマスクを切ると縁へ戻る
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(false)))));
+    h.act(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(false)))));
     h.run();
     let back = shot(&mut h);
     let n = ants
@@ -546,9 +535,9 @@ fn quick_mask_shows_a_red_overlay_in_3d_and_the_ants_are_gone() {
 
 /// 面（−Z）の上の線を、選択ペンで引き始めて、離さずに途中の絵を撮る。
 fn pen_stroke_halfway(h: &mut H, rect: Rect, modifiers: Modifiers) -> RgbaImage {
-    h.state_mut().state.brush.radius = 12.0;
-    h.state_mut().state.brush.hardness = 1.0;
-    h.state_mut().state.brush.opacity = 1.0;
+    h.brush_mut().radius = 12.0;
+    h.brush_mut().hardness = 1.0;
+    h.brush_mut().opacity = 1.0;
     let (a, b) = (
         screen_of(h, rect, Vec3::new(-0.3, 0.0, -0.5)),
         screen_of(h, rect, Vec3::new(0.3, 0.0, -0.5)),
@@ -589,7 +578,7 @@ fn a_selection_pen_stroke_shows_its_cover_while_painting_blue_to_add_and_orange_
         blue_after < blue / 10,
         "離したら青は残らない: {blue_after} {blue}"
     );
-    assert!(st(&h).doc.selection().is_some());
+    assert!(st(&h).doc().selection().is_some());
     // 選択消し（Ctrl）の途中は橙
     h.event(Event::ModifiersChanged(Modifiers::NONE));
     let erasing = pen_stroke_halfway(&mut h, rect, Modifiers::COMMAND);
@@ -626,13 +615,13 @@ fn the_edge_keeps_its_thickness_when_the_model_is_zoomed_in_or_out() {
     let mut widths = Vec::new();
     for distance_scale in [0.85f32, 1.0, 1.7] {
         let (mut h, rect) = still_view();
-        h.state_mut().state.view3d.camera.distance *= distance_scale;
+        h.view3d_mut().view.camera.distance *= distance_scale;
         h.run();
         let base = shot(&mut h);
         ellipse_on_front(&mut h, rect);
         let with = shot(&mut h);
         assert!(
-            st(&h).doc.selection().is_some(),
+            st(&h).doc().selection().is_some(),
             "{distance_scale}: {}",
             message(&h)
         );
@@ -660,7 +649,7 @@ fn the_edge_keeps_its_thickness_when_the_model_is_zoomed_in_or_out() {
 fn the_edge_stays_white_through_tone_mapping() {
     for curve in [Curve::Aces, Curve::Neutral] {
         let (mut h, rect) = still_view();
-        h.state_mut().state.apply(Action::View3d(Op::Tone(curve)));
+        h.act(Action::View3d(Op::Tone(curve)));
         h.run();
         let base = shot(&mut h);
         ellipse_on_front(&mut h, rect);
@@ -682,10 +671,9 @@ fn the_edge_stays_white_through_tone_mapping() {
 
 #[test]
 fn snapshot_selection_in_3d_only_in_both_languages() {
-    let mut snapshots = egui_kittest::SnapshotResults::new();
     for lang in Lang::ALL {
         let (mut h, rect) = still_view();
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         h.run();
         ellipse_on_front(&mut h, rect);
         // 2 つ目の形を追加（楕円の外の、側面にまたがる長方形）
@@ -707,15 +695,16 @@ fn snapshot_selection_in_3d_only_in_both_languages() {
         h.step();
         h.event(Event::PointerGone);
         h.run();
-        h.snapshot(lang.pick("view3d_selection_edge_ja", "view3d_selection_edge_en"));
-        snapshots.extend_harness(&mut h);
+        // 英語の絵は撮らない（3D の絵に文字は無い）
+        if lang == Lang::Ja {
+            crate::common::shot::region(&mut h, "view3d_selection_edge_ja", rect);
+        }
         // クイックマスク（赤い重ね）
-        h.state_mut()
-            .state
-            .apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
+        h.act(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
         h.run();
-        h.snapshot(lang.pick("view3d_selection_quick_ja", "view3d_selection_quick_en"));
-        snapshots.extend_harness(&mut h);
+        if lang == Lang::Ja {
+            crate::common::shot::region(&mut h, "view3d_selection_quick_ja", rect);
+        }
     }
 }
 
@@ -732,28 +721,24 @@ fn measure_frames_with_and_without_the_selection_overlay() {
     for (size, grid) in [(2048u32, 77u32), (4096, 160)] {
         let mut h = app(1100.0, 760.0, size);
         click_tab(&mut h, yolu_app::Tab::View3d);
-        h.state_mut().state.sel.animate = false;
+        h.sel_mut().animate = false;
         h.run();
         println!(
             "GPU: {}  文書 {size}²  球の格子 {grid}",
             h.state().view3d_adapter().unwrap_or_default()
         );
-        h.state_mut()
-            .state
-            .apply(Action::View3d(Op::Shading(Shading::Material)));
-        h.state_mut()
-            .state
-            .apply(Action::View3d(Op::Env(EnvKind::Studio)));
+        h.act(Action::View3d(Op::Shading(Shading::Material)));
+        h.act(Action::View3d(Op::Env(EnvKind::Studio)));
         let mesh = cube_sphere(grid, 0.5);
         let triangles: usize = mesh.submeshes.iter().map(|s| s.indices.len() / 3).sum();
         {
-            let state = &mut h.state_mut().state;
-            let revision = state.view3d.next_revision();
-            state.view3d.material = 0;
+            let state = h.app_mut();
+            let revision = state.view3d_mut().next_revision();
+            state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
             let model = ViewModel::new("球", vec![mesh], vec![None], revision).unwrap();
             model.tangents();
-            state.view3d.set_model(model);
-            state.view3d.camera = OrbitCamera {
+            state.view3d_mut().set_model(model);
+            state.view3d_mut().view.camera = OrbitCamera {
                 target: Vec3::ZERO,
                 yaw: 20.0,
                 pitch: 10.0,
@@ -763,14 +748,14 @@ fn measure_frames_with_and_without_the_selection_overlay() {
             };
         }
         h.run();
-        h.state().view3d_wait_gpu();
+        h.view3d_wait_gpu();
         let frames = |h: &mut H| -> (f64, f64) {
             let (mut wall, mut cpu) = (Vec::new(), Vec::new());
             for frame in 0..60 {
-                h.state_mut().state.view3d.camera.yaw += 3.0 + frame as f32 * 0.01;
+                h.view3d_mut().view.camera.yaw += 3.0 + frame as f32 * 0.01;
                 let started = Instant::now();
                 h.step();
-                h.state().view3d_wait_gpu();
+                h.view3d_wait_gpu();
                 wall.push(started.elapsed().as_micros() as f64 / 1000.0);
                 cpu.push(h.state().view3d_stats().unwrap().last_prepare_us as f64 / 1000.0);
             }
@@ -778,19 +763,17 @@ fn measure_frames_with_and_without_the_selection_overlay() {
         };
         // 選択範囲: 文書の半分ほどの楕円（量のあるタイルが多い）。選択範囲を作る CPU の時間（`apply`）と、重ねを上げて描くフレームの時間を分けて測る
         let started = Instant::now();
-        h.state_mut()
-            .state
-            .apply(Action::Sel(SelAction::Edit(SelEdit::Ellipse {
-                cx: size as f64 * 0.5,
-                cy: size as f64 * 0.5,
-                rx: size as f64 * 0.45,
-                ry: size as f64 * 0.4,
-                mode: SelectionCombine::Replace,
-            })));
+        h.act(Action::Sel(SelAction::Edit(SelEdit::Ellipse {
+            cx: size as f64 * 0.5,
+            cy: size as f64 * 0.5,
+            rx: size as f64 * 0.45,
+            ry: size as f64 * 0.4,
+            mode: SelectionCombine::Replace,
+        })));
         let apply_ms = started.elapsed().as_micros() as f64 / 1000.0;
         let started = Instant::now();
         h.step();
-        h.state().view3d_wait_gpu();
+        h.view3d_wait_gpu();
         let change_ms = started.elapsed().as_micros() as f64 / 1000.0;
         println!(
             "  選択を作る CPU {apply_ms:.2} ms、上げて描くフレーム {change_ms:.2} ms（prepare の CPU {:.2} ms）",
@@ -836,19 +819,17 @@ fn measure_frames_with_and_without_the_selection_overlay() {
         );
         // 解除してから同じ選択範囲を作り直すフレーム（パイプラインは作ってあるので、上げ・ミップ・描きだけ）
         clear_selection(&mut h);
-        h.state().view3d_wait_gpu();
-        h.state_mut()
-            .state
-            .apply(Action::Sel(SelAction::Edit(SelEdit::Ellipse {
-                cx: size as f64 * 0.5,
-                cy: size as f64 * 0.5,
-                rx: size as f64 * 0.45,
-                ry: size as f64 * 0.4,
-                mode: SelectionCombine::Replace,
-            })));
+        h.view3d_wait_gpu();
+        h.act(Action::Sel(SelAction::Edit(SelEdit::Ellipse {
+            cx: size as f64 * 0.5,
+            cy: size as f64 * 0.5,
+            rx: size as f64 * 0.45,
+            ry: size as f64 * 0.4,
+            mode: SelectionCombine::Replace,
+        })));
         let started = Instant::now();
         h.step();
-        h.state().view3d_wait_gpu();
+        h.view3d_wait_gpu();
         println!(
             "  作り直すフレーム（2 回目）{:.2} ms（prepare の CPU {:.2} ms）",
             started.elapsed().as_micros() as f64 / 1000.0,
@@ -856,17 +837,15 @@ fn measure_frames_with_and_without_the_selection_overlay() {
         );
         // 1 タイルだけ変えるフレーム（追加）
         let started = Instant::now();
-        h.state_mut()
-            .state
-            .apply(Action::Sel(SelAction::Edit(SelEdit::Rect {
-                x0: 5,
-                y0: 5,
-                x1: 60,
-                y1: 60,
-                mode: SelectionCombine::Add,
-            })));
+        h.act(Action::Sel(SelAction::Edit(SelEdit::Rect {
+            x0: 5,
+            y0: 5,
+            x1: 60,
+            y1: 60,
+            mode: SelectionCombine::Add,
+        })));
         h.step();
-        h.state().view3d_wait_gpu();
+        h.view3d_wait_gpu();
         println!(
             "  選択を 1 タイルだけ追加したフレーム {:.2} ms",
             started.elapsed().as_micros() as f64 / 1000.0
@@ -878,15 +857,15 @@ fn measure_frames_with_and_without_the_selection_overlay() {
         for _ in 0..60 {
             let started = Instant::now();
             h.step();
-            h.state().view3d_wait_gpu();
+            h.view3d_wait_gpu();
             still.push(started.elapsed().as_micros() as f64 / 1000.0);
         }
         assert_eq!(h.state().view3d_stats().unwrap().renders, renders);
         for _ in 0..60 {
-            h.state_mut().state.view3d.camera.yaw += 0.001;
+            h.view3d_mut().view.camera.yaw += 0.001;
             let started = Instant::now();
             h.step();
-            h.state().view3d_wait_gpu();
+            h.view3d_wait_gpu();
             redrawn.push(started.elapsed().as_micros() as f64 / 1000.0);
         }
         println!(
@@ -899,9 +878,7 @@ fn measure_frames_with_and_without_the_selection_overlay() {
             spread(&redrawn[10..]).1,
         );
         let (q_wall, _) = {
-            h.state_mut()
-                .state
-                .apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
+            h.act(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
             frames(&mut h)
         };
         println!("  クイックマスク（赤い重ね）{q_wall:.2} ms");
@@ -936,9 +913,7 @@ fn the_2d_overlay_beside_the_3d_view_follows_a_3d_stroke_in_progress() {
             let (mut h, rect) = side_by_side(canvas_first);
             if quick {
                 select_rect(&mut h, (2, 2, 30, 60));
-                h.state_mut()
-                    .state
-                    .apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
+                h.act(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
                 h.run();
                 tool(&mut h, Tool::Brush);
             } else {
@@ -953,12 +928,12 @@ fn the_2d_overlay_beside_the_3d_view_follows_a_3d_stroke_in_progress() {
                 h.step();
             }
             h.step();
-            assert!(st(&h).sel.pen.is_some(), "{label}: 描いている");
+            assert!(st(&h).sel().pen.is_some(), "{label}: 描いている");
             let drawn = h.render().expect("描画");
             {
-                let s = &mut h.state_mut().state;
-                s.sel.pen_overlay.clear();
-                s.sel.quick_overlay.clear();
+                let s = h.app_mut();
+                s.sel_mut().pen_overlay.clear();
+                s.sel_mut().quick_overlay.clear();
             }
             h.step();
             let rebuilt = h.render().expect("描画");
@@ -973,15 +948,13 @@ fn the_2d_overlay_beside_the_3d_view_follows_a_3d_stroke_in_progress() {
 
 /// 幅いっぱいの長方形を選んで、3D の重ねの様子を読む。
 fn select_wide(h: &mut H, width: u32) {
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Edit(SelEdit::Rect {
-            x0: 10,
-            y0: 10,
-            x1: i64::from(width) - 10,
-            y1: 50,
-            mode: SelectionCombine::Replace,
-        })));
+    h.act(Action::Sel(SelAction::Edit(SelEdit::Rect {
+        x0: 10,
+        y0: 10,
+        x1: i64::from(width) - 10,
+        y1: 50,
+        mode: SelectionCombine::Replace,
+    })));
     h.event(Event::PointerGone);
     h.run();
 }
@@ -1004,7 +977,7 @@ fn a_document_wider_than_the_gpu_texture_limit_shows_no_selection_overlay_and_sa
         // 上限を超える幅: 重ねのテクスチャを作らず（作ると wgpu の検証の誤りで落ちる）、大きさの理由で知らせる
         let width = limit + 128;
         let (mut h, _) = wide_plate_view(width);
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         select_wide(&mut h, width);
         let stats = h.state().view3d_stats().unwrap();
         assert!(
@@ -1022,7 +995,7 @@ fn a_document_wider_than_the_gpu_texture_limit_shows_no_selection_overlay_and_sa
             "{lang:?}: 理由は予算でなく、大きさの上限"
         );
         // 3D の絵は動く（落ちない）
-        h.state_mut().state.view3d.camera.yaw += 5.0;
+        h.view3d_mut().view.camera.yaw += 5.0;
         h.run();
         assert!(
             h.state().view3d_stats().unwrap().overlay_skipped,
@@ -1030,7 +1003,7 @@ fn a_document_wider_than_the_gpu_texture_limit_shows_no_selection_overlay_and_sa
         );
         // 上限ちょうどの幅は出す（アイコンも無い）
         let (mut h, _) = wide_plate_view(limit);
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         select_wide(&mut h, limit);
         let stats = h.state().view3d_stats().unwrap();
         assert!(
@@ -1058,7 +1031,7 @@ fn a_selection_that_is_not_moving_does_not_make_the_3d_view_redraw() {
     // 3D の縁の点線は止めたまま（2D の点線は流れるが、3D は流さない）。選択範囲があっても、何もしていない間は 3D を描き直さず、
     // 描き直しも頼まない（頼むと `run` が終わらない）
     let (mut h, rect) = cube_view();
-    assert!(h.state().state.sel.animate, "点線を流す設定のまま");
+    assert!(h.sel().animate, "点線を流す設定のまま");
     ellipse_on_front(&mut h, rect);
     let stats = h.state().view3d_stats().unwrap();
     assert!(

@@ -439,7 +439,7 @@ fn without_hard_links_the_name_is_still_given_without_replacing_anything() {
         no_hard_link: true,
         ..Faults::default()
     };
-    // 付け替えの枝（rename）でも、取られている名前は番号で避け、一時ファイルは残さない
+    // 付け替えの分岐（rename）でも、取られている名前は番号で避け、一時ファイルは残さない
     let a = add_with(
         dir.root(),
         "Images",
@@ -477,7 +477,7 @@ fn without_hard_links_the_name_is_still_given_without_replacing_anything() {
     let every = walk(dir.root());
     assert!(every.iter().all(|n| !n.ends_with('~')), "{every:?}");
     assert_eq!(every.len(), 3);
-    // 同じ中身は、この枝でも書かない
+    // 同じ中身は、この分岐でも書かない
     let same = add_with(
         dir.root(),
         "Images",
@@ -607,7 +607,7 @@ fn a_library_origin_is_written_to_the_index_and_read_back() {
     let id = shelf
         .add_file_from_library(
             "11111111-1111-4111-8111-111111111111",
-            "試験素材",
+            "テスト素材",
             ResourceKind::SmartMaterial,
             &bytes,
             "Smart/raster.ylsmart",

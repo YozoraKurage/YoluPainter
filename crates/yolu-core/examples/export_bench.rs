@@ -1,4 +1,4 @@
-//! 書き出しの速さの計測（tools/csharp-golden/run.sh export-bench の C# と同じ中身）。
+//! 書き出しの速さの計測。
 //!   cargo run --release -p yolu-core --example export_bench [回数]
 //! 4096² で、全チャンネルに全タイル乱数のレイヤーを 1 つずつ持つ文書（Height → Normal 有効）の各テンプレートの画像の Build と、乱数の三角形
 //! 20000 個の覆い、塗り広げ（16 テクセル・全部）、大きなアイランド（2 三角形）の覆いと外の塗り広げ。`RAYON_NUM_THREADS=1` で 1 スレッドの時間。

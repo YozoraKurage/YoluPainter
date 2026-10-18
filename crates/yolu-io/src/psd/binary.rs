@@ -78,6 +78,25 @@ impl<'a> Reader<'a> {
         }
         Ok(())
     }
+    /// UTF-16 の `n` 単位を読み進めるが、読んで `String` にするのは先頭の `max` 単位までで、残りは読み飛ばす（長い名前の分の作業メモリを持たない）。
+    /// 切る位置が代用対の途中なら、その対ごと手前で切る。対にならない代用対は置き換え文字として読む（写しとしての取り込み）。
+    pub fn utf16_prefix(&mut self, n: usize, max: usize) -> Result<String> {
+        let b = self.take(
+            n.checked_mul(2)
+                .ok_or_else(|| Error::InvalidData("UTF-16 長のオーバーフロー".into()))?,
+        )?;
+        let unit = |i: usize| u16::from_be_bytes([b[i * 2], b[i * 2 + 1]]);
+        let mut keep = max.min(n);
+        if keep > 0
+            && keep < n
+            && (0xD800..0xDC00).contains(&unit(keep - 1))
+            && (0xDC00..0xE000).contains(&unit(keep))
+        {
+            keep -= 1;
+        }
+        let units = (0..keep).map(unit).collect::<Vec<_>>();
+        Ok(String::from_utf16_lossy(&units))
+    }
     pub fn utf16(&mut self, n: usize) -> Result<String> {
         let b = self.take(
             n.checked_mul(2)

@@ -26,12 +26,14 @@ fn dab(d: &mut Document, layer: LayerId) -> Stroke {
         radius: 4.0,
         hardness: 1.0,
         color: Rgba8::new(255, 255, 0, 255),
-        pressure_size: false,
-        pressure_opacity: false,
-        pressure_flow: false,
         ..BrushSettings::default()
     };
-    let mut s = d.begin_stroke(layer, &brush).unwrap();
+    let mut s = d
+        .begin_brush_stroke(
+            layer,
+            &crate::Brush::simple(brush, crate::PressureSwitches::NONE),
+        )
+        .unwrap();
     s.add_point(d, 20.0, 12.0, 1.0, DVec2::ZERO).unwrap();
     s
 }

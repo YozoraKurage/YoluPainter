@@ -1,6 +1,7 @@
 //! 3D ビューの選択ペン・選択消し（egui_kittest。3D ビューのドラッグの入力の道で）: 面に塗って選択範囲へ追加・削除すること（正面から見た板で、2D の選択ペンと同じ量）・
 //! Shift（追加）・Ctrl（削除）・ペンの消しゴムの端・筆圧・取り消し 1 回・Esc とツールの切り替えとフォーカスの喪失と補った離し・確定待ち・ツールのキーの一時の
 //! 切り替え・読むだけのセットと予算の断り。クイックマスクの 3D のブラシは `parity_symmetry.rs` が見る。
+use crate::common::drive::Drive;
 use crate::common::*;
 use crate::view3d_brush::{cube_view, press_with, release_with, screen_of};
 use crate::view3d_select::{
@@ -24,12 +25,12 @@ pub(crate) fn brush(h: &mut H, radius: f32, three_d: bool) {
     } else {
         radius
     };
-    let s = &mut h.state_mut().state;
-    s.brush.radius = radius;
-    s.brush.hardness = 0.6;
-    s.brush.opacity = 1.0;
-    s.brush.pressure_size = false;
-    s.brush.pressure_opacity = false;
+    let s = h.app_mut();
+    s.brush_mut().radius = radius;
+    s.brush_mut().hardness = 0.6;
+    s.brush_mut().opacity = 1.0;
+    s.brush_mut().pressure.size = false;
+    s.brush_mut().pressure.opacity = false;
 }
 
 /// 板の上の文書の点の列を、画面の点に。
@@ -69,8 +70,8 @@ const CROSS: [(f64, f64); 3] = [(32.0, 18.0), (34.0, 32.0), (32.0, 48.0)];
 fn canvas_at(h: &H, (x, y): (f64, f64)) -> Pos2 {
     let r = canvas_rect(h);
     let s = st(h);
-    s.view
-        .view(r, s.doc.width(), s.doc.height())
+    s.view()
+        .view(r, s.doc().width(), s.doc().height())
         .to_screen(x, y)
 }
 
@@ -124,7 +125,7 @@ fn the_selection_pen_in_3d_adds_like_the_2d_pen_seen_straight_on_and_is_one_undo
         brush(&mut h, 4.0, true);
         let pts = on_plate(&h, rect, &LINE);
         drag_mods(&mut h, &pts, Modifiers::NONE);
-        assert_eq!(st(&h).doc.undo_count(), 1, "{ortho} {}", message(&h));
+        assert_eq!(st(&h).doc().undo_count(), 1, "{ortho} {}", message(&h));
         let got = selection(&h).unwrap_or_else(|| panic!("{ortho}: 選べなかった: {}", message(&h)));
         let want = two_d(&[(&LINE, Modifiers::NONE)], 4.0).expect("2D で選べた");
         assert_like_2d(&got, &want, &format!("ortho={ortho}"));
@@ -136,8 +137,8 @@ fn the_selection_pen_in_3d_adds_like_the_2d_pen_seen_straight_on_and_is_one_undo
         h.run();
         assert!(selection(&h) == Some(got), "{ortho}");
         assert!(!st(&h).is_stroking());
-        assert!(st(&h).view3d.input.cover.is_none() && st(&h).sel.pen.is_none());
-        assert!(st(&h).doc.undo_count() == 1);
+        assert!(st(&h).view3d().view.input.cover.is_none() && st(&h).sel().pen.is_none());
+        assert!(st(&h).doc().undo_count() == 1);
     }
 }
 
@@ -149,7 +150,7 @@ fn ctrl_the_option_and_the_pen_eraser_end_make_it_a_selection_eraser_and_shift_a
     brush(&mut h, 4.0, true);
     stroke(&mut h, rect, &LINE, Modifiers::NONE);
     stroke(&mut h, rect, &CROSS, Modifiers::COMMAND);
-    assert_eq!(st(&h).doc.undo_count(), 2, "{}", message(&h));
+    assert_eq!(st(&h).doc().undo_count(), 2, "{}", message(&h));
     let want = two_d(
         &[(&LINE, Modifiers::NONE), (&CROSS, Modifiers::COMMAND)],
         4.0,
@@ -163,12 +164,12 @@ fn ctrl_the_option_and_the_pen_eraser_end_make_it_a_selection_eraser_and_shift_a
     tool(&mut h, Tool::SelectPen);
     brush(&mut h, 4.0, true);
     stroke(&mut h, rect, &LINE, Modifiers::NONE);
-    h.state_mut().state.sel.pen_erase = true;
+    h.sel_mut().pen_erase = true;
     stroke(&mut h, rect, &CROSS, Modifiers::NONE);
     assert_eq!(amount(&h, 33, 32), 0, "選択消しのオプションで削る");
     stroke(&mut h, rect, &CROSS, Modifiers::SHIFT);
     assert_eq!(amount(&h, 33, 24), 255, "Shift を押せば追加する");
-    assert_eq!(st(&h).doc.undo_count(), 3, "{}", message(&h));
+    assert_eq!(st(&h).doc().undo_count(), 3, "{}", message(&h));
     // ペンの消しゴムの端: 削る
     let (mut h, rect) = plate_view(true);
     tool(&mut h, Tool::SelectPen);
@@ -189,7 +190,7 @@ fn ctrl_the_option_and_the_pen_eraser_end_make_it_a_selection_eraser_and_shift_a
     h.step();
     h.run();
     assert_eq!(amount(&h, 33, 32), 0, "消しゴムの端で削る: {}", message(&h));
-    assert_eq!(st(&h).doc.undo_count(), 2);
+    assert_eq!(st(&h).doc().undo_count(), 2);
 }
 
 #[test]
@@ -197,10 +198,10 @@ fn the_pen_pressure_scales_the_amount_and_the_3d_symmetry_is_not_used() {
     let (mut h, rect) = plate_view(true);
     tool(&mut h, Tool::SelectPen);
     brush(&mut h, 4.0, true);
-    h.state_mut().state.brush.pressure_opacity = true;
+    h.brush_mut().pressure.opacity = true;
     // 3D の対称は選択ペンに使わない（2D の選択ペンと同じ）
     crate::common::rulers::mirror_3d(
-        &mut h.state_mut().state,
+        h.app_mut(),
         yolu_core::glam::DVec3::ZERO,
         yolu_core::glam::DVec3::X,
     );
@@ -223,7 +224,7 @@ fn the_pen_pressure_scales_the_amount_and_the_3d_symmetry_is_not_used() {
     let (mut h2, rect2) = plate_view(true);
     tool(&mut h2, Tool::SelectPen);
     brush(&mut h2, 4.0, true);
-    h2.state_mut().state.brush.pressure_opacity = true;
+    h2.brush_mut().pressure.opacity = true;
     let pts2 = on_plate(&h2, rect2, &LINE);
     for (i, p) in pts2.iter().enumerate() {
         h2.state().pen().push(pen_sample(*p, true, i as u32 * 10));
@@ -255,10 +256,13 @@ fn escape_and_switching_tools_drop_the_stroke_and_focus_loss_and_a_lost_release_
             move_to(&h, *p);
             h.step();
         }
-        assert!(st(&h).view3d.input.cover.is_some(), "{way}: 描いている");
+        assert!(
+            st(&h).view3d().view.input.cover.is_some(),
+            "{way}: 描いている"
+        );
         match way {
             0 => key(&h, Key::Escape, Modifiers::NONE),
-            1 => h.state_mut().state.apply(Action::SelectTool(Tool::Brush)),
+            1 => h.act(Action::SelectTool(Tool::Brush)),
             2 => h.event(Event::WindowFocused(false)),
             _ => {
                 // OS に押しを奪われて補った離し（ペンの押しは別の道）: 下のペンの試験で見る。ここは離すだけ
@@ -269,19 +273,19 @@ fn escape_and_switching_tools_drop_the_stroke_and_focus_loss_and_a_lost_release_
         h.run();
         assert!(!st(&h).is_stroking(), "{way}");
         assert!(
-            st(&h).view3d.input.cover.is_none() && st(&h).sel.pen.is_none(),
+            st(&h).view3d().view.input.cover.is_none() && st(&h).sel().pen.is_none(),
             "{way}"
         );
         match way {
             // 捨てる: 何も選ばず、取り消しに積まない
             0 | 1 => {
                 assert!(selection(&h).is_none(), "{way}");
-                assert_eq!(st(&h).doc.undo_count(), 0, "{way}");
+                assert_eq!(st(&h).doc().undo_count(), 0, "{way}");
             }
             // そこまでを確定する（3D のブラシと同じ）
             _ => {
                 assert!(selection(&h).is_some(), "{way}: そこまでを選ぶ");
-                assert_eq!(st(&h).doc.undo_count(), 1, "{way}");
+                assert_eq!(st(&h).doc().undo_count(), 1, "{way}");
             }
         }
         release(&h, pts[3], PointerButton::Primary);
@@ -299,28 +303,28 @@ fn a_pen_press_taken_by_the_os_ends_the_selection_pen_stroke_at_the_last_point()
         h.state().pen().push(pen_sample(*p, true, i as u32 * 10));
         h.step();
     }
-    assert!(st(&h).view3d.input.cover.is_some());
+    assert!(st(&h).view3d().view.input.cover.is_some());
     h.state().pen().push_lost(pen_sample(pts[3], false, 50));
     h.step();
     h.run();
-    assert!(st(&h).view3d.input.cover.is_none() && st(&h).sel.pen.is_none());
-    assert!(st(&h).view3d.input.pen_press.is_none());
+    assert!(st(&h).view3d().view.input.cover.is_none() && st(&h).sel().pen.is_none());
+    assert!(st(&h).view3d().view.input.pen_press.is_none());
     assert!(selection(&h).is_some(), "最後の位置までを選ぶ");
-    assert_eq!(st(&h).doc.undo_count(), 1);
+    assert_eq!(st(&h).doc().undo_count(), 1);
     // 次の押しは新しいストローク
     stroke(&mut h, rect, &CROSS, Modifiers::NONE);
-    assert_eq!(st(&h).doc.undo_count(), 2);
+    assert_eq!(st(&h).doc().undo_count(), 2);
 }
 
 #[test]
 fn a_selection_pen_press_during_the_leftover_of_a_released_brush_stroke_finishes_it_first() {
     let (mut h, rect) = cube_view();
     {
-        let s = &mut h.state_mut().state;
-        s.brush.radius = 3.0;
-        s.brush.spacing = 0.2;
-        s.view3d.input.paint_budget = Some(std::time::Duration::ZERO);
-        s.color.set_main([1.0, 0.0, 0.0, 1.0]);
+        let s = h.app_mut();
+        s.brush_mut().radius = 3.0;
+        s.brush_mut().spacing = 0.2;
+        s.view3d_mut().view.input.paint_budget = Some(std::time::Duration::ZERO);
+        s.color_mut().set_main([1.0, 0.0, 0.0, 1.0]);
     }
     let (a, b) = (
         screen_of(&h, rect, Vec3::new(-0.4, -0.35, -0.5)),
@@ -333,11 +337,11 @@ fn a_selection_pen_press_during_the_leftover_of_a_released_brush_stroke_finishes
     release_with(&h, b, Modifiers::NONE);
     h.step();
     assert!(
-        st(&h).view3d.input.released && st(&h).is_stroking(),
+        st(&h).view3d().view.input.released && st(&h).is_stroking(),
         "確定待ち"
     );
     // ツールは直に替えて、押しが先に確定させる
-    h.state_mut().state.tool = Tool::SelectPen;
+    h.set_tool(Tool::SelectPen);
     let (c, d) = (
         screen_of(&h, rect, Vec3::new(-0.2, -0.2, -0.5)),
         screen_of(&h, rect, Vec3::new(0.2, 0.2, -0.5)),
@@ -345,7 +349,7 @@ fn a_selection_pen_press_during_the_leftover_of_a_released_brush_stroke_finishes
     drag_mods(&mut h, &[c, (c + d.to_vec2()) * 0.5, d], Modifiers::NONE);
     assert!(!st(&h).is_stroking(), "{}", message(&h));
     assert_eq!(
-        st(&h).doc.undo_count(),
+        st(&h).doc().undo_count(),
         2,
         "線の確定と選択範囲、それぞれ 1 回: {}",
         message(&h)
@@ -357,9 +361,7 @@ fn a_selection_pen_press_during_the_leftover_of_a_released_brush_stroke_finishes
 fn releasing_the_hold_key_in_the_middle_of_a_3d_selection_pen_stroke_finishes_the_stroke_first() {
     let (mut h, rect) = plate_view(true);
     brush(&mut h, 4.0, true);
-    h.state_mut()
-        .state
-        .apply(Action::ToolKeyMode("tool.select_pen", ToolKeyMode::Hold));
+    h.act(Action::ToolKeyMode("tool.select_pen", ToolKeyMode::Hold));
     h.run();
     let key_event = |h: &H, pressed: bool| {
         h.event(Event::Key {
@@ -373,18 +375,18 @@ fn releasing_the_hold_key_in_the_middle_of_a_3d_selection_pen_stroke_finishes_th
     key_event(&h, true);
     h.step();
     h.step();
-    assert_eq!(st(&h).tool, Tool::SelectPen);
+    assert_eq!(st(&h).tool(), Tool::SelectPen);
     let pts = on_plate(&h, rect, &LINE);
     press(&h, pts[0], PointerButton::Primary);
     h.step();
     move_to(&h, pts[1]);
     h.step();
-    assert!(st(&h).view3d.input.cover.is_some());
+    assert!(st(&h).view3d().view.input.cover.is_some());
     key_event(&h, false);
     for _ in 0..20 {
         h.step();
     }
-    assert_eq!(st(&h).tool, Tool::SelectPen, "描いている途中は戻さない");
+    assert_eq!(st(&h).tool(), Tool::SelectPen, "描いている途中は戻さない");
     for p in &pts[2..] {
         move_to(&h, *p);
         h.step();
@@ -393,8 +395,8 @@ fn releasing_the_hold_key_in_the_middle_of_a_3d_selection_pen_stroke_finishes_th
     h.step();
     h.run();
     assert!(selection(&h).is_some(), "{}", message(&h));
-    assert_eq!(st(&h).doc.undo_count(), 1);
-    assert_eq!(st(&h).tool, Tool::Brush, "描き終えたら戻る");
+    assert_eq!(st(&h).doc().undo_count(), 1);
+    assert_eq!(st(&h).tool(), Tool::Brush, "描き終えたら戻る");
 }
 
 #[test]
@@ -402,22 +404,22 @@ fn a_read_only_set_and_a_small_work_budget_refuse_and_change_nothing() {
     let (mut h, rect) = plate_view(true);
     tool(&mut h, Tool::SelectPen);
     brush(&mut h, 4.0, true);
-    h.state_mut().state.sets.get_mut(0).unwrap().read_only = Some("読めない中身".into());
+    h.sets_mut().get_mut(0).unwrap().read_only = Some("読めない中身".into());
     let pts = on_plate(&h, rect, &LINE);
     drag_mods(&mut h, &pts, Modifiers::NONE);
     assert!(message(&h).contains("読めない中身"), "{}", message(&h));
     assert!(selection(&h).is_none());
-    assert!(st(&h).sel.pen.is_none() && st(&h).view3d.input.cover.is_none());
+    assert!(st(&h).sel().pen.is_none() && st(&h).view3d().view.input.cover.is_none());
     // 作業の予算（被覆のタイルの分）に入らない
     let (mut h, rect) = plate_view(true);
     tool(&mut h, Tool::SelectPen);
     brush(&mut h, 4.0, true);
-    h.state_mut().state.sel.pen_budget = 1000;
+    h.sel_mut().pen_budget = 1000;
     let pts = on_plate(&h, rect, &LINE);
     drag_mods(&mut h, &pts, Modifiers::NONE);
     assert!(!message(&h).is_empty());
     assert!(selection(&h).is_none(), "{}", message(&h));
-    assert_eq!(st(&h).doc.undo_count(), 0);
+    assert_eq!(st(&h).doc().undo_count(), 0);
     assert!(!st(&h).is_stroking());
 }
 
@@ -426,19 +428,17 @@ fn the_quick_mask_brush_still_works_beside_the_selection_pen() {
     // クイックマスクが入っていても、選択ペンのツールは選択ペンとして塗る（クイックマスクのブラシではない）
     let (mut h, rect) = plate_view(true);
     brush(&mut h, 4.0, true);
-    h.state_mut()
-        .state
-        .apply(Action::Sel(yolu_app::selection::SelAction::Ui(
-            yolu_app::selection::SelUiOp::QuickMask(Some(true)),
-        )));
+    h.act(Action::Sel(yolu_app::selection::SelAction::Ui(
+        yolu_app::selection::SelUiOp::QuickMask(Some(true)),
+    )));
     tool(&mut h, Tool::SelectPen);
     stroke(&mut h, rect, &LINE, Modifiers::NONE);
     assert!(selection(&h).is_some(), "{}", message(&h));
-    assert_eq!(st(&h).doc.undo_count(), 1);
+    assert_eq!(st(&h).doc().undo_count(), 1);
     // ブラシへ替えれば、クイックマスクのブラシとして塗る（追加）
     tool(&mut h, Tool::Brush);
     stroke(&mut h, rect, &CROSS, Modifiers::NONE);
-    assert_eq!(st(&h).doc.undo_count(), 2, "{}", message(&h));
+    assert_eq!(st(&h).doc().undo_count(), 2, "{}", message(&h));
     assert!(amount(&h, 33, 32) > 0);
 }
 
@@ -454,15 +454,13 @@ pub(crate) const WINDING: [(f64, f64); 6] = [
 ];
 
 pub(crate) fn select_rect(h: &mut H, (x0, y0, x1, y1): (i64, i64, i64, i64)) {
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Edit(SelEdit::Rect {
-            x0,
-            y0,
-            x1,
-            y1,
-            mode: SelectionCombine::Replace,
-        })));
+    h.act(Action::Sel(SelAction::Edit(SelEdit::Rect {
+        x0,
+        y0,
+        x1,
+        y1,
+        mode: SelectionCombine::Replace,
+    })));
     h.run();
 }
 
@@ -485,7 +483,7 @@ fn escape_in_the_middle_of_a_3d_stroke_keeps_the_selection_that_was_there() {
         select_rect(&mut h, (2, 2, 62, 62));
         let kept = selection(&h);
         assert!(kept.is_some());
-        let steps = st(&h).doc.undo_count();
+        let steps = st(&h).doc().undo_count();
         tool(&mut h, t);
         brush(&mut h, 3.0, false);
         let pts = on_plate(&h, rect, &WINDING);
@@ -503,7 +501,7 @@ fn escape_in_the_middle_of_a_3d_stroke_keeps_the_selection_that_was_there() {
             }
         }
         assert!(
-            st(&h).view3d.input.stroke.is_some(),
+            st(&h).view3d().view.input.stroke.is_some(),
             "{label}: ストロークの途中"
         );
         key(&h, Key::Escape, Modifiers::NONE);
@@ -512,7 +510,10 @@ fn escape_in_the_middle_of_a_3d_stroke_keeps_the_selection_that_was_there() {
             selection(&h) == kept,
             "{label}: 同じ Esc で前からある選択範囲まで解除しない"
         );
-        assert!(st(&h).view3d.input.stroke.is_none(), "{label}: 捨てた");
+        assert!(
+            st(&h).view3d().view.input.stroke.is_none(),
+            "{label}: 捨てた"
+        );
         if mouse {
             release(&h, pts[2], PointerButton::Primary);
         } else {
@@ -522,7 +523,7 @@ fn escape_in_the_middle_of_a_3d_stroke_keeps_the_selection_that_was_there() {
         h.run();
         assert!(selection(&h) == kept, "{label}: 離しても変わらない");
         assert_eq!(
-            st(&h).doc.undo_count(),
+            st(&h).doc().undo_count(),
             steps,
             "{label}: 取り消しに積まない"
         );
@@ -533,4 +534,50 @@ fn escape_in_the_middle_of_a_3d_stroke_keeps_the_selection_that_was_there() {
         h.run();
         assert!(selection(&h).is_none(), "{label}: 次の Esc で解除");
     }
+}
+
+/// 3D の選択ペンのドラッグ（文書を書かない描いている最中）の間に、バケツ（近い色）の裏の仕事の結果が届いても、結果は塗れて 1 回の Undo
+/// （塗りつぶしの出どころで「塗りました。」）。選択ペンのストロークは、そのあと離して別の 1 回の Undo。
+#[test]
+fn a_bucket_result_that_arrives_during_a_3d_selection_pen_stroke_is_still_filled() {
+    use yolu_app::notice::{Kind, Source};
+    let (mut h, rect) = plate_view(true);
+    tool(&mut h, Tool::SelectPen);
+    brush(&mut h, 4.0, true);
+    let pts = on_plate(&h, rect, &LINE);
+    press_with(&h, pts[0], Modifiers::NONE);
+    h.step();
+    move_to(&h, pts[1]);
+    h.step();
+    assert!(
+        st(&h).is_stroking() && st(&h).view3d().view.input.cover.is_some(),
+        "選択ペンのドラッグの途中: {}",
+        message(&h)
+    );
+    let before = st(&h).doc().undo_count();
+    let layer = st(&h).selected_layer().unwrap();
+    let (job, tx) = yolu_app::region::bucket::Job::parked(st(&h), layer);
+    h.app_mut().region_mut().job = Some(job);
+    tx.send(Ok(SelectionMask::rectangle(st(&h).doc(), 0, 0, 8, 8)))
+        .unwrap();
+    move_to(&h, pts[2]);
+    h.step();
+    assert!(st(&h).region().job.is_none(), "結果を受けた");
+    assert!(st(&h).is_stroking(), "選択ペンのドラッグは続く");
+    assert_eq!(st(&h).doc().undo_count(), before + 1, "{}", message(&h));
+    let notice = st(&h).last_notice().clone().expect("知らせ");
+    assert_eq!((notice.source, notice.kind), (Source::Fill, Kind::Info));
+    assert_eq!(notice.text, "塗りました。");
+    let painted = st(&h)
+        .doc()
+        .layer(layer)
+        .unwrap()
+        .pixel(yolu_app::engine::Channel::Color, 1, 1)
+        .unwrap();
+    assert!(painted.a > 0);
+    release_with(&h, pts[2], Modifiers::NONE);
+    h.step();
+    h.run();
+    assert!(!st(&h).is_stroking());
+    assert_eq!(st(&h).doc().undo_count(), before + 2, "{}", message(&h));
 }

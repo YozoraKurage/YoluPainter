@@ -1,4 +1,5 @@
 use super::{check, input::hash_text, MeshBakeInput, MeshIdSource, Result};
+use crate::Reason;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 #[derive(Clone, Debug, Default)]
@@ -13,7 +14,7 @@ impl IdColorAssignments {
         }
         check(
             colors.len() <= 4096 && colors.iter().all(|(k, v)| *k < 4_000_000 && *v <= 0xffffff),
-            "手動ID色の数・番号・色が範囲外です",
+            Reason::ManualIdColorsOutOfRange,
         )?;
         check(
             colors.is_empty()
@@ -21,7 +22,7 @@ impl IdColorAssignments {
                     && binding
                         .bytes()
                         .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
-            "手動ID色のモデル指紋が不正です",
+            Reason::ManualIdColorsFingerprintInvalid,
         )?;
         Ok(Self { binding, colors })
     }
@@ -37,7 +38,7 @@ impl IdColorAssignments {
     pub fn with_color(&self, binding: &str, part: usize, rgb: Option<u32>) -> Result<Self> {
         check(
             self.colors.is_empty() || binding == self.binding,
-            "手動ID色が別のモデルに属しています",
+            Reason::ManualIdColorsOtherModel,
         )?;
         let mut colors = self.colors.clone();
         if let Some(rgb) = rgb {
@@ -126,7 +127,7 @@ pub fn id_part_binding(input: &MeshBakeInput) -> (Vec<usize>, String) {
 pub fn id_palette_levels(count: usize) -> Result<usize> {
     (2usize..=256)
         .find(|q| q * q * q - q >= count)
-        .ok_or_else(|| super::MeshMapError("IDの部品が多すぎます".into()))
+        .ok_or(super::MeshMapError::Refused(Reason::BakeTooManyIdParts))
 }
 fn palette_level(i: usize, q: usize) -> u32 {
     ((i * 255 + (q - 1) / 2) / (q - 1)) as u32
@@ -191,7 +192,7 @@ impl IdTable {
             let count = parts.iter().max().copied().unwrap_or(0) + 1;
             check(
                 binding == manual.binding && manual.colors.keys().all(|p| *p < count),
-                "手動ID色が別のモデルまたは分割に属しています",
+                Reason::ManualIdColorsOtherModelOrSplit,
             )?;
             result.manual = parts
                 .iter()

@@ -186,7 +186,7 @@ pub fn read(bytes: &[u8]) -> Result<StoredPose> {
     check(root.is_object(), "pose.json がオブジェクトではありません")?;
     check(
         root.get("format").and_then(Value::as_i64) == Some(FORMAT),
-        "pose.json の版が未対応です",
+        "pose.json のバージョンが未対応です",
     )?;
     let array = |key: &str| -> Result<Vec<Value>> {
         match root.get(key) {

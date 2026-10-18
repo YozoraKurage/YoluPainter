@@ -420,6 +420,123 @@ fn anchor_omits_above_and_ancestor_opacity() {
     let p = Plan::new(&layers, 2, (1, 1), ChannelKind::Color).unwrap();
     assert_eq!(p.pixel(0, 0), Rgba8::new(200, 0, 0, 128));
 }
+/// 通過のグループにクリッピングされたレイヤーが 1 枚でもあれば、見えるかによらず Anchor の合成もそのグループを分離する（文書の合成と同じ）。
+/// 基（赤）の上に通過のグループ（緑の帯のラスターと反転）、その上にクリッピングされたレイヤー、一番上が host。帯は左の画素だけ。
+#[test]
+fn anchor_isolates_a_pass_through_group_with_any_clipped_layer() {
+    use anchor::*;
+    let red = Rgba8::new(200, 0, 0, 255);
+    let band_data = [0, 255, 0, 255, 0, 0, 0, 0];
+    let band = Image::new(&band_data, 2, 1).unwrap();
+    let inverted_red = Rgba8::new(55, 255, 255, 255);
+    let inverted_green = Rgba8::new(255, 0, 255, 255);
+    // 1 つ目は、クリッピングされたレイヤーの状態（隠す・有効でない・不透明度 0・透明・無し）
+    type Edit = fn(&mut Layer<'_>);
+    let cases: [(&str, bool, Edit); 5] = [
+        ("無し", false, |l| {
+            l.clipping = false;
+            l.visible = false
+        }),
+        ("非表示", true, |l| l.visible = false),
+        ("チャンネルを切った", true, |l| l.enabled = false),
+        ("不透明度 0", true, |l| l.opacity = 0.),
+        ("透明", true, |l| {
+            l.content = Content::Fill(Rgba8::TRANSPARENT)
+        }),
+    ];
+    for (name, isolated, edit) in cases {
+        let mut layers = vec![
+            Layer::new(Content::Fill(red)),
+            Layer::new(Content::Pixels(&band)),
+            Layer::new(Content::Adjustment(yolu_core::AdjustmentSettings::invert())),
+            Layer::new(Content::Group),
+            Layer::new(Content::Fill(Rgba8::new(0, 255, 255, 255))),
+            Layer::new(Content::Fill(Rgba8::TRANSPARENT)),
+        ];
+        layers[1].parent = Some(3);
+        layers[2].parent = Some(3);
+        layers[3].blend = BlendMode::PassThrough;
+        layers[4].clipping = true;
+        edit(&mut layers[4]);
+        let p = Plan::new(&layers, 5, (2, 1), ChannelKind::Color).unwrap();
+        let (outside, inside) = (p.pixel(1, 0), p.pixel(0, 0));
+        assert_eq!(inside, inverted_green, "{name}: 帯の中");
+        assert_eq!(
+            outside,
+            if isolated { red } else { inverted_red },
+            "{name}: 帯の外"
+        );
+    }
+}
+/// ホストが通過のグループの中にあり、そのグループのすぐ上にクリッピングされた兄弟があるとき、Anchor が読む下は、文書の合成と同じく、
+/// グループの外の下を混ぜない（基は赤、グループの中は緑の帯のラスターと反転、ホストは帯の上）。比べる相手は、グループの中の物だけを
+/// 一番上の段に置いた文書の合成。クリッピングされた兄弟が無いときは、グループは通過のままで、基まで読む（基も含む文書の合成と同じ）。
+#[test]
+fn anchor_reads_below_an_ancestor_group_isolated_by_a_clipped_sibling_like_the_document() {
+    use anchor::*;
+    use yolu_core::{AdjustmentSettings, Document};
+    let red = Rgba8::new(200, 0, 0, 255);
+    let green = Rgba8::new(0, 255, 0, 255);
+    let band_data = [0, 255, 0, 255, 0, 0, 0, 0];
+    let band = Image::new(&band_data, 2, 1).unwrap();
+    // 文書の側: 反転が基まで届くか（通過）、グループの中だけか（分離）
+    let doc = |with_base: bool| {
+        let mut d = Document::with_tile_size(2, 1, 4).unwrap();
+        if with_base {
+            let b = d.add_layer("基").unwrap();
+            for x in 0..2 {
+                d.set_pixel(b, x, 0, red).unwrap();
+            }
+        }
+        let g = d.add_layer("帯").unwrap();
+        d.set_pixel(g, 0, 0, green).unwrap();
+        let i = d
+            .add_adjustment_layer("反転", AdjustmentSettings::invert(), None, None)
+            .unwrap();
+        let g = d.group_layers(&[g, i], "グループ").unwrap();
+        d.set_layer_blend_mode(g, BlendMode::PassThrough).unwrap();
+        (0..2)
+            .map(|x| d.composite_pixel(Channel::Color, x, 0).unwrap())
+            .collect::<Vec<_>>()
+    };
+    let inner_only = doc(false);
+    let through = doc(true);
+    assert_ne!(
+        inner_only[1], through[1],
+        "外の下が結果に混ざるか区別できる文書"
+    );
+    // 1 つ目は、クリッピングされた兄弟の状態
+    type Edit = fn(&mut Layer<'_>);
+    let cases: [(&str, bool, Edit); 4] = [
+        ("無し", false, |l| l.clipping = false),
+        ("見える", true, |_| {}),
+        ("非表示", true, |l| l.visible = false),
+        ("調整", true, |l| {
+            l.content = Content::Adjustment(AdjustmentSettings::invert())
+        }),
+    ];
+    for (name, isolated, edit) in cases {
+        let mut layers = vec![
+            Layer::new(Content::Fill(red)),
+            Layer::new(Content::Group),
+            Layer::new(Content::Pixels(&band)),
+            Layer::new(Content::Adjustment(AdjustmentSettings::invert())),
+            Layer::new(Content::Fill(Rgba8::TRANSPARENT)),
+            Layer::new(Content::Fill(Rgba8::new(0, 255, 255, 255))),
+        ];
+        layers[1].blend = BlendMode::PassThrough;
+        layers[2].parent = Some(1);
+        layers[3].parent = Some(1);
+        layers[4].parent = Some(1);
+        layers[5].clipping = true;
+        edit(&mut layers[5]);
+        let p = Plan::new(&layers, 4, (2, 1), ChannelKind::Color).unwrap();
+        let expected = if isolated { &inner_only } else { &through };
+        for x in 0..2 {
+            assert_eq!(p.pixel(x, 0), expected[x as usize], "{name}: x={x}");
+        }
+    }
+}
 #[test]
 fn anchor_rejects_parent_cycles_normal_and_budget() {
     use anchor::*;

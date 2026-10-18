@@ -48,9 +48,10 @@ fn main() {
     s.apply(Action::Bake(BakeAction::Start));
     s.wait_bake();
     eprintln!("マップを焼いた: {:.0} ms", ms(t));
-    let mut effect_inputs = s.doc.effect_inputs().clone();
+    let mut effect_inputs = s.session.doc.effect_inputs().clone();
     for kind in [MeshMapKind::Position, MeshMapKind::WorldNormal] {
         let map = s
+            .session
             .sets
             .current()
             .mesh_maps
@@ -61,7 +62,10 @@ fn main() {
             .with_map(MapInput::from_baked(&map, MapState::Current).expect("マップ"))
             .expect("入力");
     }
-    s.doc.set_effect_inputs(effect_inputs).expect("入力を置く");
+    s.session
+        .doc
+        .set_effect_inputs(effect_inputs)
+        .expect("入力を置く");
 
     // 1024² の模様（格子と斜めの縞）
     let n = 1024u32;
@@ -84,20 +88,29 @@ fn main() {
         .expect("棚へ入る");
     let image = inputs::image_id(&rid).expect("GUID");
     s.apply(Action::M2(Edit::NewFill));
-    let layer = s.selected_layer.expect("足したレイヤー");
+    let layer = s.session.selected_layer.expect("足したレイヤー");
     s.apply(Action::Fill(FillOp::Image {
         layer,
         channel: Channel::Color,
         image: Some(image),
     }));
-    let mut p = *s.doc.layer(layer).expect("レイヤー").projection();
+    let mut p = *s.session.doc.layer(layer).expect("レイヤー").projection();
     p.mode = ProjectionMode::Triplanar;
-    s.doc.set_fill_projection(layer, p, false).expect("投影");
+    s.session
+        .doc
+        .set_fill_projection(layer, p, false)
+        .expect("投影");
 
-    let rs = egui_kittest::wgpu::create_render_state(
-        egui_kittest::wgpu::default_wgpu_setup(),
-        Default::default(),
-    );
+    // kittest の既定の装置の設定の D3D12 のシェーダーのコンパイラーを、製品と同じにする
+    let mut setup = egui_kittest::wgpu::default_wgpu_setup();
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut setup {
+        create
+            .instance_descriptor
+            .backend_options
+            .dx12
+            .shader_compiler = yolu_gpu::dx12_compiler();
+    }
+    let rs = egui_kittest::wgpu::create_render_state(setup, Default::default());
     let info = rs.adapter.get_info();
     eprintln!("GPU: {} ({:?})", info.name, info.backend);
     let mut paint = Paint::new(&rs);
@@ -111,7 +124,7 @@ fn main() {
         let _ = rs.device.poll(wgpu::PollType::wait_indefinitely());
         ms(t)
     };
-    row("first", &[sync(&mut paint, &s.doc)]);
+    row("first", &[sync(&mut paint, &s.session.doc)]);
 
     let mut drags = Vec::new();
     let mut releases = Vec::new();
@@ -119,30 +132,38 @@ fn main() {
         // 1 回のドラッグ: 3 歩動かして離す
         for step in 0..3 {
             p.placement.center[0] += 0.01 * (k * 3 + step + 1) as f64 / 10.0;
-            s.doc.set_fill_projection(layer, p, true).expect("動かす");
-            drags.push(sync(&mut paint, &s.doc));
+            s.session
+                .doc
+                .set_fill_projection(layer, p, true)
+                .expect("動かす");
+            drags.push(sync(&mut paint, &s.session.doc));
         }
-        s.doc.end_coalescing();
-        releases.push(sync(&mut paint, &s.doc));
+        s.session.doc.end_coalescing();
+        releases.push(sync(&mut paint, &s.session.doc));
     }
     row("drag_step", &drags);
     row("release", &releases);
     // 内訳: 文書の合成だけ（全面・正確）と、歩幅 4 の粗い合成だけ
-    let whole = s.doc.bounds();
-    let coords: Vec<_> = s.doc.canvas_tiles().collect();
+    let whole = s.session.doc.bounds();
+    let coords: Vec<_> = s.session.doc.canvas_tiles().collect();
     let mut exact = Vec::new();
     let mut coarse = Vec::new();
     let mut buf = vec![0u8; whole.width as usize * whole.height as usize * 4];
     for _ in 0..3 {
         p.placement.center[1] += 0.003;
-        s.doc.set_fill_projection(layer, p, true).expect("動かす");
+        s.session
+            .doc
+            .set_fill_projection(layer, p, true)
+            .expect("動かす");
         let t = Instant::now();
-        s.doc
+        s.session
+            .doc
             .composite_coarse_tiles(Channel::Color, &coords, 4)
             .expect("粗い合成");
         coarse.push(ms(t));
         let t = Instant::now();
-        s.doc
+        s.session
+            .doc
             .composite_into(
                 Channel::Color,
                 whole,
@@ -151,7 +172,7 @@ fn main() {
             )
             .expect("合成");
         exact.push(ms(t));
-        s.doc.end_coalescing();
+        s.session.doc.end_coalescing();
     }
     row("composite_exact", &exact);
     row("composite_coarse4", &coarse);

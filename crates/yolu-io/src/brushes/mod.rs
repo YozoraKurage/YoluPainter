@@ -34,10 +34,12 @@ pub use error::{
     SkippedPattern, UnsupportedFile,
 };
 pub use notes::{
-    AbrKind, ControlKind, DualNote, PatternNote, Setting, Source, SutInput, SutMapped, SutNote,
-    SutTarget, TextureNote, Unrepresented, VbrShape,
+    AbrKind, ColorNote, ControlKind, DualNote, PatternNote, Setting, Source, SprayNote,
+    SutDualNote, SutInput, SutMapped, SutNote, SutTarget, TextureNote, Unrepresented, VbrShape,
 };
 pub use reader::MAX_DECODED_BYTES;
+/// `.sut` の手ブレ補正の強さ 1 あたりの糸の長さ（画素）。
+pub use sut::STABILIZER_PER_LEVEL as SUT_STABILIZER_PER_LEVEL;
 
 use reader::Budget;
 

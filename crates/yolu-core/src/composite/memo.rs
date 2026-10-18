@@ -44,6 +44,8 @@ pub struct MemoStats {
 #[derive(PartialEq, Eq)]
 struct Key {
     stroke: u64,
+    /// 合成したレイヤーセット（`LayerSetId` の値）。
+    set: u128,
     channel: Channel,
     /// 道の各段のレイヤーの番号。
     route: Vec<usize>,
@@ -142,6 +144,8 @@ impl Memo {
 pub(crate) struct MemoRequest<'m> {
     pub memo: &'m Memo,
     pub stroke: u64,
+    /// 合成するレイヤーセット（`LayerSetId` の値。描くレイヤーのレイヤーセット）。
+    pub set: u128,
     /// 描くレイヤーの番号（`layers` の中）。
     pub layer: usize,
     pub channel: Channel,
@@ -246,6 +250,7 @@ pub(super) fn prepare<'a>(
     let positions: Vec<usize> = route.iter().map(|r| r.0).collect();
     let key = Key {
         stroke: req.stroke,
+        set: req.set,
         channel: req.channel,
         route: route.iter().map(|r| r.1).collect(),
         foreign: req.foreign,

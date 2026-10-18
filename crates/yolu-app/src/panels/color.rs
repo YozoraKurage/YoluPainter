@@ -7,6 +7,7 @@ use egui::{
     WidgetInfo, WidgetType,
 };
 
+use crate::engine::unit_f32_to_byte;
 use crate::notice::Source;
 use crate::state::{hsv_to_rgb, parse_hex, to_hex, Action, AppState};
 use crate::ui::theme as t;
@@ -24,7 +25,11 @@ pub struct ColorTextures {
 }
 
 fn rgb32(r: f32, g: f32, b: f32) -> Color32 {
-    Color32::from_rgb(w::to_byte(r), w::to_byte(g), w::to_byte(b))
+    Color32::from_rgb(
+        unit_f32_to_byte(r),
+        unit_f32_to_byte(g),
+        unit_f32_to_byte(b),
+    )
 }
 
 impl ColorTextures {
@@ -100,10 +105,10 @@ impl ColorTextures {
                         }
                         let (r, g, b) = hsv_to_rgb(hue, 1.0, 1.0);
                         pixels.push(Color32::from_rgba_unmultiplied(
-                            w::to_byte(r),
-                            w::to_byte(g),
-                            w::to_byte(b),
-                            w::to_byte(alpha),
+                            unit_f32_to_byte(r),
+                            unit_f32_to_byte(g),
+                            unit_f32_to_byte(b),
+                            unit_f32_to_byte(alpha),
                         ));
                     }
                 }
@@ -253,7 +258,7 @@ fn marker(p: &egui::Painter, at: Pos2, radius: f32) {
 
 fn sv_square(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures, r: Rect, id: &str) {
     let response = ui.interact(r, ui.make_persistent_id(id), Sense::click_and_drag());
-    if response.is_pointer_button_down_on() {
+    if w::pressed_by_primary(&response) {
         if let Some(p) = response.interact_pointer_pos() {
             app.color.pick_sv(
                 (p.x - r.left()) / r.width(),
@@ -279,7 +284,7 @@ fn sv_square(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures, r: Rect, 
         WidgetInfo::labeled(
             WidgetType::Other,
             true,
-            app.lang.pick("彩度と明度", "Saturation and value"),
+            app.lang.t("panels-saturation-and-value"),
         )
     });
 }
@@ -319,8 +324,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
         let response = ui.interact(wheel, id, Sense::click_and_drag());
         // 押した所が輪なら色相、中の四角なら彩度と明度（ドラッグの間は押したほうのまま）
         let mode_id = id.with("mode");
-        if response.drag_started()
-            || (response.is_pointer_button_down_on() && ui.input(|i| i.pointer.any_pressed()))
+        if response.drag_started_by(egui::PointerButton::Primary)
+            || (w::pressed_by_primary(&response) && ui.input(|i| i.pointer.any_pressed()))
         {
             let origin = ui.input(|i| i.pointer.press_origin());
             let mode = origin
@@ -336,7 +341,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
                 .unwrap_or(0);
             ui.data_mut(|d| d.insert_temp(mode_id, mode));
         }
-        if response.is_pointer_button_down_on() {
+        if w::pressed_by_primary(&response) {
             let mode: u8 = ui.data(|d| d.get_temp(mode_id).unwrap_or(0));
             if let Some(p) = response.interact_pointer_pos() {
                 match mode {
@@ -389,11 +394,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
             6.0,
         );
         response.widget_info(|| {
-            WidgetInfo::labeled(
-                WidgetType::Other,
-                true,
-                app.lang.pick("色相の円", "Hue wheel"),
-            )
+            WidgetInfo::labeled(WidgetType::Other, true, app.lang.t("panels-hue-wheel"))
         });
     } else {
         let sv = Rect::from_min_size(
@@ -410,7 +411,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
             ui.make_persistent_id("color.hue"),
             Sense::click_and_drag(),
         );
-        if response.is_pointer_button_down_on() {
+        if w::pressed_by_primary(&response) {
             if let Some(p) = response.interact_pointer_pos() {
                 app.color
                     .set_hue((1.0 - (p.y - hue.top()) / hue.height()).clamp(0.0, 1.0));
@@ -437,13 +438,13 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
             2.0,
         );
         response.widget_info(|| {
-            WidgetInfo::labeled(WidgetType::Slider, true, app.lang.pick("色相", "Hue"))
+            WidgetInfo::labeled(WidgetType::Slider, true, app.lang.t("panels-hue"))
         });
     }
     let tip = if app.color.wheel {
-        app.lang.pick("四角と色相の帯", "Square and hue bar")
+        app.lang.t("panels-square-and-hue-bar-tip")
     } else {
-        app.lang.pick("色相の円", "Hue wheel")
+        app.lang.t("panels-hue-wheel-tip")
     };
     if w::icon_button(
         ui,
@@ -465,7 +466,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
     }
 
     // 16 進とアルファ
-    // 16 進の欄を広めに取る（同梱の書体の数字は幅広で、「#RRGGBB」が半分の幅に収まらない）
+    // 16 進の欄を広めに取る（同梱のフォントの数字は幅広で、「#RRGGBB」が半分の幅に収まらない）
     let cells = if stacked {
         // 狭い欄: 16 進とアルファを 2 行に（「#RRGGBB」が欠けないように）
         [
@@ -486,7 +487,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
         cells[0],
         "color.hex",
         &hex,
-        Some(app.lang.pick("16 進の色（#RRGGBB）", "Hex color (#RRGGBB)")),
+        Some(app.lang.t("panels-hex-color-rrggbb-tip")),
         false,
     )
     .committed
@@ -498,17 +499,13 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
             let typed = app.lang.quote(&typed);
             app.fail(
                 Source::Color,
-                app.lang.pick(
-                    format!("{typed}は 16 進の色として読めません。"),
-                    format!("{typed} is not a valid hex color."),
-                ),
+                app.lang
+                    .f("panels-is-not-a-valid-hex", &[("typed", &typed)]),
             );
         }
     }
-    let spec = SliderSpec::new("A", 0.0, 100.0, NumberFormat::int("%")).tooltip(
-        app.lang
-            .pick("描画色のアルファ", "Alpha of the brush color"),
-    );
+    let spec = SliderSpec::new("A", 0.0, 100.0, NumberFormat::int("%"))
+        .tooltip(app.lang.t("panels-alpha-of-the-brush-color-tip"));
     let alpha = w::slider(
         ui,
         cells[1],
@@ -553,7 +550,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
             1.0,
             2.0,
         );
-        let label = format!("#{}{:02X}", to_hex(*c), w::to_byte(c[3]));
+        let label = format!("#{}{:02X}", to_hex(*c), unit_f32_to_byte(c[3]));
         if response.clicked() {
             app.color.set_main(*c);
         }

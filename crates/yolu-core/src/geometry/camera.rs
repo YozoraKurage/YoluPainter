@@ -23,8 +23,6 @@ pub const DEFAULT_PITCH: f32 = 10.0;
 
 /// 回すときの、画面の点 1 つあたりの角度（度。Unity 版と同じ）。
 pub const ORBIT_DEGREES_PER_POINT: f32 = 0.35;
-/// 軸の向きへ吸い付く角度（度）。
-pub const SNAP_ANGLE: f32 = 15.0;
 
 /// 軸に沿った視点（正面・背面・右・左・上・下）。モデルは Unity の流儀で +Z を向き、+Y が上。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,7 +51,7 @@ impl AxisView {
         Self::Bottom,
     ];
 
-    /// この視点の (yaw, pitch)（度）。上・下は pitch ±90°（`orbit` は ±89° までなので、吸い付くときだけここへ来る）で、
+    /// この視点の (yaw, pitch)（度）。上・下は pitch ±90°（`orbit` は ±89° までなので、スナップ回転で切り替えるときだけここへ来る）で、
     /// yaw は 180°（画面の上がモデルの背中側）。
     pub fn orientation(self) -> (f32, f32) {
         match self {
@@ -85,10 +83,10 @@ impl AxisView {
     }
 }
 
-/// 見ている向きが軸の視点とそろっているとみなす cos（約 0.26°。吸い付き・軸の視点の選びの後の向きはこの中に入る）。
+/// 見ている向きが軸の視点とそろっているとみなす cos（約 0.26°。スナップ回転・軸の視点の選びの後の向きはこの中に入る）。
 const ALIGNED_COS: f32 = 0.99999;
 
-/// 見ている向きが軸の視点にそろっていれば、その視点（吸い付いた・軸の視点を選んだ後の向き。回して外れたら None）。
+/// 見ている向きが軸の視点にそろっていれば、その視点（スナップ回転で切り替えた・軸の視点を選んだ後の向き。回して外れたら None）。
 pub fn aligned_axis_view(yaw: f32, pitch: f32) -> Option<AxisView> {
     let forward = orientation_rotation(yaw, pitch) * Vec3::Z;
     AxisView::ALL
@@ -208,7 +206,7 @@ fn orientation_rotation(yaw: f32, pitch: f32) -> Quat {
     )
 }
 
-/// 回したあとの (yaw, pitch)（`orbit` と同じ動き。pitch は ±89° まで。今の pitch がそれを越えている（軸の視点へ吸い付いて ±90°）ときは、
+/// 回したあとの (yaw, pitch)（`orbit` と同じ動き。pitch は ±89° まで。今の pitch がそれを越えている（上・下の視点へ切り替えて ±90°）ときは、
 /// その値まで止めを広げる: 真上・真下から回し始めても、最初に 1° はねない）。
 pub fn orbited(yaw: f32, pitch: f32, dx_points: f32, dy_points: f32) -> (f32, f32) {
     let limit = pitch.abs().clamp(89.0, 90.0);
@@ -218,29 +216,52 @@ pub fn orbited(yaw: f32, pitch: f32, dx_points: f32, dy_points: f32) -> (f32, f3
     )
 }
 
-/// この向きに `SNAP_ANGLE` 以内で近い軸の視点（見ている向きどうしの角度。いちばん近いもの。無ければ None）。
-pub fn nearest_axis_view(yaw: f32, pitch: f32) -> Option<AxisView> {
-    let forward = orientation_rotation(yaw, pitch) * Vec3::Z;
-    AxisView::ALL
-        .into_iter()
-        .map(|view| (view, forward.dot(view.forward()).clamp(-1.0, 1.0).acos()))
-        .filter(|(_, angle)| angle.to_degrees() <= SNAP_ANGLE)
-        .min_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(view, _)| view)
+/// スナップ回転のドラッグの向き（画面で動かした向き）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Flick {
+    /// 右へ（`orbited` の dx が正。yaw が増える）。
+    Right,
+    /// 左へ（dx が負）。
+    Left,
+    /// 下へ（dy が正。pitch が増え、上の視点の側へ回る）。
+    Down,
+    /// 上へ（dy が負。下の視点の側へ回る）。
+    Up,
 }
 
-/// 向きを、`SNAP_ANGLE` 以内にある軸の視点へ吸い付ける（無ければそのまま）。yaw は回した数（360° の何周か）を保つ。
-/// 上・下は画面の向きが決まらないので、今の yaw にいちばん近い 90° の倍数にする。
-pub fn snap_orientation(yaw: f32, pitch: f32) -> (f32, f32) {
-    let Some(view) = nearest_axis_view(yaw, pitch) else {
-        return (yaw, pitch);
-    };
-    let (axis_yaw, axis_pitch) = view.orientation();
-    let target_yaw = match view {
+/// 向きにいちばん近い軸の視点（角度の近さだけで選び、範囲は見ない。同じ近さなら `AxisView::ALL` の先のもの）。
+fn closest_axis_view(yaw: f32, pitch: f32) -> AxisView {
+    let forward = orientation_rotation(yaw, pitch) * Vec3::Z;
+    let nearness = |view: AxisView| forward.dot(view.forward());
+    AxisView::ALL
+        .into_iter()
+        .min_by(|a, b| nearness(*b).total_cmp(&nearness(*a)))
+        .unwrap_or(AxisView::Front)
+}
+
+/// 今の向きに（範囲を見ずに）いちばん近い軸の視点を「今の視点」とみなし、`flick` の向きにある隣の軸の視点の向きにする。
+/// yaw は回した数（360° の何周か）を保つ。
+///
+/// - 横の視点（正面・背面・右・左）: 右・左へは yaw を 90° 動かした隣の横の視点（`orbited` の dx と同じ向き）。下・上へは pitch を
+///   +90°・-90° 動かした上・下の視点（`orbited` の dy と同じ向き。画面の向きは、yaw をそのまま 90° の倍数に）。
+/// - 上・下の視点: 右・左へは、同じ画面の向きの横の視点から見た隣の横の視点（つかんで動かす決まり（右へ動かすと画面の左側が見える）なので、
+///   ドラッグと反対の側にカメラのある視点）。画面の下・上へは、来た向きなら
+///   同じ yaw の横の視点へ戻り、そのまま先へなら画面を起こしたまま反対側の横の視点（yaw を 180° 回す）へ回り込む。
+pub fn flicked_orientation(yaw: f32, pitch: f32, flick: Flick) -> (f32, f32) {
+    let view = closest_axis_view(yaw, pitch);
+    let (axis_yaw, _) = view.orientation();
+    let base = match view {
         AxisView::Top | AxisView::Bottom => (yaw / 90.0).round() * 90.0,
         _ => axis_yaw + 360.0 * ((yaw - axis_yaw) / 360.0).round(),
     };
-    (target_yaw, axis_pitch)
+    match (flick, view) {
+        (Flick::Right, _) => (base + 90.0, 0.0),
+        (Flick::Left, _) => (base - 90.0, 0.0),
+        (Flick::Down, AxisView::Top) | (Flick::Up, AxisView::Bottom) => (base + 180.0, 0.0),
+        (Flick::Up, AxisView::Top) | (Flick::Down, AxisView::Bottom) => (base, 0.0),
+        (Flick::Down, _) => (base, 90.0),
+        (Flick::Up, _) => (base, -90.0),
+    }
 }
 
 /// 注視点のまわりを回るカメラ。
@@ -249,7 +270,7 @@ pub struct OrbitCamera {
     pub target: Vec3,
     /// 度。
     pub yaw: f32,
-    /// 度（`orbit` は −89〜89。軸の視点へ吸い付いたときだけ ±90）。
+    /// 度（`orbit` は −89〜89。スナップ回転で上・下の視点へ切り替えたときだけ ±90）。
     pub pitch: f32,
     pub distance: f32,
     /// モデルの半径（寄る範囲・近い面と遠い面の目安）。
@@ -816,60 +837,6 @@ mod tests {
             let offset = (c.position() - c.target).normalize();
             assert!((offset - side).length() < 1e-5, "{view:?}: {offset}");
         }
-    }
-
-    #[test]
-    fn the_orientation_snaps_to_an_axis_view_only_within_the_snap_angle() {
-        // 正面（yaw 180・pitch 0）の 14° 手前は吸い付き、16° 手前は吸い付かない
-        let near = snap_orientation(180.0 + 14.0, 0.0);
-        assert_eq!(near, (180.0, 0.0));
-        assert_eq!(snap_orientation(180.0 - 14.0, 0.0), (180.0, 0.0));
-        assert_eq!(snap_orientation(180.0 + 16.0, 0.0), (196.0, 0.0));
-        // 縦の向きも見る
-        assert_eq!(snap_orientation(180.0, 14.0), (180.0, 0.0));
-        assert_eq!(snap_orientation(180.0, 16.0), (180.0, 16.0));
-        // 背面・右・左
-        assert_eq!(snap_orientation(5.0, -3.0), (0.0, 0.0));
-        assert_eq!(snap_orientation(-80.0, 4.0), (-90.0, 0.0));
-        assert_eq!(snap_orientation(100.0, 4.0), (90.0, 0.0));
-        // 斜め 45° はどの軸にも吸い付かない
-        assert_eq!(snap_orientation(45.0, 0.0), (45.0, 0.0));
-        assert_eq!(snap_orientation(225.0, 35.0), (225.0, 35.0));
-        // 角度は、yaw と pitch が同時に振れた分で測る（yaw 10°・pitch 10° は 約 14° で内、yaw 11°・pitch 11° は 約 15.4° で外）
-        assert_eq!(snap_orientation(180.0 + 10.0, 10.0), (180.0, 0.0));
-        assert_eq!(snap_orientation(180.0 + 11.0, 11.0), (191.0, 11.0));
-    }
-
-    #[test]
-    fn snapping_keeps_the_number_of_full_turns_of_yaw() {
-        // 回した数（360° の何周か）は保つ。-180° も 540° も正面
-        assert_eq!(snap_orientation(540.0 + 10.0, 0.0), (540.0, 0.0));
-        assert_eq!(snap_orientation(-180.0 + 10.0, 0.0), (-180.0, 0.0));
-        assert_eq!(snap_orientation(360.0 + 5.0, 0.0), (360.0, 0.0));
-        assert_eq!(snap_orientation(-270.0 - 5.0, 0.0), (-270.0, 0.0));
-    }
-
-    #[test]
-    fn looking_nearly_straight_up_or_down_snaps_to_pitch_90_with_a_quarter_turn_yaw() {
-        // orbit の上限（89°）まで来れば、上へ吸い付く
-        assert_eq!(snap_orientation(180.0, 89.0), (180.0, 90.0));
-        assert_eq!(snap_orientation(180.0, 80.0), (180.0, 90.0));
-        assert_eq!(snap_orientation(180.0, 74.0), (180.0, 74.0));
-        assert_eq!(snap_orientation(180.0, -80.0), (180.0, -90.0));
-        // 画面の向きは、今の yaw にいちばん近い 90° の倍数
-        assert_eq!(snap_orientation(200.0, 85.0), (180.0, 90.0));
-        assert_eq!(snap_orientation(230.0, 85.0), (270.0, 90.0));
-        assert_eq!(snap_orientation(-50.0, -85.0), (-90.0, -90.0));
-    }
-
-    #[test]
-    fn the_nearest_axis_view_wins_when_two_are_in_range() {
-        // 正面（180・0）と上（pitch 90）の間。pitch 50° は上のほうが近い（40°）が、15° 以内の物が無ければ None
-        assert_eq!(nearest_axis_view(180.0, 50.0), None);
-        assert_eq!(nearest_axis_view(180.0, 8.0), Some(AxisView::Front));
-        assert_eq!(nearest_axis_view(180.0, 82.0), Some(AxisView::Top));
-        assert_eq!(nearest_axis_view(90.0 + 5.0, 0.0), Some(AxisView::Left));
-        assert_eq!(nearest_axis_view(-90.0 + 5.0, 0.0), Some(AxisView::Right));
     }
 
     #[test]
@@ -1458,9 +1425,6 @@ mod tests {
             let (yaw, pitch) = view.orientation();
             assert_eq!(aligned_axis_view(yaw, pitch), Some(view));
             assert_eq!(aligned_axis_view(yaw + 720.0, pitch), Some(view));
-            // 吸い付いた向きもそろう
-            let (y, p) = snap_orientation(yaw + 10.0, pitch.clamp(-80.0, 80.0));
-            assert_eq!(aligned_axis_view(y, p), Some(view), "{view:?}");
             // 少しでも回せば外れる
             assert_eq!(aligned_axis_view(yaw + 1.0, pitch.clamp(-89.0, 89.0)), None);
             // 側はカメラのいる側
@@ -1472,5 +1436,124 @@ mod tests {
             assert!(((c.position() - c.target).normalize() - view.side()).length() < 1e-5);
         }
         assert_eq!(aligned_axis_view(DEFAULT_YAW, DEFAULT_PITCH), None);
+    }
+
+    #[test]
+    fn a_flick_from_a_side_view_goes_90_degrees_the_way_the_free_orbit_would_turn() {
+        use super::Flick::{Down, Left, Right, Up};
+        // 横へ: yaw を 90° 動かした隣（右は yaw が増える向き）
+        assert_eq!(flicked_orientation(180.0, 0.0, Right), (270.0, 0.0));
+        assert_eq!(flicked_orientation(180.0, 0.0, Left), (90.0, 0.0));
+        assert_eq!(flicked_orientation(-90.0, 0.0, Right), (0.0, 0.0));
+        assert_eq!(flicked_orientation(0.0, 0.0, Left), (-90.0, 0.0));
+        // 自由な回転で 90° 分動かした向きと同じ（右・左は dx、下・上は dy の向き）
+        let degrees = 90.0 / ORBIT_DEGREES_PER_POINT;
+        for view in [
+            AxisView::Front,
+            AxisView::Back,
+            AxisView::Right,
+            AxisView::Left,
+        ] {
+            let (yaw, pitch) = view.orientation();
+            let (free_yaw, _) = orbited(yaw, pitch, degrees, 0.0);
+            assert!((flicked_orientation(yaw, pitch, Right).0 - free_yaw).abs() < 1e-3);
+            let (free_yaw, _) = orbited(yaw, pitch, -degrees, 0.0);
+            assert!((flicked_orientation(yaw, pitch, Left).0 - free_yaw).abs() < 1e-3);
+            // 下は pitch が増える向き（上の視点）、上は下の視点。画面の向きは今の yaw のまま
+            assert_eq!(flicked_orientation(yaw, pitch, Down), (yaw, 90.0));
+            assert_eq!(flicked_orientation(yaw, pitch, Up), (yaw, -90.0));
+        }
+        // 隣の視点（カメラのいる側）
+        let side = |(yaw, pitch): (f32, f32)| aligned_axis_view(yaw, pitch);
+        assert_eq!(
+            side(flicked_orientation(180.0, 0.0, Right)),
+            Some(AxisView::Right)
+        );
+        assert_eq!(
+            side(flicked_orientation(180.0, 0.0, Left)),
+            Some(AxisView::Left)
+        );
+        assert_eq!(
+            side(flicked_orientation(180.0, 0.0, Down)),
+            Some(AxisView::Top)
+        );
+        assert_eq!(
+            side(flicked_orientation(180.0, 0.0, Up)),
+            Some(AxisView::Bottom)
+        );
+    }
+
+    #[test]
+    fn a_flick_from_the_top_or_bottom_turns_to_a_side_view_with_the_screen_kept_upright() {
+        use super::Flick::{Down, Left, Right, Up};
+        let side = |(yaw, pitch): (f32, f32)| aligned_axis_view(yaw, pitch);
+        // 正面から下へ回した上の視点（画面の向きは正面のまま）: 上へなら正面へ戻り、さらに下へなら背面へ回り込む
+        let top = flicked_orientation(180.0, 0.0, Down);
+        assert_eq!(top, (180.0, 90.0));
+        assert_eq!(flicked_orientation(top.0, top.1, Up), (180.0, 0.0));
+        assert_eq!(
+            side(flicked_orientation(top.0, top.1, Down)),
+            Some(AxisView::Back)
+        );
+        assert_eq!(flicked_orientation(top.0, top.1, Down).1, 0.0);
+        // 横は、画面の向きの右・左にある横の視点
+        assert_eq!(flicked_orientation(top.0, top.1, Right), (270.0, 0.0));
+        assert_eq!(flicked_orientation(top.0, top.1, Left), (90.0, 0.0));
+        // 下の視点は上下が逆
+        let bottom = flicked_orientation(180.0, 0.0, Up);
+        assert_eq!(bottom, (180.0, -90.0));
+        assert_eq!(flicked_orientation(bottom.0, bottom.1, Down), (180.0, 0.0));
+        assert_eq!(
+            side(flicked_orientation(bottom.0, bottom.1, Up)),
+            Some(AxisView::Back)
+        );
+        assert_eq!(flicked_orientation(bottom.0, bottom.1, Right), (270.0, 0.0));
+        // 右の視点から上へ回した上の視点で、さらに下へ: 反対の左の視点
+        let top = flicked_orientation(-90.0, 0.0, Down);
+        assert_eq!(top, (-90.0, 90.0));
+        assert_eq!(
+            side(flicked_orientation(top.0, top.1, Down)),
+            Some(AxisView::Left)
+        );
+    }
+
+    #[test]
+    fn a_flick_starts_from_the_nearest_axis_view_however_far_the_view_is_from_every_axis() {
+        use super::Flick::{Down, Right};
+        // 既定の斜めの向き（正面に近い）から右へ: 右の視点
+        assert_eq!(
+            flicked_orientation(DEFAULT_YAW, DEFAULT_PITCH, Right),
+            (270.0, 0.0)
+        );
+        // 正面から 40° 外れても正面とみなす。右の視点に近ければ右の視点から
+        assert_eq!(flicked_orientation(220.0, 0.0, Right), (270.0, 0.0));
+        assert_eq!(flicked_orientation(240.0, 0.0, Right), (360.0, 0.0));
+        // 上に傾いて上の視点に近ければ、上の視点（画面の向きは 90° の倍数へ）から
+        assert_eq!(flicked_orientation(200.0, 70.0, Right), (270.0, 0.0));
+        assert_eq!(flicked_orientation(230.0, 70.0, Down), (450.0, 0.0));
+        // 回した数を保つ
+        assert_eq!(flicked_orientation(540.0 + 10.0, 5.0, Right), (630.0, 0.0));
+        assert_eq!(
+            flicked_orientation(-180.0 + 10.0, 0.0, Down),
+            (-180.0, 90.0)
+        );
+    }
+
+    #[test]
+    fn a_flick_always_lands_on_an_axis_view_a_quarter_turn_away() {
+        for yaw in (-360..=720).step_by(15) {
+            for pitch in (-90..=90).step_by(15) {
+                let (yaw, pitch) = (yaw as f32, pitch as f32);
+                let from = closest_axis_view(yaw, pitch);
+                for flick in [Flick::Right, Flick::Left, Flick::Down, Flick::Up] {
+                    let (y, p) = flicked_orientation(yaw, pitch, flick);
+                    let to = aligned_axis_view(y, p).expect("軸の視点にそろう");
+                    assert!(
+                        from.forward().dot(to.forward()).abs() < 1e-5,
+                        "{yaw} {pitch} {flick:?}: {from:?} -> {to:?}"
+                    );
+                }
+            }
+        }
     }
 }

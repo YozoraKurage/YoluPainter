@@ -17,13 +17,16 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
-use egui::{Event, InputState, Key, Modifiers, PointerButton};
+use egui::{Event, InputState};
 
 use crate::clipboard::ClipAction;
 use crate::commands;
 use crate::lang::Lang;
+use crate::state::key::{Key, Modifiers, PointerButton};
 use crate::state::{Action, AppState, Tool};
 use crate::toolkeys::ToolKeyMode;
+
+mod key_egui;
 
 // ───────── キーボードの割り当て ─────────
 
@@ -45,7 +48,7 @@ impl When {
     pub fn holds(self, app: &AppState) -> bool {
         match self {
             When::Always => true,
-            When::HasSelection => app.doc.selection().is_some(),
+            When::HasSelection => app.session.doc.selection().is_some(),
             When::Tool(tool) => app.tool == tool,
             When::Windows => cfg!(windows) && !app.is_stroking(),
             When::PointSelected => {
@@ -66,6 +69,8 @@ pub enum Scope {
     Edit,
     /// ポーズのモードだけ。
     Pose,
+    /// ハイドのモードだけ。
+    Hide,
     /// 途中の操作（3D で右を押している間の視点の移動など）の間だけ。その操作が読み（`take_fly_keys`）、`dispatch` は当てない。
     During,
 }
@@ -84,20 +89,22 @@ impl Scope {
             Scope::Paint => mode == EditorMode::Paint,
             Scope::Edit => mode == EditorMode::Edit,
             Scope::Pose => mode == EditorMode::Pose,
+            Scope::Hide => mode == EditorMode::Hide,
             Scope::During => false,
         }
     }
 
-    /// モードの段の範囲か（ペイント・編集・ポーズ）。
+    /// モードの段の範囲か（ペイント・編集・ポーズ・ハイド）。
     pub fn is_mode(self) -> bool {
-        matches!(self, Scope::Paint | Scope::Edit | Scope::Pose)
+        matches!(self, Scope::Paint | Scope::Edit | Scope::Pose | Scope::Hide)
     }
 
-    pub const ALL: [Scope; 5] = [
+    pub const ALL: [Scope; 6] = [
         Scope::Everywhere,
         Scope::Paint,
         Scope::Edit,
         Scope::Pose,
+        Scope::Hide,
         Scope::During,
     ];
 
@@ -108,6 +115,7 @@ impl Scope {
             Scope::Paint => "paint",
             Scope::Edit => "edit",
             Scope::Pose => "pose",
+            Scope::Hide => "hide",
             Scope::During => "during",
         }
     }
@@ -350,6 +358,22 @@ const fn fly(command: &'static str, key: Key, direction: [f32; 3]) -> FlyKey {
     }
 }
 
+/// 1 つのモードだけの段の行: 編集のモード（H・Alt+H で選んだ物の印を隠す・全部出す、Delete で選んだ物を削除、Q で選んだ形の取っ手を隠す・出す）と、
+/// ハイドのモード（H・Alt+H で選んだ面を隠す・すべて表示、Ctrl+A・Ctrl+D で UV アイランドをすべて選ぶ・選びを外す）。
+fn single_mode_bindings() -> Vec<KeyBinding> {
+    let (cmd, alt, none) = (Modifiers::COMMAND, Modifiers::ALT, Modifiers::NONE);
+    vec![
+        kb(none, Key::H, "object.hide").scope(Scope::Edit),
+        kb(alt, Key::H, "object.reveal").scope(Scope::Edit),
+        kb(none, Key::Delete, "object.delete").scope(Scope::Edit),
+        kb(none, Key::Q, "fill.toggle_handles").scope(Scope::Edit),
+        kb(none, Key::H, "hide.hide_selected").scope(Scope::Hide),
+        kb(alt, Key::H, "hide.show_all").scope(Scope::Hide),
+        kb(cmd, Key::A, "hide.select_all").scope(Scope::Hide),
+        kb(cmd, Key::D, "hide.deselect").scope(Scope::Hide),
+    ]
+}
+
 /// 一覧に出す順の、キーボードの割り当て（クリップボードのキー・押している間のキー・ビューが読むキーも含む）。
 /// 1 つの操作に行が 2 つ以上あるとき、最初の行が「主の行」（メニューのキーの文字になる）。
 pub fn bindings() -> Vec<KeyBinding> {
@@ -401,6 +425,8 @@ pub fn bindings() -> Vec<KeyBinding> {
         kb(shift, Key::R, "view.reset_rotation"),
         // モードのパイ（どのモードでも。macOS でも Command ではなく Control）
         kb(Modifiers::CTRL, Key::Tab, "mode.pie"),
+        // UI を隠す・戻す（文字を打っている間・ポップアップとダイアログの間は `handle_shortcuts` が渡さない）
+        kb(none, Key::Tab, "view.toggle_ui"),
     ];
     // ツールのキー（ツールの表のとおり。ツールの帯の並び）
     for tool in Tool::ALL {
@@ -484,13 +510,7 @@ pub fn bindings() -> Vec<KeyBinding> {
             kb(shift, Key::Tab, "object.snap_toggle").scope(scope),
         ]);
     }
-    // 編集のモードだけ: H・Alt+H（選んだ物の印を隠す・全部出す）・Delete（選んだ物を削除）・Q（選んだ形の取っ手を隠す・出す）
-    v.extend([
-        kb(none, Key::H, "object.hide").scope(Scope::Edit),
-        kb(alt, Key::H, "object.reveal").scope(Scope::Edit),
-        kb(none, Key::Delete, "object.delete").scope(Scope::Edit),
-        kb(none, Key::Q, "fill.toggle_handles").scope(Scope::Edit),
-    ]);
+    v.extend(single_mode_bindings());
     // 移動・変形のツールの矢印キー（移動・変形のツールを選んでいるとき。ビューが読む）
     for n in NUDGES {
         let modifiers = if n.shift { shift } else { none };
@@ -776,7 +796,9 @@ fn take_key(i: &mut InputState, modifiers: Modifiers, key: Key) -> (bool, bool) 
         else {
             return true;
         };
-        let is_match = *pressed_key == key && modifiers_match(pressed_modifiers, modifiers, key);
+        let (pressed_key, pressed_modifiers) =
+            (Key::from(*pressed_key), Modifiers::from(*pressed_modifiers));
+        let is_match = pressed_key == key && modifiers_match(&pressed_modifiers, modifiers, key);
         found |= is_match;
         fresh |= is_match && !*repeat;
         !is_match
@@ -805,7 +827,7 @@ pub fn hold_key(command: &str) -> Option<Key> {
 
 /// 押している間だけ効く操作のキーを今押しているか。
 pub fn hold_down(i: &InputState, command: &str) -> bool {
-    hold_key(command).is_some_and(|key| i.key_down(key))
+    hold_key(command).is_some_and(|key| i.key_down(key.into()))
 }
 
 /// 視点の移動キーの押し（繰り返しを含む。Shift 以外の修飾キーが無いもの。Ctrl を押した Ctrl+S などは残す）を取り除く。右ボタンを押している
@@ -820,7 +842,7 @@ pub fn take_fly_keys(i: &mut InputState, held: &mut Vec<Key>, flying: bool) {
     if flying {
         // 右ボタンを押す前から押していたキーも、移動の間は押されている
         for key in &keys {
-            if i.key_down(*key) && !held.contains(key) {
+            if i.key_down((*key).into()) && !held.contains(key) {
                 held.push(*key);
             }
         }
@@ -834,7 +856,8 @@ pub fn take_fly_keys(i: &mut InputState, held: &mut Vec<Key>, flying: bool) {
             modifiers,
             pressed,
             ..
-        } if keys.contains(key) => {
+        } if keys.contains(&(*key).into()) => {
+            let key = &Key::from(*key);
             if !*pressed {
                 // 離した: 次の押しは新しい押し
                 held.retain(|k| k != key);
@@ -852,7 +875,7 @@ pub fn take_fly_keys(i: &mut InputState, held: &mut Vec<Key>, flying: bool) {
         }
         _ => true,
     });
-    held.retain(|key| i.key_down(*key));
+    held.retain(|key| i.key_down((*key).into()));
 }
 
 /// 操作のキー（表の最初のキーの行。画面の部品の決まった働きは、その定義のキー）。
@@ -1019,9 +1042,9 @@ pub enum Operation {
     Rotate,
     /// 色を取る（2D は右ボタンを押す。3D は右ボタンを動かさずに離す）。
     Pick,
-    /// 3D ビューの視点を回す。軸の向き（正面・背面・右・左・上・下）の 15° 以内に入ったらその向きへ吸い付く。
+    /// 3D ビューの視点を回す（Alt + 右）。ドラッグした向き（右・左・下・上）へ、今の視点から 90° 隣の軸の視点（正面・背面・右・左・上・下）に切り替える。
     SnapOrbit,
-    /// クローンのブラシで、クローンの元を決める（2D・3D とも Alt + 左を動かさずに離す。動かせば、2D は表示を回し、3D はスナップ回転）。
+    /// クローンのブラシで、クローンの元を決める（2D・3D とも Alt + 左を動かさずに離す。動かせば、2D は表示を回し、3D は何もしない）。
     CloneSource,
     SelectionAdd,
     SelectionSubtract,
@@ -1054,23 +1077,20 @@ impl Operation {
 
     pub fn label(self, lang: Lang) -> &'static str {
         match self {
-            Self::Orbit => lang.pick("回転", "Orbit"),
-            Self::Pan => lang.pick("パン", "Pan"),
-            Self::Zoom => lang.pick("ズーム", "Zoom"),
-            Self::Rotate => lang.pick("回転", "Rotate"),
+            Self::Orbit => lang.t("keymap-orbit"),
+            Self::Pan => lang.t("keymap-pan"),
+            Self::Zoom => lang.t("keymap-zoom"),
+            Self::Rotate => lang.t("keymap-rotate"),
             Self::Pick => Tool::Eyedropper.name_in(lang),
-            Self::SnapOrbit => lang.pick("スナップ回転", "Snap Orbit"),
-            Self::CloneSource => lang.pick("クローンの元を決める", "Set Clone Source"),
-            Self::SelectionAdd => lang.pick("選択範囲に追加", "Add to Selection"),
-            Self::SelectionSubtract => lang.pick("選択範囲から引く", "Subtract from Selection"),
-            Self::SelectionIntersect => lang.pick("選択範囲と重ねる", "Intersect with Selection"),
-            Self::MoveStencil => lang.pick("ステンシルの移動", "Move Stencil"),
-            Self::RotateStencil => lang.pick("ステンシルの回転", "Rotate Stencil"),
-            Self::ScaleStencil => lang.pick("ステンシルの拡縮", "Scale Stencil"),
-            Self::SnapStencilRotation => lang.pick(
-                "ステンシルの回転を 15° 刻みに",
-                "Snap Stencil Rotation to 15°",
-            ),
+            Self::SnapOrbit => lang.t("keymap-snap-orbit"),
+            Self::CloneSource => lang.t("keymap-set-clone-source"),
+            Self::SelectionAdd => lang.t("keymap-add-to-selection"),
+            Self::SelectionSubtract => lang.t("keymap-subtract-from-selection"),
+            Self::SelectionIntersect => lang.t("keymap-intersect-with-selection"),
+            Self::MoveStencil => lang.t("keymap-move-stencil"),
+            Self::RotateStencil => lang.t("keymap-rotate-stencil"),
+            Self::ScaleStencil => lang.t("keymap-scale-stencil"),
+            Self::SnapStencilRotation => lang.t("keymap-snap-stencil-rotation-to-15"),
         }
     }
 }
@@ -1210,8 +1230,17 @@ pub const GESTURES: [Gesture; 20] = numbered([
         (false, false, true),
         Operation::SelectionSubtract,
     )),
-    // 3D ビュー: 右ボタンで回す（動かさずに離すとスポイト）・中ボタンでパン・Space + 左でパン（Ctrl を足すと拡縮）・
-    // Alt + 左でスナップ回転（動かさずに離すとクローンの元）
+    // 3D ビュー: 右ボタンで回す（動かさずに離すとスポイト）・Alt + 右でスナップ回転・中ボタンでパン・Space + 左でパン（Ctrl を足すと拡縮）・
+    // Alt + 左を動かさずに離すとクローンの元。表の並びのテスト（`a_gesture_is_never_hidden_by_an_earlier_one`）は、条件の少ない行を
+    // 先に置くことを許さないので、Alt を足した右の行は、修飾なしの右の行の上に置く（実際の照合は、`Keymap::with_gestures` が修飾の多い行を先にする）
+    // （押しの始めに Alt を持っていたときだけ当たる。右で回している途中の Alt は押しの始めの修飾ではないので、替わらない）
+    gesture_of(
+        "view3d",
+        None,
+        Secondary,
+        (true, false, false),
+        Operation::SnapOrbit,
+    ),
     gesture_of(
         "view3d",
         None,
@@ -1240,13 +1269,6 @@ pub const GESTURES: [Gesture; 20] = numbered([
         Primary,
         (false, false, false),
         Operation::Pan,
-    ),
-    gesture_of(
-        "view3d",
-        None,
-        Primary,
-        (true, false, false),
-        Operation::SnapOrbit,
     ),
     in_paint(click_of(
         "view3d",
@@ -1451,7 +1473,7 @@ mod tests {
         let shift = Modifiers::SHIFT;
         let alt_shift = Modifiers::ALT | Modifiers::SHIFT;
         let ctrl = Modifiers::CTRL;
-        // 3D: 右で回す・中でパン・Space + 左でパン（Ctrl を足すと拡縮）・Alt + 左でスナップ回転
+        // 3D: 右で回す・中でパン・Space + 左でパン（Ctrl を足すと拡縮）・Alt + 右でスナップ回転
         assert_eq!(
             gesture("view3d", Secondary, &none, false),
             Some(Operation::Orbit)
@@ -1470,17 +1492,24 @@ mod tests {
             Some(Operation::Zoom)
         );
         assert_eq!(gesture("view3d", Primary, &ctrl, false), None);
+        // スナップ回転は Alt + 右。Alt + 左は何も始めない（動かさずに離すクローンの元の行だけ）
         assert_eq!(
-            gesture("view3d", Primary, &alt, false),
+            gesture("view3d", Secondary, &alt, false),
             Some(Operation::SnapOrbit)
         );
-        // 外した組み合わせ: Shift + 右は、パンではなく回す（Shift は気にしない）。Alt + Shift + 左も、パンではなくスナップ回転
+        assert_eq!(gesture("view3d", Primary, &alt, false), None);
+        assert_eq!(gesture("view3d", Primary, &alt_shift, false), None);
+        // 外した組み合わせ: Shift + 右は、パンではなく回す（Shift は気にしない）。Alt + Shift + 右も、パンではなくスナップ回転
+        assert_eq!(
+            gesture("view3d", Secondary, &none, false),
+            Some(Operation::Orbit)
+        );
         assert_eq!(
             gesture("view3d", Secondary, &shift, false),
             Some(Operation::Orbit)
         );
         assert_eq!(
-            gesture("view3d", Primary, &alt_shift, false),
+            gesture("view3d", Secondary, &alt_shift, false),
             Some(Operation::SnapOrbit)
         );
         // Space を押していても、右・中ボタンは同じ
@@ -1498,6 +1527,7 @@ mod tests {
             Some(Operation::CloneSource)
         );
         assert_eq!(click_gesture("view3d", Secondary, &shift, false), None);
+        assert_eq!(click_gesture("view3d", Secondary, &alt, false), None);
         assert_eq!(click_gesture("view3d", Primary, &alt_shift, false), None);
         assert_eq!(click_gesture("view3d", Secondary, &ctrl, false), None);
         assert_eq!(click_gesture("view3d", Secondary, &none, true), None);
@@ -1588,11 +1618,11 @@ mod tests {
         let mut got = Vec::new();
         let input = egui::RawInput {
             events: vec![Event::Key {
-                key,
+                key: key.into(),
                 physical_key: None,
                 pressed: true,
                 repeat: false,
-                modifiers,
+                modifiers: modifiers.into(),
             }],
             ..Default::default()
         };
@@ -1855,12 +1885,12 @@ mod tests {
     #[test]
     fn one_operation_runs_once_per_frame_even_when_two_of_its_rows_match() {
         let app = AppState::new(32, 32);
-        let key = |key, modifiers| Event::Key {
-            key,
+        let key = |key: Key, modifiers: Modifiers| Event::Key {
+            key: key.into(),
             physical_key: None,
             pressed: true,
             repeat: false,
-            modifiers,
+            modifiers: modifiers.into(),
         };
         // JIS 配列の ^ のキーは、キーの Equals と文字の ^ が両方届く。表示を右に回すのは 1 回だけ
         let (got, left) = dispatched_events(
@@ -1929,12 +1959,12 @@ mod tests {
     #[test]
     fn consume_key_removes_the_matching_events_only() {
         let ctx = egui::Context::default();
-        let key_event = |key, modifiers| Event::Key {
-            key,
+        let key_event = |key: Key, modifiers: Modifiers| Event::Key {
+            key: key.into(),
             physical_key: None,
             pressed: true,
             repeat: false,
-            modifiers,
+            modifiers: modifiers.into(),
         };
         let input = egui::RawInput {
             events: vec![
@@ -2056,6 +2086,11 @@ mod tests {
                         | "layer.merge_visible"
                 );
             let during = b.command.starts_with("view3d.fly_");
+            // ハイドの段の行（H・Alt+H・Ctrl+A・Ctrl+D）
+            if b.command.starts_with("hide.") {
+                assert_eq!(b.scope, Scope::Hide, "{}", b.command);
+                continue;
+            }
             // 編集・ポーズの段の行（同じ操作をそれぞれの段に置く）。Q は、ペイントと編集の両方の段
             if b.command.starts_with("object.")
                 || (b.command == "fill.toggle_handles" && b.scope == Scope::Edit)
@@ -2138,7 +2173,11 @@ mod tests {
                 key: Key::Tab
             }
         );
-        // 範囲はモードで決まる。途中の操作の行は `dispatch` では効かない（その操作が読む）
+    }
+
+    /// 範囲はモードで決まる。途中の操作の行は `dispatch` では効かない（その操作が読む）。
+    #[test]
+    fn scopes_hold_by_the_mode() {
         use crate::mode::EditorMode;
         let mut app = AppState::new(32, 32);
         for mode in EditorMode::ALL {
@@ -2147,6 +2186,7 @@ mod tests {
             assert_eq!(Scope::Paint.holds(&app), mode == EditorMode::Paint);
             assert_eq!(Scope::Edit.holds(&app), mode == EditorMode::Edit);
             assert_eq!(Scope::Pose.holds(&app), mode == EditorMode::Pose);
+            assert_eq!(Scope::Hide.holds(&app), mode == EditorMode::Hide);
             assert!(!Scope::During.holds(&app));
         }
     }
@@ -2158,7 +2198,10 @@ mod tests {
                 Layer::During
             } else if b.when != When::Always {
                 Layer::Context
-            } else if matches!(b.scope, Scope::Paint | Scope::Edit | Scope::Pose) {
+            } else if matches!(
+                b.scope,
+                Scope::Paint | Scope::Edit | Scope::Pose | Scope::Hide
+            ) {
                 Layer::Mode
             } else {
                 Layer::Everywhere
@@ -2192,11 +2235,11 @@ mod tests {
         let mut got = Vec::new();
         let input = egui::RawInput {
             events: vec![Event::Key {
-                key,
+                key: key.into(),
                 physical_key: None,
                 pressed: true,
                 repeat: false,
-                modifiers,
+                modifiers: modifiers.into(),
             }],
             ..Default::default()
         };
@@ -2250,7 +2293,12 @@ mod tests {
                 dispatched_with(&map, &app, Key::Tab, Modifiers::CTRL | Modifiers::SHIFT)
                     .is_empty()
             );
-            assert!(dispatched_with(&map, &app, Key::Tab, Modifiers::NONE).is_empty());
+            // 修飾の無い Tab は UI を隠す・戻す
+            assert_eq!(
+                dispatched_with(&map, &app, Key::Tab, Modifiers::NONE),
+                vec![Action::ToggleUi],
+                "{mode:?}"
+            );
         }
     }
 
@@ -2281,16 +2329,16 @@ mod tests {
         // 押したままのキーの繰り返しでは開かない（事象は取り除く）。ほかの操作の繰り返しは今までどおり効く。egui は、押したままのキーの
         // 2 回目からの押しを繰り返しにするので、同じ入れ物で押してから続ける
         let ctx = egui::Context::default();
-        let frame = |key, modifiers, repeat| {
+        let frame = |key: Key, modifiers: Modifiers, repeat| {
             let mut got = Vec::new();
             let mut left = Vec::new();
             let input = egui::RawInput {
                 events: vec![Event::Key {
-                    key,
+                    key: key.into(),
                     physical_key: None,
                     pressed: true,
                     repeat,
-                    modifiers,
+                    modifiers: modifiers.into(),
                 }],
                 ..Default::default()
             };
@@ -2330,6 +2378,7 @@ mod tests {
             once,
             [
                 "bake.open",
+                "brush.erase_mode",
                 "fill.toggle_handles",
                 "mode.pie",
                 "view3d.pie",
@@ -2339,6 +2388,10 @@ mod tests {
                 "object.snap_toggle",
                 "object.hide",
                 "object.reveal",
+                "hide.hide_selected",
+                "hide.show_all",
+                "hide.select_all",
+                "hide.deselect",
                 "object.delete",
                 "view3d.ortho",
             ]
@@ -2634,13 +2687,13 @@ mod tests {
     fn consume_command_reads_the_table_and_respects_the_condition() {
         let mut app = AppState::new(32, 32);
         let ctx = egui::Context::default();
-        let press = |key, modifiers| egui::RawInput {
+        let press = |key: Key, modifiers: Modifiers| egui::RawInput {
             events: vec![Event::Key {
-                key,
+                key: key.into(),
                 physical_key: None,
                 pressed: true,
                 repeat: false,
-                modifiers,
+                modifiers: modifiers.into(),
             }],
             ..Default::default()
         };
@@ -2736,12 +2789,12 @@ mod tests {
 
     #[test]
     fn taking_the_fly_keys_removes_only_plain_and_shifted_presses_of_those_keys() {
-        let key = |key, modifiers, pressed| Event::Key {
-            key,
+        let key = |key: Key, modifiers: Modifiers, pressed| Event::Key {
+            key: key.into(),
             physical_key: None,
             pressed,
             repeat: false,
-            modifiers,
+            modifiers: modifiers.into(),
         };
         let ctx = egui::Context::default();
         let mut left = Vec::new();
@@ -2769,7 +2822,7 @@ mod tests {
         let keys: Vec<(Key, bool)> = left
             .iter()
             .filter_map(|e| match e {
-                Event::Key { key, pressed, .. } => Some((*key, *pressed)),
+                Event::Key { key, pressed, .. } => Some(((*key).into(), *pressed)),
                 _ => None,
             })
             .collect();
@@ -2788,12 +2841,12 @@ mod tests {
     #[test]
     fn a_fly_key_still_held_after_the_flight_stays_off_the_table_until_it_is_released_and_pressed_again(
     ) {
-        let key = |key, modifiers, pressed, repeat| Event::Key {
-            key,
+        let key = |key: Key, modifiers: Modifiers, pressed, repeat| Event::Key {
+            key: key.into(),
             physical_key: None,
             pressed,
             repeat,
-            modifiers,
+            modifiers: modifiers.into(),
         };
         let ctx = egui::Context::default();
         let mut held: Vec<Key> = Vec::new();
@@ -2810,7 +2863,7 @@ mod tests {
                         .events
                         .iter()
                         .filter_map(|e| match e {
-                            Event::Key { key, pressed, .. } => Some((*key, *pressed)),
+                            Event::Key { key, pressed, .. } => Some(((*key).into(), *pressed)),
                             _ => None,
                         })
                         .collect();
@@ -2909,11 +2962,11 @@ mod tests {
             count
         };
         let press = |repeat| Event::Key {
-            key: Key::W,
+            key: Key::W.into(),
             physical_key: None,
             pressed: true,
             repeat,
-            modifiers: Modifiers::NONE,
+            modifiers: Modifiers::NONE.into(),
         };
         // 右ボタンを押す前に W を押していた（表へ届く）
         assert_eq!(run(vec![press(false)], false, &mut held), 1);

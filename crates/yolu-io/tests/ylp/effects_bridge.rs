@@ -1,5 +1,5 @@
 //! 効果（フィルターのスタック・Generator・Anchor・塗りつぶしの画像と投影・グラデーション）の正本と core の行き来。
-//! 正解は C# の実際の書き手（`tools/io-fixtures/EffectFixture.cs`）が作った正本と、同じ文書のレイヤーごとの評価した出力・入力。
+//! 正解は C# の実際の書き手が作った正本と、同じ文書のレイヤーごとの評価した出力・入力。
 //! 全チャンネルの合成（`*.composite`）は、合成の式が f32 の core の式になってから core で撮り直した（`YOLU_GOLDEN_UPDATE=1`）。
 use yolu_core::generator::{MapKind, MapState};
 use yolu_core::{
@@ -328,7 +328,7 @@ fn legacy_versions_with_effects_read_and_migrate_like_csharp() {
         assert_eq!(
             NativeDocument::from_core(&core).unwrap().to_bytes(),
             read(&format!("{name}.v21")),
-            "{name}: 版 21 へ移した正本が C# の書き直しと同じバイト列"
+            "{name}: バージョン 21 へ移した正本が C# の書き直しと同じバイト列"
         );
         isotropic(&mut core);
         assert_eq!(
@@ -905,12 +905,15 @@ pub fn edited_effects_with_history() -> Document {
             style: Default::default(),
             id: 0x77,
             channel: Channel::Color,
-            brush: PathBrush(BrushSettings {
-                radius: 3.0,
-                spacing: 0.17,
-                color: Rgba8::new(201, 37, 89, 219),
-                ..BrushSettings::default()
-            }),
+            brush: PathBrush(
+                BrushSettings {
+                    radius: 3.0,
+                    spacing: 0.17,
+                    color: Rgba8::new(201, 37, 89, 219),
+                    ..BrushSettings::default()
+                },
+                yolu_core::PressureSwitches::default(),
+            ),
             points: vec![
                 CanvasPoint::new(4.5, 7.25, 0.3).unwrap(),
                 CanvasPoint::new(29.5, 21.5, 0.9).unwrap(),
@@ -1042,13 +1045,13 @@ fn a_document_edited_with_every_effect_api_survives_save_and_reopen() {
     let set = |doc: &Document| yolu_io::SetSpec {
         id: "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0".into(),
         name: "効果".into(),
-        material: yolu_io::MaterialRef::Unassigned,
+        materials: vec![yolu_io::MaterialRef::Unassigned],
         document: Some(NativeDocument::from_core(doc).unwrap().into()),
         composites: yolu_io::composite_pngs(doc).unwrap(),
     };
     let project = yolu_io::Project::create(
         yolu_io::WriterInfo {
-            app: "試験の書き手".into(),
+            app: "テストの書き手".into(),
             version: "0.0.1".into(),
             unity: "standalone".into(),
         },
@@ -1098,8 +1101,8 @@ fn every_step_of_editing_effects_round_trips() {
 }
 
 /// 編集 API で作った文書の正本（固定の ID で作るので、ファイルと同じバイト列になる）。作り直すときは
-/// `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp effects_bridge::rust_written_effects_fixture_is`、続けて
-/// `python3 tools/io-fixtures/generate.py --source <Unity 版> --rust-written-effects` で Unity 版の読み手の記録を取り直す。
+/// `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp effects_bridge::rust_written_effects_fixture_is`。
+/// Unity 版の読み手の記録（`*.unity.txt`）は Unity 0.2.0 で取った物で、取り直す道は無い。
 #[test]
 fn rust_written_effects_fixture_is_what_this_writer_produces() {
     let bytes = NativeDocument::from_core(&edited_effects_document())

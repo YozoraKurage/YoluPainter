@@ -1,5 +1,6 @@
 //! 合成の参照元（クローンが読む元と、色の混ぜの「全レイヤーから」の下地）の組み立て（C# の BrushStroke.UseCompositeCloneSource の、文書を読む部分）。
 
+use crate::Reason;
 use std::collections::{BTreeSet, HashMap};
 
 use super::*;
@@ -29,6 +30,57 @@ impl Document {
         }
     }
 
+    pub(super) fn use_reference_layers(
+        &mut self,
+        id: u64,
+        marked: &std::collections::HashSet<LayerId>,
+        channel: Channel,
+    ) -> Result<bool, CoreError> {
+        let active = match &self.active {
+            Some(a) if a.id == id => a,
+            _ => return Err(CoreError::NoActiveStroke),
+        };
+        if !active.brush().reference_lines.enabled {
+            return Ok(false);
+        }
+        let result = (|| {
+            if !self
+                .active
+                .iter()
+                .chain(self.material.extra.iter())
+                .all(|s| s.can_take_reference())
+            {
+                return Err(CoreError::Unsupported(Reason::ReferenceOnlyBeforeFirstDab));
+            }
+            self.require_channel(channel)?;
+            if !marked.iter().any(|&l| self.layer(l).is_some()) {
+                return Ok(None);
+            }
+            let set = self.layers[self.active.as_ref().expect("確かめた").layer_index].set;
+            let view = self.reference_view_now(marked)?;
+            Ok(Some(std::sync::Arc::new(
+                crate::brush::refer::ReferSource::new(view, set, channel),
+            )))
+        })();
+        match result {
+            Ok(None) => Ok(false),
+            Ok(Some(source)) => {
+                self.active
+                    .as_mut()
+                    .expect("確かめた")
+                    .set_reference(source.clone());
+                for state in self.material.extra.iter_mut() {
+                    state.set_reference(source.clone());
+                }
+                Ok(true)
+            }
+            Err(e) => {
+                self.cancel_active_stroke();
+                Err(e)
+            }
+        }
+    }
+
     /// 凍結した合成の参照元のバイトの合計（全チャンネル。ストロークの予算に数える分）。
     pub fn clone_source_bytes(&self) -> u64 {
         self.active
@@ -42,7 +94,7 @@ impl Document {
     fn build_clone_sources(&self) -> Result<Vec<CloneSource>, CoreError> {
         if self.active_target == Target::Mask {
             return Err(CoreError::Unsupported(
-                "マスクへのストロークはチャンネルの合成を読めない",
+                Reason::MaskStrokeCannotReadChannelComposite,
             ));
         }
         let states: Vec<&StrokeState> = self
@@ -52,10 +104,12 @@ impl Document {
             .collect();
         if states.iter().any(|s| !s.can_take_source()) {
             return Err(CoreError::Unsupported(
-                "合成の参照元はクローンか色の混ぜの最初のダブの前にだけ決められる",
+                Reason::CompositeSourceOnlyBeforeFirstDab,
             ));
         }
         let ts = self.tile_size;
+        // 読むのは、描くレイヤーのレイヤーセットの合成（出力の割り当てによらない）
+        let set = self.layers[states[0].layer_index].set;
         let mut total = 0u64; // C# の cloneSourceBytes（これまでのチャンネルの分）
         let mut sources = Vec::with_capacity(states.len());
         for state in states {
@@ -64,7 +118,7 @@ impl Document {
             // レイヤーが画素を持ち得るタイル（見えていて、そのチャンネルが有効なレイヤー。塗りつぶし・調整はキャンバス全体）
             let mut coords: BTreeSet<TileCoord> = BTreeSet::new();
             for layer in &self.layers {
-                if !layer.visible || !layer.is_channel_enabled(channel) {
+                if layer.set != set || !layer.visible || !layer.is_channel_enabled(channel) {
                     continue;
                 }
                 let found: Vec<TileCoord> = match layer.kind {
@@ -109,7 +163,14 @@ impl Document {
             let mut tiles = HashMap::with_capacity(rects.len());
             for (coord, rect) in rects {
                 let mut pixels = vec![0u8; rect.width as usize * rect.height as usize * 4];
-                self.composite_into(channel, rect, &mut pixels, RowOrder::BottomUp)?;
+                self.composite_set_into_cancellable(
+                    set,
+                    channel,
+                    rect,
+                    &mut pixels,
+                    RowOrder::BottomUp,
+                    None,
+                )?;
                 tiles.insert(
                     coord,
                     CompositeTile {

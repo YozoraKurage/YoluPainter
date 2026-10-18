@@ -6,13 +6,14 @@
 //!   ポインタの所に開く（押しているキーを覚え、押したまま離したら指している項目を実行する）。開いている間は `PopupKind::Pie` のポップアップとして、
 //!   下の入力を止める。
 
-use egui::{Key, Pos2, Rect, Vec2};
+use egui::{Pos2, Rect, Vec2};
 use serde_json::Value;
 
 use crate::commands;
 use crate::lang::Lang;
 use crate::mode::EditorMode;
 use crate::notice::Source;
+use crate::state::key::Key;
 use crate::state::{Action, AppState, OpenPopup, PopupKind};
 use crate::ui::menu::PopupState;
 use crate::ui::pie::{self as widget, Outcome, Runtime, Slot, SLOTS};
@@ -33,10 +34,26 @@ pub enum PieItem {
 /// パイの名前。
 #[derive(Clone, Debug, PartialEq)]
 pub enum PieName {
-    /// 最初からあるパイ（日本語・英語）。
-    Builtin(&'static str, &'static str),
+    /// 最初からあるパイ。
+    Builtin(BuiltinPie),
     /// 利用者が付けた名前。
     User(String),
+}
+
+/// 最初からあるパイ。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuiltinPie {
+    Mode,
+    View,
+}
+
+impl BuiltinPie {
+    pub fn name(self, lang: Lang) -> &'static str {
+        match self {
+            BuiltinPie::Mode => lang.t("pie-mode"),
+            BuiltinPie::View => lang.t("pie-view"),
+        }
+    }
 }
 
 /// パイ 1 つ。
@@ -54,7 +71,7 @@ pub struct PieMenu {
 impl PieMenu {
     pub fn name(&self, lang: Lang) -> String {
         match &self.name {
-            PieName::Builtin(ja, en) => lang.pick(*ja, *en).to_owned(),
+            PieName::Builtin(builtin) => builtin.name(lang).to_owned(),
             PieName::User(name) => name.clone(),
         }
     }
@@ -71,7 +88,7 @@ pub enum PieAction {
 #[derive(Clone, Debug, PartialEq)]
 pub struct OpenPie {
     pub menu: String,
-    pub run: Runtime,
+    pub run: Runtime<Key>,
 }
 
 /// パイの状態（パイの並びと、開いているもの）。アプリの状態で、.ylp には入れない。
@@ -109,15 +126,15 @@ pub fn builtin() -> Vec<PieMenu> {
     vec![
         PieMenu {
             id: "mode".into(),
-            name: PieName::Builtin("モード", "Mode"),
+            name: PieName::Builtin(BuiltinPie::Mode),
             command: Some("mode.pie"),
-            // 上: 編集、右: ポーズ、左: ペイント
+            // 上: 編集、右: ポーズ、下: ハイド、左: ペイント
             slots: [
                 command("mode.edit"),
                 None,
                 command("mode.pose"),
                 None,
-                None,
+                command("mode.hide"),
                 None,
                 command("mode.paint"),
                 None,
@@ -125,7 +142,7 @@ pub fn builtin() -> Vec<PieMenu> {
         },
         PieMenu {
             id: "view".into(),
-            name: PieName::Builtin("視点", "View"),
+            name: PieName::Builtin(BuiltinPie::View),
             command: Some("view3d.pie"),
             // 上・右上（正面）・右・右下（正投影）・下・左下（収める）・左・左上（背面）
             slots: [
@@ -167,7 +184,7 @@ impl PieState {
     pub fn add_user(&mut self, lang: Lang) -> String {
         let n = (1..)
             .find(|n| {
-                let name = lang.pick(format!("パイメニュー {n}"), format!("Pie Menu {n}"));
+                let name = lang.f("pie-pie-menu", &[("n", &n)]);
                 !self.menus.iter().any(|m| m.name(lang) == name)
             })
             .unwrap_or(1);
@@ -177,7 +194,7 @@ impl PieState {
                 break id;
             }
         };
-        let name = lang.pick(format!("パイメニュー {n}"), format!("Pie Menu {n}"));
+        let name = lang.f("pie-pie-menu", &[("n", &n)]);
         self.menus.push(user_menu(&id, name, Default::default()));
         id
     }
@@ -220,11 +237,14 @@ pub fn slot_of(app: &AppState, item: &PieItem) -> Slot {
                 (Some(_), Some(EditorMode::Pose)) if app.view3d.pose.session.is_none() => {
                     Some(crate::mode::no_rig(lang).to_owned())
                 }
+                (Some(_), Some(EditorMode::Hide)) if app.view3d.full_model().is_none() => {
+                    Some(crate::mode::no_model(lang).to_owned())
+                }
                 (Some(c), _) => c.unavailable(lang).map(str::to_owned),
             };
             // 入っている切り替え（今のモード・正投影）には印
             let on = mode == Some(app.mode)
-                || (id == "view3d.ortho" && app.view3d.camera.is_orthographic());
+                || (id == "view3d.ortho" && app.view3d.view.camera.is_orthographic());
             Slot {
                 label,
                 icon: mode.map(EditorMode::icon),
@@ -278,24 +298,15 @@ fn ops_label(json: &str) -> String {
 }
 
 fn unknown_command(lang: Lang, id: &str) -> String {
-    lang.pick(
-        format!("操作{}がありません", lang.quote(id)),
-        format!("No command {}", lang.quote(id)),
-    )
+    lang.f("pie-no-command", &[("id", &lang.quote(id))])
 }
 
 fn unknown_pie(lang: Lang, id: &str) -> String {
-    lang.pick(
-        format!("パイメニュー{}がありません", lang.quote(id)),
-        format!("No pie menu {}", lang.quote(id)),
-    )
+    lang.f("pie-no-pie-menu", &[("id", &lang.quote(id))])
 }
 
 fn no_action(lang: Lang, name: &str) -> String {
-    lang.pick(
-        format!("アクション{}がありません", lang.quote(name)),
-        format!("No action {}", lang.quote(name)),
-    )
+    lang.f("pie-no-action", &[("name", &lang.quote(name))])
 }
 
 /// パイを開かない途中の操作か（ポーズのギズモ・形のギズモ・点のドラッグ、3D の視点の操作、範囲のドラッグ、アイランドのメニューの右の押し、
@@ -304,8 +315,8 @@ pub fn dragging(app: &AppState) -> bool {
     app.view3d.pose.drag.is_some()
         || app.fillfx.drag.is_some()
         || app.fillfx.point_drag.is_some()
-        || app.view3d.input.nav.is_some()
-        || app.view3d.input.eyedrop.is_some()
+        || app.view3d.view.input.nav.is_some()
+        || app.view3d.view.input.eyedrop.is_some()
         || app.region.drag.is_some()
         || app.bake.menu_press.is_some()
         || app.canvas.rotating.is_some()
@@ -319,8 +330,8 @@ pub fn dragging(app: &AppState) -> bool {
 fn refuse_during_drag(app: &mut AppState) {
     let lang = app.lang;
     let text = lang.with_reason(
-        lang.pick("パイメニューを開けません", "Cannot open the pie menu"),
-        lang.pick("ほかの操作の途中です", "another operation is in progress"),
+        lang.t("pie-cannot-open-the-pie-menu"),
+        lang.t("pie-another-operation-is-in-progress"),
     );
     app.refuse(Source::Edit, text);
 }
@@ -372,7 +383,7 @@ pub fn open_requested(ctx: &egui::Context, app: &mut AppState) {
     let key = command.and_then(|command| {
         let map = crate::keymap::current();
         let keys: Vec<Key> = map.rows_of(command).filter_map(|b| b.key()).collect();
-        ctx.input(|i| keys.into_iter().find(|k| i.key_down(*k)))
+        ctx.input(|i| keys.into_iter().find(|k| i.key_down((*k).into())))
     });
     let center = ctx
         .input(|i| i.pointer.latest_pos())
@@ -392,7 +403,7 @@ pub fn open_at(
         menu: id,
         run: Runtime::new(ctx, center, key),
     });
-    app.popup = Some(OpenPopup {
+    app.ui.popup = Some(OpenPopup {
         kind: PopupKind::Pie,
         state: PopupState::new(ctx, Rect::from_center_size(center, Vec2::ZERO)),
     });
@@ -456,13 +467,8 @@ pub fn run(app: &mut AppState, item: &PieItem) {
             };
             if let Some(reason) = command.unavailable(lang) {
                 let what = command.label(app).unwrap_or_else(|| id.clone());
-                let text = lang.with_reason(
-                    lang.pick(
-                        format!("{what}は使えません"),
-                        format!("{what} is not available"),
-                    ),
-                    reason,
-                );
+                let text =
+                    lang.with_reason(lang.f("pie-is-not-available", &[("what", &what)]), reason);
                 app.refuse(Source::Edit, text);
                 return;
             }
@@ -499,15 +505,12 @@ pub fn run(app: &mut AppState, item: &PieItem) {
 /// yolu-ops の命令（JSON）を、今の文書に 1 回の取り消しで当てる（アクションの再生と同じ口）。
 fn run_ops(app: &mut AppState, json: &str) {
     let lang = app.lang;
-    let what = lang.pick("命令を実行できません", "Cannot run the commands");
+    let what = lang.t("pie-cannot-run-the-commands");
     let items = match serde_json::from_str::<Value>(json) {
         Ok(Value::Array(items)) => items,
         Ok(v) => vec![v],
         Err(_) => {
-            let text = lang.with_reason(
-                what,
-                lang.pick("JSON を読めません", "the JSON cannot be read"),
-            );
+            let text = lang.with_reason(what, lang.t("pie-the-json-cannot-be-read"));
             app.refuse(Source::Ops, text);
             return;
         }
@@ -526,7 +529,7 @@ fn run_ops(app: &mut AppState, json: &str) {
     }
     // 記録の間は当てない（アクションの再生と同じ。記録に入らない変更を文書に残さない）
     if app.automation.recorder.is_some() {
-        let text = lang.with_reason(what, lang.pick("記録中です", "Recording is in progress"));
+        let text = lang.with_reason(what, lang.t("pie-recording-is-in-progress"));
         app.refuse(Source::Ops, text);
         return;
     }
@@ -570,7 +573,7 @@ mod tests {
                 None,
                 some("ポーズ"),
                 None,
-                None,
+                some("ハイド"),
                 None,
                 some("ペイント"),
                 None
@@ -588,7 +591,7 @@ mod tests {
                 None,
                 some("Pose"),
                 None,
-                None,
+                some("Hide"),
                 None,
                 some("Paint"),
                 None
@@ -646,7 +649,7 @@ mod tests {
                 s.label
             );
         }
-        app.view3d.camera.set_orthographic(true);
+        app.view3d.view.camera.set_orthographic(true);
         for (i, item) in view.slots.iter().enumerate() {
             let s = slot_of(&app, item.as_ref().unwrap());
             assert_eq!(s.checked, i == 3, "{}", s.label);
@@ -662,10 +665,10 @@ mod tests {
         app.apply(Action::Pie(PieAction::Open("nothing".into())));
         assert!(app.pie.request.is_none());
         assert_eq!(app.message, "パイメニュー「nothing」がありません。");
-        let layer = app.selected_layer.unwrap();
+        let layer = app.session.selected_layer.unwrap();
         let settings = app.stroke_settings(false);
-        let stroke = app.doc.begin_stroke(layer, &settings).unwrap();
-        app.stroke = Some(stroke);
+        let stroke = app.session.doc.begin_stroke(layer, &settings).unwrap();
+        app.session.stroke = Some(stroke);
         app.canvas.stroke = Some(crate::state::StrokeSource::Mouse);
         app.apply(Action::Pie(PieAction::Open("mode".into())));
         assert!(app.pie.request.is_none());
@@ -681,9 +684,9 @@ mod tests {
         // 正投影の切り替え（3D のモデルがあるとき）
         app.view3d.load_demo();
         run(&mut app, &PieItem::Command("view3d.ortho".into()));
-        assert!(app.view3d.camera.is_orthographic());
+        assert!(app.view3d.view.camera.is_orthographic());
         run(&mut app, &PieItem::Command("view3d.ortho".into()));
-        assert!(!app.view3d.camera.is_orthographic());
+        assert!(!app.view3d.view.camera.is_orthographic());
         run(&mut app, &PieItem::Command("no.such".into()));
         assert_eq!(app.message, "操作「no.such」がありません。");
         // 別のパイ: 開く頼み
@@ -691,7 +694,7 @@ mod tests {
         assert_eq!(app.pie.request.as_deref(), Some("view"));
         app.pie.request = None;
         // yolu-ops の命令: 全部を 1 回の取り消しで
-        let layers = app.doc.layers().len();
+        let layers = app.session.doc.layers().len();
         let json = json!([
             {"command": "layer.add", "args": {"kind": "paint", "name": "A"}},
             {"command": "layer.add", "args": {"kind": "paint", "name": "B"}},
@@ -702,9 +705,18 @@ mod tests {
             "layer.add +1"
         );
         run(&mut app, &PieItem::Ops(json));
-        assert_eq!(app.doc.layers().len(), layers + 2, "{}", app.message);
+        assert_eq!(
+            app.session.doc.layers().len(),
+            layers + 2,
+            "{}",
+            app.message
+        );
         app.apply(Action::Undo);
-        assert_eq!(app.doc.layers().len(), layers, "1 回の取り消しで両方");
+        assert_eq!(
+            app.session.doc.layers().len(),
+            layers,
+            "1 回の取り消しで両方"
+        );
         // 記録の間は断る
         app.apply(Action::Automation(
             crate::automation::AutomationOp::StartRecording,
@@ -712,7 +724,7 @@ mod tests {
         let json1 = json!({"command": "layer.add", "args": {"kind": "paint"}}).to_string();
         run(&mut app, &PieItem::Ops(json1));
         assert_eq!(app.message, "命令を実行できません（記録中です）。");
-        assert_eq!(app.doc.layers().len(), layers);
+        assert_eq!(app.session.doc.layers().len(), layers);
         app.automation.recorder = None;
         // 読めない JSON・知らない命令は断る（文書は変えない）
         run(&mut app, &PieItem::Ops("{".into()));
@@ -726,7 +738,7 @@ mod tests {
             "{}",
             app.message
         );
-        assert_eq!(app.doc.layers().len(), layers);
+        assert_eq!(app.session.doc.layers().len(), layers);
         // 記録したアクション: 名前で探す（無ければ断る）
         let missing = PieItem::Recorded("無い".into());
         assert!(!slot_of(&app, &missing).enabled);
@@ -748,9 +760,14 @@ mod tests {
         let item = PieItem::Recorded("塗る".into());
         let slot = slot_of(&app, &item);
         assert!(slot.enabled && slot.label == "塗る" && slot.icon == Some("play"));
-        let layers = app.doc.layers().len();
+        let layers = app.session.doc.layers().len();
         run(&mut app, &item);
-        assert_eq!(app.doc.layers().len(), layers + 1, "{}", app.message);
+        assert_eq!(
+            app.session.doc.layers().len(),
+            layers + 1,
+            "{}",
+            app.message
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

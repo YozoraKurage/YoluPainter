@@ -82,7 +82,10 @@ pub fn hover_of(
 }
 
 fn canvas_size(app: &AppState) -> (f64, f64) {
-    (app.doc.width() as f64, app.doc.height() as f64)
+    (
+        app.session.doc.width() as f64,
+        app.session.doc.height() as f64,
+    )
 }
 
 /// 選んでいるレイヤーの、編集していないほかの 2D のパス（一覧の上のものから）。
@@ -212,10 +215,7 @@ fn inside(app: &AppState, x: f64, y: f64) -> bool {
 }
 
 fn outside(app: &mut AppState) {
-    app.refuse(
-        Source::Path,
-        app.lang.pick("キャンバスの外です", "Outside the canvas"),
-    );
+    app.refuse(Source::Path, app.lang.t("pathtool-outside-the-canvas"));
 }
 
 /// 動いた。

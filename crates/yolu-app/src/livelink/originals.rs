@@ -50,18 +50,15 @@ impl OriginalMark {
     pub fn tooltip(&self, lang: Lang, set: (u32, u32)) -> String {
         let mut lines = Vec::new();
         if self.converted {
-            lines.push(lang.pick(
-                "リニアのテクスチャを sRGB の画素へ直しています".to_owned(),
-                "Converted from a linear texture to sRGB pixels".to_owned(),
-            ));
+            lines.push(
+                lang.t("livelink-converted-from-a-linear-texture-tip")
+                    .to_owned(),
+            );
         }
         if let Some((w, h)) = self.resized_from {
-            lines.push(lang.pick(
-                format!(
-                    "{w}×{h} をセットの大きさ {}×{} に拡大縮小しています",
-                    set.0, set.1
-                ),
-                format!("Scaled from {w}×{h} to the set size {}×{}", set.0, set.1),
+            lines.push(lang.f(
+                "livelink-scaled-from-to-the-set-tip",
+                &[("w", &w), ("h", &h), ("set", &set.0), ("set_2", &set.1)],
             ));
         }
         lines.join("\n")
@@ -102,13 +99,22 @@ impl OriginalMarks {
 fn add_bottom_layer(doc: &mut Document, pixels: Vec<u8>, lang: Lang) -> Result<LayerId, String> {
     let clip = PixelClipboard::from_image(doc.width(), doc.height(), pixels, Channel::Color)
         .map_err(|e| lang.core_error(&e))?;
-    let name = lang.pick("元の絵", "Original");
+    let name = lang.t("livelink-original");
+    let white = crate::state::starter_white_of(doc);
     let pasted = doc
         .paste_as_layer(&clip, Channel::Color, Some(name), None)
         .map_err(|e| lang.core_error(&e))?;
     if let Err(e) = doc.move_layer(pasted.layer, 0) {
         let _ = doc.undo();
         return Err(lang.core_error(&e));
+    }
+    // 初めの形のセット（白の単色の上に空のレイヤー）は、白が元の絵を覆わないよう白の単色を外す
+    if let Some(white) = white {
+        if let Err(e) = doc.remove_layer(white) {
+            let _ = doc.undo();
+            let _ = doc.undo();
+            return Err(lang.core_error(&e));
+        }
     }
     let _ = doc.clear_history();
     Ok(pasted.layer)
@@ -148,7 +154,7 @@ pub fn install(
         if let Some((doc, layer)) = rebuilt_with(state.set_doc(index), picture, lang) {
             let mark = mark(&doc, layer);
             state.swap_untouched_set_document(index, doc);
-            state.link_originals.push(mark);
+            state.services.link_originals.push(mark);
             return Ok(());
         }
     }
@@ -156,7 +162,7 @@ pub fn install(
     let size = (doc.width(), doc.height());
     let layer = add_bottom_layer(doc, fit(picture, size), lang)?;
     let mark = mark(state.set_doc(index), layer);
-    state.link_originals.push(mark);
+    state.services.link_originals.push(mark);
     Ok(())
 }
 
@@ -229,7 +235,7 @@ pub fn install_layers(
         .layers()
         .last()
         .map(|l| l.name().to_owned())
-        .unwrap_or_else(|| format!("{} 1", lang.pick("レイヤー", "Layer")));
+        .unwrap_or_else(|| format!("{} 1", lang.t("livelink-layer")));
     let mut doc = layers.doc;
     let top = doc.add_layer(&name).map_err(core)?;
     for channel in &channels {
@@ -263,29 +269,30 @@ pub fn layers_note(lang: Lang, set: &str, layers: &PsdLayers) -> Option<String> 
             .take(SHOWN)
             .cloned()
             .collect::<Vec<_>>()
-            .join(lang.pick("、", ", "));
+            .join(lang.t("livelink-text-2"));
         if all.len() > SHOWN {
             let rest = all.len() - SHOWN;
-            text += &lang.pick(format!(" ほか {rest} 件"), format!(" and {rest} more"));
+            text += &lang.f("livelink-and-more", &[("rest", &rest)]);
         }
         Some(text)
     };
-    let parts: Vec<String> = [
-        (ImportAction::Dropped, "落とす物", "dropped"),
-        (ImportAction::Changed, "変わる物", "changed"),
-    ]
-    .into_iter()
-    .filter_map(|(action, ja, en)| {
-        names(action).map(|list| lang.pick(format!("{ja}（{list}）"), format!("{en} ({list})")))
-    })
-    .collect();
+    let parts: Vec<String> = [ImportAction::Dropped, ImportAction::Changed]
+        .into_iter()
+        .filter_map(|action| {
+            names(action).map(|list| match action {
+                ImportAction::Dropped => lang.f("livelink-dropped-list", &[("list", &list)]),
+                _ => lang.f("livelink-changed-list", &[("list", &list)]),
+            })
+        })
+        .collect();
     if parts.is_empty() {
         return None;
     }
     let file = lang.quote(&file_name(&layers.path));
-    Some(lang.pick(
-        format!("{set}: {file}の取り込みで{}", parts.join("・")),
-        format!("{set}: importing {file}, {}", parts.join(", ")),
+    let parts = parts.join(lang.t("livelink-parts-separator"));
+    Some(lang.f(
+        "livelink-importing-the-file",
+        &[("set", &set), ("file", &file), ("parts", &parts)],
     ))
 }
 
@@ -293,9 +300,9 @@ pub fn layers_note(lang: Lang, set: &str, layers: &PsdLayers) -> Option<String> 
 pub fn flattened_note(lang: Lang, set: &str, path: &str, why: &CopyRefusal) -> String {
     let file = lang.quote(&file_name(std::path::Path::new(path)));
     lang.with_reason(
-        lang.pick(
-            format!("{set}: {file}をレイヤーのまま入れられないので、平らにして入れました"),
-            format!("{set}: {file} was flattened instead of kept as layers"),
+        lang.f(
+            "livelink-was-flattened-instead-of-kept",
+            &[("set", &set), ("file", &file)],
         ),
         crate::lang::psd_copy_refusal(lang, why),
     )
@@ -304,9 +311,9 @@ pub fn flattened_note(lang: Lang, set: &str, path: &str, why: &CopyRefusal) -> S
 /// 触ったセットの元の絵のファイルが変わった（セットは変えない）知らせ。
 pub fn changed_note(lang: Lang, set: &str, path: &str) -> String {
     let file = lang.quote(&file_name(std::path::Path::new(path)));
-    lang.pick(
-        format!("{set}: 元の絵{file}が変わりました"),
-        format!("{set}: the original {file} has changed"),
+    lang.f(
+        "livelink-the-original-has-changed",
+        &[("set", &set), ("file", &file)],
     )
 }
 
@@ -314,9 +321,9 @@ pub fn changed_note(lang: Lang, set: &str, path: &str) -> String {
 pub fn unreadable_kept_note(lang: Lang, set: &str, path: &str, why: &PictureError) -> String {
     let file = lang.quote(&file_name(std::path::Path::new(path)));
     lang.with_reason(
-        lang.pick(
-            format!("{set}: 元の絵{file}を読めないので、セットはそのままです"),
-            format!("{set}: the original {file} cannot be read, so the set is kept"),
+        lang.f(
+            "livelink-the-original-cannot-be-read",
+            &[("set", &set), ("file", &file)],
         ),
         why.text(lang),
     )

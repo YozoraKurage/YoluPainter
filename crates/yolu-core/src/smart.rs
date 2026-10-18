@@ -1,5 +1,6 @@
 //! 名前を付けたレイヤーの断片。捕捉した時点の写しを保持し、配置しても変わらない。
-use crate::{Channel, ChannelInfo, CoreError, Layer, LayerId};
+use crate::Reason;
+use crate::{Channel, ChannelInfo, CoreError, Layer, LayerId, LayerSetId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SmartKind {
@@ -76,13 +77,16 @@ pub(crate) fn check_name(name: &str) -> Result<(), CoreError> {
         || name.encode_utf16().count() > 256
         || name.chars().any(|c| c < ' ' || c == '\x7f')
     {
-        return Err(CoreError::InvalidArgument("スマート素材の名前"));
+        return Err(CoreError::InvalidArgument(Reason::SmartMaterialName));
     }
     Ok(())
 }
 #[derive(Clone, Debug, Default)]
 pub struct SmartPlacement {
     pub parent: Option<LayerId>,
+    /// 一番上の段（parent が None）に置くときの入れ先のレイヤーセット。None は最初のレイヤーセット。parent があるときは
+    /// そのグループのレイヤーセットで、違うレイヤーセットを渡せば断る。
+    pub set: Option<LayerSetId>,
     /// None または兄弟数を超える位置は最上位。
     pub position: Option<usize>,
     /// None は元の有効状態を保つ。値と画素は無効化しても保持する。

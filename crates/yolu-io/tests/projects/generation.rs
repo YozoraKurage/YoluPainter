@@ -1053,7 +1053,7 @@ fn copy_dir(from: &Path, to: &Path) {
 
 #[test]
 fn a_store_written_by_the_unity_code_is_read_back_listed_and_carried_on() {
-    // `tools/io-fixtures` が Unity 版の `GenerationStore.Commit` で書いた 2 世代（変わらない中身は共有）。置き場を触るので、写しで試す
+    // Unity 版の `GenerationStore.Commit` で書いた 2 世代（変わらない中身は共有）。置き場を触るので、写しで試す
     let dir = Dir::new();
     copy_dir(&fixture_path("unity-generation"), &dir.0);
     let store = GenerationStore::new(&dir.0);
@@ -1084,7 +1084,7 @@ fn a_store_written_by_the_unity_code_is_read_back_listed_and_carried_on() {
     assert_eq!(
         pointer(&dir.0, "previous"),
         listed[1].id,
-        "Unity 版の previous の書き方（File.Replace）も同じ形"
+        "0.4.x までの Unity ブリッジの previous の書き方（File.Replace）も同じ形"
     );
     let older = store.load_generation(&listed[1].id).unwrap();
     assert!(
@@ -1228,7 +1228,7 @@ fn a_project_survives_the_store_and_opens_from_its_entries() {
     use yolu_core::{BrushSettings, Document, Rgba8};
     use yolu_io::{composite_pngs, MaterialRef, NativeDocument, Project, SetSpec, WriterInfo};
     let writer = WriterInfo {
-        app: "試験".into(),
+        app: "テスト".into(),
         version: "0.0.1".into(),
         unity: "standalone".into(),
     };
@@ -1248,7 +1248,7 @@ fn a_project_survives_the_store_and_opens_from_its_entries() {
     let spec = SetSpec {
         id: id.clone(),
         name: "セット".into(),
-        material: MaterialRef::PendingSlot(0),
+        materials: vec![MaterialRef::PendingSlot(0)],
         document: Some(NativeDocument::from_core(&doc).unwrap().into()),
         composites: composite_pngs(&doc).unwrap(),
     };

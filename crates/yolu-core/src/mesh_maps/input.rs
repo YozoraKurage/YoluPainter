@@ -1,4 +1,5 @@
 use super::{check, Result};
+use crate::Reason;
 use sha2::{Digest, Sha256};
 
 /// 三角形ごとに独立した角。構築時に検証し、その後は読み取り専用。
@@ -46,11 +47,11 @@ impl MeshBakeInput {
         let n = corners.len() / 9;
         check(
             corners.len().is_multiple_of(9) && n > 0 && n <= 4_000_000,
-            "三角形の角は9成分ずつ、1〜4000000面が必要です",
+            Reason::MeshTriangleCountRange,
         )?;
         check(
             uvs.len() == n * 6 && slots.len() == n,
-            "UV またはスロットの数が面数と一致しません",
+            Reason::MeshUvOrSlotCountMismatch,
         )?;
         for (values, size) in [
             (&attrs.normals, n * 9),
@@ -61,16 +62,16 @@ impl MeshBakeInput {
                 values
                     .as_ref()
                     .is_none_or(|v| v.len() == size && v.iter().all(|f| f.is_finite())),
-                "頂点属性の数または値が不正です",
+                Reason::MeshVertexAttributesInvalid,
             )?;
         }
         check(
             corners.iter().chain(&uvs).all(|v| v.is_finite()),
-            "位置・UV に有限でない値があります",
+            Reason::MeshValuesNotFinite,
         )?;
         check(
             slots.iter().all(|s| *s >= -1) && (0..=7).contains(&attrs.uv_channel),
-            "スロットまたは UV チャンネルが範囲外です",
+            Reason::MeshSlotOrUvChannelRange,
         )?;
         check(
             attrs.renderers.as_ref().is_none_or(|r| {
@@ -83,7 +84,7 @@ impl MeshBakeInput {
                                 .is_none_or(|names| (*r as usize) < names.len())
                     })
             }),
-            "レンダラー番号が不正です",
+            Reason::MeshRendererIndexInvalid,
         )?;
         check(
             attrs.material_keys.as_ref().is_none_or(|k| {
@@ -91,7 +92,7 @@ impl MeshBakeInput {
                     && k.iter()
                         .all(|s| s.as_ref().is_none_or(|s| s.encode_utf16().count() <= 128))
             }),
-            "マテリアル識別子の数または長さが不正です",
+            Reason::MeshMaterialIdsInvalid,
         )?;
         let mut min = [f64::MAX; 3];
         let mut max = [f64::MIN; 3];
@@ -103,10 +104,7 @@ impl MeshBakeInput {
         }
         let d = std::array::from_fn(|a| max[a] - min[a]);
         let diagonal = length(d);
-        check(
-            diagonal > 0. && diagonal.is_finite(),
-            "メッシュの大きさが0または範囲外です",
-        )?;
+        check(diagonal > 0. && diagonal.is_finite(), Reason::MeshSizeRange)?;
         let normal_source = if attrs.normals.is_none() {
             "face".into()
         } else {

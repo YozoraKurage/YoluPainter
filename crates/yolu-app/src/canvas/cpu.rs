@@ -25,7 +25,7 @@ use rayon::prelude::*;
 
 use super::display::PAGE;
 use super::view::CanvasView;
-use crate::engine::{Channel, Document, Rect as DocRect, TileCoord};
+use crate::engine::{Channel, Document, LayerSetId, Rect as DocRect, TileCoord};
 
 /// 見えている範囲と拡大。タイルを上げる順と、粗い絵の歩幅を決める。
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -112,6 +112,10 @@ const COARSE_SIDE_MAX: u32 = 4096;
 pub(super) struct CpuCanvas {
     doc_id: u128,
     channel: Option<Channel>,
+    /// 見せるレイヤーセット（None は最終の結果）。替わると頁を作り直す。
+    set: Option<LayerSetId>,
+    /// 今の頁を作ったときの `set`。
+    shown_set: Option<LayerSetId>,
     serial: u64,
     size: (u32, u32),
     tile_size: u32,
@@ -165,6 +169,8 @@ impl Default for CpuCanvas {
         CpuCanvas {
             doc_id: 0,
             channel: None,
+            set: None,
+            shown_set: None,
             serial: 0,
             size: (0, 0),
             tile_size: 0,
@@ -185,6 +191,47 @@ impl CpuCanvas {
         self.pages.is_empty()
     }
 
+    /// 次の `sync` から見せるレイヤーセット（None は最終の結果。出力の割り当てのレイヤーセットを渡すときも None に正規化するのは呼ぶ側）。
+    /// 前と違えば、次の `sync` が頁を作り直す。
+    pub(super) fn show_set(&mut self, set: Option<LayerSetId>) {
+        self.set = set;
+    }
+
+    /// `set` の表示（無ければ最終の結果）のタイルの合成。
+    fn composite_tiles(
+        &self,
+        doc: &Document,
+        channel: Channel,
+        coords: &[TileCoord],
+    ) -> Result<Vec<crate::engine::CompositedTile>, crate::engine::CoreError> {
+        match self.set {
+            Some(set) => doc.composite_set_tiles_cancellable(set, channel, coords, None),
+            None => doc.composite_tiles(channel, coords),
+        }
+    }
+
+    /// `set` の表示（無ければ最終の結果）の粗い合成。
+    fn composite_coarse(
+        &self,
+        doc: &Document,
+        channel: Channel,
+        coords: &[TileCoord],
+        stride: u32,
+    ) -> Result<Vec<crate::engine::CompositedTile>, crate::engine::CoreError> {
+        match self.set {
+            Some(set) => doc.composite_set_coarse_tiles(set, channel, coords, stride),
+            None => doc.composite_coarse_tiles(channel, coords, stride),
+        }
+    }
+
+    /// `set` の表示（無ければ最終の結果）に、評価していない効果の出力があるタイルがあるか。
+    fn effects_pending(&self, doc: &Document, channel: Channel, coords: &[TileCoord]) -> bool {
+        match self.set {
+            Some(set) => doc.set_effects_pending(set, channel, coords),
+            None => doc.effects_pending(channel, coords),
+        }
+    }
+
     /// 前の文書の絵を全部捨てる（次の `sync` が全部を作り直す）。
     pub(super) fn clear(&mut self) {
         self.pages.clear();
@@ -192,6 +239,7 @@ impl CpuCanvas {
         self.coarse = None;
         self.doc_id = 0;
         self.channel = None;
+        self.shown_set = None;
         self.serial = 0;
     }
 
@@ -282,6 +330,7 @@ impl CpuCanvas {
         self.nearest = nearest;
         self.doc_id = doc.id();
         self.channel = Some(channel);
+        self.shown_set = self.set;
         self.size = (w, h);
         self.tile_size = doc.tile_size();
         self.cols = w.div_ceil(self.tile_size);
@@ -346,6 +395,7 @@ impl CpuCanvas {
             || self.nearest != nearest
             || self.doc_id != doc.id()
             || self.channel != Some(channel)
+            || self.shown_set != self.set
             || changed.is_none();
         if rebuilt {
             self.reset(doc, channel, nearest);
@@ -563,7 +613,7 @@ impl CpuCanvas {
     ) -> usize {
         let coords: Vec<TileCoord> = chunk.iter().map(|&i| self.coord(i)).collect();
         let t = Instant::now();
-        let Ok(tiles) = doc.composite_coarse_tiles(channel, &coords, stride) else {
+        let Ok(tiles) = self.composite_coarse(doc, channel, &coords, stride) else {
             return 0;
         };
         for tile in &tiles {
@@ -650,13 +700,13 @@ impl CpuCanvas {
             let coords: Vec<TileCoord> = chunk.iter().map(|&i| self.coord(i)).collect();
             // ドラッグの途中で、効果の出力をまだ評価していないタイルは、粗く合成して見せる（離したら正確に直す）
             if let Some(s) = coarse_stride {
-                if interactive && doc.effects_pending(channel, &coords) {
+                if interactive && self.effects_pending(doc, channel, &coords) {
                     coarse_made += self.coarse_chunk(ctx, doc, channel, chunk, s);
                     continue;
                 }
             }
             let t = Instant::now();
-            if let Ok(tiles) = doc.composite_tiles(channel, &coords) {
+            if let Ok(tiles) = self.composite_tiles(doc, channel, &coords) {
                 // 乗算済みの画像への変換をタイルごとにワーカーへ分け、頁へ上げるのは 1 つのスレッドで
                 let pieces: Vec<Vec<(usize, [usize; 2], ColorImage)>> = if tiles.len() < 4 {
                     tiles

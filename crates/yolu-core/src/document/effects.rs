@@ -4,6 +4,7 @@
 //! どれも 1 回の Undo で、断ったら何も変えない。スライダーのドラッグ（強さ・設定・投影・グラデーション）はまとめられる。
 //! 評価は [`super::eval`]（合成のとき）。ここは設定の入れ物の変更と、変化の記録（そのレイヤーが出す所を作り直させる）まで。
 
+use crate::Reason;
 use std::collections::BTreeMap;
 
 use super::{CoalesceKey, Command, Document};
@@ -160,11 +161,11 @@ impl Document {
                 .mask
                 .as_ref()
                 .map(|m| &m.filters)
-                .ok_or(CoreError::Unsupported("レイヤーにマスクが無い")),
+                .ok_or(CoreError::Unsupported(Reason::LayerHasNoMask)),
         }
     }
 
-    fn new_filter_id(&mut self) -> FilterId {
+    pub(super) fn new_filter_id(&mut self) -> FilterId {
         loop {
             self.id_counter += 1;
             let id = FilterId(super::random_id(self.id_counter));
@@ -364,7 +365,7 @@ impl Document {
             {
                 if e.id.0 == 0 || !seen.insert(e.id) || self.find_filter(e.id).is_some() {
                     return Err(CoreError::InvalidArgument(
-                        "フィルターの ID が空か重なっている",
+                        Reason::FilterIdEmptyOrDuplicated,
                     ));
                 }
             }
@@ -414,8 +415,10 @@ impl Document {
 
     fn content_kind_refusal(layer: &Layer) -> Result<(), CoreError> {
         match layer.kind {
-            LayerKind::Adjustment => Err(CoreError::Unsupported("調整レイヤーには画素が無い")),
-            LayerKind::Group => Err(CoreError::Unsupported("グループの合成へのフィルターは無い")),
+            LayerKind::Adjustment => {
+                Err(CoreError::Unsupported(Reason::AdjustmentLayersHaveNoPixels))
+            }
+            LayerKind::Group => Err(CoreError::Unsupported(Reason::GroupsHaveNoCompositeFilters)),
             _ => Ok(()),
         }
     }
@@ -430,9 +433,9 @@ impl Document {
     ) -> Result<FilterId, CoreError> {
         self.ensure_no_stroke()?;
         let index = self.index_of(layer)?;
-        require_finite(spec.strength, "strength")?;
+        require_finite(spec.strength, Reason::Strength)?;
         if !(0.0..=1.0).contains(&spec.strength) {
-            return Err(CoreError::InvalidArgument("strength"));
+            return Err(CoreError::InvalidArgument(Reason::Strength));
         }
         let channels = match target {
             FilterTarget::Content => {
@@ -463,14 +466,10 @@ impl Document {
                 };
                 list.sort();
                 if list.windows(2).any(|w| w[0] == w[1]) {
-                    return Err(CoreError::InvalidArgument(
-                        "フィルターのチャンネルが重なっている",
-                    ));
+                    return Err(CoreError::InvalidArgument(Reason::FilterChannelsDuplicated));
                 }
                 if list.is_empty() {
-                    return Err(CoreError::InvalidArgument(
-                        "フィルターのチャンネルが選ばれていない",
-                    ));
+                    return Err(CoreError::InvalidArgument(Reason::NoFilterChannelSelected));
                 }
                 list
             }
@@ -478,7 +477,7 @@ impl Document {
                 self.stack_ref(index, target)?;
                 if spec.channels.is_some() {
                     return Err(CoreError::InvalidArgument(
-                        "マスクのフィルターはチャンネルを持たない（マスクは全チャンネルで共有）",
+                        Reason::MaskFiltersSharedByAllChannels,
                     ));
                 }
                 spec.settings.validate(ValueType::Mask)?;
@@ -488,10 +487,10 @@ impl Document {
         let id = match spec.id {
             Some(id) => {
                 if id.0 == 0 {
-                    return Err(CoreError::InvalidArgument("フィルターの ID が空"));
+                    return Err(CoreError::InvalidArgument(Reason::FilterIdEmpty));
                 }
                 if self.find_filter(id).is_some() {
-                    return Err(CoreError::InvalidArgument("フィルターの ID が重なっている"));
+                    return Err(CoreError::InvalidArgument(Reason::FilterIdDuplicated));
                 }
                 id
             }
@@ -500,7 +499,7 @@ impl Document {
         let mut stack = self.stack_ref(index, target)?.clone();
         let at = spec.index.unwrap_or(stack.len());
         if at > stack.len() {
-            return Err(CoreError::InvalidArgument("index"));
+            return Err(CoreError::InvalidArgument(Reason::Index));
         }
         stack.insert(
             at,
@@ -536,7 +535,7 @@ impl Document {
         let (layer_index, target, at) = self.locate_filter(layer, filter)?;
         let mut stack = self.stack_ref(layer_index, target)?.clone();
         if index >= stack.len() {
-            return Err(CoreError::InvalidArgument("index"));
+            return Err(CoreError::InvalidArgument(Reason::Index));
         }
         if at == index {
             return Ok(());
@@ -571,9 +570,9 @@ impl Document {
         coalesce: bool,
     ) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
-        require_finite(strength, "strength")?;
+        require_finite(strength, Reason::Strength)?;
         if !(0.0..=1.0).contains(&strength) {
-            return Err(CoreError::InvalidArgument("strength"));
+            return Err(CoreError::InvalidArgument(Reason::Strength));
         }
         let (index, target, at) = self.locate_filter(layer, filter)?;
         let mut stack = self.stack_ref(index, target)?.clone();
@@ -630,17 +629,13 @@ impl Document {
         self.ensure_no_stroke()?;
         let (index, target, at) = self.locate_filter(layer, filter)?;
         if target == FilterTarget::Mask {
-            return Err(CoreError::Unsupported(
-                "マスクのフィルターはチャンネルを持たない",
-            ));
+            return Err(CoreError::Unsupported(Reason::MaskFiltersHaveNoChannels));
         }
         let mut list = channels.to_vec();
         list.sort();
         list.dedup();
         if list.is_empty() {
-            return Err(CoreError::InvalidArgument(
-                "フィルターのチャンネルが選ばれていない",
-            ));
+            return Err(CoreError::InvalidArgument(Reason::NoFilterChannelSelected));
         }
         let mut stack = self.stack_ref(index, target)?.clone();
         for c in &list {
@@ -674,13 +669,13 @@ impl Document {
         {
             return Ok((index, FilterTarget::Mask, at));
         }
-        Err(CoreError::Unsupported("そのレイヤーにそのフィルターが無い"))
+        Err(CoreError::Unsupported(Reason::LayerHasNoSuchFilter))
     }
 
     /// スタックの検査（段の数・到達半径・ブロックの作業メモリ）。チャンネルごと・マスクの有効な段の並びで見る。
     fn check_stack(&self, after: &[FilterEffect], target: FilterTarget) -> Result<(), CoreError> {
         if after.len() > MAX_FILTERS_PER_STACK {
-            return Err(CoreError::Unsupported("1 つのスタックの段は 32 まで"));
+            return Err(CoreError::Unsupported(Reason::TooManyStackEffects));
         }
         let chains: Vec<Vec<&FilterEffect>> = match target {
             FilterTarget::Mask => vec![after.iter().filter(|e| e.is_active()).collect()],
@@ -703,9 +698,7 @@ impl Document {
     fn check_chain(&self, chain: &[&FilterEffect]) -> Result<(), CoreError> {
         let halo: u32 = chain.iter().map(|e| e.settings.halo()).sum();
         if halo > MAX_FILTER_STACK_HALO {
-            return Err(CoreError::Unsupported(
-                "スタックの到達半径の合計が 512 画素を超える",
-            ));
+            return Err(CoreError::Unsupported(Reason::StackReachTooLarge));
         }
         if chain.is_empty() {
             return Ok(());
@@ -802,7 +795,7 @@ impl Document {
                 self.layers[index]
                     .mask
                     .as_mut()
-                    .ok_or(CoreError::Unsupported("レイヤーにマスクが無い"))?
+                    .ok_or(CoreError::Unsupported(Reason::LayerHasNoMask))?
                     .filters = stack.to_vec()
             }
         }
@@ -853,16 +846,17 @@ impl Document {
         let l = &self.layers[index];
         match placement {
             AnchorPlacement::Mask => {
-                let m = l.mask.as_ref().ok_or(CoreError::Unsupported(
-                    "マスクの無いレイヤーのマスクには Anchor を置けない",
-                ))?;
+                let m = l
+                    .mask
+                    .as_ref()
+                    .ok_or(CoreError::Unsupported(Reason::MaskAnchorNeedsMask))?;
                 if m.anchor.is_some() {
-                    return Err(CoreError::Unsupported("このマスクにはもう Anchor がある"));
+                    return Err(CoreError::Unsupported(Reason::ThisMaskAlreadyHasAnchor));
                 }
             }
             AnchorPlacement::Layer => {
                 if l.anchor.is_some() {
-                    return Err(CoreError::Unsupported("このレイヤーにはもう Anchor がある"));
+                    return Err(CoreError::Unsupported(Reason::ThisLayerAlreadyHasAnchor));
                 }
             }
         }
@@ -877,10 +871,10 @@ impl Document {
         let anchor_id = match id {
             Some(a) => {
                 if a.0 == 0 {
-                    return Err(CoreError::InvalidArgument("Anchor の ID が空"));
+                    return Err(CoreError::InvalidArgument(Reason::AnchorIdEmpty));
                 }
                 if self.find_anchor(a).is_some() {
-                    return Err(CoreError::InvalidArgument("Anchor の ID が重なっている"));
+                    return Err(CoreError::InvalidArgument(Reason::AnchorIdDuplicated));
                 }
                 a
             }
@@ -908,7 +902,7 @@ impl Document {
         self.ensure_no_stroke()?;
         let info = self
             .find_anchor(anchor)
-            .ok_or(CoreError::Unsupported("その Anchor が無い"))?;
+            .ok_or(CoreError::Unsupported(Reason::AnchorNotFound))?;
         let (layer, placement, old) = (info.layer, info.placement, info.anchor.clone());
         // 名前の変更は断らないが、外すのは、すべてのロックで断る（C# の RemoveAnchor）
         self.refuse_lock(layer, super::LayerLocks::ALL)?;
@@ -929,7 +923,7 @@ impl Document {
         Anchor::check_name(name)?;
         let info = self
             .find_anchor(anchor)
-            .ok_or(CoreError::Unsupported("その Anchor が無い"))?;
+            .ok_or(CoreError::Unsupported(Reason::AnchorNotFound))?;
         if info.anchor.name == name {
             return Ok(());
         }
@@ -962,7 +956,7 @@ impl Document {
                 self.layers[index]
                     .mask
                     .as_mut()
-                    .ok_or(CoreError::Unsupported("レイヤーにマスクが無い"))?
+                    .ok_or(CoreError::Unsupported(Reason::LayerHasNoMask))?
                     .anchor = value.cloned()
             }
         }
@@ -981,14 +975,12 @@ impl Document {
             return Ok(None);
         };
         let points = self.anchor_points();
-        Ok(
-            match anchor::resolve(&points, a.0, reader, self.layers.len()) {
-                Ok(_) => None,
-                Err(anchor::Issue::NotChosen) => Some(AnchorIssueKind::NotChosen),
-                Err(anchor::Issue::Missing) => Some(AnchorIssueKind::Missing),
-                Err(anchor::Issue::NotBelow) => Some(AnchorIssueKind::NotBelow),
-            },
-        )
+        Ok(match self.resolve_anchor(&points, a.0, reader) {
+            Ok(_) => None,
+            Err(anchor::Issue::NotChosen) => Some(AnchorIssueKind::NotChosen),
+            Err(anchor::Issue::Missing) => Some(AnchorIssueKind::Missing),
+            Err(anchor::Issue::NotBelow) => Some(AnchorIssueKind::NotBelow),
+        })
     }
 
     /// レイヤーの Generator が読める Anchor（そのレイヤーより下にあるもの）。
@@ -1021,21 +1013,19 @@ impl Document {
         let (index, target, at) = self.locate_filter(layer, filter)?;
         let effect = &self.stack_ref(index, target)?[at];
         let EffectSettings::Generator(g) = &effect.settings else {
-            return Err(CoreError::Unsupported("Anchor のジェネレーターではない"));
+            return Err(CoreError::Unsupported(Reason::NotAnchorGenerator));
         };
         if g.kind != generator::Kind::Anchor {
-            return Err(CoreError::Unsupported("Anchor のジェネレーターではない"));
+            return Err(CoreError::Unsupported(Reason::NotAnchorGenerator));
         }
         require_standard(channel)?;
         if channel == Channel::Normal {
-            return Err(CoreError::Unsupported("Anchor は Normal を読めない"));
+            return Err(CoreError::Unsupported(Reason::AnchorCannotReadNormal));
         }
         if let Some(why) = self.anchor_reference_refusal(layer, anchor)? {
             return Err(CoreError::Unsupported(match why {
-                AnchorIssueKind::NotBelow => {
-                    "Anchor がレイヤーより下に無い（自分のレイヤーの Anchor は読めない）"
-                }
-                _ => "その Anchor が無い",
+                AnchorIssueKind::NotBelow => Reason::AnchorNotBelowLayer,
+                _ => Reason::AnchorNotFound,
             }));
         }
         let mut next = (**g).clone();
@@ -1067,7 +1057,7 @@ impl Document {
                     if g.kind != generator::Kind::Anchor {
                         continue;
                     }
-                    if let Err(issue) = g.anchor.resolve(&points, i, self.layers.len()) {
+                    if let Err(issue) = self.resolve_anchor(&points, g.anchor.id, i) {
                         v.push(AnchorIssue {
                             layer: l.id,
                             filter: e.id,
@@ -1121,7 +1111,7 @@ impl Document {
         Anchor::check_name(name)?;
         if id.0 == 0 || self.find_anchor(id).is_some() {
             return Err(CoreError::InvalidArgument(
-                "Anchor の ID が空か重なっている",
+                Reason::AnchorIdEmptyOrDuplicated,
             ));
         }
         let anchor = Anchor {
@@ -1131,7 +1121,7 @@ impl Document {
         match placement {
             AnchorPlacement::Layer => {
                 if self.layers[index].anchor.is_some() {
-                    return Err(CoreError::Unsupported("このレイヤーにはもう Anchor がある"));
+                    return Err(CoreError::Unsupported(Reason::ThisLayerAlreadyHasAnchor));
                 }
                 self.layers[index].anchor = Some(anchor);
             }
@@ -1139,9 +1129,9 @@ impl Document {
                 let m = self.layers[index]
                     .mask
                     .as_mut()
-                    .ok_or(CoreError::Unsupported("マスクが無い"))?;
+                    .ok_or(CoreError::Unsupported(Reason::NoMask))?;
                 if m.anchor.is_some() {
-                    return Err(CoreError::Unsupported("このマスクにはもう Anchor がある"));
+                    return Err(CoreError::Unsupported(Reason::ThisMaskAlreadyHasAnchor));
                 }
                 m.anchor = Some(anchor);
             }
@@ -1166,7 +1156,7 @@ impl Document {
                             if let Some(p) = points.iter().find(|p| p.id == g.anchor.id) {
                                 if p.host == i && g.anchor.id != 0 {
                                     return Err(CoreError::InvalidArgument(
-                                        "自分のレイヤーの Anchor を読むジェネレーター（値が自分に戻る）",
+                                        Reason::GeneratorReadsOwnLayerAnchor,
                                     ));
                                 }
                             }
@@ -1183,7 +1173,7 @@ impl Document {
     fn fill_layer_index(&self, layer: LayerId) -> Result<usize, CoreError> {
         let index = self.index_of(layer)?;
         if self.layers[index].kind != LayerKind::Fill {
-            return Err(CoreError::Unsupported("塗りつぶしレイヤーだけが持つ"));
+            return Err(CoreError::Unsupported(Reason::OnlyFillLayersHaveThis));
         }
         Ok(index)
     }
@@ -1207,16 +1197,16 @@ impl Document {
         }
         if let Some(id) = image {
             if id.0 == 0 {
-                return Err(CoreError::InvalidArgument("画像の ID が空"));
+                return Err(CoreError::InvalidArgument(Reason::ImageIdEmpty));
             }
             let input = self
                 .effects
                 .inputs
                 .images
                 .get(&id)
-                .ok_or(CoreError::Unsupported("プロジェクトにその画像が無い"))?;
+                .ok_or(CoreError::Unsupported(Reason::ProjectHasNoSuchImage))?;
             let need = ImageMipChain::extra_bytes(input.width, input.height)
-                .map_err(|_| CoreError::InvalidArgument("画像の大きさ"))?;
+                .map_err(|_| CoreError::InvalidArgument(Reason::ImageSize))?;
             if need > self.effects.image_cache_budget {
                 return Err(CoreError::WorkingBudgetExceeded);
             }
@@ -1260,7 +1250,7 @@ impl Document {
         let index = self.fill_layer_index(layer)?;
         let old = FillChannelState::of(&self.layers[index], channel);
         if old.image.is_none() {
-            return Err(CoreError::InvalidArgument("画像の無いチャンネル"));
+            return Err(CoreError::InvalidArgument(Reason::ChannelWithoutImage));
         }
         if old.anisotropic == anisotropic {
             return Ok(());
@@ -1291,7 +1281,7 @@ impl Document {
         for c in channels {
             if !self.layers[index].fill_images.contains_key(c) || !set.insert(*c) {
                 return Err(CoreError::InvalidArgument(
-                    "異方性を切る塗りつぶしの画像のチャンネル",
+                    Reason::FillImageAnisotropyChannel,
                 ));
             }
         }
@@ -1311,7 +1301,7 @@ impl Document {
         let index = self.fill_layer_index(layer)?;
         projection
             .validate()
-            .map_err(|_| CoreError::InvalidArgument("投影の値"))?;
+            .map_err(|_| CoreError::InvalidArgument(Reason::ProjectionValues))?;
         let old = self.layers[index].projection;
         if old == projection {
             return Ok(());
@@ -1456,9 +1446,7 @@ impl Document {
                 || l.fill_gradients.contains_key(&c)
                 || map.insert(c, g).is_some()
             {
-                return Err(CoreError::InvalidArgument(
-                    "塗りつぶしの点のグラデーションのチャンネル",
-                ));
+                return Err(CoreError::InvalidArgument(Reason::FillPointGradientChannel));
             }
         }
         self.layers[index].fill_points = map;
@@ -1476,9 +1464,7 @@ impl Document {
         let g = self.layers[index]
             .fill_points
             .get(&channel)
-            .ok_or(CoreError::Unsupported(
-                "そのチャンネルに点のグラデーションが無い",
-            ))?;
+            .ok_or(CoreError::Unsupported(Reason::ChannelHasNoPointGradient))?;
         Ok(self.points_reason(g))
     }
 
@@ -1544,7 +1530,7 @@ impl Document {
         let index = self.fill_layer_index(layer)?;
         projection
             .validate()
-            .map_err(|_| CoreError::InvalidArgument("投影の値"))?;
+            .map_err(|_| CoreError::InvalidArgument(Reason::ProjectionValues))?;
         let mut seen = BTreeMap::new();
         for (c, id) in images {
             require_standard(*c)?;
@@ -1554,9 +1540,7 @@ impl Document {
                 || self.layers[index].fill_gradients.contains_key(c)
                 || self.layers[index].fill_points.contains_key(c)
             {
-                return Err(CoreError::InvalidArgument(
-                    "塗りつぶしの画像のチャンネルか ID",
-                ));
+                return Err(CoreError::InvalidArgument(Reason::FillImageChannelOrId));
             }
         }
         let l = &mut self.layers[index];
@@ -1583,9 +1567,7 @@ impl Document {
                 || self.layers[index].fill_images.contains_key(&c)
                 || map.insert(c, g).is_some()
             {
-                return Err(CoreError::InvalidArgument(
-                    "塗りつぶしのグラデーションのチャンネル",
-                ));
+                return Err(CoreError::InvalidArgument(Reason::FillGradientChannel));
             }
         }
         self.layers[index].fill_gradients = map;
@@ -1610,27 +1592,27 @@ impl Document {
             }
             let id = spec
                 .id
-                .ok_or(CoreError::InvalidArgument("フィルターの ID"))?;
+                .ok_or(CoreError::InvalidArgument(Reason::FilterId))?;
             if id.0 == 0
                 || self.find_filter(id).is_some()
                 || stack.iter().any(|e: &FilterEffect| e.id == id)
             {
                 return Err(CoreError::InvalidArgument(
-                    "フィルターの ID が空か重なっている",
+                    Reason::FilterIdEmptyOrDuplicated,
                 ));
             }
-            require_finite(spec.strength, "strength")?;
+            require_finite(spec.strength, Reason::Strength)?;
             if !(0.0..=1.0).contains(&spec.strength) {
-                return Err(CoreError::InvalidArgument("strength"));
+                return Err(CoreError::InvalidArgument(Reason::Strength));
             }
             let channels = match target {
                 FilterTarget::Content => {
                     let mut list = spec
                         .channels
-                        .ok_or(CoreError::InvalidArgument("フィルターのチャンネル"))?;
+                        .ok_or(CoreError::InvalidArgument(Reason::FilterChannels))?;
                     list.sort();
                     if list.is_empty() || list.windows(2).any(|w| w[0] == w[1]) {
-                        return Err(CoreError::InvalidArgument("フィルターのチャンネル"));
+                        return Err(CoreError::InvalidArgument(Reason::FilterChannels));
                     }
                     for c in &list {
                         self.require_channel(*c)?;
@@ -1642,7 +1624,7 @@ impl Document {
                 }
                 FilterTarget::Mask => {
                     if spec.channels.is_some() {
-                        return Err(CoreError::InvalidArgument("マスクのフィルターのチャンネル"));
+                        return Err(CoreError::InvalidArgument(Reason::MaskFilterChannels));
                     }
                     spec.settings.validate(ValueType::Mask)?;
                     Vec::new()
@@ -1762,9 +1744,7 @@ impl Document {
         self.ensure_no_stroke()?;
         let need = self.current_working_need(self.effects.block_pixels)?;
         if bytes < need {
-            return Err(CoreError::InvalidArgument(
-                "予算が今のフィルターの要る量より小さい",
-            ));
+            return Err(CoreError::InvalidArgument(Reason::BudgetBelowFilterNeed));
         }
         if bytes != self.effects.working_budget {
             self.effects.working_budget = bytes;
@@ -1781,7 +1761,7 @@ impl Document {
     pub fn set_filter_block_pixels(&mut self, pixels: u32) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
         if pixels == 0 || pixels > 4096 {
-            return Err(CoreError::InvalidArgument("block_pixels"));
+            return Err(CoreError::InvalidArgument(Reason::BlockPixels));
         }
         if self.current_working_need(pixels)? > self.effects.working_budget {
             return Err(CoreError::WorkingBudgetExceeded);
@@ -1846,7 +1826,7 @@ impl Document {
         let index = self.index_of(layer)?;
         let (_, target, at) = self.locate_filter(layer, filter)?;
         let EffectSettings::Generator(g) = &self.stack_ref(index, target)?[at].settings else {
-            return Err(CoreError::Unsupported("ジェネレーターではない"));
+            return Err(CoreError::Unsupported(Reason::NotGenerator));
         };
         Ok(self.generator_reason(g, index))
     }
@@ -1861,7 +1841,7 @@ impl Document {
         let index = self.index_of(layer)?;
         let (_, target, at) = self.locate_filter(layer, filter)?;
         let EffectSettings::Generator(g) = &self.stack_ref(index, target)?[at].settings else {
-            return Err(CoreError::Unsupported("ジェネレーターではない"));
+            return Err(CoreError::Unsupported(Reason::NotGenerator));
         };
         Ok(self.generator_status(g, index).1)
     }
@@ -1876,9 +1856,7 @@ impl Document {
         let g = self.layers[index]
             .fill_gradients
             .get(&channel)
-            .ok_or(CoreError::Unsupported(
-                "そのチャンネルにグラデーションが無い",
-            ))?;
+            .ok_or(CoreError::Unsupported(Reason::ChannelHasNoGradient))?;
         Ok(self.generator_reason(g, index))
     }
 
@@ -1987,9 +1965,7 @@ impl Document {
 /// 塗りつぶしの点のグラデーションの検査。
 fn validate_fill_points(channel: Channel, g: &PointGradient) -> Result<(), CoreError> {
     if channel == Channel::Normal {
-        return Err(CoreError::Unsupported(
-            "点のグラデーションは色かスカラーで、法線ではない",
-        ));
+        return Err(CoreError::Unsupported(Reason::PointGradientNotForNormal));
     }
     g.validate().map_err(CoreError::InvalidArgument)
 }
@@ -1997,22 +1973,18 @@ fn validate_fill_points(channel: Channel, g: &PointGradient) -> Result<(), CoreE
 /// 塗りつぶしのグラデーションの設定の検査（C# の `ValidateFillGradient`）。
 fn validate_fill_gradient(channel: Channel, g: &generator::Settings) -> Result<(), CoreError> {
     if channel == Channel::Normal {
-        return Err(CoreError::Unsupported(
-            "形のグラデーションは色かスカラーで、法線ではない",
-        ));
+        return Err(CoreError::Unsupported(Reason::ShapeGradientNotForNormal));
     }
     if g.kind != generator::Kind::ShapeGradient || g.ramp.is_none() {
         return Err(CoreError::InvalidArgument(
-            "塗りつぶしのグラデーションはランプ付きの形のグラデーション",
+            Reason::FillGradientShapeGradientWithRamp,
         ));
     }
     if g.blend != generator::Blend::Replace {
-        return Err(CoreError::InvalidArgument(
-            "塗りつぶしのグラデーションは置き換え",
-        ));
+        return Err(CoreError::InvalidArgument(Reason::FillGradientReplaces));
     }
     g.validate().map_err(|e| match e {
         generator::Error::Invalid(why) => CoreError::InvalidArgument(why),
-        _ => CoreError::InvalidArgument("グラデーションの設定"),
+        _ => CoreError::InvalidArgument(Reason::GradientSettings),
     })
 }

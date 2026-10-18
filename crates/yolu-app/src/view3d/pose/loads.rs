@@ -125,10 +125,11 @@ mod tests {
         open_fbx, poll, prepare_fbx, wait_for_load, ModelLimits, PoseAction, MODEL_SHARE,
     };
     use super::hold;
+    use crate::jobs::close_jobs;
     use crate::newproject::{NpAction, Prep};
     use crate::state::{Action, AppState};
     use crate::view3d::model::ViewError;
-    use crate::windows::{close_jobs, stop_jobs};
+    use crate::windows::stop_jobs;
 
     /// 試験ごとの作業フォルダ（FBX を書く）。
     struct Dir(PathBuf);

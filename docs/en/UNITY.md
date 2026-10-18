@@ -16,7 +16,7 @@ a folder on the same PC; no native library is used (specification: [LIVELINK.md]
    bones moved by hand in the Pose panel or in Pose mode. If an original texture file changed, untouched sets get it again; touched sets are left as they are, with a notice).
 3. When you choose the "lilToon" Output Template in the File → Export Textures… window and export, the Output Path starts at the folder Unity specified. Of the PNG files written, Unity imports those that
    belong to a lilToon material property (`_MainTex`, `_BumpMap`, and so on) and asks in its window whether to assign them to the materials. The other templates and the per-channel PNG
-   files are not sent back to Unity.
+   files are not sent back to Unity. When a texture set is assigned to several materials, the same PNG files are sent back for each of those materials.
 4. Save your work as `.ylp`. The model opened over Live Link (the FBX files, renderer and material bindings, and pose) is kept in the `.ylp` and reopens without Unity.
    Whether the material values received from Unity are kept in the `.ylp` is set by "Save material values received from Unity" in the same section of the settings (on by default).
    Save for Distribution with "Model reference" removed also leaves this record out of the copy ([SAVE_FOR_DISTRIBUTION.md](../SAVE_FOR_DISTRIBUTION.md), Japanese).
@@ -33,14 +33,14 @@ see the state as "Live Link: Accepting" and the open object as "Unity: name", an
   on Linux) is accessible only to the user; folders others can enter are not used. Other programs running as the same user can place files there.
 - The original texture and material assets in the Unity project are written only when you choose to assign the exported textures to the materials.
 
-## Exchanging .ylp files with the Unity version
+## Exchanging .ylp files with the Unity bridge up to 0.4.x
 
 From 0.5.0, the Unity Bridge does not open `.ylp` files. Painting inside Unity, importing `.ylp` and `.ylsmart` files, reading and writing PSD files, and baking mesh maps were removed;
 the package now only does Live Link and applying textures to materials. Painting, opening and saving `.ylp` files is done in the standalone application. A `.ylp` placed in Assets is an
 ordinary file to Unity.
 
-What the Unity version up to 0.4.x can read when it opens a `.ylp` (the outer version, the format of the contents, the document version, and how unknown entries are handled) is in the
-"Ranges by reader" table in [YLP_FORMAT.md](../YLP_FORMAT.md) (Japanese). That version reads document versions up to 21, so a `.ylp` that contains a set using user channels, Noise/Grunge,
+What the Unity bridge up to 0.4.x can read when it opens a `.ylp` (the outer version, the format of the contents, the document version, and how unknown entries are handled) is in the
+"Ranges by reader" table in [YLP_FORMAT.md](../YLP_FORMAT.md) (Japanese). That version of the bridge reads document versions up to 21, so a `.ylp` that contains a set using user channels, Noise/Grunge,
 color adjustments, the 0.5.0 effects, and so on is refused without touching the file. To go back to it, remove those features in the standalone application and save again (the version
 returns to 21). A `.ylp` that uses remembered selections (format 8) is refused too, so delete them all and save again, or use Save for Distribution with Remembered selections removed
-([SAVE_FOR_DISTRIBUTION.md](../SAVE_FOR_DISTRIBUTION.md), Japanese). There is no conversion to formats for older Unity versions.
+([SAVE_FOR_DISTRIBUTION.md](../SAVE_FOR_DISTRIBUTION.md), Japanese). There is no conversion to formats for the Unity bridge up to 0.4.x.

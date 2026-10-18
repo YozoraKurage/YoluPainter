@@ -2,6 +2,7 @@
 //! 値の表（`liltoon`）、操作（`LookOp`。`Action::Look`）、lilToon のひな形（要るユーザーチャンネルを作って割り当てる）、欄（`panel`）、
 //! .ylp との受け渡し（`io`）。値は文書（`Document::look`）が持ち、変更は 1 回の Undo（スライダーのドラッグは 1 段にまとめる）。
 
+use yolu_core::Reason;
 pub mod export;
 pub mod fields;
 pub mod io;
@@ -192,8 +193,7 @@ struct TemplateMask {
     /// この機能が入のときに作る（"outline" は輪郭線のシェーダー）。
     toggle: &'static str,
     slot: &'static str,
-    ja: &'static str,
-    en: &'static str,
+    label: liltoon::Label,
     kind: ChannelKind,
     space: ColorSpace,
     default: Rgba8,
@@ -205,14 +205,12 @@ const CLEAR: Rgba8 = Rgba8::new(0, 0, 0, 0);
 const fn mask(
     toggle: &'static str,
     slot: &'static str,
-    ja: &'static str,
-    en: &'static str,
+    label: fn(Lang) -> &'static str,
 ) -> TemplateMask {
     TemplateMask {
         toggle,
         slot,
-        ja,
-        en,
+        label: liltoon::Label::new(label),
         kind: ChannelKind::Scalar,
         space: ColorSpace::Linear,
         default: WHITE,
@@ -222,14 +220,12 @@ const fn mask(
 const fn layer(
     toggle: &'static str,
     slot: &'static str,
-    ja: &'static str,
-    en: &'static str,
+    label: fn(Lang) -> &'static str,
 ) -> TemplateMask {
     TemplateMask {
         toggle,
         slot,
-        ja,
-        en,
+        label: liltoon::Label::new(label),
         kind: ChannelKind::Color,
         space: ColorSpace::Srgb,
         default: CLEAR,
@@ -239,92 +235,50 @@ const fn layer(
 /// ひな形が作るチャンネル（インスペクターの節の並び）。色のレイヤー（影色・メインカラー 2nd・3rd）は何も描いていない所を透明にして、
 /// 描いた所だけが効くようにする（影色のテクスチャは A でメインカラーと混ぜる。2nd・3rd は A で重ねる）。
 const TEMPLATE: &[TemplateMask] = &[
-    layer(
-        "_UseMain2ndTex",
-        "_Main2ndTex",
-        "メインカラー2nd",
-        "Main Color 2nd",
-    ),
-    layer(
-        "_UseMain3rdTex",
-        "_Main3rdTex",
-        "メインカラー3rd",
-        "Main Color 3rd",
-    ),
-    mask(
-        "_UseShadow",
-        "_ShadowStrengthMask",
-        "影の強度",
-        "Shadow Strength",
-    ),
-    layer("_UseShadow", "_ShadowColorTex", "影色", "Shadow Color"),
-    mask("_UseShadow", "_ShadowBorderMask", "AO", "AO"),
-    mask(
-        "_UseRimShade",
-        "_RimShadeMask",
-        "リムシェードのマスク",
-        "RimShade Mask",
-    ),
-    mask(
-        "_UseEmission",
-        "_EmissionBlendMask",
-        "発光のマスク",
-        "Emission Mask",
-    ),
-    mask(
-        "_UseEmission2nd",
-        "_Emission2ndBlendMask",
-        "発光2nd のマスク",
-        "Emission 2nd Mask",
-    ),
-    mask(
-        "_UseAnisotropy",
-        "_AnisotropyScaleMask",
-        "異方性反射のマスク",
-        "Anisotropy Mask",
-    ),
-    mask(
-        "_UseBacklight",
-        "_BacklightColorTex",
-        "逆光ライトのマスク",
-        "Backlight Mask",
-    ),
-    mask(
-        "_UseReflection",
-        "_ReflectionColorTex",
-        "光沢のマスク",
-        "Reflection Mask",
-    ),
-    mask(
-        "_UseMatCap",
-        "_MatCapBlendMask",
-        "マットキャップのマスク",
-        "MatCap Mask",
-    ),
-    mask(
-        "_UseMatCap2nd",
-        "_MatCap2ndBlendMask",
-        "マットキャップ2nd のマスク",
-        "MatCap 2nd Mask",
-    ),
-    mask(
-        "_UseRim",
-        "_RimColorTex",
-        "リムライトのマスク",
-        "Rim Light Mask",
-    ),
-    mask(
-        "_UseGlitter",
-        "_GlitterColorTex",
-        "ラメのマスク",
-        "Glitter Mask",
-    ),
-    mask(
-        "outline",
-        "_OutlineWidthMask",
-        "輪郭線の太さ",
-        "Outline Width",
-    ),
+    layer("_UseMain2ndTex", "_Main2ndTex", |l| {
+        l.t("look-main-color-2nd")
+    }),
+    layer("_UseMain3rdTex", "_Main3rdTex", |l| {
+        l.t("look-main-color-3rd")
+    }),
+    mask("_UseShadow", "_ShadowStrengthMask", |l| {
+        l.t("look-shadow-strength")
+    }),
+    layer("_UseShadow", "_ShadowColorTex", |l| {
+        l.t("look-shadow-color")
+    }),
+    mask("_UseShadow", "_ShadowBorderMask", |l| l.t("look-ao")),
+    mask("_UseRimShade", "_RimShadeMask", |l| {
+        l.t("look-rimshade-mask")
+    }),
+    mask("_UseEmission", "_EmissionBlendMask", |l| {
+        l.t("look-emission-mask")
+    }),
+    mask("_UseEmission2nd", "_Emission2ndBlendMask", |l| {
+        l.t("look-emission-2nd-mask")
+    }),
+    mask("_UseAnisotropy", "_AnisotropyScaleMask", |l| {
+        l.t("look-anisotropy-mask")
+    }),
+    mask("_UseBacklight", "_BacklightColorTex", |l| {
+        l.t("look-backlight-mask")
+    }),
+    mask("_UseReflection", "_ReflectionColorTex", |l| {
+        l.t("look-reflection-mask")
+    }),
+    mask("_UseMatCap", "_MatCapBlendMask", |l| {
+        l.t("look-matcap-mask")
+    }),
+    mask("_UseMatCap2nd", "_MatCap2ndBlendMask", |l| {
+        l.t("look-matcap-2nd-mask")
+    }),
+    mask("_UseRim", "_RimColorTex", |l| l.t("look-rim-light-mask")),
+    mask("_UseGlitter", "_GlitterColorTex", |l| {
+        l.t("look-glitter-mask")
+    }),
+    mask("outline", "_OutlineWidthMask", |l| {
+        l.t("look-outline-width")
+    }),
 ];
 
 /// ひな形の機能の入切（"outline" は輪郭線のシェーダー）。
@@ -350,7 +304,7 @@ const TEMPLATE_TOGGLES: &[&str] = &[
 pub fn paint_channel_spec(slot: &liltoon::Slot, lang: Lang) -> Option<ChannelInfo> {
     if let Some(t) = TEMPLATE.iter().find(|t| t.slot == slot.name) {
         return Some(ChannelInfo {
-            name: lang.pick(t.ja, t.en).to_owned(),
+            name: t.label.get(lang).to_owned(),
             kind: t.kind,
             color_space: t.space,
             default: t.default,
@@ -404,7 +358,7 @@ pub fn paint_slot(doc: &mut Document, slot: &str, lang: Lang) -> Result<Channel,
         }
     }
     let Some(spec) = liltoon::slot(slot).and_then(|s| paint_channel_spec(s, lang)) else {
-        return Err(CoreError::InvalidArgument("描けないスロット"));
+        return Err(CoreError::InvalidArgument(Reason::SlotCannotBePainted));
     };
     doc.batch(|d| {
         let mut look = d.look().clone();
@@ -453,19 +407,18 @@ pub fn new_slot_channel(
     lang: Lang,
 ) -> Result<Channel, CoreError> {
     let Some(info) = liltoon::slot(slot) else {
-        return Err(CoreError::InvalidArgument("知らないスロット"));
+        return Err(CoreError::InvalidArgument(Reason::SlotUnknown));
     };
     let planes = match plane {
         None => None,
         Some(_) => match doc.drawn_look().textures.get(slot) {
             Some(TextureSource::Packed(p)) => Some(*p),
-            _ => return Err(CoreError::InvalidArgument("成分ごとの割り当てではない")),
+            _ => return Err(CoreError::InvalidArgument(Reason::SlotNotPacked)),
         },
     };
     let spec = match (plane, planes) {
-        (None, _) => {
-            paint_channel_spec(info, lang).ok_or(CoreError::InvalidArgument("描けないスロット"))?
-        }
+        (None, _) => paint_channel_spec(info, lang)
+            .ok_or(CoreError::InvalidArgument(Reason::SlotCannotBePainted))?,
         (Some(k), Some(planes)) if k < 4 => {
             // 何も描いていない所は、置き換える成分が定数ならその値（見た目を変えない）、チャンネルならスロットの既定のその成分
             let white = match planes[k as usize] {
@@ -486,7 +439,7 @@ pub fn new_slot_channel(
                 },
             }
         }
-        _ => return Err(CoreError::InvalidArgument("成分は 0〜3")),
+        _ => return Err(CoreError::InvalidArgument(Reason::PackedComponentRange)),
     };
     doc.batch(|d| {
         let mut look = d.look().clone();
@@ -612,14 +565,14 @@ pub fn apply_template(doc: &mut Document, lang: Lang) -> Result<usize, CoreError
             {
                 let right = add(
                     d,
-                    lang.pick("顔の影（右）", "Face Shadow (Right)"),
+                    lang.t("look-face-shadow-right"),
                     ChannelKind::Scalar,
                     ColorSpace::Linear,
                     WHITE,
                 )?;
                 let left = add(
                     d,
-                    lang.pick("顔の影（左）", "Face Shadow (Left)"),
+                    lang.t("look-face-shadow-left"),
                     ChannelKind::Scalar,
                     ColorSpace::Linear,
                     WHITE,
@@ -641,13 +594,7 @@ pub fn apply_template(doc: &mut Document, lang: Lang) -> Result<usize, CoreError
                 );
                 continue;
             }
-            let channel = add(
-                d,
-                lang.pick(mask.ja, mask.en),
-                mask.kind,
-                mask.space,
-                mask.default,
-            )?;
+            let channel = add(d, mask.label.get(lang), mask.kind, mask.space, mask.default)?;
             look.textures
                 .insert(mask.slot.into(), TextureSource::Channel(channel));
         }
@@ -668,12 +615,10 @@ impl AppState {
         }
         if let LookOp::PaintSlot(slot) = op {
             let lang = self.lang;
-            let before = self.doc.revision();
-            match paint_slot(&mut self.doc, slot, lang) {
+            let before = self.session.doc.revision();
+            match paint_slot(&mut self.session.doc, slot, lang) {
                 Ok(channel) => {
-                    if self.doc.revision() != before {
-                        self.modified = true;
-                    }
+                    self.session.mark_modified_if_changed(before);
                     self.m2_ui(crate::m2::UiOp::PaintChannel(channel));
                 }
                 Err(e) => self.notify(
@@ -686,9 +631,9 @@ impl AppState {
         }
         if let LookOp::NewChannel { slot, plane } = op {
             let lang = self.lang;
-            match new_slot_channel(&mut self.doc, slot, plane, lang) {
+            match new_slot_channel(&mut self.session.doc, slot, plane, lang) {
                 Ok(channel) => {
-                    self.modified = true;
+                    self.session.mark_modified();
                     self.m2_ui(crate::m2::UiOp::PaintChannel(channel));
                 }
                 Err(e) => self.notify(
@@ -701,14 +646,14 @@ impl AppState {
         }
         if op == LookOp::Template {
             let lang = self.lang;
-            match apply_template(&mut self.doc, lang) {
+            match apply_template(&mut self.session.doc, lang) {
                 Ok(made) => {
-                    self.modified = true;
+                    self.session.mark_modified();
                     self.info(
                         Source::Material,
-                        lang.pick(
-                            format!("lilToon のひな形を当てました（チャンネル {made}）。"),
-                            format!("Applied the lilToon template ({made} channels)."),
+                        lang.f(
+                            "look-applied-the-liltoon-template-channels",
+                            &[("made", &made)],
                         ),
                     );
                 }
@@ -720,16 +665,16 @@ impl AppState {
             }
             return;
         }
-        let mut look = self.doc.look().clone();
+        let mut look = self.session.doc.look().clone();
         // 描画モード・輪郭線の今の様子は描く見た目（Unity から受けた値を含む）から読み、変えた値は利用者の設定に書く
-        let drawn = self.doc.drawn_look().clone();
+        let drawn = self.session.doc.drawn_look().clone();
         let mut coalesce = false;
         match op {
             LookOp::Kind(kind) => {
                 look.kind = kind;
                 // Unity から受けた値があるときだけ「選んだ」と覚える（受けた値の描き方より欄の選びが勝つ）。無いときの選びは種類だけで
                 // 足り、標準に戻した設定は既定のまま（保存しない）
-                look.kind_chosen = self.doc.received_look().is_some();
+                look.kind_chosen = self.session.doc.received_look().is_some();
                 if kind == LookKind::LilToon && drawn.textures.is_empty() {
                     default_textures(&mut look);
                 }
@@ -783,6 +728,7 @@ impl AppState {
                 // 戻した名前が受けた値（無ければ既定）と同じなら、利用者の設定から外す
                 if matches!(section, Section::Base | Section::Outline) && !look.shader.is_empty() {
                     let base = self
+                        .session
                         .doc
                         .received_look()
                         .map(|r| liltoon::shader_info(&r.look))
@@ -809,12 +755,10 @@ impl AppState {
                 unreachable!("上で扱った")
             }
         }
-        let before = self.doc.revision();
-        match self.doc.set_look(look, coalesce) {
+        let before = self.session.doc.revision();
+        match self.session.doc.set_look(look, coalesce) {
             Ok(()) => {
-                if self.doc.revision() != before {
-                    self.modified = true;
-                }
+                self.session.mark_modified_if_changed(before);
             }
             Err(e) => self.notify(
                 crate::notice::Kind::of_core(&e),

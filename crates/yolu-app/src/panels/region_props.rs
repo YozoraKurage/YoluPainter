@@ -41,12 +41,7 @@ fn opacity_slider(ui: &mut Ui, app: &mut AppState, at: Rect) {
         at,
         "options.opacity",
         app.brush.opacity * 100.0,
-        &SliderSpec::new(
-            lang.pick("不透明度", "Opacity"),
-            0.0,
-            100.0,
-            NumberFormat::int("%"),
-        ),
+        &SliderSpec::new(lang.t("panels-opacity"), 0.0, 100.0, NumberFormat::int("%")),
     );
     if out.changed {
         app.brush.opacity = out.value / 100.0;
@@ -58,31 +53,19 @@ fn paint_erase(ui: &mut Ui, app: &mut AppState, cursor: &mut Cursor) {
     let lang = app.lang;
     let mask = app.m2.edit_mask;
     let (paint, erase) = if mask {
-        (
-            lang.pick("白（見せる）", "White (show)"),
-            lang.pick("黒（隠す）", "Black (hide)"),
-        )
+        (lang.t("panels-white-show"), lang.t("panels-black-hide"))
     } else {
-        (lang.pick("塗る", "Paint"), lang.pick("消す", "Erase"))
+        (lang.t("panels-paint"), lang.t("panels-erase-2"))
     };
     let (paint_tip, erase_tip) = if mask {
         (
-            lang.pick(
-                "マスクを白で塗る（レイヤーを見せる）",
-                "Fill the mask with white (shows the layer)",
-            ),
-            lang.pick(
-                "マスクを黒で塗る（レイヤーを隠す）",
-                "Fill the mask with black (hides the layer)",
-            ),
+            lang.t("panels-fill-the-mask-with-white-tip"),
+            lang.t("panels-fill-the-mask-with-black-tip"),
         )
     } else {
         (
-            lang.pick(
-                "描画色と不透明度で塗る",
-                "Fill with the paint color and the opacity",
-            ),
-            lang.pick("透明にする", "Erase to transparent"),
+            lang.t("panels-fill-with-the-paint-color-tip"),
+            lang.t("panels-erase-to-transparent-tip"),
         )
     };
     let width = |p: &egui::Painter, s: &str| w::text_width(p, s, t::LABEL) + 20.0;
@@ -137,13 +120,7 @@ fn tolerance_slider(
         at,
         id,
         value,
-        &SliderSpec::new(
-            lang.pick("許容", "Tolerance"),
-            0.0,
-            max,
-            NumberFormat::int(""),
-        )
-        .tooltip(tip),
+        &SliderSpec::new(lang.t("panels-tolerance"), 0.0, max, NumberFormat::int("")).tooltip(tip),
     );
     out.changed.then(|| out.value.round().clamp(0.0, max))
 }
@@ -206,10 +183,7 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
                     at,
                     "options.tolerance",
                     255.0,
-                    lang.pick(
-                        "押した画素の色との各成分の差の上限",
-                        "The largest per-channel difference from the pressed pixel",
-                    ),
+                    lang.t("panels-the-largest-per-channel-difference-tip"),
                     v,
                 ) {
                     app.apply(Action::Region(RegionAction::Tolerance(v as u8)));
@@ -226,10 +200,7 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
                 at,
                 "options.id-tolerance",
                 255.0,
-                lang.pick(
-                    "画素の ID の色が、クリックした色からどこまで離れていてよいか（8 bit のチャンネルの差の最大）。焼いた ID の色は、部品が 4080 個までなら互いに 17 以上離れています",
-                    "How far (largest 8-bit channel difference) a pixel's ID color may be from the clicked one. Baked ID colors of up to 4080 parts differ by 17 or more",
-                ),
+                lang.t("panels-how-far-largest-8-bit-2-tip"),
                 v,
             ) {
                 app.apply(Action::Region(RegionAction::IdTolerance(v as u8)));
@@ -262,31 +233,19 @@ fn paint_erase_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let lang = app.lang;
     let mask = app.m2.edit_mask;
     let (paint, erase) = if mask {
-        (
-            lang.pick("白（見せる）", "White (show)"),
-            lang.pick("黒（隠す）", "Black (hide)"),
-        )
+        (lang.t("panels-white-show"), lang.t("panels-black-hide"))
     } else {
-        (lang.pick("塗る", "Paint"), lang.pick("消す", "Erase"))
+        (lang.t("panels-paint"), lang.t("panels-erase-2"))
     };
     let (paint_tip, erase_tip) = if mask {
         (
-            lang.pick(
-                "マスクを白で塗る（レイヤーを見せる）",
-                "Fill the mask with white (shows the layer)",
-            ),
-            lang.pick(
-                "マスクを黒で塗る（レイヤーを隠す）",
-                "Fill the mask with black (hides the layer)",
-            ),
+            lang.t("panels-fill-the-mask-with-white-tip"),
+            lang.t("panels-fill-the-mask-with-black-tip"),
         )
     } else {
         (
-            lang.pick(
-                "描画色と不透明度で塗る",
-                "Fill with the paint color and the opacity",
-            ),
-            lang.pick("透明にする", "Erase to transparent"),
+            lang.t("panels-fill-with-the-paint-color-tip"),
+            lang.t("panels-erase-to-transparent-tip"),
         )
     };
     let erasing = app.region.erase;
@@ -318,11 +277,11 @@ fn opacity_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         ui,
         rows,
         "props.region.opacity",
-        lang.pick("不透明度", "Opacity"),
+        lang.t("panels-opacity"),
         app.brush.opacity * 100.0,
         (0.0, 100.0),
         NumberFormat::int("%"),
-        Some(lang.pick("ブラシと共通", "Shared with the brush")),
+        Some(lang.t("panels-shared-with-the-brush-tip")),
         true,
     ) {
         app.brush.opacity = v / 100.0;
@@ -340,14 +299,11 @@ pub fn fill_props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui:
             ui,
             rows,
             "region.tolerance",
-            lang.pick("許容", "Tolerance"),
+            lang.t("panels-tolerance"),
             tol,
             (0.0, 255.0),
             NumberFormat::int(""),
-            Some(lang.pick(
-                "押した画素の色との各成分の差の上限",
-                "The largest per-channel difference from the pressed pixel",
-            )),
+            Some(lang.t("panels-the-largest-per-channel-difference-tip")),
             true,
         ) {
             app.apply(Action::Region(RegionAction::Tolerance(v.round() as u8)));
@@ -357,7 +313,7 @@ pub fn fill_props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui:
             ui,
             rows,
             "region.contiguous",
-            lang.pick("隣接", "Contiguous"),
+            lang.t("panels-contiguous"),
             c,
             None,
             true,
@@ -373,7 +329,7 @@ pub fn fill_props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui:
             ui,
             rows,
             "bucket.margin",
-            lang.pick("領域の拡縮", "Area scaling"),
+            lang.t("panels-area-scaling"),
             app.region.color.margin as f32,
             (-200.0, 200.0),
             NumberFormat::int(" px"),
@@ -390,9 +346,9 @@ pub fn fill_props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui:
         "region.snap-symmetry",
         app.region.snap_symmetry,
         if app.paints_only_in_3d() {
-            Some(lang.pick("2D だけ", "2D only"))
+            Some(lang.t("panels-2d-only"))
         } else if app.region.by_color && app.region.color.leftovers {
-            Some(lang.pick("塗り残しでは効きません", "Not used with leftover fill"))
+            Some(lang.t("panels-not-used-with-leftover-fill"))
         } else {
             None
         },
@@ -428,9 +384,9 @@ fn id_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     // ベイクのウィンドウを、ID マップにチェックを入れて開く
     let row = rows.row(24.0, 4.0);
     let label = if usable.is_ok() {
-        lang.pick("ID マップをベイクし直す…", "Bake ID Map Again…")
+        lang.t("panels-bake-id-map-again")
     } else {
-        lang.pick("ID マップをベイク…", "Bake ID Map…")
+        lang.t("panels-bake-id-map")
     };
     let baking = app.bake.is_baking();
     if w::button(
@@ -456,14 +412,11 @@ fn id_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         ui,
         rows,
         "id.tolerance",
-        lang.pick("許容", "Tolerance"),
+        lang.t("panels-tolerance"),
         tol,
         (0.0, 255.0),
         NumberFormat::int(""),
-        Some(lang.pick(
-            "画素の ID の色が、クリックした色からどこまで離れていてよいか（8 bit のチャンネルの差の最大）",
-            "How far (largest 8-bit channel difference) a pixel's ID color may be from the clicked one",
-        )),
+        Some(lang.t("panels-how-far-largest-8-bit-3-tip")),
         true,
     ) {
         app.apply(Action::Region(RegionAction::IdTolerance(v.round() as u8)));
@@ -474,27 +427,17 @@ fn id_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
 
 /// 部品の切り替えの表示（今のセットの部品の一覧の中の位置 / 個数。モデル全体の部品の番号ではない）。
 pub fn part_position(lang: crate::lang::Lang, at: usize, count: usize) -> String {
-    lang.pick(
-        format!("部品 {} / {count}", at + 1),
-        format!("Part {} / {count}", at + 1),
-    )
+    lang.f("panels-part", &[("at", &(at + 1)), ("value", &count)])
 }
 
 /// 手動の ID の色（メッシュの塊ごと。文書の状態で、.ylp の正本の版 19 の塊に書く）。
 fn manual_colors(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let lang = app.lang;
-    group_label(ui, rows, lang.pick("部品の手動の色", "Manual part colors"));
-    let count = app.doc.id_colors().colors().len();
+    group_label(ui, rows, lang.t("panels-manual-part-colors"));
+    let count = app.session.doc.id_colors().colors().len();
     let free = !app.is_stroking();
     if app.id_colors_foreign() {
-        status_row(
-            ui,
-            rows,
-            lang.pick(
-                "別のモデルの手動の色です",
-                "These manual colors belong to another model",
-            ),
-        );
+        status_row(ui, rows, lang.t("panels-these-manual-colors-belong-to"));
     } else {
         // モデルが替わった直後は、部品を別のスレッドで求め終えるまで一覧を出さない（UI を止めて待たない）
         let found = app.id_set_parts();
@@ -516,7 +459,7 @@ fn manual_colors(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
                 prev,
                 "id.part.prev",
                 "expand_less",
-                lang.pick("前の部品", "Previous part"),
+                lang.t("panels-previous-part-tip"),
                 false,
                 at > 0,
                 16.0,
@@ -530,7 +473,7 @@ fn manual_colors(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
                 next,
                 "id.part.next",
                 "expand_more",
-                lang.pick("次の部品", "Next part"),
+                lang.t("panels-next-part-tip"),
                 false,
                 at + 1 < parts.len(),
                 16.0,
@@ -568,7 +511,7 @@ fn manual_colors(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
                 hex_rect,
                 "id.part.hex",
                 &current,
-                Some(lang.pick("16 進（#RRGGBB）で決める", "Set with hex (#RRGGBB)")),
+                Some(lang.t("panels-set-with-hex-rrggbb-tip")),
                 false,
             );
             if let Some(text) = out.committed {
@@ -585,7 +528,7 @@ fn manual_colors(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
                     ui,
                     reset,
                     "id.part.auto",
-                    lang.pick("自動", "Automatic"),
+                    lang.t("panels-automatic"),
                     false,
                     free && manual.is_some(),
                     None,
@@ -599,7 +542,7 @@ fn manual_colors(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
                 })));
             }
         } else if found.is_none() {
-            status_row(ui, rows, lang.pick("確かめています", "Checking"));
+            status_row(ui, rows, lang.t("panels-checking"));
         } else if app.region_model().is_none() {
             status_row(ui, rows, &app.region_missing_reason());
         }
@@ -610,7 +553,7 @@ fn manual_colors(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         ui,
         row,
         "id.colors.reset",
-        lang.pick("手動の色を全部やめる", "Reset all manual colors"),
+        lang.t("panels-reset-all-manual-colors"),
         false,
         free && count > 0,
         None,
@@ -639,11 +582,11 @@ fn part_color(
 ) {
     let lang = app.lang;
     let ctx = ui.ctx().clone();
-    let doc = app.doc.id();
+    let doc = app.session.doc.id();
     let target_of = |part: usize| egui::Id::new(("id.part.color", doc, part));
     let target = target_of(part);
     let auto_id = target.with("auto");
-    let name = lang.pick("部品の ID の色", "Part ID Color");
+    let name = lang.t("panels-part-id-color");
     let current = Pick::rgb([(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8]);
     let last_id = egui::Id::new(("id.part.color.last", doc));
     let last = ctx.data(|d| d.get_temp::<usize>(last_id));
@@ -658,7 +601,7 @@ fn part_color(
         target,
         name,
         current,
-        lang.pick("この部品の ID の色", "This part's ID color"),
+        lang.t("panels-this-part-s-id-color-tip"),
         enabled,
     );
     if !was_target && color_window::is_target(&ctx, target) {
@@ -693,26 +636,29 @@ fn part_color(
 fn bucket_properties(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     use crate::region::color::{Distance, Reference};
     let lang = app.lang;
-    for (value, ja, en) in [
-        (Reference::Editing, "編集しているレイヤー", "Editing layer"),
-        (Reference::Visible, "全部のレイヤー", "All visible layers"),
-        (Reference::Marked, "参照レイヤー", "Reference layers"),
+    for (value, id, label) in [
+        (
+            Reference::Editing,
+            "編集しているレイヤー",
+            lang.t("panels-editing-layer"),
+        ),
+        (
+            Reference::Visible,
+            "全部のレイヤー",
+            lang.t("panels-all-visible-layers"),
+        ),
+        (
+            Reference::Marked,
+            "参照レイヤー",
+            lang.t("panels-reference-layers"),
+        ),
     ] {
         let current = if app.region.sample_all {
             Reference::Visible
         } else {
             app.region.color.reference
         };
-        if toggle_row(
-            ui,
-            rows,
-            ja,
-            lang.pick(ja, en),
-            current == value,
-            None,
-            true,
-        ) == Some(true)
-        {
+        if toggle_row(ui, rows, id, label, current == value, None, true) == Some(true) {
             app.apply(Action::Region(RegionAction::Reference(value)));
         }
     }
@@ -721,12 +667,9 @@ fn bucket_properties(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         ui,
         rows,
         "bucket.distance",
-        lang.pick("知覚の色差", "Perceptual difference"),
+        lang.t("panels-perceptual-difference"),
         p,
-        Some(lang.pick(
-            "オフ: RGB の差の最大。オン: 人の見え方に合わせた色差の近似",
-            "Off: largest RGB difference. On: approximate perceptual color difference",
-        )),
+        Some(lang.t("panels-off-largest-rgb-difference-on-tip")),
         true,
     ) {
         app.apply(Action::Region(RegionAction::Distance(if v {
@@ -735,19 +678,17 @@ fn bucket_properties(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             Distance::Rgb
         })));
     }
-    for (id, ja, en, value, min, max) in [
+    for (id, label, value, min, max) in [
         (
             "bucket.gap",
-            "隙間閉じ",
-            "Close gap",
+            lang.t("panels-close-gap"),
             app.region.color.gap as f32,
             0.0,
             32.0,
         ),
         (
             "bucket.margin",
-            "領域の拡縮",
-            "Area scaling",
+            lang.t("panels-area-scaling"),
             app.region.color.margin as f32,
             -200.0,
             200.0,
@@ -757,7 +698,7 @@ fn bucket_properties(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             ui,
             rows,
             id,
-            lang.pick(ja, en),
+            label,
             value,
             (min, max),
             NumberFormat::int(" px"),
@@ -776,12 +717,9 @@ fn bucket_properties(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         ui,
         rows,
         "bucket.leftovers",
-        lang.pick("塗り残し部分に塗る", "Paint unfilled areas"),
+        lang.t("panels-paint-unfilled-areas"),
         app.region.color.leftovers,
-        Some(lang.pick(
-            "なぞった範囲に触れる小さな閉領域の透明・白い部分",
-            "Transparent or white pixels of small enclosed regions touched by the stroke",
-        )),
+        Some(lang.t("panels-transparent-or-white-pixels-of-tip")),
         true,
     ) {
         app.apply(Action::Region(RegionAction::Leftovers(v)));
@@ -791,7 +729,7 @@ fn bucket_properties(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             ui,
             rows,
             "bucket.area",
-            lang.pick("囲みの最大面積", "Maximum enclosed area"),
+            lang.t("panels-maximum-enclosed-area"),
             app.region.color.max_area as f32,
             (1.0, 65536.0),
             NumberFormat::int(" px²"),

@@ -2,6 +2,7 @@
 //! 手で塗る・画素を動かすのは断り、値を外す（ラスタライズ）と普通のレイヤーになる。フォントは同梱の BIZ UDPGothic（OFL）。
 
 use yolu_core::text::{self, TextAlign, TextFont, TextSettings};
+use yolu_core::Reason;
 use yolu_core::{
     Affine2D, BrushSettings, CanvasResampling, Channel, CoreError, Document, HistoryKind, LayerId,
     LayerLocks, Resampling, Rgba8,
@@ -116,7 +117,7 @@ fn moving_and_rotating_change_the_value_not_the_pixels_by_resampling() {
             Resampling::Bilinear,
             false
         ),
-        Err(CoreError::Unsupported("テキストレイヤーには手で描けない"))
+        Err(CoreError::Unsupported(Reason::CannotPaintByHandOnTextLayer))
     );
     assert_eq!(color_bytes(&d, id), before);
 }
@@ -124,7 +125,7 @@ fn moving_and_rotating_change_the_value_not_the_pixels_by_resampling() {
 #[test]
 fn hand_painting_paths_and_disabling_color_are_refused() {
     let (mut d, id) = text_doc();
-    let refused = Err(CoreError::Unsupported("テキストレイヤーには手で描けない"));
+    let refused = Err(CoreError::Unsupported(Reason::CannotPaintByHandOnTextLayer));
     assert_eq!(
         d.begin_stroke(id, &BrushSettings::default()).map(|_| ()),
         refused
@@ -132,28 +133,26 @@ fn hand_painting_paths_and_disabling_color_are_refused() {
     let path = yolu_core::paths::CanvasPath {
         id: 1,
         channel: Channel::Color,
-        brush: yolu_core::paths::PathBrush(BrushSettings::default()),
+        brush: yolu_core::paths::PathBrush(BrushSettings::default(), Default::default()),
         points: vec![yolu_core::paths::CanvasPoint::new(10.0, 10.0, 1.0).unwrap()],
         material: None,
         style: Default::default(),
     };
     assert_eq!(
         d.set_canvas_path(id, path),
-        Err(CoreError::Unsupported(
-            "テキストレイヤーにはパスを付けられない"
-        ))
+        Err(CoreError::Unsupported(Reason::TextLayerCannotHavePath))
     );
     assert_eq!(
         d.set_channel_enabled(id, Channel::Color, false),
         Err(CoreError::Unsupported(
-            "テキストレイヤーの Color は無効にできない"
+            Reason::CannotDisableColorOnTextLayer
         ))
     );
     // テキストレイヤーでないレイヤーの値は変えられない
     let plain = d.add_layer("普通").unwrap();
     assert_eq!(
         d.set_text(plain, hello(0.0, 50.0), FONT, false),
-        Err(CoreError::Unsupported("テキストレイヤーではない"))
+        Err(CoreError::Unsupported(Reason::NotTextLayer))
     );
 }
 
@@ -167,7 +166,7 @@ fn an_unreadable_font_or_bad_value_changes_nothing() {
     next.text = "別の文".into();
     assert_eq!(
         d.set_text(id, next.clone(), b"not a font", false),
-        Err(CoreError::InvalidArgument("フォントのファイルを読めない"))
+        Err(CoreError::InvalidArgument(Reason::CannotReadFontFile))
     );
     assert!(d
         .add_text_layer("x", next.clone(), b"not a font", None, false)
@@ -175,7 +174,7 @@ fn an_unreadable_font_or_bad_value_changes_nothing() {
     next.size = 0.0;
     assert_eq!(
         d.set_text(id, next, FONT, false),
-        Err(CoreError::InvalidArgument("文字のサイズ"))
+        Err(CoreError::InvalidArgument(Reason::TextSize))
     );
     assert_eq!(d.layers().len(), layers);
     assert_eq!(d.undo_count(), count);
@@ -286,9 +285,7 @@ fn loading_attaches_the_value_without_history() {
     assert_eq!(d.layer(plain).unwrap().text(), Some(&t));
     assert_eq!(
         d.set_text_for_load(plain, t),
-        Err(CoreError::Unsupported(
-            "テキストの値を付けられるのはパスとテキストの無いラスターのレイヤーだけ"
-        ))
+        Err(CoreError::Unsupported(Reason::TextNeedsPlainRasterLayer))
     );
 }
 

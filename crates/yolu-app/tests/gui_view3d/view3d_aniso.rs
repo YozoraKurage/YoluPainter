@@ -3,6 +3,7 @@
 //! 1 画素おきの横縞（縞は縦方向 = 板の v）を貼った板を、横へ 78° 回した位置から見る。板の横（u）は強く縮み、縦（v）はほぼそのまま。
 //! 等方のミップは強く縮む横に合わせて段を選ぶので、縮まない縦の縞まで潰れて灰色になる。異方性フィルタリングは縦の細かさを残す。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::Pos2;
@@ -50,8 +51,7 @@ fn striped_plane(standard: bool) -> Harness<'static, YoluApp> {
     move_to(&h, egui::pos2(1.0, 1.0));
     h.run();
     if standard {
-        h.state_mut()
-            .state
+        h.app_mut()
             .set_doc_mut(0)
             .restore_look(MaterialLook::default())
             .expect("作ったばかりの文書");
@@ -63,9 +63,9 @@ fn striped_plane(standard: bool) -> Harness<'static, YoluApp> {
     }
     h.state_mut().apply(Action::View3d(Op::Env(EnvKind::None)));
     {
-        let state = &mut h.state_mut().state;
-        let layer = state.selected_layer.expect("レイヤー");
-        let doc = &mut state.doc;
+        let state = h.app_mut();
+        let layer = state.selected_layer().expect("レイヤー");
+        let doc = state.doc_mut();
         for y in 0..DOC {
             let v = if y % 2 == 0 { 0 } else { 255 };
             for x in 0..DOC {
@@ -74,13 +74,13 @@ fn striped_plane(standard: bool) -> Harness<'static, YoluApp> {
             }
         }
         doc.clear_history().unwrap();
-        let revision = state.view3d.next_revision();
-        state.view3d.material = 0;
+        let revision = state.view3d_mut().next_revision();
+        state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
         let model =
             ViewModel::new("板", vec![plane()], vec![Some("板".to_string())], revision).unwrap();
         model.tangents();
-        state.view3d.set_model(model);
-        state.view3d.camera = OrbitCamera {
+        state.view3d_mut().set_model(model);
+        state.view3d_mut().view.camera = OrbitCamera {
             target: Vec3::ZERO,
             yaw: 78.0,
             pitch: 0.0,
@@ -186,9 +186,9 @@ fn measure_frames_with_and_without_anisotropy() {
     big.run();
     println!("GPU: {}", big.state().view3d_adapter().unwrap_or_default());
     {
-        let state = &mut big.state_mut().state;
+        let state = big.app_mut();
         state
-            .doc
+            .doc_mut()
             .add_fill_layer(
                 "値",
                 &[
@@ -217,14 +217,15 @@ fn measure_frames_with_and_without_anisotropy() {
     ];
     for (name, meshes, yaw, pitch) in scenes {
         {
-            let state = &mut big.state_mut().state;
-            let revision = state.view3d.next_revision();
-            state.view3d.material = 0;
+            let state = big.app_mut();
+            let revision = state.view3d_mut().next_revision();
+            state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
             let model =
-                ViewModel::new("試験", meshes, vec![Some("試験".to_string())], revision).unwrap();
+                ViewModel::new("テスト", meshes, vec![Some("テスト".to_string())], revision)
+                    .unwrap();
             model.tangents();
-            state.view3d.set_model(model);
-            state.view3d.camera = OrbitCamera {
+            state.view3d_mut().set_model(model);
+            state.view3d_mut().view.camera = OrbitCamera {
                 target: Vec3::ZERO,
                 yaw,
                 pitch,
@@ -241,7 +242,7 @@ fn measure_frames_with_and_without_anisotropy() {
                 big.run();
                 let mut wall = Vec::new();
                 for frame in 0..24 {
-                    big.state_mut().state.view3d.camera.yaw += 0.4 + frame as f32 * 0.001;
+                    big.view3d_mut().view.camera.yaw += 0.4 + frame as f32 * 0.001;
                     let started = Instant::now();
                     big.step();
                     big.state().view3d_wait_gpu();

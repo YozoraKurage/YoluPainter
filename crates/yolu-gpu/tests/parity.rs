@@ -1,4 +1,6 @@
-use yolu_core::{BlendMode, BrushSettings, Channel, Document, Rgba8, TileCoord};
+use yolu_core::{
+    BlendMode, Brush, BrushSettings, Channel, Document, PressureSwitches, Rgba8, TileCoord,
+};
 #[path = "support/gpu_lease.rs"]
 mod gpu_lease;
 #[path = "support/require_gpu.rs"]
@@ -8,7 +10,7 @@ fn gpu() -> Option<GpuPainter> {
     gpu_lease::lease();
     match GpuPainter::new(Options::default()) {
         Ok(g) => {
-            eprintln!("GPU 試験: {:?}", g.adapter_info());
+            eprintln!("GPU テスト: {:?}", g.adapter_info());
             Some(g)
         }
         Err(e) => {
@@ -16,7 +18,7 @@ fn gpu() -> Option<GpuPainter> {
                 e.to_string().starts_with("GPU 利用不可:"),
                 "GPU 実装の初期化失敗: {e}"
             );
-            require_gpu::skipped("GPU 試験", &e.to_string());
+            require_gpu::skipped("GPU テスト", &e.to_string());
             None
         }
     }
@@ -104,14 +106,15 @@ fn exact_copy_hidden_base_and_incremental_undo() {
     d.set_layer_opacity(a, 1.0, false).unwrap();
     let old = g.composite_tiles(&d, Channel::Color, &coords(&d)).unwrap();
     let serial = d.change_serial();
-    let brush = BrushSettings {
-        radius: 3.0,
-        hardness: 1.0,
-        pressure_size: false,
-        pressure_opacity: false,
-        ..Default::default()
-    };
-    let mut s = d.begin_stroke(a, &brush).unwrap();
+    let brush = Brush::simple(
+        BrushSettings {
+            radius: 3.0,
+            hardness: 1.0,
+            ..Default::default()
+        },
+        PressureSwitches::NONE,
+    );
+    let mut s = d.begin_brush_stroke(a, &brush).unwrap();
     s.add_point(&mut d, 20.0, 20.0, 1.0, yolu_core::glam::DVec2::ZERO)
         .unwrap();
     assert!(!old.is_current(&d));
@@ -120,7 +123,7 @@ fn exact_copy_hidden_base_and_incremental_undo() {
     compare(&mut g, &d, &changed, 0);
     d.cancel_stroke(s);
     compare(&mut g, &d, &changed, 0);
-    let mut s = d.begin_stroke(a, &brush).unwrap();
+    let mut s = d.begin_brush_stroke(a, &brush).unwrap();
     s.add_point(&mut d, 20.0, 20.0, 1.0, yolu_core::glam::DVec2::ZERO)
         .unwrap();
     d.end_stroke(s).unwrap();
@@ -160,10 +163,12 @@ fn brush_matches_core_accumulation_and_erase() {
                     flow: 0.6,
                     color: Rgba8::new(51, 153, 204, 180),
                     erase,
-                    pressure_size: pressure_flags,
-                    pressure_flow: pressure_flags,
-                    pressure_opacity: pressure_flags,
                     ..Default::default()
+                };
+                let pressure = PressureSwitches {
+                    size: pressure_flags,
+                    opacity: pressure_flags,
+                    flow: pressure_flags,
                 };
                 let dabs: Vec<_> = (0..15)
                     .map(|i| Dab {
@@ -172,15 +177,12 @@ fn brush_matches_core_accumulation_and_erase() {
                         pressure: [0.0, 0.1, 0.5, 1.0][i % 4],
                     })
                     .collect();
-                let mut stroke = d.begin_stroke(a, &settings).unwrap();
+                let mut stroke = d
+                    .begin_brush_stroke(a, &Brush::simple(settings, pressure))
+                    .unwrap();
                 // ダブの補間を介さず、core の ApplyPixel に同じ丸い覆いを渡す。
                 for dab in &dabs {
-                    let radius = settings.radius
-                        * if settings.pressure_size {
-                            dab.pressure
-                        } else {
-                            1.0
-                        };
+                    let radius = settings.radius * if pressure.size { dab.pressure } else { 1.0 };
                     if radius <= 0.0 {
                         continue;
                     }
@@ -211,11 +213,17 @@ fn brush_matches_core_accumulation_and_erase() {
                     .surface(Channel::Color)
                     .unwrap()
                     .to_canvas_bytes();
-                let actual = g.brush_dabs(67, 35, &start, &settings, &dabs).unwrap();
+                let actual = g
+                    .brush_dabs(67, 35, &start, &settings, pressure, &dabs)
+                    .unwrap();
                 let max = diff(&expected, &actual);
                 eprintln!("ブラシ erase={erase} hardness={hardness} pressure={pressure_flags}: 最大差 {max}");
                 assert!(max <= 1);
-                assert_eq!(g.brush_dabs(67, 35, &start, &settings, &[]).unwrap(), start);
+                assert_eq!(
+                    g.brush_dabs(67, 35, &start, &settings, pressure, &[])
+                        .unwrap(),
+                    start
+                );
             }
         }
     }
@@ -225,7 +233,14 @@ fn invalid_input_budget_and_cpu_fallback() {
     let Some(mut g) = gpu() else { return };
     let d = Document::new(32, 32).unwrap();
     assert!(g
-        .brush_dabs(u32::MAX, u32::MAX, &[], &BrushSettings::default(), &[])
+        .brush_dabs(
+            u32::MAX,
+            u32::MAX,
+            &[],
+            &BrushSettings::default(),
+            PressureSwitches::default(),
+            &[]
+        )
         .is_err());
     // 縁のアンチエイリアスは core だけ: 段のあるブラシは断る（今の式で黙って描かない）
     for level in [
@@ -237,7 +252,9 @@ fn invalid_input_budget_and_cpu_fallback() {
             anti_alias: level,
             ..BrushSettings::default()
         };
-        assert!(g.brush_dabs(1, 1, &[0; 4], &s, &[]).is_err());
+        assert!(g
+            .brush_dabs(1, 1, &[0; 4], &s, PressureSwitches::default(), &[])
+            .is_err());
     }
     // 文書にないチャンネルは断る（法線の種類のチャンネルは合成できる）
     assert!(g
@@ -259,6 +276,7 @@ fn invalid_input_budget_and_cpu_fallback() {
             1,
             &[0; 4],
             &BrushSettings::default(),
+            PressureSwitches::default(),
             &[Dab {
                 x: f64::NAN,
                 y: 0.0,
@@ -276,7 +294,14 @@ fn invalid_input_budget_and_cpu_fallback() {
         .composite_tiles(&d, Channel::Color, &coords(&d))
         .is_err());
     assert!(small
-        .brush_dabs(1, 1, &[0; 4], &BrushSettings::default(), &[])
+        .brush_dabs(
+            1,
+            1,
+            &[0; 4],
+            &BrushSettings::default(),
+            PressureSwitches::default(),
+            &[]
+        )
         .is_err());
     let mut fallback = Compositor::new(Options {
         budget_bytes: 1,
@@ -453,4 +478,34 @@ fn composite_tiles_handles_isolated_groups_adjustments_effects_and_normals() {
     });
     let out = fallback.composite_tiles(&d, Channel::Color, &all).unwrap();
     assert_eq!(out.tiles[0].pixels, d.composite(out.tiles[0].rect).unwrap());
+}
+#[test]
+fn unassigned_channel_output_composites_to_the_channel_default_like_cpu() {
+    let Some(mut g) = gpu() else { return };
+    let mut d = Document::with_tile_size(37, 21, 16).unwrap();
+    let a = d.add_layer("下地").unwrap();
+    d.set_pixel(a, 3, 3, Rgba8::new(200, 40, 90, 255)).unwrap();
+    d.add_layer_set("2").unwrap();
+    let all = coords(&d);
+    for channel in [Channel::Color, Channel::Roughness, Channel::Normal] {
+        d.set_channel_output(channel, None).unwrap();
+        assert_eq!(d.channel_output(channel).unwrap(), None);
+        let r = g.composite_tiles(&d, channel, &all).unwrap();
+        for t in r.tiles {
+            let mut expected = vec![0; t.pixels.len()];
+            d.composite_into(
+                channel,
+                t.rect,
+                &mut expected,
+                yolu_core::RowOrder::BottomUp,
+            )
+            .unwrap();
+            let default = d.channel_info(channel).unwrap().default.to_array();
+            assert_eq!(&expected[..4], &default, "CPU は既定値");
+            assert!(
+                diff(&expected, &t.pixels) <= 1,
+                "{channel:?}: 割り当てが無いチャンネルの GPU の結果が CPU の既定値と違う"
+            );
+        }
+    }
 }

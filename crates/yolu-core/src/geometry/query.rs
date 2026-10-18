@@ -122,8 +122,8 @@ impl SurfaceGeometry {
         }
     }
 
-    /// point にいちばん近い面の上の点（C# の TryFindClosestPoint）。BVH を近い枝から辿り、今の最短より遠い枝は刈る。
-    /// facing が 0 でなければ法線が facing と同じ側を向く三角形だけ、material が 0 以上ならその組の三角形だけ。同じ距離なら番号の
+    /// point にいちばん近い面の上の点（C# の TryFindClosestPoint）。BVH を近い側の子から辿り、今の最短より遠い側は刈る。
+    /// facing が 0 でなければ法線が facing と同じ側を向く三角形だけ、material が Some ならその組の三角形だけ。同じ距離なら番号の
     /// 小さい三角形。節点を見る数が max_node_visits を超えたら `Err`（重なり合った幾何で止まらないように）。届く面が無ければ Ok(None)。
     pub fn find_closest_point(
         &self,
@@ -131,7 +131,7 @@ impl SurfaceGeometry {
         max_distance: f32,
         facing: Vec3,
         max_node_visits: i32,
-        material: i32,
+        material: Option<&super::MaterialSet>,
     ) -> Result<Option<SurfaceHit>, NodeBudgetExceeded> {
         if self.triangles.is_empty()
             || !finite3(point)
@@ -178,7 +178,7 @@ impl SurfaceGeometry {
                 if use_facing && dot(t.normal(), facing) <= 0.0 {
                     continue;
                 }
-                if material >= 0 && t.material != material {
+                if !super::admits(material, t.material) {
                     continue;
                 }
                 let closest = closest_point(point, t);

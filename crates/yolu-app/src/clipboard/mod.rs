@@ -15,6 +15,7 @@ pub mod keys;
 pub mod os;
 
 use crate::engine::{Channel, LayerKind, PixelClipboard};
+use crate::features::{Feature, PollStage};
 use crate::notice::Source;
 use crate::state::{Action, AppState};
 use crate::ui::menu::Entry;
@@ -48,6 +49,8 @@ enum Stale {
 pub struct ClipState {
     /// アプリの中のクリップボード。
     pub pixels: Option<PixelClipboard>,
+    /// コピーしたレイヤーマスク（面・設定・マスクのフィルター。OS のクリップボードの画像とは別）。
+    pub mask: Option<crate::engine::MaskCopy>,
     os: Box<dyn OsClipboard>,
     /// 最後に OS へ書いた画像の指紋（今 OS にある画像が自分の書いたものかを見る）。
     written: Option<u64>,
@@ -56,7 +59,7 @@ pub struct ClipState {
     /// Ctrl+V を処理した印（V を離したときの二重の貼り付けを避ける。`keys` が使う）。
     pub(crate) v_handled: bool,
     /// 前のフレームの終わりの修飾キー（`keys` が、フレームの中の事象の時点の Shift を見るのに使う）。
-    pub(crate) last_modifiers: egui::Modifiers,
+    pub(crate) last_modifiers: crate::state::key::Modifiers,
 }
 
 impl Default for ClipState {
@@ -64,11 +67,12 @@ impl Default for ClipState {
     fn default() -> Self {
         ClipState {
             pixels: None,
+            mask: None,
             os: Box::new(NoClipboard),
             written: None,
             stale: None,
             v_handled: false,
-            last_modifiers: egui::Modifiers::NONE,
+            last_modifiers: crate::state::key::Modifiers::NONE,
         }
     }
 }
@@ -148,7 +152,7 @@ impl AppState {
             );
             return;
         }
-        let revision = self.doc.revision();
+        let revision = self.session.doc.revision();
         let result = match action {
             ClipAction::Copy => self.clip_copy(),
             ClipAction::Cut => self.clip_cut(),
@@ -160,9 +164,7 @@ impl AppState {
             Ok(text) => self.info(Source::Clipboard, text),
             Err(text) => self.refuse(Source::Clipboard, text),
         }
-        if self.doc.revision() != revision {
-            self.modified = true;
-        }
+        self.session.mark_modified_if_changed(revision);
     }
 
     /// OS への書き込みの失敗を受ける（フレームの初めに）。
@@ -172,13 +174,8 @@ impl AppState {
             let text = error.text(self.lang);
             self.fail(
                 Source::Clipboard,
-                self.lang.with_reason(
-                    self.lang.pick(
-                        "画像を OS へコピーできません",
-                        "Cannot copy the image to the OS",
-                    ),
-                    text,
-                ),
+                self.lang
+                    .with_reason(self.lang.t("clipboard-cannot-copy-the-image-to"), text),
             );
         }
     }
@@ -186,24 +183,27 @@ impl AppState {
     /// 写す先のレイヤーとチャンネル、マスクを写すか。
     pub(crate) fn clip_target(&self) -> Result<(crate::engine::LayerId, Channel, bool), String> {
         let id = self
+            .session
             .selected_layer
-            .filter(|id| self.doc.layer(*id).is_some())
-            .ok_or_else(|| {
-                self.lang
-                    .pick("レイヤーが選ばれていません。", "No layer is selected.")
-                    .to_string()
-            })?;
-        let mask = self.m2.edit_mask && self.doc.layer(id).is_some_and(|l| l.mask().is_some());
+            .filter(|id| self.session.doc.layer(*id).is_some())
+            .ok_or_else(|| self.lang.t("clipboard-no-layer-is-selected").to_string())?;
+        let mask = self.m2.edit_mask
+            && self
+                .session
+                .doc
+                .layer(id)
+                .is_some_and(|l| l.mask().is_some());
         Ok((id, self.m2.paint_channel, mask))
     }
 
     fn clip_limit(&self) -> u64 {
-        self.doc.stroke_budget_bytes()
+        self.session.doc.stroke_budget_bytes()
     }
 
     fn clip_copy(&mut self) -> Result<String, String> {
         let (id, channel, mask) = self.clip_target()?;
         let clip = self
+            .session
             .doc
             .copy_pixels(id, channel, mask, self.clip_limit())
             .map_err(|e| self.lang.core_error(&e))?;
@@ -214,6 +214,7 @@ impl AppState {
 
     fn clip_copy_merged(&mut self) -> Result<String, String> {
         let clip = self
+            .session
             .doc
             .copy_merged(self.m2.paint_channel, self.clip_limit())
             .map_err(|e| self.lang.core_error(&e))?;
@@ -225,6 +226,7 @@ impl AppState {
     fn clip_cut(&mut self) -> Result<String, String> {
         let (id, channel, mask) = self.clip_target()?;
         let clip = self
+            .session
             .doc
             .cut_pixels(id, channel, mask, self.clip_limit())
             .map_err(|e| self.lang.core_error(&e))?;
@@ -251,17 +253,16 @@ impl AppState {
                         os_error: None,
                     });
                 }
-                let (doc_w, doc_h) = (self.doc.width(), self.doc.height());
+                let (doc_w, doc_h) = (self.session.doc.width(), self.session.doc.height());
                 if image.width > doc_w || image.height > doc_h {
-                    return Err(lang.pick(
-                        format!(
-                            "画像がテクスチャセットより大きい（{} × {} > {} × {}）",
-                            image.width, image.height, doc_w, doc_h
-                        ),
-                        format!(
-                            "Image is larger than the texture set ({} × {} > {} × {})",
-                            image.width, image.height, doc_w, doc_h
-                        ),
+                    return Err(lang.f(
+                        "clipboard-image-is-larger-than-the",
+                        &[
+                            ("width", &image.width),
+                            ("height", &image.height),
+                            ("doc_w", &doc_w),
+                            ("doc_h", &doc_h),
+                        ],
                     ));
                 }
                 image::from_image(image, self.m2.paint_channel)
@@ -276,8 +277,7 @@ impl AppState {
                 from_app(
                     &self.clip.pixels,
                     None,
-                    lang.pick("クリップボードが空です。", "The clipboard is empty.")
-                        .to_string(),
+                    lang.t("clipboard-the-clipboard-is-empty").to_string(),
                 )
             }
             Err(error) => from_app(&self.clip.pixels, Some(error), error.text(lang).to_string()),
@@ -287,26 +287,40 @@ impl AppState {
     fn clip_paste(&mut self) -> Result<String, String> {
         let lang = self.lang;
         let PasteSource { clip, os_error } = self.clip_source()?;
+        // マスクを描いている間は、画像を今のマスクに貼る（白 = 見える・黒 = 隠す。色のある画像は明るさ）。新しいレイヤーは作らない
+        let mask_layer = self.session.selected_layer.filter(|id| {
+            self.m2.edit_mask
+                && self
+                    .session
+                    .doc
+                    .layer(*id)
+                    .is_some_and(|l| l.mask().is_some())
+        });
+        if let Some(id) = mask_layer {
+            return self.clip_paste_into_mask(id, &clip, os_error);
+        }
         let name = self.layer_name_for_new();
         let above = self
+            .session
             .selected_layer
-            .filter(|id| self.doc.layer(*id).is_some());
+            .filter(|id| self.session.doc.layer(*id).is_some());
         // 大きさの上限は core の予算（0 でないタイルの実際の大きさ）に任せる。矩形の大きさで先に断ると、まばらな画像まで断る
         let result = self
+            .session
             .doc
             .paste_as_layer(&clip, self.m2.paint_channel, Some(&name), above)
             .map_err(|e| lang.core_error(&e))?;
-        self.selected_layer = Some(result.layer);
+        self.session.selected_layer = Some(result.layer);
         self.set_edit_mask(false);
         self.ensure_selection();
         let mut notes = Vec::new();
         if result.centered {
-            notes.push(lang.pick("中央", "centred").to_string());
+            notes.push(lang.t("clipboard-centred").to_string());
         }
         if result.clipped_pixels > 0 {
-            notes.push(lang.pick(
-                format!("はみ出した {} 画素を切り落とし", result.clipped_pixels),
-                format!("{} pixels cut off", result.clipped_pixels),
+            notes.push(lang.f(
+                "clipboard-pixels-cut-off",
+                &[("clipped_pixels", &result.clipped_pixels)],
             ));
         }
         if let Some(error) = os_error {
@@ -316,18 +330,63 @@ impl AppState {
     }
 }
 
+impl AppState {
+    /// 画像を、レイヤーのマスクに貼る（`Document::paste_into_mask`。1 回の Undo）。
+    fn clip_paste_into_mask(
+        &mut self,
+        id: crate::engine::LayerId,
+        clip: &PixelClipboard,
+        os_error: Option<OsClipboardError>,
+    ) -> Result<String, String> {
+        let lang = self.lang;
+        let result = self
+            .session
+            .doc
+            .paste_into_mask(id, clip)
+            .map_err(|e| lang.core_error(&e))?;
+        let name = self
+            .session
+            .doc
+            .layer(id)
+            .map(|l| l.name().to_owned())
+            .unwrap_or_default();
+        let mut notes = Vec::new();
+        if result.centered {
+            notes.push(lang.t("clipboard-centred").to_string());
+        }
+        if result.clipped_pixels > 0 {
+            notes.push(lang.f(
+                "clipboard-pixels-cut-off",
+                &[("clipped_pixels", &result.clipped_pixels)],
+            ));
+        }
+        if let Some(error) = os_error {
+            notes.push(error.text(lang).to_string());
+        }
+        let head = lang.f("clipboard-pasted-to-mask", &[("name", &name)]);
+        if notes.is_empty() {
+            return Ok(head);
+        }
+        let notes = notes.join(lang.t("clipboard-note-separator"));
+        Ok(lang.f(
+            "clipboard-pasted-with-notes",
+            &[("head", &head), ("notes", &notes)],
+        ))
+    }
+}
+
 /// ペーストした知らせ: 名前に、あれば補足（中央・切り落とし・OS を読めなかった理由）を括弧で並べる。コピーの知らせと同じく
 /// 文の形にしない（句点・ピリオドを付けない）。
 fn pasted_text(lang: crate::lang::Lang, name: &str, notes: &[String]) -> String {
-    let head = lang.pick(
-        format!("ペーストしました: {name}"),
-        format!("Pasted as {name}"),
-    );
+    let head = lang.f("clipboard-pasted-as", &[("name", &name)]);
     if notes.is_empty() {
         return head;
     }
-    let (open, separator, close) = lang.pick(("（", "、", "）"), (" (", ", ", ")"));
-    format!("{head}{open}{}{close}", notes.join(separator))
+    let notes = notes.join(lang.t("clipboard-note-separator"));
+    lang.f(
+        "clipboard-pasted-with-notes",
+        &[("head", &head), ("notes", &notes)],
+    )
 }
 
 /// コピー・カットした知らせ（出どころと大きさ）。
@@ -335,23 +394,11 @@ fn copied_text(lang: crate::lang::Lang, clip: &PixelClipboard, cut: bool) -> Str
     use crate::engine::ClipboardSource::*;
     let size = format!("{} × {}", clip.width(), clip.height());
     match (clip.source(), cut) {
-        (Mask, true) => lang.pick(
-            format!("マスクをカットしました（{size}）"),
-            format!("Cut mask ({size})"),
-        ),
-        (Mask, false) => lang.pick(
-            format!("マスクをコピーしました（{size}）"),
-            format!("Copied mask ({size})"),
-        ),
-        (Composite, _) => lang.pick(
-            format!("結合してコピーしました（{size}）"),
-            format!("Copied merged ({size})"),
-        ),
-        (_, true) => lang.pick(format!("カットしました（{size}）"), format!("Cut ({size})")),
-        _ => lang.pick(
-            format!("コピーしました（{size}）"),
-            format!("Copied ({size})"),
-        ),
+        (Mask, true) => lang.f("clipboard-cut-mask", &[("size", &size)]),
+        (Mask, false) => lang.f("clipboard-copied-mask", &[("size", &size)]),
+        (Composite, _) => lang.f("clipboard-copied-merged", &[("size", &size)]),
+        (_, true) => lang.f("clipboard-cut", &[("size", &size)]),
+        _ => lang.f("clipboard-copied", &[("size", &size)]),
     }
 }
 
@@ -360,8 +407,9 @@ pub fn menu_entries(app: &AppState) -> Vec<Entry<Action>> {
     let l = app.lang;
     let free = app.can_edit();
     let layer = app
+        .session
         .selected_layer
-        .and_then(|id| app.doc.layer(id))
+        .and_then(|id| app.session.doc.layer(id))
         .map(|layer| {
             let mask = app.m2.edit_mask && layer.mask().is_some();
             (mask, layer.kind())
@@ -369,38 +417,24 @@ pub fn menu_entries(app: &AppState) -> Vec<Entry<Action>> {
     let copyable = layer
         .is_some_and(|(mask, kind)| mask || matches!(kind, LayerKind::Raster | LayerKind::Fill));
     let cuttable = layer.is_some_and(|(mask, kind)| mask || kind == LayerKind::Raster);
-    let item = |name, action, command: &str, on: bool| {
-        Entry::item(name, Action::Clip(action))
+    let item = |command: &str, action, on: bool| {
+        Entry::item(crate::commands::label_of(command, l), Action::Clip(action))
             .command_key(command)
             .enabled(on)
     };
     vec![
-        item(
-            l.pick("カット", "Cut"),
-            ClipAction::Cut,
-            "clip.cut",
-            free && cuttable,
-        ),
-        item(
-            l.pick("コピー", "Copy"),
-            ClipAction::Copy,
-            "clip.copy",
-            free && copyable,
-        ),
-        item(
-            l.pick("結合してコピー", "Copy Merged"),
-            ClipAction::CopyMerged,
-            "clip.copy_merged",
-            free,
-        ),
-        item(
-            l.pick("ペースト", "Paste"),
-            ClipAction::Paste,
-            "clip.paste",
-            free,
-        ),
+        item("clip.cut", ClipAction::Cut, free && cuttable),
+        item("clip.copy", ClipAction::Copy, free && copyable),
+        item("clip.copy_merged", ClipAction::CopyMerged, free),
+        item("clip.paste", ClipAction::Paste, free),
     ]
 }
+
+/// 機能の表の行（毎フレーム、クリップボードの結果を受ける）。
+pub(crate) const FEATURE: Feature = Feature {
+    poll: Some((PollStage::BeforeTextColor, AppState::poll_clipboard)),
+    ..Feature::new("clipboard")
+};
 
 #[cfg(test)]
 mod tests {

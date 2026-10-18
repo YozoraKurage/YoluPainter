@@ -15,13 +15,14 @@
 
 use std::collections::{HashMap, HashSet};
 
-use egui::{Modifiers, Pos2};
+use egui::Pos2;
 
 use super::{SelAction, SelEdit, ShapeDrag};
 use crate::canvas::view::CanvasView;
 use crate::engine::{CoreError, Document, SelectionCombine, SelectionMask, TileCoord};
 use crate::lang::Lang;
 use crate::notice::Source;
+use crate::state::key::{Modifiers, PointerButton};
 use crate::state::{Action, AppState, BrushState, StrokeSource, Tool};
 
 /// 1 ストロークが使ってよい作業の場所（被覆・見た目の 2 つの札・クイックマスクの合成結果のぶんも数えて、持つ量の 3 倍で見る）。
@@ -36,9 +37,8 @@ pub struct PenParams {
     pub hardness: f64,
     /// 0〜1。ダブの最大の量。
     pub opacity: f64,
-    /// 筆圧で半径を変える・量を変える。
-    pub pressure_size: bool,
-    pub pressure_opacity: bool,
+    /// 筆圧で半径を変える・量を変える（流量は使わない）。
+    pub pressure: crate::engine::PressureSwitches,
 }
 
 impl PenParams {
@@ -48,8 +48,7 @@ impl PenParams {
             radius: self.radius,
             hardness: self.hardness,
             opacity: self.opacity,
-            pressure_size: self.pressure_size,
-            pressure_opacity: self.pressure_opacity,
+            pressure: self.pressure,
         }
     }
 
@@ -59,8 +58,10 @@ impl PenParams {
             radius: b.radius as f64,
             hardness: (b.hardness as f64).clamp(0.0, 1.0),
             opacity: (b.opacity as f64).clamp(0.0, 1.0),
-            pressure_size: b.pressure_size,
-            pressure_opacity: b.pressure_opacity,
+            pressure: crate::engine::PressureSwitches {
+                flow: false,
+                ..b.pressure
+            },
         }
     }
 }
@@ -77,8 +78,8 @@ pub enum PenError {
 impl PenError {
     pub fn text(self, lang: Lang) -> &'static str {
         match self {
-            PenError::TooLarge => lang.pick("ストロークが大きすぎます", "The stroke is too large"),
-            PenError::Core => lang.pick("選択範囲を作れません", "Cannot build the selection"),
+            PenError::TooLarge => lang.t("selection-the-stroke-is-too-large"),
+            PenError::Core => lang.t("selection-cannot-build-the-selection"),
         }
     }
 }
@@ -205,12 +206,12 @@ impl PenStroke {
     /// ダブの半径と最大の量（筆圧を入れたもの）。
     fn dab_params(&self, pressure: f64) -> (f64, f64) {
         let p = pressure.clamp(0.0, 1.0);
-        let radius = if self.params.pressure_size {
+        let radius = if self.params.pressure.size {
             self.params.radius * p.max(0.05)
         } else {
             self.params.radius
         };
-        let opacity = if self.params.pressure_opacity {
+        let opacity = if self.params.pressure.opacity {
             self.params.opacity * p
         } else {
             self.params.opacity
@@ -389,7 +390,7 @@ pub struct ActivePen {
 /// 選択ペンのツールで消すか（基本の切り替えと、押したときの修飾: 作成方法の割り当て（`combine_for`）で、足すに当たる修飾は選択ペン・
 /// 引くに当たる修飾は選択消しに、押しているあいだだけ替える）。
 pub fn erases(base_erase: bool, modifiers: Modifiers) -> bool {
-    match super::combine_for(egui::PointerButton::Primary, &modifiers) {
+    match super::combine_for(PointerButton::Primary, &modifiers) {
         Some(SelectionCombine::Add) => false,
         Some(SelectionCombine::Subtract) => true,
         _ => base_erase,
@@ -401,15 +402,22 @@ pub fn begin(app: &mut AppState, source: StrokeSource, erase: bool, quick: bool)
     let params = PenParams::from_brush(&app.brush);
     let overlay_base = if quick {
         Some(
-            app.doc
+            app.session
+                .doc
                 .selection()
                 .cloned()
-                .unwrap_or_else(|| SelectionMask::none(&app.doc)),
+                .unwrap_or_else(|| SelectionMask::none(&app.session.doc)),
         )
     } else {
         None
     };
-    match PenStroke::new(&app.doc, erase, overlay_base, params, app.sel.pen_budget) {
+    match PenStroke::new(
+        &app.session.doc,
+        erase,
+        overlay_base,
+        params,
+        app.sel.pen_budget,
+    ) {
         Ok(stroke) => {
             app.sel.pen = Some(ActivePen {
                 stroke,
@@ -453,11 +461,7 @@ pub fn finish(app: &mut AppState, cancel: bool) -> bool {
     };
     app.sel.drag = None;
     if cancel {
-        app.info(
-            Source::Selection,
-            app.lang
-                .pick("ストロークを取り消しました。", "Stroke cancelled."),
-        );
+        app.info(Source::Selection, app.lang.t("selection-stroke-cancelled"));
         return true;
     }
     match active.stroke.finish() {

@@ -2,7 +2,7 @@
 //! ドラッグの間は形だけを重ね（文書を変えない）、離したとき 1 回の取り消しで作る・動かす。Esc・フォーカスの喪失・ツールの切り替えは
 //! `AppState::drafting_cancel` が捨てる。
 
-use egui::{Modifiers, Pos2};
+use egui::Pos2;
 use yolu_core::glam::DVec2;
 use yolu_core::{LayerId, Ruler, RulerKind, RulerPlace};
 
@@ -10,6 +10,7 @@ use super::active::canvas_points;
 use super::ops::new_ruler;
 use super::{Grab, Handle, RulerAction, RulerDrag, RulerState, HANDLE_POINTS};
 use crate::canvas::view::CanvasView;
+use crate::state::key::Modifiers;
 use crate::state::{Action, AppState, StrokeSource};
 
 /// 種類ごとの、つまみの位置（文書の座標）。

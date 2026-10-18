@@ -23,13 +23,9 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, mut x: f32) {
         w::button(ui, at, id, label, selected, enabled, None, None).clicked()
     };
     for (f, id, name) in [
-        (Figure::Line, "line", lang.pick("直線", "Line")),
-        (
-            Figure::Rectangle,
-            "rectangle",
-            lang.pick("長方形", "Rectangle"),
-        ),
-        (Figure::Ellipse, "ellipse", lang.pick("楕円", "Ellipse")),
+        (Figure::Line, "line", lang.t("drafting-line")),
+        (Figure::Rectangle, "rectangle", lang.t("drafting-rectangle")),
+        (Figure::Ellipse, "ellipse", lang.t("drafting-ellipse")),
     ] {
         if button(ui, id, name, app.drafting.figure == f) {
             app.drafting.figure = f;
@@ -41,7 +37,7 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, mut x: f32) {
     if button(
         ui,
         "drafting.outline",
-        lang.pick("線で描く", "Outline"),
+        lang.t("drafting-outline"),
         !app.drafting.fill,
     ) {
         app.drafting.fill = false;
@@ -50,7 +46,7 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, mut x: f32) {
         && button(
             ui,
             "drafting.fill",
-            lang.pick("塗る", "Fill"),
+            lang.t("drafting-fill"),
             app.drafting.fill,
         )
     {
@@ -68,21 +64,21 @@ pub fn shape_props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui
     let items = [
         ChoiceButton {
             id: "props.line",
-            label: lang.pick("直線", "Line"),
+            label: lang.t("drafting-line"),
             selected: app.drafting.figure == Figure::Line,
             enabled,
             tooltip: None,
         },
         ChoiceButton {
             id: "props.rectangle",
-            label: lang.pick("長方形", "Rectangle"),
+            label: lang.t("drafting-rectangle"),
             selected: app.drafting.figure == Figure::Rectangle,
             enabled,
             tooltip: None,
         },
         ChoiceButton {
             id: "props.ellipse",
-            label: lang.pick("楕円", "Ellipse"),
+            label: lang.t("drafting-ellipse"),
             selected: app.drafting.figure == Figure::Ellipse,
             enabled,
             tooltip: None,
@@ -98,14 +94,14 @@ pub fn shape_props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui
         let items = [
             ChoiceButton {
                 id: "props.outline",
-                label: lang.pick("線で描く", "Outline"),
+                label: lang.t("drafting-outline"),
                 selected: !app.drafting.fill,
                 enabled,
                 tooltip: None,
             },
             ChoiceButton {
                 id: "props.fill",
-                label: lang.pick("塗る", "Fill"),
+                label: lang.t("drafting-fill"),
                 selected: app.drafting.fill,
                 enabled,
                 tooltip: None,
@@ -120,7 +116,7 @@ pub fn shape_props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui
             ui,
             rows,
             "drafting.corner",
-            lang.pick("角の丸み", "Corner Radius"),
+            lang.t("drafting-corner-radius"),
             app.drafting.corner,
             (0.0, 256.0),
             NumberFormat::int(" px"),
@@ -130,12 +126,12 @@ pub fn shape_props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui
             app.drafting.corner = v;
         }
     }
-    let shared = lang.pick("ブラシと共通", "Shared with the brush");
+    let shared = lang.t("drafting-shared-with-the-brush");
     if let Some(v) = slider_row(
         ui,
         rows,
         "drafting.size",
-        lang.pick("直径", "Size"),
+        lang.t("drafting-size"),
         app.brush.radius * 2.0,
         (1.0, 256.0),
         NumberFormat::int(" px"),
@@ -148,7 +144,7 @@ pub fn shape_props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui
         ui,
         rows,
         "drafting.opacity",
-        lang.pick("不透明度", "Opacity"),
+        lang.t("drafting-opacity"),
         app.brush.opacity * 100.0,
         (0.0, 100.0),
         NumberFormat::int("%"),

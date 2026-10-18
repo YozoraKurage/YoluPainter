@@ -2,10 +2,11 @@
 //! 開いている種類は `PopupKind::M2(Popup)`、選ばれた項目は `Action` で返る（閉じてから当てるのは `YoluApp`）。
 
 use crate::engine::{
-    AntiAlias, Channel, ChannelInfo, ChannelKind, DualBrushMode, HeightEdgeMode, NormalYDirection,
-    TextureMode,
+    AntiAlias, Channel, ChannelInfo, ChannelKind, DualBrushMode, HeightEdgeMode, LayerId,
+    LayerSetId, MixMode, NormalYDirection, TextureMode,
 };
 use crate::lang::Lang;
+use crate::m2::layersets::{self, LayerSetEdit};
 use crate::m2::{
     self, anti_alias_label, channel_format, dual_mode_label, kind_name, new_channel_info,
     texture_mode_label, tip_label, BrushOp, Edit, EffectKind, UiOp,
@@ -98,8 +99,35 @@ pub enum Popup {
     TextFont,
     /// ブラシの縁のアンチエイリアス（なし・弱・中・強）。
     AntiAlias,
+    /// 色の混ぜの混ぜ方（なし・混ぜる・伸ばす）。
+    MixMode,
+    /// 筆先の繰り返し方法（6 種）。
+    TipRepeat,
+    /// 筆先の左右・上下の反転のしかた（4 種）。
+    FlipX,
+    FlipY,
+    /// 色の変化を当てる描画色（3 種）。
+    ColorTarget,
+    /// 2 つ目の紙の質感の画像と合わせ方。
+    DualTexture,
+    DualTextureMode,
     /// パスのブラシの縁のアンチエイリアス。
     PathAntiAlias,
+    /// レイヤーのパネルの頭のドロップダウン（今のレイヤーセットを選ぶ）。
+    LayerSet,
+    /// チャンネルの行のドロップダウン（そのチャンネルの出力元のレイヤーセット）。
+    LayerSetOutput(Channel),
+    /// テクスチャセットのパネルのレイヤーセットの行の右クリック。
+    LayerSetContext(crate::engine::LayerSetId),
+    /// 手ぶれ補正の速度による調整の補正タイプ（2 種）。
+    StabilizerSpeedType,
+    /// 色の混ぜの混色モード（標準・知覚的）と輝度の補正（なし〜最高）。
+    MixSpace,
+    MixCorrection,
+    /// はみ出し防止の領域拡縮の方法（3 種）。
+    ReferMode,
+    /// 3D の塗りのアライメント（カメラ・Tangent | Wrap）。
+    ProjectionAlignment,
 }
 
 fn tips(
@@ -120,6 +148,28 @@ fn tips(
             )
             .radio(on),
         );
+    }
+    v
+}
+
+/// 紙の質感の画像の一覧: なし・組み込みの質感・取り込んだ模様（組み込みの後ろ）。主の質感も 2 つ目の質感も同じ並び。
+fn texture_entries(
+    app: &AppState,
+    texture: Option<&yolu_core::PaperTexture>,
+    op: fn(Option<&'static str>) -> BrushOp,
+    pattern_op: fn(crate::brushes::BrushKey) -> BrushOp,
+) -> Vec<Entry<Action>> {
+    let current = texture.map(|t| &*t.image);
+    let mut v = tips(app, current, app.lang.t("m2_menu-none"), op);
+    let patterns = patterns(app);
+    if !patterns.is_empty() {
+        v.push(Entry::Separator);
+        for (key, name, image) in patterns {
+            v.push(
+                Entry::item(name, Action::M2Ui(UiOp::Brush(pattern_op(key))))
+                    .radio(current.is_some_and(|t| *t == *image)),
+            );
+        }
     }
     v
 }
@@ -147,8 +197,8 @@ pub fn patterns(
 /// Normal の設定の端の名前（Height の微分がキャンバスの外で読むもの）。
 pub fn edges_name(lang: Lang, mode: HeightEdgeMode) -> &'static str {
     match mode {
-        HeightEdgeMode::Clamp => lang.pick("クランプ", "Clamp"),
-        HeightEdgeMode::Wrap => lang.pick("ラップ（タイル）", "Wrap (tiling)"),
+        HeightEdgeMode::Clamp => lang.t("m2_menu-clamp"),
+        HeightEdgeMode::Wrap => lang.t("m2_menu-wrap-tiling"),
     }
 }
 
@@ -158,10 +208,11 @@ pub fn new_channel_name(app: &AppState, kind: ChannelKind) -> String {
     (1..)
         .map(|n| format!("{base} {n}"))
         .find(|name| {
-            !app.doc
+            !app.session
+                .doc
                 .channels()
                 .iter()
-                .any(|c| m2::channel_name(app.lang, &app.doc, *c) == *name)
+                .any(|c| m2::channel_name(app.lang, &app.session.doc, *c) == *name)
         })
         .expect("名前は尽きない")
 }
@@ -192,31 +243,122 @@ fn channel_kind_entries(channel: Channel, info: &ChannelInfo, free: bool) -> Vec
         .collect()
 }
 
+/// 選びの並び（値と名前）を、今の値に印を付けた項目にする。
+fn choices<T: Copy + PartialEq>(
+    options: impl IntoIterator<Item = (T, &'static str)>,
+    current: Option<T>,
+    action: impl Fn(T) -> Action,
+) -> Vec<Entry<Action>> {
+    options
+        .into_iter()
+        .map(|(value, name)| Entry::item(name, action(value)).radio(current == Some(value)))
+        .collect()
+}
+
+/// ブラシの選びの並び。
+fn brush_choices<T: Copy + PartialEq>(
+    options: impl IntoIterator<Item = (T, &'static str)>,
+    current: Option<T>,
+    op: impl Fn(T) -> BrushOp,
+) -> Vec<Entry<Action>> {
+    choices(options, current, |value| {
+        Action::M2Ui(UiOp::Brush(op(value)))
+    })
+}
+
+/// 色の混ぜ（混ぜ方・混色モード・輝度の補正）とはみ出し防止の領域拡縮の方法の選び。
+fn mix_choice_entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
+    let lang = app.lang;
+    match popup {
+        Popup::MixMode => brush_choices(
+            [
+                (MixMode::Off, lang.t("m2_menu-none")),
+                (MixMode::Mix, lang.t("panels-mix")),
+                (MixMode::Layer, lang.t("panels-mix-layer")),
+                (MixMode::Smear, lang.t("panels-smear")),
+            ],
+            Some(app.m2.brush.mix.mode),
+            BrushOp::MixMode,
+        ),
+        Popup::MixSpace => brush_choices(
+            m2::mix_spaces(lang),
+            Some(app.m2.brush.mix.space),
+            BrushOp::MixSpace,
+        ),
+        Popup::MixCorrection => brush_choices(
+            m2::mix_corrections(lang),
+            Some(app.m2.brush.mix.correction),
+            BrushOp::MixCorrection,
+        ),
+        Popup::ReferMode => brush_choices(
+            m2::expand_modes(lang),
+            Some(app.m2.brush.reference_lines.mode),
+            BrushOp::ReferMode,
+        ),
+        _ => Vec::new(),
+    }
+}
+
+/// サブツールの行の右クリックのメニュー（名前の変更・複製・設定の登録・元に戻す・削除）。
+fn sub_tool_context_entries(app: &AppState) -> Vec<Entry<Action>> {
+    let lang = app.lang;
+    let free = !app.is_stroking();
+    let Some((tool, key)) = app.subtools.ui.context else {
+        return Vec::new();
+    };
+    let user = key.is_user();
+    let modified = app.subtool_is_modified(tool, key);
+    vec![
+        Entry::item(
+            lang.t("m2_menu-rename"),
+            Action::SubTool(SubToolAction::StartRename(tool, key)),
+        )
+        .enabled(free && user),
+        Entry::item(
+            lang.t("m2_menu-duplicate"),
+            Action::SubTool(SubToolAction::Duplicate(tool, key)),
+        )
+        .enabled(free),
+        Entry::item(
+            lang.t("m2_menu-register-these-settings"),
+            Action::SubTool(SubToolAction::Register(tool, key)),
+        )
+        .enabled(free && user && modified),
+        Entry::item(
+            lang.t("m2_menu-revert"),
+            Action::SubTool(SubToolAction::Revert(tool, key)),
+        )
+        .enabled(free && modified),
+        Entry::Separator,
+        Entry::item(
+            lang.t("m2_menu-delete"),
+            Action::SubTool(SubToolAction::Delete(tool, key)),
+        )
+        .enabled(free && user),
+    ]
+}
+
 /// 項目の並び。
 pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
     match popup {
-        Popup::Resampling => [
-            yolu_core::Resampling::Bilinear,
-            yolu_core::Resampling::Nearest,
-        ]
-        .into_iter()
-        .map(|mode| {
-            Entry::item(
-                crate::transform::resampling_name(lang, mode),
-                Action::M2Ui(UiOp::Resampling(mode)),
-            )
-            .radio(app.transform.resampling == mode)
-        })
-        .collect(),
+        Popup::Resampling => choices(
+            [
+                yolu_core::Resampling::Bilinear,
+                yolu_core::Resampling::Nearest,
+            ]
+            .map(|mode| (mode, crate::transform::resampling_name(lang, mode))),
+            Some(app.transform.resampling),
+            |mode| Action::M2Ui(UiOp::Resampling(mode)),
+        ),
         Popup::Pref(choice) => crate::prefs::entries(app, choice),
         Popup::ExportForm => crate::export::window::form_entries(app),
         Popup::Look(choice) => crate::look::panel::entries(app, choice),
         Popup::Take => crate::panels::pose::take_entries(app),
         Popup::TextFont => crate::textlayer::props::font_entries(app),
         Popup::NormalEdges => {
-            let current = app.doc.normal_settings();
+            let current = app.session.doc.normal_settings();
             [HeightEdgeMode::Clamp, HeightEdgeMode::Wrap]
                 .into_iter()
                 .map(|mode| {
@@ -233,7 +375,7 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
                 .collect()
         }
         Popup::NormalDirection => {
-            let current = app.doc.normal_settings();
+            let current = app.session.doc.normal_settings();
             [NormalYDirection::OpenGL, NormalYDirection::DirectX]
                 .into_iter()
                 .map(|direction| {
@@ -257,118 +399,85 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         Popup::ToolStripContext => crate::toolset::ui::strip_menu(app),
         Popup::GroupContext => crate::toolset::ui::group_menu(app),
         Popup::CatalogContext => crate::panels::brush_catalog::context_menu(app),
-        Popup::SubToolContext => {
-            let Some((tool, key)) = app.subtools.ui.context else {
-                return Vec::new();
-            };
-            let user = key.is_user();
-            let modified = app.subtool_is_modified(tool, key);
-            vec![
-                Entry::item(
-                    lang.pick("名前を変更", "Rename"),
-                    Action::SubTool(SubToolAction::StartRename(tool, key)),
-                )
-                .enabled(free && user),
-                Entry::item(
-                    lang.pick("複製", "Duplicate"),
-                    Action::SubTool(SubToolAction::Duplicate(tool, key)),
-                )
-                .enabled(free),
-                Entry::item(
-                    lang.pick("この設定で登録", "Register These Settings"),
-                    Action::SubTool(SubToolAction::Register(tool, key)),
-                )
-                .enabled(free && user && modified),
-                Entry::item(
-                    lang.pick("元に戻す", "Revert"),
-                    Action::SubTool(SubToolAction::Revert(tool, key)),
-                )
-                .enabled(free && modified),
-                Entry::Separator,
-                Entry::item(
-                    lang.pick("削除", "Delete"),
-                    Action::SubTool(SubToolAction::Delete(tool, key)),
-                )
-                .enabled(free && user),
-            ]
-        }
-        Popup::Effect => {
-            let current = EffectKind::of(&app.m2.brush.effect);
-            EffectKind::ALL
-                .iter()
-                .map(|k| {
-                    Entry::item(k.name(lang), Action::M2Ui(UiOp::Brush(BrushOp::Effect(*k))))
-                        .radio(current == *k)
-                })
-                .collect()
-        }
+        Popup::SubToolContext => sub_tool_context_entries(app),
+        Popup::Effect => brush_choices(
+            EffectKind::ALL.map(|k| (k, k.name(lang))),
+            Some(EffectKind::of(&app.m2.brush.effect)),
+            BrushOp::Effect,
+        ),
         Popup::Tip => tips(
             app,
             app.m2.brush.tip.image.as_deref(),
-            lang.pick("丸（硬さ）", "Round (hardness)"),
+            lang.t("m2_menu-round-hardness"),
             BrushOp::Tip,
         ),
-        Popup::Texture => {
-            let current = app.m2.brush.texture.as_ref().map(|t| &*t.image);
-            let mut v = tips(app, current, lang.pick("なし", "None"), BrushOp::Texture);
-            // 取り込んだ模様は、組み込みの質感の後ろに並べる
-            let patterns = patterns(app);
-            if !patterns.is_empty() {
-                v.push(Entry::Separator);
-                for (key, name, image) in patterns {
-                    v.push(
-                        Entry::item(
-                            name,
-                            Action::M2Ui(UiOp::Brush(BrushOp::PatternTexture(key))),
-                        )
-                        .radio(current.is_some_and(|t| *t == *image)),
-                    );
-                }
-            }
-            v
-        }
+        Popup::Texture => texture_entries(
+            app,
+            app.m2.brush.texture.as_ref(),
+            BrushOp::Texture,
+            BrushOp::PatternTexture,
+        ),
+        Popup::DualTexture => texture_entries(
+            app,
+            app.m2.brush.dual.as_ref().and_then(|d| d.texture.as_ref()),
+            BrushOp::DualTexture,
+            BrushOp::DualPatternTexture,
+        ),
         Popup::DualTip => tips(
             app,
             app.m2.brush.dual.as_ref().and_then(|d| d.tip.as_deref()),
-            lang.pick("丸（硬さ）", "Round (hardness)"),
+            lang.t("m2_menu-round-hardness"),
             BrushOp::DualTip,
         ),
-        Popup::TextureMode => {
-            let current = app.m2.brush.texture.as_ref().map(|t| t.mode);
-            TextureMode::ALL
-                .iter()
-                .map(|m| {
-                    Entry::item(
-                        texture_mode_label(lang, *m),
-                        Action::M2Ui(UiOp::Brush(BrushOp::TextureMode(*m))),
-                    )
-                    .radio(current == Some(*m))
-                })
-                .collect()
+        Popup::TextureMode => brush_choices(
+            TextureMode::ALL.map(|m| (m, texture_mode_label(lang, m))),
+            app.m2.brush.texture.as_ref().map(|t| t.mode),
+            BrushOp::TextureMode,
+        ),
+        Popup::DualTextureMode => brush_choices(
+            TextureMode::ALL.map(|m| (m, texture_mode_label(lang, m))),
+            app.m2
+                .brush
+                .dual
+                .as_ref()
+                .and_then(|d| d.texture.as_ref())
+                .map(|t| t.mode),
+            BrushOp::DualTextureMode,
+        ),
+        Popup::AntiAlias => brush_choices(
+            AntiAlias::ALL.map(|a| (a, anti_alias_label(lang, a))),
+            Some(app.brush.anti_alias),
+            BrushOp::AntiAlias,
+        ),
+        Popup::MixMode | Popup::MixSpace | Popup::MixCorrection | Popup::ReferMode => {
+            mix_choice_entries(app, popup)
         }
-        Popup::AntiAlias => AntiAlias::ALL
-            .iter()
-            .map(|a| {
-                Entry::item(
-                    anti_alias_label(lang, *a),
-                    Action::M2Ui(UiOp::Brush(BrushOp::AntiAlias(*a))),
-                )
-                .radio(app.brush.anti_alias == *a)
-            })
-            .collect(),
-        Popup::DualMode => {
-            let current = app.m2.brush.dual.as_ref().map(|d| d.mode);
-            DualBrushMode::ALL
-                .iter()
-                .map(|m| {
-                    Entry::item(
-                        dual_mode_label(lang, *m),
-                        Action::M2Ui(UiOp::Brush(BrushOp::DualMode(*m))),
-                    )
-                    .radio(current == Some(*m))
-                })
-                .collect()
-        }
+        Popup::TipRepeat => brush_choices(
+            m2::tip_repeats(lang),
+            Some(app.m2.brush.tip.selection),
+            BrushOp::TipRepeat,
+        ),
+        Popup::FlipX => brush_choices(
+            m2::flip_rules(lang),
+            Some(app.m2.brush.tip.flip_x),
+            BrushOp::FlipX,
+        ),
+        Popup::FlipY => brush_choices(
+            m2::flip_rules(lang),
+            Some(app.m2.brush.tip.flip_y),
+            BrushOp::FlipY,
+        ),
+        Popup::ColorTarget => brush_choices(
+            m2::color_targets(lang),
+            Some(app.m2.brush.color.target),
+            BrushOp::ColorTarget,
+        ),
+        Popup::StabilizerSpeedType | Popup::ProjectionAlignment => setting_entries(app, popup),
+        Popup::DualMode => brush_choices(
+            DualBrushMode::ALL.map(|m| (m, dual_mode_label(lang, m))),
+            app.m2.brush.dual.as_ref().map(|d| d.mode),
+            BrushOp::DualMode,
+        ),
         Popup::NewChannel => [ChannelKind::Color, ChannelKind::Scalar, ChannelKind::Normal]
             .iter()
             .map(|k| {
@@ -376,7 +485,7 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
                 Entry::item(channel_format(&info), Action::M2(Edit::AddChannel(info))).enabled(free)
             })
             .collect(),
-        Popup::ChannelKind(channel) => match app.doc.channel_info(channel) {
+        Popup::ChannelKind(channel) => match app.session.doc.channel_info(channel) {
             Some(info) => channel_kind_entries(channel, info, free),
             None => Vec::new(),
         },
@@ -402,34 +511,169 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         Popup::PathTip => crate::panels::path_props::tip_entries(app),
         Popup::PathPresets => crate::panels::path_props::preset_entries(app),
         Popup::PathAntiAlias => crate::panels::path_props::anti_alias_entries(app),
-        Popup::ChannelContext(channel) => {
-            let user = !channel.is_standard();
-            vec![
-                Entry::item(
-                    lang.pick("描くチャンネルにする", "Paint This Channel"),
-                    Action::M2Ui(UiOp::PaintChannel(channel)),
-                )
-                .radio(app.m2.paint_channel == channel)
-                .enabled(free),
-                Entry::item(
-                    lang.pick("キャンバスに表示", "Show in Canvas"),
-                    Action::M2Ui(UiOp::DisplayChannel(channel)),
-                )
-                .radio(app.m2.display_channel == channel),
-                Entry::Separator,
-                Entry::item(
-                    lang.pick("名前を変更", "Rename"),
-                    Action::M2Ui(UiOp::RenameChannel(channel)),
-                )
-                .enabled(free && user),
-                Entry::item(
-                    lang.pick("チャンネルを削除", "Delete Channel"),
-                    Action::M2(Edit::RemoveChannel(channel)),
-                )
-                .enabled(free && user),
-            ]
-        }
+        Popup::LayerSet => layer_set_pick_entries(app, free),
+        Popup::LayerSetOutput(channel) => layer_set_output_entries(app, channel),
+        Popup::LayerSetContext(set) => layer_set_context_entries(app, set),
+        Popup::ChannelContext(channel) => channel_context_entries(app, channel, free),
     }
+}
+
+/// 手ぶれ補正の補正タイプと 3D の塗りのアライメントの選び肢（`entries` の続き）。
+fn setting_entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
+    let lang = app.lang;
+    match popup {
+        Popup::ProjectionAlignment => brush_choices(
+            yolu_core::geometry::SurfaceAlignment::ALL.map(|a| (a, m2::alignment_label(lang, a))),
+            Some(app.view3d.projection.alignment),
+            BrushOp::ProjectionAlignment,
+        ),
+        _ => brush_choices(
+            m2::stabilizer_speed_types(lang),
+            Some(m2::stabilizer_speed_type(&app.m2.brush.assist)),
+            BrushOp::StabilizerSpeedType,
+        ),
+    }
+}
+
+/// チャンネルの行の右クリック: 描く・キャンバスに見せる・名前の変更・削除（標準のチャンネルは名前の変更と削除ができない）。
+fn channel_context_entries(app: &AppState, channel: Channel, free: bool) -> Vec<Entry<Action>> {
+    let lang = app.lang;
+    let user = !channel.is_standard();
+    vec![
+        Entry::item(
+            lang.t("m2_menu-paint-this-channel"),
+            Action::M2Ui(UiOp::PaintChannel(channel)),
+        )
+        .radio(app.m2.paint_channel == channel)
+        .enabled(free),
+        Entry::item(
+            lang.t("m2_menu-show-in-canvas"),
+            Action::M2Ui(UiOp::DisplayChannel(channel)),
+        )
+        .radio(app.m2.display_channel == channel),
+        Entry::Separator,
+        Entry::item(
+            lang.t("m2_menu-rename"),
+            Action::M2Ui(UiOp::RenameChannel(channel)),
+        )
+        .enabled(free && user),
+        Entry::item(
+            lang.t("m2_menu-delete-channel"),
+            Action::M2(Edit::RemoveChannel(channel)),
+        )
+        .enabled(free && user),
+    ]
+}
+
+// ───────── レイヤーセットのメニュー ─────────
+
+fn layer_set_edit(e: LayerSetEdit) -> Action {
+    Action::M2(Edit::LayerSets(e))
+}
+
+/// レイヤーのパネルの頭のドロップダウン: レイヤーセットを選ぶ（今のレイヤーセットに印）。
+fn layer_set_pick_entries(app: &AppState, free: bool) -> Vec<Entry<Action>> {
+    let doc = &app.session.doc;
+    let current = app.layer_set();
+    (0..doc.layer_sets().len())
+        .map(|i| {
+            let id = doc.layer_sets()[i].id;
+            Entry::item(
+                layersets::display_name(app.lang, doc, i),
+                Action::M2Ui(UiOp::SelectLayerSet(id)),
+            )
+            .radio(id == current)
+            .enabled(free)
+        })
+        .collect()
+}
+
+/// チャンネルの行のドロップダウン: そのチャンネルの出力元のレイヤーセット（区切りの後に「なし」）。
+fn layer_set_output_entries(app: &AppState, channel: Channel) -> Vec<Entry<Action>> {
+    let doc = &app.session.doc;
+    let current = doc.channel_output(channel).ok().flatten();
+    let free = app.can_edit();
+    let mut entries: Vec<Entry<Action>> = (0..doc.layer_sets().len())
+        .map(|i| {
+            let id = doc.layer_sets()[i].id;
+            Entry::item(
+                layersets::display_name(app.lang, doc, i),
+                layer_set_edit(LayerSetEdit::Output {
+                    channel,
+                    set: Some(id),
+                }),
+            )
+            .radio(current == Some(id))
+            .enabled(free)
+        })
+        .collect();
+    entries.push(Entry::Separator);
+    entries.push(
+        Entry::item(
+            app.lang.t("m2_menu-none"),
+            layer_set_edit(LayerSetEdit::Output { channel, set: None }),
+        )
+        .radio(current.is_none())
+        .enabled(free),
+    );
+    entries
+}
+
+/// テクスチャセットのパネルのレイヤーセットの行の右クリック: 新しいレイヤーセット・複製・名前の変更・削除（最後の 1 つは消せない）。
+fn layer_set_context_entries(app: &AppState, set: LayerSetId) -> Vec<Entry<Action>> {
+    let lang = app.lang;
+    let free = app.can_edit();
+    let several = app.session.doc.layer_sets().len() > 1;
+    vec![
+        Entry::item(
+            lang.t("layersets-new-layer-set"),
+            layer_set_edit(LayerSetEdit::New),
+        )
+        .enabled(free && app.session.doc.layer_sets().len() < yolu_core::MAX_LAYER_SETS),
+        Entry::item(
+            lang.t("m2_menu-duplicate"),
+            layer_set_edit(LayerSetEdit::Duplicate(set)),
+        )
+        .enabled(free && app.session.doc.layer_sets().len() < yolu_core::MAX_LAYER_SETS),
+        Entry::item(
+            lang.t("m2_menu-rename"),
+            Action::M2Ui(UiOp::RenameLayerSet(set)),
+        )
+        .enabled(free),
+        Entry::Separator,
+        Entry::item(
+            lang.t("m2_menu-delete"),
+            layer_set_edit(LayerSetEdit::Remove(set)),
+        )
+        .enabled(free && several),
+    ]
+}
+
+/// レイヤーの右クリックの「レイヤーセットへ移す ▸」（レイヤーセットが 2 つ以上あるときだけ。移し先は、今のレイヤーのレイヤーセット以外）。
+pub fn layer_set_move_submenu(app: &AppState, ids: Vec<LayerId>) -> Option<Entry<Action>> {
+    let doc = &app.session.doc;
+    if doc.layer_sets().len() < 2 {
+        return None;
+    }
+    let from = ids
+        .first()
+        .and_then(|id| doc.layer(*id))
+        .map(|l| l.layer_set());
+    let free = app.can_edit();
+    let entries: Vec<Entry<Action>> = (0..doc.layer_sets().len())
+        .filter(|&i| Some(doc.layer_sets()[i].id) != from)
+        .map(|i| {
+            Entry::item(
+                layersets::display_name(app.lang, doc, i),
+                layer_set_edit(LayerSetEdit::MoveLayers {
+                    ids: ids.clone(),
+                    set: doc.layer_sets()[i].id,
+                }),
+            )
+            .enabled(free)
+        })
+        .collect();
+    Some(Entry::submenu(app.lang.t("layersets-move-to-layer-set"), entries).enabled(free))
 }
 
 #[cfg(test)]
@@ -572,23 +816,27 @@ mod tests {
                     _ => None,
                 })
                 .unwrap_or_else(|| panic!("{tag}: 印の項目がない"));
-            let revision = s.doc.revision();
-            let steps = s.doc.undo_count();
+            let revision = s.session.doc.revision();
+            let steps = s.session.doc.undo_count();
             let message = s.message.clone();
-            s.modified = false;
+            s.session.clear_modified();
             s.apply(marked);
-            assert_eq!(s.doc.channel_info(channel), Some(&info), "{tag}");
-            assert_eq!(s.doc.revision(), revision, "{tag}: 文書の版");
-            assert_eq!(s.doc.undo_count(), steps, "{tag}: Undo の段");
+            assert_eq!(s.session.doc.channel_info(channel), Some(&info), "{tag}");
+            assert_eq!(
+                s.session.doc.revision(),
+                revision,
+                "{tag}: 文書のバージョン"
+            );
+            assert_eq!(s.session.doc.undo_count(), steps, "{tag}: Undo の段");
             assert_eq!(s.message, message, "{tag}: 知らせ");
-            assert!(!s.modified, "{tag}: 変更の印");
+            assert!(!s.session.is_modified(), "{tag}: 変更の印");
             // 今の種類と色空間のまま、印の位置も変わらない
             let now = rows(&kind_entries(&s, channel));
             assert_eq!(now.iter().filter(|r| r.1).count(), 1, "{tag}");
             // 最後の段はチャンネルを追加した編集のまま
             s.apply(Action::Undo);
             assert_eq!(
-                s.doc.channel_info(channel),
+                s.session.doc.channel_info(channel),
                 None,
                 "{tag}: Undo 1 回で追加する前"
             );
@@ -603,16 +851,16 @@ mod tests {
             ..info_with(ChannelKind::Color, ColorSpace::Srgb)
         };
         let (mut s, channel) = app_with(info.clone(), Lang::Ja);
-        let steps = s.doc.undo_count();
+        let steps = s.session.doc.undo_count();
         let marked = action_of(kind_entries(&s, channel), "sRGB8").unwrap();
         s.apply(marked);
-        assert_eq!(s.doc.channel_info(channel), Some(&info));
-        assert_eq!(s.doc.undo_count(), steps);
+        assert_eq!(s.session.doc.channel_info(channel), Some(&info));
+        assert_eq!(s.session.doc.undo_count(), steps);
         let other = action_of(kind_entries(&s, channel), "L8").unwrap();
         s.apply(other);
-        let after = s.doc.channel_info(channel).unwrap();
+        let after = s.session.doc.channel_info(channel).unwrap();
         assert_eq!(*after, new_channel_info("x".into(), ChannelKind::Scalar));
-        assert_eq!(s.doc.undo_count(), steps + 1);
+        assert_eq!(s.session.doc.undo_count(), steps + 1);
     }
 
     /// 描いている間は 3 つとも押せなくなるが、印は変わらない。
@@ -654,10 +902,10 @@ mod tests {
             let tag = format!("{} -> {pick}", channel_format(&info));
             let chosen = action_of(kind_entries(&s, channel), pick)
                 .unwrap_or_else(|| panic!("{tag}: 項目がない"));
-            let steps = s.doc.undo_count();
+            let steps = s.session.doc.undo_count();
             s.apply(chosen);
-            let after = s.doc.channel_info(channel).unwrap().clone();
-            assert_eq!(s.doc.undo_count(), steps + 1, "{tag}: 1 回の編集");
+            let after = s.session.doc.channel_info(channel).unwrap().clone();
+            assert_eq!(s.session.doc.undo_count(), steps + 1, "{tag}: 1 回の編集");
             assert_eq!(channel_format(&after), pick, "{tag}");
             assert_eq!(after.name, info.name, "{tag}");
             // 選んだ後は、選んだ項目だけに印が付く
@@ -667,7 +915,11 @@ mod tests {
             assert_eq!(marked.len(), 1, "{tag}");
             assert_eq!(marked[0].0, pick, "{tag}");
             s.apply(Action::Undo);
-            assert_eq!(s.doc.channel_info(channel), Some(&info), "{tag}: Undo 1 回");
+            assert_eq!(
+                s.session.doc.channel_info(channel),
+                Some(&info),
+                "{tag}: Undo 1 回"
+            );
         }
     }
 }

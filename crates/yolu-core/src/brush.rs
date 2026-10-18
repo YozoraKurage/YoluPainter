@@ -12,6 +12,8 @@
 //! - 効果（ぼかし・指先・クローン）は、ダブの前に読む範囲を凍結し（[`effects`]）、覆いの割合でその色へ寄せる。
 //! - 色の混ぜ（厚塗り。拡張: C# に無い）は、効果と同じくダブの前に下地を凍結し、画素ごとに下の色と筆の荷を混ぜた色を、ダブごとの色と同じ道
 //!   （画素ごとの色の積み）で置く（`mix`・`mix_stroke`）。混ぜ方が切のブラシの画素は混ぜを足す前とバイト単位で同じ。
+//! - 水彩境界（拡張: C# に無い）は、ダブを塗った後に、ストロークの覆いから縁の帯を求め、その範囲の画素をストロークの前の色から
+//!   計算し直す（[`water_edge`]。描いている間は入力ごと、ドラッグ後に処理なら確定のときに 1 回）。
 //! - 覆いは float（単精度）で持ち、画素の計算（覆い・天井と流量・覆いの寄せ・画素ごとの色・合成・効果の読み）も f32 の式
 //!   （`rows`。合成は `crate::blend` の Normal とフェード）。ダブの位置・形・筆圧・ゆらぎは倍精度で求め、画素の式へ渡すときに f32 へ丸める。
 //!   回転・傾き・線の向きは libm の三角関数（cos・sin・tan・atan・atan2）を通るので、ダブの形は libm（OS）によって 1 ULP ずれ得る。
@@ -48,24 +50,34 @@
 //! assert!(doc.end_stroke(stroke).unwrap().changed); // 確定で、待たせた曲線の最後の区間も描く
 //! ```
 
+use crate::Reason;
+mod color_change;
+mod continuous;
+mod correction;
 pub mod curve;
+mod dual;
 mod dynamics;
 pub(crate) mod edge;
 mod effects;
+mod influence;
 mod mix;
+mod mix_space;
 mod mix_stroke;
 mod plan;
 mod presets;
-mod pressure;
 #[doc(hidden)]
 pub mod profile;
 pub mod random;
+pub(crate) mod refer;
+pub(crate) mod ribbon;
 mod rows;
 mod settings;
 mod sources;
+mod spray;
 mod stencil;
 mod symmetric;
 mod tip;
+mod water_edge;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -74,25 +86,43 @@ use std::sync::Arc;
 use glam::DVec2;
 use rayon::prelude::*;
 
+pub(crate) use continuous::ContinuousClock;
+pub use continuous::{CONTINUOUS_INTERVAL, MAX_CONTINUOUS_PER_INPUT};
+pub(crate) use correction::{plan as correction_plan, PostPoint, Sweep};
+pub use correction::{PostCorrection, StabilizerSpeed, MAX_POST_STRENGTH};
+pub(crate) use dual::{
+    lifted_link, spot as dual_spot, step as dual_step, textured_at as dual_textured_at, DualLook,
+    DualPlace, DualRun, DualTips,
+};
 pub use dynamics::{hsv_to_rgb, pen_tilt, rgb_to_hsv};
 pub use edge::AntiAlias;
 pub(crate) use edge::{Edge, TexelMetric};
-pub use mix::{ColorMix, MixGround, MixMode};
-pub(crate) use plan::{DabPlan, StampControls};
+pub use influence::DualItem;
+pub use influence::{
+    ColorItem, Influence, Influences, Input, InputResponse, InputUse, Item, PressureSwitches,
+    SprayItem, MAX_CURVE_POINTS, STRAIGHT,
+};
+pub(crate) use influence::{InputValues, PressureScale, INFLUENCE_STREAM};
+pub use mix::{ColorMix, MixBlur, MixGround, MixMode, MixSpace, MAX_MIX_BLUR, MAX_MIX_CORRECTION};
+pub(crate) use plan::{DabPlan, StampControls, TaperStart, TipRun};
 pub use presets::{builtin_presets, BrushPreset};
-pub(crate) use pressure::PressureScale;
-pub use pressure::{PressureResponse, PressureResponses, MAX_CURVE_POINTS, STRAIGHT};
+pub use refer::{ExpandMode, ReferenceLines, MAX_REFERENCE_EXPAND, MAX_REFERENCE_MARGIN};
 pub use settings::{
-    Brush, BrushEffect, ColorDynamics, Controls, DualBrush, DualBrushMode, Jitter, PaperTexture,
-    StrokeAssist, TextureMode, TipSelection, TipShape, MAX_FADE, MAX_STROKE_ASSIST,
+    Brush, BrushEffect, ColorDynamics, ColorTarget, Controls, DualBrush, DualBrushMode, FlipRule,
+    Jitter, PaperTexture, StrokeAssist, StrokeColorChange, TaperTargets, TextureMode,
+    TipColorChange, TipSelection, TipShape, MAX_FADE, MAX_STROKE_ASSIST, MAX_SWEEP,
+    MIN_ONE_PIXEL_RADIUS,
 };
 pub use sources::{BrushMappedPixel, BrushSourceTap};
 pub(crate) use sources::{CloneSource, CompositeTile};
+pub use spray::{Spray, SprayDirection, DENSITY_PER_STAMP, MAX_SPRAY_SIZE};
+pub(crate) use spray::{SprayFrame, SprayRun, SprayUse};
 pub use stencil::{
     linear_to_srgb, luminance, BrushStencil, ImageColorSpace, StencilImage, StencilMapping,
     StencilMode, StencilPoint, StencilSample, StencilTexel, StencilTiling,
 };
 pub use tip::{builtin_tip, BrushTip, BUILTIN_TIPS};
+pub use water_edge::{WaterEdge, MAX_WATER_EDGE_BLUR, MAX_WATER_EDGE_WIDTH, MIN_WATER_EDGE_WIDTH};
 
 use crate::error::CoreError;
 use crate::math::{clamp01, require_finite};
@@ -106,7 +136,8 @@ use mix::{MixDab, MixRun, MixTally};
 use random::NetRandom;
 
 /// ブラシの基本の設定（M1）。ストロークを始めたときに写して固定する（途中で変えても、そのストロークには効かない）。
-/// 筆先・ゆらぎ・質感などを足すときは [`Brush`]（これを `base` に持つ）で始める。
+/// 筆先・ゆらぎ・質感などを足すときは [`Brush`]（これを `base` に持つ）で始める。筆圧で大きさ・不透明度・流量を変えるかは、簡単なブラシでは
+/// [`PressureSwitches`]（[`Brush::simple`] で作る）、全部入りのブラシでは [`Brush::influences`] が持つ。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BrushSettings {
     /// 半径（画素）。0 < r ≤ 65536。
@@ -121,10 +152,6 @@ pub struct BrushSettings {
     pub flow: f64,
     /// 塗る色（straight）。消しゴムではアルファだけを消す強さに使う。
     pub color: Rgba8,
-    /// 筆圧で大きさ・不透明度・流量を変えるか（それぞれ線形）。
-    pub pressure_size: bool,
-    pub pressure_opacity: bool,
-    pub pressure_flow: bool,
     /// 消しゴム（アルファを消す。色のアルファの割合だけ）。
     pub erase: bool,
     /// 拡張（C# に無い）: 丸い筆先の縁のアンチエイリアスと、小さなダブの濃さ（[`AntiAlias`]）。既定は なし（今の式）。
@@ -141,9 +168,6 @@ impl Default for BrushSettings {
             opacity: 1.0,
             flow: 1.0,
             color: Rgba8::new(255, 255, 255, 255),
-            pressure_size: true,
-            pressure_opacity: true,
-            pressure_flow: false,
             erase: false,
             anti_alias: AntiAlias::None,
         }
@@ -153,25 +177,25 @@ impl Default for BrushSettings {
 impl BrushSettings {
     /// C# の BrushSettings.Validate の M1 の部分。
     pub fn validate(&self) -> Result<(), CoreError> {
-        require_finite(self.radius, "radius")?;
-        require_finite(self.hardness, "hardness")?;
-        require_finite(self.spacing, "spacing")?;
-        require_finite(self.opacity, "opacity")?;
-        require_finite(self.flow, "flow")?;
+        require_finite(self.radius, Reason::Radius)?;
+        require_finite(self.hardness, Reason::Hardness)?;
+        require_finite(self.spacing, Reason::Spacing)?;
+        require_finite(self.opacity, Reason::Opacity)?;
+        require_finite(self.flow, Reason::Flow)?;
         if self.radius <= 0.0 || self.radius > 65536.0 {
-            return Err(CoreError::InvalidArgument("radius"));
+            return Err(CoreError::InvalidArgument(Reason::Radius));
         }
         if !(0.0..=1.0).contains(&self.hardness) {
-            return Err(CoreError::InvalidArgument("hardness"));
+            return Err(CoreError::InvalidArgument(Reason::Hardness));
         }
         if !(0.01..=4.0).contains(&self.spacing) {
-            return Err(CoreError::InvalidArgument("spacing"));
+            return Err(CoreError::InvalidArgument(Reason::Spacing));
         }
         if !(0.0..=1.0).contains(&self.opacity) {
-            return Err(CoreError::InvalidArgument("opacity"));
+            return Err(CoreError::InvalidArgument(Reason::Opacity));
         }
         if !(0.0..=1.0).contains(&self.flow) {
-            return Err(CoreError::InvalidArgument("flow"));
+            return Err(CoreError::InvalidArgument(Reason::Flow));
         }
         Ok(())
     }
@@ -196,12 +220,12 @@ pub struct BrushSample {
 impl BrushSample {
     /// 有限でない値は断る。筆圧は 0〜1、傾きは ±π/2 に収める（C# の BrushSample と同じ）。
     pub fn new(x: f64, y: f64, pressure: f64, time: f64, tilt: DVec2) -> Result<Self, CoreError> {
-        require_finite(x, "x")?;
-        require_finite(y, "y")?;
-        require_finite(pressure, "pressure")?;
-        require_finite(time, "time")?;
-        require_finite(tilt.x, "tilt")?;
-        require_finite(tilt.y, "tilt")?;
+        require_finite(x, Reason::X)?;
+        require_finite(y, Reason::Y)?;
+        require_finite(pressure, Reason::Pressure)?;
+        require_finite(time, Reason::Time)?;
+        require_finite(tilt.x, Reason::Tilt)?;
+        require_finite(tilt.y, Reason::Tilt)?;
         let max = std::f64::consts::FRAC_PI_2;
         Ok(BrushSample {
             x,
@@ -215,7 +239,7 @@ impl BrushSample {
     }
     /// ペンの軸の回転（ラジアン、キャンバスで反時計回り）を付けた写し。有限でない値は断る。
     pub fn with_rotation(self, rotation: f64) -> Result<Self, CoreError> {
-        require_finite(rotation, "rotation")?;
+        require_finite(rotation, Reason::Rotation)?;
         Ok(BrushSample { rotation, ..self })
     }
     const ZERO: BrushSample = BrushSample {
@@ -236,6 +260,21 @@ fn cos_sin(angle: f64) -> (f64, f64) {
         (1.0, 0.0)
     } else {
         (angle.cos(), angle.sin())
+    }
+}
+
+/// 筆の点 a から b への区間の割合 t の所の、道の上のダブ（線の長さ arc・線の向き direction。筆圧・傾き・回転・速さは主のダブと同じ補間）。
+fn path_dab(a: &BrushSample, b: &BrushSample, t: f64, arc: f64, direction: f64) -> PendingDab {
+    PendingDab {
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t,
+        pressure: a.pressure + (b.pressure - a.pressure) * t,
+        arc,
+        direction,
+        tilt_x: a.tilt.x + (b.tilt.x - a.tilt.x) * t,
+        tilt_y: a.tilt.y + (b.tilt.y - a.tilt.y) * t,
+        rotation: lerp_angle(a.rotation, b.rotation, t),
+        speed: a.speed + (b.speed - a.speed) * t,
     }
 }
 
@@ -312,6 +351,10 @@ struct DualDab {
     x: f64,
     y: f64,
     arc: f64,
+    /// 並べた区間の線の向き（散布の粒子の向きの「線の方向」）。
+    direction: f64,
+    /// そのダブの見え方（影響元・向きの足し。[`DualRun::look`]）。
+    look: DualLook,
 }
 
 /// 効果のダブの状態（指先の前の位置、読み元の位置のずれ、枠の大きさ）。
@@ -332,6 +375,8 @@ struct EffectState {
 pub(crate) struct StrokeState {
     /// 透明部分のロック: 描く画素のアルファと透明画素の RGB を守る。作るときに必ず決める（[`StrokeState::new`]）。
     keep_alpha: bool,
+    /// ストロークを始めるときにチャンネルの面を作った（画素を変えずに終われば外す。段は取り消しで外す）。
+    pub created_surface: bool,
     pub id: u64,
     pub layer: LayerId,
     pub layer_index: usize,
@@ -356,11 +401,19 @@ pub(crate) struct StrokeState {
     last_speed: f64,
     stroke_length: f64,
     pending: VecDeque<PendingDab>,
+    /// 入り抜きのあるブラシの、ストロークの形（クリック・Shift の直線・手で描いた線）の見極めと、ここまでに並べたダブの数。
+    taper_start: TaperStart,
+    dabs: u64,
     random: NetRandom,
+    /// 影響元のランダムの乱数の列（どの項目もランダムを使わなければ None で、1 つも引かない）。
+    influence_random: Option<NetRandom>,
     // 色の変化: ストロークの色（ダブごとでないとき・パスの面のダブ）、今のダブの色、色の乱数の列
     stroke_color: Rgba8,
     dab_color: Rgba8,
     color_random: Option<NetRandom>,
+    /// 色の変化（先端・サブ描画色混合率・ストロークごと）の進み。
+    color_change: color_change::ColorChange,
+    /// ダブごとに色が要るか（Photoshop の形の「描点ごとに適用」か、色の変化がダブごとに動く）。
     tip_colors: bool,
     /// ステンシルの色を受けるチャンネル（色のモードで、ステンシルが名指すチャンネルへ色を塗るとき）。
     stencil_kind: Option<ChannelKind>,
@@ -369,8 +422,13 @@ pub(crate) struct StrokeState {
     dual_pending: VecDeque<DualDab>,
     dual_coverage: HashMap<TileCoord, Vec<f32>>,
     dual_since_stamp: f64,
-    /// 次の筆先（順に使うとき）。
-    tip_index: u64,
+    /// 2 つ目のダブの見え方の進みと、次の 2 つ目のダブまでの間隔の係数（直前に並べたダブの間隔の影響元）。
+    dual_run: DualRun,
+    dual_step: f64,
+    /// 2 つ目の筆先の選び・反転・散布の進み。
+    dual_tips: DualTips,
+    /// 筆先の選びと反転の進み（順に使うときの番号・ランダムな反転の乱数の列）。
+    tips: TipRun,
     // 曲線: 描いた点（curve_from）と、その前の点（curve_before）、まだ描いていない最新の点（curve_to）
     curve_points: u8,
     has_curve_before: bool,
@@ -402,16 +460,46 @@ pub(crate) struct StrokeState {
     surface_look: Option<SurfaceDabLook>,
     /// 3D の対称（[`Brush::model_symmetry`]）の写しを作れなかった最後の理由。
     copy_note: Option<crate::geometry::MirrorOutcome>,
+    /// 水彩境界（効くストロークだけ。[`water_edge`]）。
+    water_edge: Option<water_edge::EdgeRun>,
+    /// はみ出し防止（凍結した参照の重なりと狙いの色。None は効かない）。
+    refer: Option<refer::ReferRun>,
+    /// 描く面のチャンネルの種類（描き直しで、同じ形のストロークを作り直す）。
+    kind: ChannelKind,
+    /// はらいの進み。
+    sweep: Sweep,
+    /// 後補正のブラシの、ここまでの入力（描き直しのストロークと、後補正の無いブラシは None）。
+    post: Option<PostInputs>,
+    /// 連続吹き付けの時計（連続吹き付けが効くブラシだけ。[`continuous`]）。
+    continuous: Option<ContinuousClock>,
+}
+
+/// 後補正のために覚える入力の点と、Shift の直線の角（角の後の最初の点の番号）。
+#[derive(Default)]
+struct PostInputs {
+    points: Vec<BrushSample>,
+    breaks: Vec<usize>,
+}
+
+impl PostInputs {
+    fn bytes(&self) -> u64 {
+        (self.points.capacity() * std::mem::size_of::<BrushSample>()
+            + self.breaks.capacity() * std::mem::size_of::<usize>()) as u64
+    }
 }
 
 /// 面の画素の不透明度・流量の係数と、乗算でない紙の質感（合わせ方・質感の値・深さ）。
 type SurfaceScales = ((f32, f32), Option<(DualBrushMode, f32, f32)>);
 
-/// 3D の面のダブ 1 つの、ゆらぎ・フェード・傾き・速さの不透明度と流量の係数（2D のダブの形の `opacity_scale`・`flow_scale` と同じ）。
+/// 3D の面のダブ 1 つの、ゆらぎ・フェード・傾き・速さの不透明度と流量の係数（2D のダブの形の `opacity_scale`・`flow_scale` と同じ）と、
+/// 影響元の質感の濃さの係数・絵の具の量と濃さの筆圧でない入力の係数（使わなければ 1）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct SurfaceDabLook {
     pub opacity: f64,
     pub flow: f64,
+    pub texture_density: f64,
+    pub mix_paint: f64,
+    pub mix_density: f64,
 }
 
 /// これを超える長さの区間（ダブの数）は断る（C# と同じ百万）。
@@ -452,10 +540,22 @@ impl StrokeState {
             color_random = Some(r);
             tip_colors = brush.color.per_tip;
         }
+        let color_change = color_change::ColorChange::start(
+            &brush,
+            stroke_color,
+            tip_colors,
+            brush.effect.is_paint() && !brush.base.erase,
+        );
+        stroke_color = color_change.stroke_color(&brush);
+        tip_colors |= color_change.per_dab();
         let dual_random = brush
             .dual
             .as_ref()
             .map(|_| NetRandom::new(brush.seed ^ DUAL_STREAM));
+        let influence_random = brush
+            .influences
+            .uses(Input::Random)
+            .then(|| NetRandom::new(brush.seed ^ INFLUENCE_STREAM));
         // ステンシルの色: 色のモードで、ステンシルが名指すチャンネルを塗る面だけ（消す・マスク・効果は量だけ）
         let stencil_kind = brush
             .stencil
@@ -468,6 +568,11 @@ impl StrokeState {
             && brush.effect.is_paint()
             && !brush.base.erase
             && carries_color(kind);
+        // 水彩境界: 色のチャンネルを色で塗るブラシだけ（消しゴム・効果のブラシ・データのチャンネル・マスクでは効かない）
+        let water_edge = brush
+            .water_edge
+            .filter(|_| brush.effect.is_paint() && !brush.base.erase && carries_color(kind))
+            .map(water_edge::EdgeRun::new);
         StrokeState {
             keep_alpha,
             id,
@@ -475,6 +580,7 @@ impl StrokeState {
             layer_index,
             channel,
             random: NetRandom::new(brush.seed),
+            influence_random,
             budgets,
             width: size.0 as i64,
             height: size.1 as i64,
@@ -490,16 +596,22 @@ impl StrokeState {
             last_speed: 0.0,
             stroke_length: 0.0,
             pending: VecDeque::new(),
+            taper_start: TaperStart::new(&brush.assist, brush.base.radius),
+            dabs: 0,
             stroke_color,
             dab_color: stroke_color,
             color_random,
+            color_change,
             tip_colors,
             stencil_kind,
             dual_random,
             dual_pending: VecDeque::new(),
             dual_coverage: HashMap::new(),
             dual_since_stamp: 0.0,
-            tip_index: 0,
+            dual_run: DualRun::new(&brush),
+            dual_step: 1.0,
+            dual_tips: DualTips::new(&brush),
+            tips: TipRun::new(&brush),
             curve_points: 0,
             has_curve_before: false,
             curve_before: BrushSample::ZERO,
@@ -515,17 +627,93 @@ impl StrokeState {
             sample_count: 0,
             parallel_dabs: 0,
             tiles: HashMap::new(),
+            created_surface: false,
             rollback_bytes: 0,
             selection: None,
             surface_look: None,
             copy_note: None,
+            water_edge,
+            refer: None,
+            kind,
+            sweep: Sweep::default(),
+            post: brush.assist.post.active().then(PostInputs::default),
+            continuous: brush.continuous_active().then(ContinuousClock::default),
             brush: Arc::new(brush),
         }
+    }
+
+    /// 描き直しのための、始めたときと同じ形の空のストローク（選択範囲・始めに作った面・ステンシルの色・凍結した合成の参照元・
+    /// はみ出し防止の凍結した参照は引き継ぐ。水彩境界の進みと入力は引き継がない: 水彩境界は描き直しの入力から初めから付け直す）。画素を戻すのは呼び手（[`StrokeState::tiles`] の前の中身）。
+    pub(crate) fn restarted(&mut self) -> StrokeState {
+        let mut fresh = StrokeState::new(
+            self.id,
+            self.layer,
+            self.layer_index,
+            self.channel,
+            self.kind,
+            (*self.brush).clone(),
+            self.budgets,
+            (self.width as u32, self.height as u32, self.tile_size as u32),
+            self.keep_alpha,
+        )
+        .with_selection(self.selection.clone())
+        .with_created_surface(self.created_surface);
+        fresh.stencil_kind = self.stencil_kind;
+        fresh.source = self.source.take();
+        fresh.refer = self.refer.as_ref().map(refer::ReferRun::restarted);
+        fresh.post = None;
+        fresh
+    }
+
+    /// 後補正の描き直しの入力: 覚えた入力の点を区間ごとに整えた列と、区間の終わりで角にするか（[`correction::plan`]）。後補正の無い・
+    /// 描き直しの・整える点の無いストロークは None。覚えた入力は手放す。
+    pub(crate) fn take_post_plan(&mut self) -> Option<Vec<(Vec<BrushSample>, bool)>> {
+        let inputs = self.post.take()?;
+        let post = &self.brush.assist.post;
+        let points: Vec<PostPoint> = inputs
+            .points
+            .iter()
+            .map(|s| PostPoint {
+                x: s.x,
+                y: s.y,
+                pressure: s.pressure,
+                time: s.time,
+                tilt: s.tilt,
+                rotation: s.rotation,
+            })
+            .collect();
+        let speed_max = post.by_speed.then_some(self.brush.influences.speed_max);
+        let plan = correction::plan(&points, &inputs.breaks, post.tolerance(false), speed_max)?;
+        Some(
+            plan.into_iter()
+                .map(|(points, corner)| {
+                    let samples = points
+                        .into_iter()
+                        .map(|p| BrushSample {
+                            x: p.x,
+                            y: p.y,
+                            pressure: clamp01(p.pressure),
+                            time: p.time,
+                            tilt: p.tilt,
+                            rotation: p.rotation,
+                            speed: 0.0,
+                        })
+                        .collect();
+                    (samples, corner)
+                })
+                .collect(),
+        )
     }
 
     /// 文書の今の選択範囲の内側だけに描く（C# の BrushStroke が始めに document.Selection を覚えるのと同じ）。
     pub(crate) fn with_selection(mut self, selection: Option<SelectionMask>) -> Self {
         self.selection = selection;
+        self
+    }
+
+    /// 始めるときにチャンネルの面を作ったストロークにする（[`StrokeState::created_surface`]）。
+    pub(crate) fn with_created_surface(mut self, created: bool) -> Self {
+        self.created_surface = created;
         self
     }
 
@@ -561,7 +749,74 @@ impl StrokeState {
     /// 巻き戻しの外でストロークが持っているバイト: 今の効果のダブの枠と、凍結した合成の参照元（C# の effectScratchBytes と
     /// cloneSourceBytes）。タイルの写しなどを数える予算の確かめは、これも足す。
     fn held_bytes(&self) -> u64 {
-        self.effect.scratch + self.source_bytes()
+        self.effect.scratch
+            + self.source_bytes()
+            + self.refer.as_ref().map_or(0, |r| r.bytes())
+            + self.post_bytes()
+            + self.pending_bytes()
+    }
+
+    /// 抜き・入りのために待たせているダブのバイト。連続吹き付けは止めて押している間も待たせるダブを増やすので、予算に数える。
+    fn pending_bytes(&self) -> u64 {
+        (self.pending.len() * std::mem::size_of::<PendingDab>()) as u64
+    }
+
+    /// はみ出し防止の参照の重なりを渡す（最初のダブの前だけ。[`crate::Stroke::use_reference_layers`]）。
+    pub(crate) fn set_reference(&mut self, source: Arc<refer::ReferSource>) {
+        self.refer = Some(refer::ReferRun::new(source, self.brush.reference_lines));
+    }
+
+    /// 参照の重なりを受けられるか（ブラシがはみ出し防止を使い、まだダブを置いていない）。
+    pub(crate) fn can_take_reference(&self) -> bool {
+        self.brush.reference_lines.enabled
+            && !self.has_sample
+            && !self.effect.started
+            && self.tiles.is_empty()
+            && self.stamp_count == 0
+            && self.refer.is_none()
+    }
+
+    /// はみ出し防止で、面のダブの画素（座標と覆い）のうち塗る物の印（はみ出し防止が無ければ None）。キャンバスの外の画素は塗らない印。
+    fn refer_keep(
+        &mut self,
+        pixels: impl Iterator<Item = (i64, i64, f64)>,
+        center: Option<(f64, f64)>,
+    ) -> Result<Option<Vec<bool>>, CoreError> {
+        let room = self.refer_room();
+        let (w, h) = (self.width, self.height);
+        let Some(refer) = self.refer.as_mut() else {
+            return Ok(None);
+        };
+        let all: Vec<(i64, i64, f64)> = pixels.collect();
+        let inside: Vec<usize> = (0..all.len())
+            .filter(|&i| {
+                let (x, y, _) = all[i];
+                x >= 0 && y >= 0 && x < w && y < h
+            })
+            .collect();
+        let cells: Vec<(i64, i64, f64)> = inside.iter().map(|&i| all[i]).collect();
+        let keep_inside = refer.keep_listed(&cells, center, room)?;
+        let mut keep = vec![false; all.len()];
+        for (k, &i) in keep_inside.iter().zip(&inside) {
+            keep[i] = *k;
+        }
+        Ok(Some(keep))
+    }
+
+    /// はみ出し防止の作業に使ってよいバイト（ストロークの予算の残り）。
+    fn refer_room(&self) -> u64 {
+        self.budgets.stroke.saturating_sub(
+            self.rollback_bytes
+                + self.effect.scratch
+                + self.source_bytes()
+                + self.post_bytes()
+                + self.pending_bytes(),
+        )
+    }
+
+    /// 後補正のために覚えた入力のバイト（後補正でなければ 0）。
+    fn post_bytes(&self) -> u64 {
+        self.post.as_ref().map_or(0, PostInputs::bytes)
     }
 
     /// 凍結した合成の参照元のバイト（無ければ 0）。
@@ -578,35 +833,70 @@ impl StrokeState {
         }
     }
 
-    /// 入力の点を 1 つ足す（C# の Add）。changed に、画素の変わったタイルを足す。画素が変わったら true。
+    /// 入力の点を 1 つ足す（C# の Add）。changed に、画素の変わったタイルを足す。画素が変わったら true。描いている間に付ける
+    /// 水彩境界は、この入力が触った範囲を最後に計算し直す。連続吹き付けのブラシは、この入力で距離のダブを置かなかったとき、
+    /// 時刻のダブを足す（[`continuous`]）。
     pub(crate) fn add(
         &mut self,
         surface: &mut Surface,
         sample: BrushSample,
         changed: &mut Vec<TileCoord>,
     ) -> Result<bool, CoreError> {
+        let before = self.dabs;
+        let mut any = self.add_sample(surface, sample, changed)?;
+        any |= self.add_continuous(surface, sample.time, before, changed)?;
+        Ok(self.flush_water_edge(surface, changed)? | any)
+    }
+
+    fn add_sample(
+        &mut self,
+        surface: &mut Surface,
+        sample: BrushSample,
+        changed: &mut Vec<TileCoord>,
+    ) -> Result<bool, CoreError> {
         if self.has_pen && sample.time < self.last_input.time {
-            return Err(CoreError::InvalidArgument("入力の時刻が戻った"));
+            return Err(CoreError::InvalidArgument(Reason::InputTimeMovedBackwards));
         }
         if sample.x.abs() > MAX_COORDINATE || sample.y.abs() > MAX_COORDINATE {
-            return Err(CoreError::InvalidArgument("入力の座標が範囲外"));
+            return Err(CoreError::InvalidArgument(
+                Reason::InputCoordinatesOutOfRange,
+            ));
         }
         self.last_input = sample;
+        // 後補正: 離したときに整えて描き直すため、入力を覚える（覚えた分も 1 回のストロークの予算に数える）
+        if let Some(post) = self.post.as_mut() {
+            post.points.push(sample);
+            self.ensure_budget(self.rollback_bytes)?;
+        }
+        // 入り抜き: 3 つ目からの入力で（押した点から境を超えて離れて）手で描いた線と分かれば、待たせていたダブを、この入力のダブより先に置く
+        let mut any = false;
+        if self.brush.assist.tapers() && self.taper_start.input((sample.x, sample.y), self.dabs) {
+            any = self.flush_pending(
+                surface,
+                self.stroke_length - self.brush.assist.taper_out,
+                None,
+                changed,
+            )?;
+        }
         let stabilizer = self.brush.assist.stabilizer;
         if stabilizer <= 0.0 || !self.has_pen {
             self.has_pen = true;
             self.pen = sample;
-            return self.add_pen_point(surface, sample, changed);
+            return Ok(self.add_pen_point(surface, sample, changed)? | any);
         }
-        let Some((x, y)) = self
+        let length = self
             .brush
             .assist
-            .pull((self.pen.x, self.pen.y), (sample.x, sample.y))
+            .stabilizer_length(self.last_speed, self.brush.influences.speed_max);
+        let Some((x, y)) =
+            self.brush
+                .assist
+                .pull(length, (self.pen.x, self.pen.y), (sample.x, sample.y))
         else {
-            return Ok(false);
+            return Ok(any);
         };
         self.pen = BrushSample { x, y, ..sample };
-        self.add_pen_point(surface, self.pen, changed)
+        Ok(self.add_pen_point(surface, self.pen, changed)? | any)
     }
 
     /// 筆の点（手ぶれ補正の後）: そのまま道へ、または曲線の向きが分かるまで待たせる（C# の AddPenPoint）。
@@ -617,6 +907,14 @@ impl StrokeState {
         mut sample: BrushSample,
         changed: &mut Vec<TileCoord>,
     ) -> Result<bool, CoreError> {
+        if self.brush.assist.sweep > 0.0 {
+            let moved = self.last_pen_point.map_or(0.0, |p| {
+                ((sample.x - p.x) * (sample.x - p.x) + (sample.y - p.y) * (sample.y - p.y)).sqrt()
+            });
+            sample.pressure = self
+                .sweep
+                .pressure(&self.brush.assist, sample.pressure, moved);
+        }
         sample.speed = match self.last_pen_point {
             None => 0.0,
             Some(p) => {
@@ -716,12 +1014,12 @@ impl StrokeState {
         let s = &self.brush.base;
         let spacing = f64_max(0.01, s.radius * 2.0 * s.spacing);
         if length / spacing > MAX_STAMPS_PER_SEGMENT {
-            return Err(CoreError::InvalidArgument("1 区間のダブが百万を超える"));
+            return Err(CoreError::InvalidArgument(Reason::TooManyDabsPerSegment));
         }
         if let Some(d) = &self.brush.dual {
             if length / f64_max(0.01, d.radius * 2.0 * d.spacing) > MAX_STAMPS_PER_SEGMENT {
                 return Err(CoreError::InvalidArgument(
-                    "1 区間のデュアルブラシのダブが百万を超える",
+                    Reason::TooManyDualBrushDabsPerSegment,
                 ));
             }
         }
@@ -749,10 +1047,17 @@ impl StrokeState {
         let brush = self.brush.clone();
         if !self.has_sample {
             if brush.dual.is_some() {
+                let look = self.dual_run.look(
+                    &brush,
+                    &path_dab(&sample, &sample, 1.0, 0.0, self.direction),
+                );
+                self.dual_step = look.spacing;
                 self.dual_pending.push_back(DualDab {
                     x: sample.x,
                     y: sample.y,
                     arc: 0.0,
+                    direction: self.direction,
+                    look,
                 });
             }
             any |= self.emit(
@@ -782,34 +1087,11 @@ impl StrokeState {
             let s = &brush.base;
             let spacing = f64_max(0.01, s.radius * 2.0 * s.spacing);
             if length / spacing > MAX_STAMPS_PER_SEGMENT {
-                return Err(CoreError::InvalidArgument("1 区間のダブが百万を超える"));
+                return Err(CoreError::InvalidArgument(Reason::TooManyDabsPerSegment));
             }
             if length > 0.0 {
-                if let Some(d) = &brush.dual {
-                    // 2 つ目の筆先のダブは自分の間隔で先に並べておき、主のダブが自分の線の長さまでのものを使う（入力の区切り方によらない）
-                    let dual_spacing = f64_max(0.01, d.radius * 2.0 * d.spacing);
-                    if length / dual_spacing > MAX_STAMPS_PER_SEGMENT {
-                        return Err(CoreError::InvalidArgument(
-                            "1 区間のデュアルブラシのダブが百万を超える",
-                        ));
-                    }
-                    let mut at = dual_spacing - self.dual_since_stamp;
-                    while at <= length + 1e-9 {
-                        let t = f64_min(1.0, at / length);
-                        self.dual_pending.push_back(DualDab {
-                            x: p.x + dx * t,
-                            y: p.y + dy * t,
-                            arc: self.stroke_length + at,
-                        });
-                        at += dual_spacing;
-                    }
-                    self.dual_since_stamp = length - (at - dual_spacing);
-                    if self.dual_since_stamp < 1e-9 {
-                        self.dual_since_stamp = 0.0;
-                    }
-                    if self.dual_since_stamp >= dual_spacing {
-                        self.dual_since_stamp %= dual_spacing;
-                    }
+                if brush.dual.is_some() {
+                    self.queue_dual(&brush, &p, &sample, length)?;
                 }
                 let mut position = spacing - self.distance_since_stamp;
                 // 許しは入力の境での丸めを吸うだけ。溜めた距離は下で詰める
@@ -855,22 +1137,27 @@ impl StrokeState {
         Ok(any)
     }
 
-    /// 線の長さ arc の所のダブ: すぐ置くか、終わりから抜きの長さの内なら待たせる（C# の Emit）。
+    /// 線の長さ arc の所のダブ: すぐ置くか、終わりから抜きの長さの内なら待たせる（C# の Emit）。入りのあるブラシは、ストロークの形が
+    /// 決まるまでも待たせる（[`TaperStart`]）。
     fn emit(
         &mut self,
         surface: &mut Surface,
         dab: PendingDab,
         changed: &mut Vec<TileCoord>,
     ) -> Result<bool, CoreError> {
-        if self.brush.assist.taper_out > 0.0 {
+        self.dabs += 1;
+        if self.brush.assist.taper_out > 0.0 || self.taper_start.holds(&self.brush.assist) {
             self.pending.push_back(dab);
+            // 待たせたダブも 1 回のストロークの予算に数える（超えたらストロークを取り消す）
+            self.ensure_budget(self.rollback_bytes)?;
             return Ok(false);
         }
         let factor = self.taper(dab.arc, f64::INFINITY);
         self.stamp(surface, dab, factor, changed)
     }
 
-    /// 待たせたダブを線の長さ limit まで置く。end（確定の時の線の長さ）があれば、そこへ向けて細る（C# の FlushPending）。
+    /// 待たせたダブを線の長さ limit まで置く。end（確定の時の線の長さ）があれば、そこへ向けて細る（C# の FlushPending）。ストロークの
+    /// 形が決まるまでは置かない（[`TaperStart::holds`]）。
     fn flush_pending(
         &mut self,
         surface: &mut Surface,
@@ -878,6 +1165,9 @@ impl StrokeState {
         end: Option<f64>,
         changed: &mut Vec<TileCoord>,
     ) -> Result<bool, CoreError> {
+        if self.taper_start.holds(&self.brush.assist) {
+            return Ok(false);
+        }
         let mut any = false;
         while let Some(&dab) = self.pending.front() {
             if dab.arc > limit {
@@ -890,33 +1180,95 @@ impl StrokeState {
         Ok(any)
     }
 
-    /// 長さ end のストロークの、線の長さ arc の所のダブの大きさの係数（[`StrokeAssist::taper`]）。
+    /// 長さ end のストロークの、線の長さ arc の所のダブの大きさの係数（[`StrokeAssist::taper`] を、ストロークの形に合わせて。
+    /// [`TaperStart::factor`]）。
     fn taper(&self, arc: f64, end: f64) -> f64 {
-        self.brush.assist.taper(arc, end)
+        self.taper_start.factor(&self.brush.assist, arc, end)
     }
 
-    /// 入力の終わり: 手ぶれ補正の筆を最後の入力の点まで描き、待たせている曲線の区間と抜きのダブを置く（C# の FinishInput）。
-    pub(crate) fn finish_input(
+    /// 手ぶれ補正の筆を、最後の入力の点まで描く（遅れを詰める。ストロークは続き、次の入力からまた糸の長さだけ遅れて付いていく）。補正が無い・もう
+    /// 届いているときは何もしない。
+    pub(crate) fn catch_up(
         &mut self,
         surface: &mut Surface,
         changed: &mut Vec<TileCoord>,
     ) -> Result<bool, CoreError> {
-        let mut any = false;
         if self.has_pen
             && self.brush.assist.stabilizer > 0.0
             && (self.pen.x != self.last_input.x || self.pen.y != self.last_input.y)
         {
             self.pen = self.last_input;
-            any |= self.add_pen_point(surface, self.last_input, changed)?;
+            return self.add_pen_point(surface, self.last_input, changed);
         }
-        if self.curve_points == 2 {
-            // 最後の区間: その先は無いので、終わりの点の向こうへ折り返した点で向きを決める
-            let (f, t) = (self.curve_from, self.curve_to);
-            let (end_x, end_y) = curve::reflect(f.x, f.y, t.x, t.y);
-            any |= self.draw_curve_segment(surface, end_x, end_y, changed)?;
-            self.curve_points = 1;
+        Ok(false)
+    }
+
+    /// 入力の終わり: 手ぶれ補正の筆を最後の入力の点まで描き（[`StrokeState::catch_up`]）、待たせている曲線の区間と抜きのダブを置く（C# の FinishInput）。
+    pub(crate) fn finish_input(
+        &mut self,
+        surface: &mut Surface,
+        changed: &mut Vec<TileCoord>,
+    ) -> Result<bool, CoreError> {
+        let mut any = self.catch_up(surface, changed)?;
+        any |= self.close_curve_segment(surface, changed)?;
+        // 入り抜き: まだ形が分からなければ、押した点からの離れが境の内ならクリック（入り抜きの無い点）、ほかは手で描いた線
+        if self.brush.assist.tapers() {
+            self.taper_start.finish();
         }
         any |= self.flush_pending(surface, f64::INFINITY, Some(self.stroke_length), changed)?;
+        // 水彩境界: ドラッグ後に処理なら、ここで 1 回だけ縁を付ける（描いている間に付けるなら、残りの範囲を計算し直す）
+        any |= self.finish_water_edge(surface, changed)?;
+        Ok(any)
+    }
+
+    /// 待たせている曲線の区間を、その先の向きを終わりの点の向こうへ折り返した点で決めて描く（待たせている区間が無ければ何もしない）。
+    /// 区間の終わりの点は、次の区間の始まりとして残る。
+    fn close_curve_segment(
+        &mut self,
+        surface: &mut Surface,
+        changed: &mut Vec<TileCoord>,
+    ) -> Result<bool, CoreError> {
+        if self.curve_points != 2 {
+            return Ok(false);
+        }
+        // 最後の区間: その先は無いので、終わりの点の向こうへ折り返した点で向きを決める
+        let (f, t) = (self.curve_from, self.curve_to);
+        let (end_x, end_y) = curve::reflect(f.x, f.y, t.x, t.y);
+        let any = self.draw_curve_segment(surface, end_x, end_y, changed)?;
+        self.curve_points = 1;
+        Ok(any)
+    }
+
+    /// 直線の終わり（Shift の直線の押した点）: 手ぶれ補正の筆をその点まで描き、待たせている曲線の区間も描き切って、そこを角にして続ける
+    /// （次の区間は、この点から曲線を始め直す。前の直線の向きを引き継がない）。ストロークは続き、続きの入力にはまた補正と曲線が効く。
+    /// 確定のときの詰め方（[`StrokeState::finish_input`]）と同じ区間の描き方で、抜きの終わりの長さは決めない。
+    pub(crate) fn end_line(
+        &mut self,
+        surface: &mut Surface,
+        changed: &mut Vec<TileCoord>,
+    ) -> Result<bool, CoreError> {
+        // 入り抜き: 最初の 2 つの入力の直線なら Shift の直線（線全体に入りを掛けず、この線で離せば抜きも掛けない）。待たせていたダブを先に置く
+        let straight = self.brush.assist.tapers() && self.taper_start.end_line();
+        if let Some(post) = self.post.as_mut() {
+            post.breaks.push(post.points.len());
+        }
+        let mut any = false;
+        if straight {
+            any |= self.flush_pending(
+                surface,
+                self.stroke_length - self.brush.assist.taper_out,
+                None,
+                changed,
+            )?;
+        }
+        any |= self.catch_up(surface, changed)?;
+        any |= self.close_curve_segment(surface, changed)?;
+        self.has_curve_before = false;
+        if straight {
+            self.taper_start
+                .line_closed((self.last_input.x, self.last_input.y));
+        }
+        any |= self.flush_water_edge(surface, changed)?;
         Ok(any)
     }
 
@@ -925,71 +1277,166 @@ impl StrokeState {
         &mut self,
         surface: &mut Surface,
         dab: PendingDab,
-        size_factor: f64,
+        taper: f64,
         changed: &mut Vec<TileCoord>,
     ) -> Result<bool, CoreError> {
         let _profile = profile::scope(profile::Stage::Stamp);
         let index = self.stamp_count;
         self.stamp_count += 1;
         let brush = self.brush.clone();
+        let c = brush.stamp_controls(&dab, index, taper, self.influence_random.as_mut());
+        let size_factor = brush.assist.taper_item(Item::Size, taper).unwrap_or(1.0);
         if brush.dual.is_some() {
-            self.stamp_dual(dab.arc)?;
+            // サイズの連動の比: この描点の主の半径 ÷ 設定の主の半径（ゆらぎの前。最低 1 画素が入っていれば、主が置く下限まで持ち上げる）
+            let link = c.size_pressure * size_factor * c.size;
+            self.stamp_dual(
+                dab.arc,
+                lifted_link(link, brush.controls.min_one_pixel, brush.base.radius),
+            )?;
         }
-        let c = brush.stamp_controls(&dab, index);
         let s = &brush.base;
         let mut any = false;
-        for _ in 0..brush.jitter.count {
+        let min_radius = if brush.controls.min_one_pixel {
+            MIN_ONE_PIXEL_RADIUS
+        } else {
+            0.0
+        };
+        let frame = SprayFrame::document(s.radius, min_radius);
+        for _ in 0..self.tips.spray.count(&brush, &c) {
             if self.tip_colors {
-                let r = self.color_random.as_mut().expect("色の乱数");
-                self.dab_color = brush.color.next(s.color, r);
+                self.dab_color = self.next_dab_color(&c.color);
             }
-            let Some(plan) = brush.next_dab(
-                &c,
-                &dab,
-                s.radius * c.size_pressure * size_factor,
-                s.radius,
-                &mut self.random,
-                &mut self.tip_index,
-            ) else {
+            let Some(plan) = brush
+                .next_dab(
+                    &c,
+                    &dab,
+                    s.radius * c.size_pressure * size_factor,
+                    min_radius,
+                    s.radius,
+                    &mut self.random,
+                    &mut self.tips,
+                )
+                .and_then(|p| self.tips.spray.place(&brush, &c, &dab, p, frame))
+            else {
                 continue;
             };
+            if self.tips.ribbon.is_some() {
+                // リボン: この描点の帯（筆先の境で分けた帯ごとに 1 つのダブ）を写す。間隔は距離のダブの間隔と同じ
+                let gap = f64_max(0.01, s.radius * 2.0 * s.spacing);
+                let pieces = self
+                    .tips
+                    .ribbon_pieces(&brush, index, dab.arc, plan.radius, gap)?;
+                for piece in &pieces {
+                    let part = brush.ribbon_plan(&plan, piece, dab.direction);
+                    let shape = brush.dab_shape(&part, &c).with_edge(s.anti_alias);
+                    any |= self.dab(surface, &brush, &shape, changed)?;
+                }
+                continue;
+            }
             let shape = brush.dab_shape(&plan, &c).with_edge(s.anti_alias);
             any |= self.dab(surface, &brush, &shape, changed)?;
         }
         Ok(any)
     }
 
-    /// 2 つ目の筆先のダブを線の長さ limit まで、画素ごとの溜まり（最大）へ置く（C# の StampDual）。
-    fn stamp_dual(&mut self, limit: f64) -> Result<(), CoreError> {
+    /// 前の点 p から sample までの長さ length の区間に、2 つ目の筆先のダブを自分の間隔で先に並べておく（主のダブが自分の線の長さまでの
+    /// ものを使う。入力の区切り方によらない）。間隔の影響元があれば、ダブごとに次の間隔が変わる。
+    fn queue_dual(
+        &mut self,
+        brush: &Brush,
+        p: &BrushSample,
+        sample: &BrushSample,
+        length: f64,
+    ) -> Result<(), CoreError> {
+        let d = brush.dual.as_ref().expect("デュアルブラシ");
+        let base = f64_max(0.01, d.radius * 2.0 * d.spacing);
+        if length / base > MAX_STAMPS_PER_SEGMENT {
+            return Err(CoreError::InvalidArgument(
+                Reason::TooManyDualBrushDabsPerSegment,
+            ));
+        }
+        let mut step = dual::step(base, self.dual_step);
+        let mut at = step - self.dual_since_stamp;
+        let mut placed = 0.0;
+        while at <= length + 1e-9 {
+            placed += 1.0;
+            if placed > MAX_STAMPS_PER_SEGMENT + 1.0 {
+                return Err(CoreError::InvalidArgument(
+                    Reason::TooManyDualBrushDabsPerSegment,
+                ));
+            }
+            let t = f64_min(1.0, at / length);
+            let look = self.dual_run.look(
+                brush,
+                &path_dab(p, sample, t, self.stroke_length + at, self.direction),
+            );
+            self.dual_pending.push_back(DualDab {
+                x: p.x + (sample.x - p.x) * t,
+                y: p.y + (sample.y - p.y) * t,
+                arc: self.stroke_length + at,
+                direction: self.direction,
+                look,
+            });
+            self.dual_step = look.spacing;
+            step = dual::step(base, look.spacing);
+            at += step;
+        }
+        self.dual_since_stamp = length - (at - step);
+        if self.dual_since_stamp < 1e-9 {
+            self.dual_since_stamp = 0.0;
+        }
+        if self.dual_since_stamp >= step {
+            self.dual_since_stamp %= step;
+        }
+        Ok(())
+    }
+
+    /// 2 つ目の筆先のダブを線の長さ limit まで、画素ごとの溜まり（最大）へ置く（C# の StampDual）。`link` はサイズの連動の比
+    /// （この描点の主の半径 ÷ 設定の主の半径）。
+    fn stamp_dual(&mut self, limit: f64, link: f64) -> Result<(), CoreError> {
         let _profile = profile::scope(profile::Stage::Dual);
         let brush = self.brush.clone();
         let dual = brush.dual.as_ref().expect("デュアルブラシ");
+        let frame = SprayFrame::document(dual.radius, 0.0);
         while let Some(&d) = self.dual_pending.front() {
             if d.arc > limit {
                 break;
             }
             self.dual_pending.pop_front();
-            for _ in 0..dual.count {
+            for _ in 0..self.dual_tips.count(dual) {
                 let (mut cx, mut cy) = (d.x, d.y);
-                if dual.scatter > 0.0 {
+                // 散布効果の間は、旧形の散布・数を使わない（主と同じ）
+                if dual.scatter > 0.0 && dual.spray.is_none() {
                     let reach = dual.radius * 2.0 * dual.scatter;
                     let r = self.dual_random.as_mut().expect("デュアルの乱数");
                     cx += (r.next_double() * 2.0 - 1.0) * reach;
                     cy += (r.next_double() * 2.0 - 1.0) * reach;
                 }
-                self.dual_dab_at(dual, cx, cy)?;
+                let radius = dual.dab_radius(&d.look, link);
+                if radius > 0.0 {
+                    let at = dual_spot(cx, cy, d.direction);
+                    if let Some(place) = self.dual_tips.place(dual, &at, radius, frame) {
+                        self.dual_dab_at(dual, &place, &d.look)?;
+                    }
+                }
             }
         }
         Ok(())
     }
 
     /// 2 つ目の筆先のダブ 1 つ（C# の DualDabAt）。丸い筆先も回転の式で測る（C# と同じ。角度 0 でも主の丸の近道とは丸めが違う）。
-    fn dual_dab_at(&mut self, dual: &DualBrush, x: f64, y: f64) -> Result<(), CoreError> {
-        let radius = dual.radius;
-        let shape = plan::dual_shape(dual, x, y, radius, self.brush.base.anti_alias);
+    fn dual_dab_at(
+        &mut self,
+        dual: &DualBrush,
+        place: &DualPlace<'_>,
+        look: &DualLook,
+    ) -> Result<(), CoreError> {
+        let (x, y, radius) = (place.x, place.y, place.radius);
+        let level = dual.anti_alias.unwrap_or(self.brush.base.anti_alias);
+        let shape = plan::dual_shape(dual, place, level, look);
         let extent = if !shape.edge.is_off() {
             rows::dual_cover_shape(&shape).reach()
-        } else if dual.tip.is_none() {
+        } else if shape.tip.is_none() {
             radius
         } else {
             radius * SQRT_2
@@ -1067,6 +1514,11 @@ impl StrokeState {
         let max_x = ((x + extent - 0.5).floor() as i64).min(w - 1);
         let min_y = ((y - extent - 0.5).ceil() as i64).max(0);
         let max_y = ((y + extent - 0.5).floor() as i64).min(h - 1);
+        // はみ出し防止: 狙いの色は、ストロークの最初のダブの中心（写しではなく元のダブ）で決める
+        let room = self.refer_room();
+        if let Some(r) = self.refer.as_mut() {
+            r.ensure_target(x, y, room)?;
+        }
         if brush.symmetry.enabled() || brush.model_symmetry.is_some() {
             // 写しは元のダブがキャンバスの外でもキャンバスにかかり得る（C# も外接の箱を見る前に分ける）。3D の対称だけで写しの無い
             // ダブ（中心が面に無い）は、普通のダブ
@@ -1077,15 +1529,24 @@ impl StrokeState {
         if min_x > max_x || min_y > max_y {
             return Ok(false);
         }
+        self.edge_mark_box((min_x, max_x), (min_y, max_y));
         if brush
             .stencil
             .as_ref()
             .is_some_and(|st| st.canvas_to_image().is_none())
         {
             return Err(CoreError::Unsupported(
-                "ステンシルにキャンバスからの写しが無いので、2D のダブは読めない",
+                Reason::StencilTransformMissingFor2DDabs,
             ));
         }
+        let region = match self.refer.as_mut() {
+            None => None,
+            Some(r) => match r.area((min_x, max_x), (min_y, max_y), (x, y), room)? {
+                refer::DabArea::Nothing => return Ok(false),
+                refer::DabArea::All => None,
+                refer::DabArea::Mask(m) => Some(m),
+            },
+        };
         let prepared = {
             let _profile = profile::scope(profile::Stage::Prepare);
             self.prepare_dab(
@@ -1111,6 +1572,7 @@ impl StrokeState {
                 brush,
                 shape,
                 frame.as_ref(),
+                region.as_ref(),
                 (min_x, max_x),
                 (min_y, max_y),
                 changed,
@@ -1128,6 +1590,7 @@ impl StrokeState {
         brush: &Brush,
         shape: &DabShape<'_>,
         frame: Option<&EffectFrame>,
+        region: Option<&refer::DabRegion>,
         xr: (i64, i64),
         yr: (i64, i64),
         changed: &mut Vec<TileCoord>,
@@ -1156,7 +1619,8 @@ impl StrokeState {
             }
         }
         let spans: &[TileSpan] = spans;
-        let paint = self.paint(brush, frame);
+        let mut paint = self.paint(brush, frame);
+        paint.region = region;
         let parallel = spans.len() > 1
             && rayon::current_num_threads() > 1
             && worth_parallel(
@@ -1204,11 +1668,13 @@ impl StrokeState {
             // 画素ごとの色（ダブごとの色か、色の混ぜ）。天井に届いた画素も、色は寄せ続ける
             tip_colors: self.tip_colors || mix.is_some(),
             stop_at_ceiling: !(self.tip_colors || mix.is_some()) && brush.effect.is_paint(),
+            darken: brush.tip.darken_overlap && brush.effect.is_paint(),
             mix,
             stencil: brush.stencil.as_deref(),
             stencil_kind: self.stencil_kind,
             frame,
             mapped: None,
+            region: None,
             offset_x: self.effect.offset_x,
             offset_y: self.effect.offset_y,
             width: self.width,
@@ -1453,27 +1919,47 @@ impl StrokeState {
 
     /// 画素ごとに筆圧を渡す呼び出し用: 筆圧を応えに通した係数。同じ筆圧が続く間（1 つのダブの画素）は直前の結果を使う。
     fn shaped_pressure(&mut self, brush: &Brush, pressure: f64) -> PressureScale {
-        match self.pressure_memo {
+        let scale = match self.pressure_memo {
             Some((raw, scale)) if raw == pressure => scale,
             _ => {
                 let scale = brush.pressure_scale(pressure);
                 self.pressure_memo = Some((pressure, scale));
                 scale
             }
+        };
+        self.surface_pressure(scale)
+    }
+
+    /// 3D の面のダブの筆圧の係数に、今のダブの絵の具の量・濃さの、筆圧でない入力の係数を掛ける（面のダブを始めていない・使っていなければそのまま）。
+    pub(crate) fn surface_pressure(&self, scale: PressureScale) -> PressureScale {
+        match self.surface_look {
+            Some(look) if look.mix_paint != 1.0 || look.mix_density != 1.0 => PressureScale {
+                mix_paint: scale.mix_paint * look.mix_paint,
+                mix_density: scale.mix_density * look.mix_density,
+                ..scale
+            },
+            _ => scale,
         }
     }
 
     /// 3D の面のダブを 1 つ始める（2D の描点のダブの数のループの 1 回にあたる）: ダブごとの色（色の変化の「描点ごと」）を次の色へ進め、
     /// 塗るダブなら、そのゆらぎの係数を覚える。覚えた係数と紙の質感は、この後の面の画素の塗り（`apply_pixel`・`apply_dab`・
     /// `apply_mapped_dab`）が使う。大きさが 0 で塗らないダブ（`look` が None）も、2D と同じく色の乱数は 1 つ進める。
-    pub(crate) fn begin_surface_dab(&mut self, look: Option<SurfaceDabLook>) {
+    /// 描いている間に付ける水彩境界は、前のダブまでに画素ごとに塗った範囲（`apply_pixel`）を、ここで計算し直す。
+    pub(crate) fn begin_surface_dab(
+        &mut self,
+        surface: &mut Surface,
+        look: Option<SurfaceDabLook>,
+        color: &[f64; 4],
+        changed: &mut Vec<TileCoord>,
+    ) -> Result<bool, CoreError> {
         if self.tip_colors {
-            let r = self.color_random.as_mut().expect("色の乱数");
-            self.dab_color = self.brush.color.next(self.brush.base.color, r);
+            self.dab_color = self.next_dab_color(color);
         }
         if look.is_some() {
             self.surface_look = look;
         }
+        self.flush_water_edge(surface, changed)
     }
 
     /// 面の画素 (x, y) の不透明度・流量の係数と、乗算でない紙の質感（合わせ方・質感の値・深さ）。面のダブを始めていなければ係数 1・質感なし
@@ -1488,7 +1974,7 @@ impl StrokeState {
             return Some(((opacity, flow), None));
         };
         let grain = rows::Grain::new(tex, y);
-        let depth = tex.depth as f32;
+        let depth = texture_depth(tex, look.texture_density) as f32;
         match tex.mode.as_blend() {
             None => {
                 let ceiling = rows::texture_scale_one(&grain, depth, opacity, x);
@@ -1515,29 +2001,26 @@ impl StrokeState {
         at: Option<StencilPoint>,
         changed: &mut Vec<TileCoord>,
     ) -> Result<bool, CoreError> {
-        require_finite(coverage, "coverage")?;
-        require_finite(pressure, "pressure")?;
+        require_finite(coverage, Reason::Coverage)?;
+        require_finite(pressure, Reason::Pressure)?;
         if !(0.0..=1.0).contains(&coverage) || !(0.0..=1.0).contains(&pressure) {
-            return Err(CoreError::InvalidArgument("coverage/pressure"));
+            return Err(CoreError::InvalidArgument(Reason::CoveragePressure));
         }
         if x < 0 || y < 0 || x >= self.width || y >= self.height {
             return Ok(false);
         }
         if !self.brush.effect.is_paint() {
-            return Err(CoreError::Unsupported(
-                "効果のブラシは画素ごとには塗れない（apply_dab で読み元を凍結する）",
-            ));
+            return Err(CoreError::Unsupported(Reason::EffectBrushesNeedDabs));
         }
         if self.mix_on {
-            return Err(CoreError::Unsupported(
-                "混ぜるブラシは画素ごとには塗れない（apply_dab で下地を凍結する）",
-            ));
+            return Err(CoreError::Unsupported(Reason::MixingBrushNeedsDabs));
         }
         let Some((scales, paper)) = self.surface_scales(x, y) else {
             return Ok(false);
         };
         let brush = self.brush.clone();
         let pressure = self.shaped_pressure(&brush, pressure);
+        self.edge_mark_pixel(x, y);
         let paint = self.paint(&brush, None);
         let ts = surface.tile_size() as i64;
         let coord = TileCoord::new((x / ts) as u32, (y / ts) as u32);
@@ -1564,6 +2047,7 @@ impl StrokeState {
 
     /// 面のダブを丸ごと塗る（C# の ApplyDab）。効果の読み元は、どの画素を書くより前に凍結する。指先の中心はキャンバスの画素の座標で、
     /// 継ぎ目をまたぐときは呼び手が [`StrokeState::reset_effect_direction`] する。
+    /// 描いている間に付ける水彩境界は、このダブの画素の範囲を最後に計算し直す。
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn apply_dab(
         &mut self,
@@ -1574,25 +2058,50 @@ impl StrokeState {
         points: Option<&[StencilPoint]>,
         changed: &mut Vec<TileCoord>,
     ) -> Result<bool, CoreError> {
+        let any = self.apply_surface_dab(
+            surface,
+            pixels,
+            center,
+            Some(center),
+            pressure,
+            points,
+            changed,
+        )?;
+        Ok(self.flush_water_edge(surface, changed)? | any)
+    }
+
+    /// [`StrokeState::apply_dab`] の本体（水彩境界の計算し直しは呼び手）。`refer_center` は、はみ出し防止の範囲をたどり始めるダブの中心
+    /// （無ければ塊ごとに覆いの一番大きい画素から。写像されたダブを混ぜずに塗るとき）。
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn apply_surface_dab(
+        &mut self,
+        surface: &mut Surface,
+        pixels: &[BrushPixel],
+        center: DVec2,
+        refer_center: Option<DVec2>,
+        pressure: f64,
+        points: Option<&[StencilPoint]>,
+        changed: &mut Vec<TileCoord>,
+    ) -> Result<bool, CoreError> {
         if points.is_some_and(|p| p.len() != pixels.len()) {
             return Err(CoreError::InvalidArgument(
-                "ステンシルの点は画素ごとに 1 つ",
+                Reason::StencilPointCountMismatch,
             ));
         }
-        require_finite(center.x, "center")?;
-        require_finite(center.y, "center")?;
-        require_finite(pressure, "pressure")?;
+        require_finite(center.x, Reason::Center)?;
+        require_finite(center.y, Reason::Center)?;
+        require_finite(pressure, Reason::Pressure)?;
         if center.x.abs() > MAX_COORDINATE
             || center.y.abs() > MAX_COORDINATE
             || !(0.0..=1.0).contains(&pressure)
         {
-            return Err(CoreError::InvalidArgument("dab"));
+            return Err(CoreError::InvalidArgument(Reason::Dab));
         }
         let (mut x0, mut y0, mut x1, mut y1) = (self.width, self.height, -1i64, -1i64);
         for p in pixels {
-            require_finite(p.coverage, "coverage")?;
+            require_finite(p.coverage, Reason::Coverage)?;
             if !(0.0..=1.0).contains(&p.coverage) {
-                return Err(CoreError::InvalidArgument("coverage"));
+                return Err(CoreError::InvalidArgument(Reason::Coverage));
             }
             if p.x < 0 || p.y < 0 || p.x >= self.width || p.y >= self.height {
                 continue;
@@ -1605,8 +2114,49 @@ impl StrokeState {
         if x1 < x0 {
             return Ok(false);
         }
+        // はみ出し防止: 範囲の外の画素を除いた並びで塗る（並びの順は変えない）
+        let kept: Vec<BrushPixel>;
+        let kept_points: Vec<StencilPoint>;
+        let (pixels, points) = match self.refer_keep(
+            pixels.iter().map(|p| (p.x, p.y, p.coverage)),
+            refer_center.map(|c| (c.x, c.y)),
+        )? {
+            None => (pixels, points),
+            Some(keep) => {
+                kept = pixels
+                    .iter()
+                    .zip(&keep)
+                    .filter_map(|(p, &k)| k.then_some(*p))
+                    .collect();
+                kept_points = points.map_or_else(Vec::new, |v| {
+                    v.iter()
+                        .zip(&keep)
+                        .filter_map(|(p, &k)| k.then_some(*p))
+                        .collect()
+                });
+                if kept.is_empty() {
+                    return Ok(false);
+                }
+                (&kept[..], points.map(|_| &kept_points[..]))
+            }
+        };
+        let (mut x0, mut y0, mut x1, mut y1) = (self.width, self.height, -1i64, -1i64);
+        for p in pixels {
+            if p.x < 0 || p.y < 0 || p.x >= self.width || p.y >= self.height {
+                continue;
+            }
+            x0 = x0.min(p.x);
+            x1 = x1.max(p.x);
+            y0 = y0.min(p.y);
+            y1 = y1.max(p.y);
+        }
+        if self.edge_live() {
+            for p in pixels {
+                self.edge_mark_pixel(p.x, p.y);
+            }
+        }
         let brush = self.brush.clone();
-        let pressure = brush.pressure_scale(pressure);
+        let pressure = self.surface_pressure(brush.pressure_scale(pressure));
         if self.mix_on {
             // 色の混ぜ: ダブの画素を、下地を読む範囲が離れた塊へ分け、塊ごとに枠を凍結して塗る
             return self.apply_mix_dab(surface, &brush, pixels, pressure, points, changed);
@@ -1833,8 +2383,15 @@ struct DualShape<'a> {
     aspect_x: f64,
     aspect_y: f64,
     tip: Option<&'a BrushTip>,
+    /// 筆先の画像の左右・上下の反転（主の [`DabShape::flip_x`] と同じ）。
+    flip_x: bool,
+    flip_y: bool,
     /// 縁のアンチエイリアス（画素。主の筆先と同じ [`DabShape::with_edge`] の値）。
     edge: Edge,
+    /// 溜まりへ置く覆いに掛ける濃度（濃度 × 濃度の影響元の係数。1 は掛けない）。
+    flow: f64,
+    /// 溜まりへ置く覆いに掛ける紙の質感（[`DualBrush::paper`]）。
+    texture: Option<&'a PaperTexture>,
 }
 
 impl DualShape<'_> {
@@ -1877,6 +2434,8 @@ impl DualShape<'_> {
                 c
             }
             Some(t) => {
+                let u = if self.flip_x { -u } else { u };
+                let v = if self.flip_y { -v } else { v };
                 let c = t.sample(
                     (u / self.aspect_x + 1.0) * 0.5,
                     (v / self.aspect_y + 1.0) * 0.5,
@@ -1922,9 +2481,23 @@ pub(crate) struct DabShape<'a> {
     pub flip_x: bool,
     pub flip_y: bool,
     pub texture: Option<&'a PaperTexture>,
+    /// 質感の濃さの影響元の係数（紙の質感の深さに掛ける。使わなければ 1）。
+    pub texture_density: f64,
     pub dual: Option<DualBrushMode>,
     /// 縁のアンチエイリアス（帯の幅はダブの座標の単位。[`DabShape::with_edge`]。既定は今の式）。
     pub edge: Edge,
+    /// リボンの帯（[`ribbon`]。筆先の画像を線の向きの範囲だけ、画像の位置をずらして写す。None は普通のダブ）。
+    pub ribbon: Option<ribbon::RibbonCut>,
+}
+
+/// 紙の質感の深さに、質感の濃さの影響元の係数を掛けたもの（係数 1 は深さそのもの。演算を挟まない）。
+#[inline]
+pub(crate) fn texture_depth(tex: &PaperTexture, density: f64) -> f64 {
+    if density == 1.0 {
+        tex.depth
+    } else {
+        tex.depth * density
+    }
 }
 
 /// ダブの覆いを、中心からのずれ（y は上向き）ごとに 1 つずつ測る形（[`DabShape::coverage_fn`]。2D の行の核と同じ f32 の式・同じ値を
@@ -1949,6 +2522,12 @@ impl<'a> DabShape<'a> {
     /// ダブが届く、中心からの距離（丸は半径、筆先の画像は回した四角の外接円の √2 × 半径）。2D のダブの外接の箱と、3D の面のダブが
     /// 投影の画素を集める画面の円は、この半径。
     pub(crate) fn reach(&self) -> f64 {
+        if let Some(r) = self.ribbon {
+            // 帯の範囲の四角の角（画像の縦は半径 × 真円率 × aspect_y。帯の小さなダブは広げない）
+            let along = r.lo.abs().max(r.hi.abs());
+            let across = self.roundness * self.aspect_y;
+            return self.radius * (along * along + across * across).sqrt() + 1e-6;
+        }
         if self.edge.is_off() {
             return if self.tip.is_none() {
                 self.radius
@@ -2043,7 +2622,8 @@ impl<'a> DabShape<'a> {
                 let rho = e.band * 0.5;
                 let fu = if tu < rho { rho / tu } else { 1.0 };
                 let fv = if tv < rho { rho / tv } else { 1.0 };
-                if fu != 1.0 || fv != 1.0 {
+                // リボンの帯は広げない（範囲と画像の位置は半径の単位なので、広げると帯の継ぎ目がずれる）
+                if (fu != 1.0 || fv != 1.0) && self.ribbon.is_none() {
                     self.radius *= fu;
                     self.roundness = self.roundness * fv / fu;
                 }
@@ -2061,10 +2641,13 @@ impl<'a> DabShape<'a> {
         ShapeCoverage(rows::Shape32::new(self))
     }
 
-    /// 筆先の画像の縦横比（長い辺が直径にかかる）。
+    /// 筆先の画像の縦横比（長い辺が直径にかかる）。リボンの帯は、画像の高さを直径に当てる（線の向きの長さは 半径 × 幅 ÷ 高さ × 2）。
     fn with_aspect(mut self) -> Self {
         if let Some(t) = self.tip {
-            if t.width() >= t.height() {
+            if self.ribbon.is_some() {
+                self.aspect_x = t.width() as f64 / t.height() as f64;
+                self.aspect_y = 1.0;
+            } else if t.width() >= t.height() {
                 self.aspect_y = t.height() as f64 / t.width() as f64;
             } else {
                 self.aspect_x = t.width() as f64 / t.height() as f64;
@@ -2092,6 +2675,8 @@ struct Paint<'a> {
     tip_colors: bool,
     /// 天井に届いた画素は何もしない（ダブごとの色・効果では、天井でも色は寄せる）。
     stop_at_ceiling: bool,
+    /// ダブの重なりを比較暗にする（[`TipShape::darken_overlap`]。色を塗る・消すブラシだけ）。
+    darken: bool,
     stencil: Option<&'a BrushStencil>,
     stencil_kind: Option<ChannelKind>,
     frame: Option<&'a EffectFrame>,
@@ -2099,6 +2684,8 @@ struct Paint<'a> {
     mix: Option<MixDab>,
     /// 面のダブ（[`StrokeState::apply_mapped_dab`]）が先に読んで混ぜた参照の色（画素ごと）。あれば `frame` の代わりに読む。
     mapped: Option<&'a sources::MappedColors>,
+    /// はみ出し防止のダブの範囲（外の画素の覆いを 0 にする）。None は範囲なし。
+    region: Option<&'a refer::DabRegion>,
     offset_x: f64,
     offset_y: f64,
     width: i64,
@@ -2243,6 +2830,10 @@ fn dab_tile_with<const SIMPLE: bool>(
             // SAFETY: 同上
             unsafe { rows::dual_row::<Scalar1>(mode, dual, &mut cov, lo, hi, row + x0) };
         }
+        // はみ出し防止: 範囲の外の画素は塗らない（デュアルの後に。デュアルの合わせ方には覆い 0 を持ち上げるものがある）
+        if let Some(region) = cx.paint.region {
+            region.mask_row(py, xs.0, &mut cov, lo, hi);
+        }
         // 紙の質感の y の側は行で同じ
         let grain = s.texture.map(|t| (t, rows::Grain::new(t, py)));
         for (i, &coverage) in cov.iter().enumerate().take(hi).skip(lo) {
@@ -2255,7 +2846,7 @@ fn dab_tile_with<const SIMPLE: bool>(
             if let Some((tex, g)) = &grain {
                 // 紙の質感は流量ではなく天井に効かせる（Photoshop の「描点ごとに適用」オフと同じ）。流量に効かせると、
                 // 間隔の細かいブラシでは重なったダブが溜まって質感が消えてしまう
-                let depth = tex.depth as f32;
+                let depth = texture_depth(tex, s.texture_density) as f32;
                 match tex.mode.as_blend() {
                     None => {
                         ceiling_scale = rows::texture_scale_one(g, depth, opacity_scale, px);
@@ -2379,9 +2970,9 @@ fn apply_at<const SIMPLE: bool>(
                         None => {
                             let px = coord.x as i64 * ts as i64 + (local % ts) as i64;
                             let py = coord.y as i64 * ts as i64 + (local / ts) as i64;
-                            stencil.sample_canvas(px, py).ok_or(CoreError::Unsupported(
-                                "ステンシルにキャンバスからの写しが無い（画素ごとにステンシルの上の点を渡す）",
-                            ))?
+                            stencil
+                                .sample_canvas(px, py)
+                                .ok_or(CoreError::Unsupported(Reason::StencilTransformMissing))?
                         }
                     };
                     stencil_read = true;
@@ -2440,7 +3031,7 @@ fn apply_at<const SIMPLE: bool>(
         smudge,
     );
     if let Some((mode, grain, depth)) = paper {
-        ceiling += (rows::combine32(mode, ceiling, grain) - ceiling) * depth;
+        ceiling = rows::paper_blend(mode, ceiling, grain, depth);
     }
     if flow <= 0.0 || ceiling <= 0.0 {
         return Ok(false);
@@ -2467,7 +3058,7 @@ fn apply_at<const SIMPLE: bool>(
     let accumulated = if previous >= ceiling {
         previous
     } else {
-        rows::accumulate32(previous, ceiling, flow)
+        rows::settle32(p.darken, previous, ceiling, flow)
     };
     st.wash[local] = accumulated;
     let mut color = p.stroke_color;

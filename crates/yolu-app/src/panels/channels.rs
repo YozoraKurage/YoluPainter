@@ -25,6 +25,15 @@ const KIND_PAD: f32 = 32.0;
 
 /// まとまりの見出しの高さ。
 const GROUP_HEIGHT: f32 = 24.0;
+/// レイヤーセットが 2 つ以上あるとき、チャンネルの名前の欄の幅（名前の右に出力元のレイヤーセットのドロップダウンが入る）と、
+/// そのドロップダウンの最小の幅（これに満たない行では出さない）。
+const ROUTE_NAME_WIDTH: f32 = 76.0;
+const ROUTE_NAME_MIN: f32 = 40.0;
+const ROUTE_MIN_WIDTH: f32 = 40.0;
+/// この幅に満たない行では、標準のチャンネルの形式の名前を出さず、ユーザーチャンネルの形式の欄を詰める。
+const ROUTE_NARROW_ROW: f32 = 340.0;
+/// 詰めた形式の欄の、文字の外の幅（矢印と左右の余白）。
+const COMPACT_KIND_PAD: f32 = 28.0;
 
 /// ユーザーチャンネルのまとまり: 読むスロットの lilToon の部位か、どの部位のスロットも読まないもの。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,18 +71,18 @@ impl Part {
 
     fn label(self, lang: crate::lang::Lang) -> &'static str {
         match self {
-            Part::Look(Section::Main) => lang.pick("メインカラー", "Main Color"),
-            Part::Look(Section::Shadow) => lang.pick("影", "Shadow"),
-            Part::Look(Section::RimShade) => lang.pick("リムシェード", "RimShade"),
-            Part::Look(Section::Emission) => lang.pick("発光", "Emission"),
-            Part::Look(Section::Normal) => lang.pick("ノーマルマップ", "Normal Map"),
-            Part::Look(Section::Backlight) => lang.pick("逆光ライト", "Backlight"),
-            Part::Look(Section::Reflection) => lang.pick("光沢", "Reflection"),
-            Part::Look(Section::MatCap) => lang.pick("マットキャップ", "MatCap"),
-            Part::Look(Section::Rim) => lang.pick("リムライト", "Rim Light"),
-            Part::Look(Section::Glitter) => lang.pick("ラメ", "Glitter"),
-            Part::Look(Section::Outline) => lang.pick("輪郭線", "Outline"),
-            Part::Look(_) | Part::Other => lang.pick("そのほか", "Other"),
+            Part::Look(Section::Main) => lang.t("panels-main-color"),
+            Part::Look(Section::Shadow) => lang.t("panels-shadow"),
+            Part::Look(Section::RimShade) => lang.t("panels-rimshade"),
+            Part::Look(Section::Emission) => lang.t("panels-emission"),
+            Part::Look(Section::Normal) => lang.t("panels-normal-map"),
+            Part::Look(Section::Backlight) => lang.t("panels-backlight"),
+            Part::Look(Section::Reflection) => lang.t("panels-reflection"),
+            Part::Look(Section::MatCap) => lang.t("panels-matcap"),
+            Part::Look(Section::Rim) => lang.t("panels-rim-light"),
+            Part::Look(Section::Glitter) => lang.t("panels-glitter"),
+            Part::Look(Section::Outline) => lang.t("panels-outline"),
+            Part::Look(_) | Part::Other => lang.t("panels-other"),
         }
     }
 }
@@ -113,13 +122,14 @@ fn entries(app: &AppState, channels: &[Channel]) -> Vec<Entry> {
         .filter(|c| !c.is_standard())
         .copied()
         .collect();
-    let look = app.doc.drawn_look();
+    let look = app.session.doc.drawn_look();
     if look.kind != yolu_core::look::LookKind::LilToon {
         out.extend(user.into_iter().map(Entry::Row));
         return out;
     }
-    let part_of =
-        |c: Channel| crate::look::channel_section(&app.doc, c).map_or(Part::Other, Part::Look);
+    let part_of = |c: Channel| {
+        crate::look::channel_section(&app.session.doc, c).map_or(Part::Other, Part::Look)
+    };
     let parts: Vec<(Channel, Part)> = user.iter().map(|c| (*c, part_of(*c))).collect();
     // どの部位のスロットも読まないチャンネルだけなら、まとめない（見出しが「そのほか」1 つだけにならないように）
     if parts.iter().all(|(_, p)| *p == Part::Other) {
@@ -202,7 +212,7 @@ impl KindColumn {
         let dropdown = channels
             .iter()
             .filter(|c| !c.is_standard())
-            .filter_map(|c| app.doc.channel_info(*c))
+            .filter_map(|c| app.session.doc.channel_info(*c))
             .map(|i| w::text_width(p, &m2::channel_format(i), t::LABEL))
             .fold(0.0, f32::max)
             + KIND_PAD;
@@ -220,7 +230,7 @@ impl KindColumn {
 }
 
 fn open(app: &mut AppState, ctx: &egui::Context, kind: PopupKind, anchor: Rect) {
-    app.popup = Some(OpenPopup {
+    app.ui.popup = Some(OpenPopup {
         kind,
         state: PopupState::new(ctx, anchor),
     });
@@ -237,7 +247,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         r.min,
         pos2(r.right(), (r.bottom() - TOOLBAR_HEIGHT).max(r.top())),
     );
-    let channels = app.doc.channels();
+    let channels = app.session.doc.channels();
     let entries = entries(app, &channels);
     let list_height: f32 = entries.iter().map(|e| e.height()).sum();
     let bar = Scroll::begin(
@@ -307,7 +317,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         add,
         "channels.add",
         "add",
-        lang.pick("チャンネルを追加", "Add Channel"),
+        lang.t("panels-add-channel-tip"),
         false,
         enabled,
         18.0,
@@ -322,7 +332,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         button(bar.right() - 4.0 - 26.0),
         "channels.delete",
         "delete",
-        lang.pick("チャンネルを削除", "Delete Channel"),
+        lang.t("panels-delete-channel-tip"),
         false,
         enabled && !paint.is_standard(),
         17.0,
@@ -344,14 +354,14 @@ fn normal_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::
         app,
         rows,
         "normal",
-        lang.pick("ノーマル", "Normal"),
+        lang.t("panels-normal"),
         "3d_rotation",
         None,
     );
     if !open {
         return;
     }
-    let settings = app.doc.normal_settings();
+    let settings = app.session.doc.normal_settings();
     let enabled = app.can_edit();
     let derive = settings.derive_from_height();
     let edit = |app: &mut AppState, settings: NormalSettings, coalesce: bool| {
@@ -361,12 +371,9 @@ fn normal_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::
         ui,
         rows,
         "normal.derive",
-        lang.pick("ハイト → ノーマル", "Height → Normal"),
+        lang.t("panels-height-normal"),
         derive,
-        Some(lang.pick(
-            "ノーマルの出力（プレビュー・.ylp のテクスチャ・書き出し）で、描いたノーマルのレイヤーの下にハイトのチャンネルから作った法線を足します。ハイトから毎回作り直し、レイヤーには描きません",
-            "Adds the normal derived from the Height channel under the painted Normal layers in the Normal output (preview, .ylp texture, exports). It is regenerated from Height, never painted into a layer",
-        )),
+        Some(lang.t("panels-adds-the-normal-derived-from-tip")),
         enabled,
     ) {
         edit(app, settings.with_derive(next), false);
@@ -375,7 +382,7 @@ fn normal_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::
         ui,
         rows,
         "normal.strength",
-        lang.pick("強さ", "Strength"),
+        lang.t("panels-strength"),
         settings.strength() as f32,
         (
             -(NormalSettings::MAX_STRENGTH as f32),
@@ -386,10 +393,7 @@ fn normal_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::
             trim: true,
             suffix: "",
         },
-        Some(lang.pick(
-            "ハイトの全範囲（0 → 1）で何テクセル分盛り上がるか。マイナスにすると凸が凹になります",
-            "Texels of rise for the full height range (0 → 1). Negative turns bumps into dents",
-        )),
+        Some(lang.t("panels-texels-of-rise-for-the-tip")),
         enabled && derive,
     ) {
         if let Ok(next) = settings.with_strength(value as f64) {
@@ -403,33 +407,122 @@ fn normal_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::
             let (response, at) = w::dropdown(ui, r, id, None, value, Some(tip), enabled, 0.0);
             response.clicked().then_some(at)
         };
-    group_label(ui, rows, lang.pick("端", "Edges"));
+    group_label(ui, rows, lang.t("panels-edges"));
     if let Some(at) = dropdown(
         ui,
         rows,
         "normal.edges",
         edges_name(lang, settings.edges()),
-        lang.pick(
-            "クランプ: キャンバスの端の傾きは端のテクセルで求めます。ラップ: 反対側の端を読みます（タイルするテクスチャ）",
-            "Clamp: the slope at the canvas edge uses the edge texel. Wrap: it reads the opposite edge (tiling textures)",
-        ),
+        lang.t("panels-clamp-the-slope-at-the"),
         enabled && derive,
     ) {
         open_popup(app, ctx, Popup::NormalEdges, at, at.width());
     }
-    group_label(ui, rows, lang.pick("ファイルの Y", "File Y"));
+    group_label(ui, rows, lang.t("panels-file-y"));
     if let Some(at) = dropdown(
         ui,
         rows,
         "normal.direction",
         direction_name(settings.file_direction()),
-        lang.pick(
-            "画像の書き出し・PNG・PSD で書くノーマルの画像の緑の向き。Unity は OpenGL（Y+）で、.ylp のテクスチャとプレビューは常に OpenGL です",
-            "Green direction of Normal images written by the exports. Unity uses OpenGL (Y+); the .ylp texture and the preview always do",
-        ),
+        lang.t("panels-green-direction-of-normal-images"),
         enabled,
     ) {
         open_popup(app, ctx, Popup::NormalDirection, at, at.width());
+    }
+}
+
+/// チャンネルの行の中の、名前・形式・出力元のレイヤーセットの欄の位置。
+struct RowBoxes {
+    kind_rect: Rect,
+    name_rect: Rect,
+    /// 出力元のレイヤーセットのドロップダウン（レイヤーセットが 2 つ以上あって、入る幅があるときだけ）。
+    route_rect: Option<Rect>,
+    /// 標準のチャンネルの形式の名前を出さない（行が狭い）。
+    hide_format: bool,
+}
+
+fn row_boxes(
+    ui: &Ui,
+    app: &AppState,
+    row: Rect,
+    icon_rect: Rect,
+    channel: Channel,
+    kind: KindColumn,
+    format: &str,
+) -> RowBoxes {
+    let user = !channel.is_standard();
+    // レイヤーセットが 2 つ以上あって行が狭いとき、標準のチャンネルの形式の名前（情報だけ）は出さず、出力元のレイヤーセットの欄に譲る
+    // （ユーザーチャンネルの形式は、押して替える欄なので残す）
+    let many_sets = app.session.doc.layer_sets().len() >= 2;
+    let narrow = many_sets && row.width() < ROUTE_NARROW_ROW;
+    let hide_format = narrow && !user;
+    let kind_width = if hide_format {
+        0.0
+    } else if narrow {
+        // ユーザーチャンネルの形式の欄は、狭いときは行ごとの文字の幅に詰める（ほかの行にそろえず、出力元のレイヤーセットの欄に譲る）
+        w::text_width(ui.painter(), format, t::LABEL) + COMPACT_KIND_PAD
+    } else {
+        kind.width(ui.painter(), channel, format)
+    };
+    let kind_rect = Rect::from_min_max(
+        pos2(row.right() - kind_width - 4.0, row.top() + 4.0),
+        pos2(row.right() - 4.0, row.bottom() - 4.0),
+    );
+    let mut name_rect = Rect::from_min_max(
+        pos2(icon_rect.right() + 4.0, row.top() + 3.0),
+        pos2(kind_rect.left() - 4.0, row.bottom() - 3.0),
+    );
+    // レイヤーセットが 2 つ以上あるとき: 名前の右に、出力元のレイヤーセットのドロップダウン（入る幅があるときだけ）
+    let mut route_rect = None;
+    if many_sets {
+        let name_w = (name_rect.width() * 0.5).clamp(ROUTE_NAME_MIN, ROUTE_NAME_WIDTH);
+        let dropdown = Rect::from_min_max(
+            pos2(name_rect.left() + name_w + 2.0, row.top() + 3.0),
+            pos2(kind_rect.left() - 4.0, row.bottom() - 3.0),
+        );
+        if dropdown.width() >= ROUTE_MIN_WIDTH {
+            name_rect.max.x = name_rect.left() + name_w;
+            route_rect = Some(dropdown);
+        }
+    }
+    RowBoxes {
+        kind_rect,
+        name_rect,
+        route_rect,
+        hide_format,
+    }
+}
+
+/// 出力元のレイヤーセット（選ぶとその場で 3D と書き出しの結果が替わる。1 回の取り消し）のドロップダウン。`at` が None（欄が無い行）なら何もしない。
+fn route_dropdown(
+    ui: &mut Ui,
+    app: &mut AppState,
+    ctx: &egui::Context,
+    at: Option<Rect>,
+    channel: Channel,
+    enabled: bool,
+) {
+    let Some(at) = at else {
+        return;
+    };
+    let lang = app.lang;
+    let doc = &app.session.doc;
+    let label = match doc.channel_output(channel).ok().flatten() {
+        Some(set) => crate::m2::layersets::set_label(lang, doc, set),
+        None => lang.t("m2_menu-none").to_owned(),
+    };
+    let (response, b) = w::dropdown(
+        ui,
+        at,
+        ("channel.route", channel.index()),
+        None,
+        &label,
+        Some(lang.t("layersets-output-layer-set-tip")),
+        enabled,
+        0.0,
+    );
+    if response.clicked() {
+        open_popup(app, ctx, Popup::LayerSetOutput(channel), b, b.width());
     }
 }
 
@@ -443,8 +536,8 @@ fn channel_row(
     kind: KindColumn,
 ) {
     let lang = app.lang;
-    let name = m2::channel_name(lang, &app.doc, channel);
-    let Some(info) = app.doc.channel_info(channel).cloned() else {
+    let name = m2::channel_name(lang, &app.session.doc, channel);
+    let Some(info) = app.session.doc.channel_info(channel).cloned() else {
         return;
     };
     let painting = app.m2.paint_channel == channel;
@@ -487,17 +580,14 @@ fn channel_row(
     let icon_rect =
         Rect::from_min_size(pos2(eye.right() + 4.0, row.top()), vec2(18.0, row.height()));
     let format = m2::channel_format(&info);
-    let kind_width = kind.width(ui.painter(), channel, &format);
-    let kind_rect = Rect::from_min_max(
-        pos2(row.right() - kind_width - 4.0, row.top() + 4.0),
-        pos2(row.right() - 4.0, row.bottom() - 4.0),
-    );
-    let name_rect = Rect::from_min_max(
-        pos2(icon_rect.right() + 4.0, row.top() + 3.0),
-        pos2(kind_rect.left() - 4.0, row.bottom() - 3.0),
-    );
+    let RowBoxes {
+        kind_rect,
+        name_rect,
+        route_rect,
+        hide_format,
+    } = row_boxes(ui, app, row, icon_rect, channel, kind, &format);
     // このチャンネルを読む lilToon のスロット（見た目が lilToon のとき）: チャンネルの印の右上に小さな点、スロットの名前はツールチップ
-    let reading = crate::look::slots_reading(&app.doc, channel);
+    let reading = crate::look::slots_reading(&app.session.doc, channel);
 
     if response.clicked() {
         app.apply(Action::M2Ui(UiOp::PaintChannel(channel)));
@@ -530,10 +620,7 @@ fn channel_row(
         paint_btn,
         ("channel.paint", channel.index()),
         "paint_brush",
-        &lang.pick(
-            format!("{name} を描くチャンネルにする"),
-            format!("Paint {name}"),
-        ),
+        &lang.f("panels-paint-tip", &[("name", &name)]),
         painting,
         enabled,
         15.0,
@@ -551,10 +638,7 @@ fn channel_row(
         } else {
             "visibility_off"
         },
-        &lang.pick(
-            format!("{name} をキャンバスに出す"),
-            format!("Show {name} in the canvas"),
-        ),
+        &lang.f("panels-show-in-the-canvas-tip", &[("name", &name)]),
         showing,
         true,
         16.0,
@@ -619,7 +703,7 @@ fn channel_row(
         let dot = pos2(icon_rect.right() - 1.0, row.top() + 7.0);
         painter.circle_filled(dot, 3.0, t::ACCENT);
         let names: Vec<&str> = reading.iter().map(|s| s.label(lang)).collect();
-        let tip = format!("lilToon: {}", names.join(lang.pick("、", ", ")));
+        let tip = format!("lilToon: {}", names.join(lang.t("panels-text-tip")));
         let hit = icon_rect.intersect(list);
         let response = ui.interact(
             hit,
@@ -631,6 +715,8 @@ fn channel_row(
         response.on_hover_text(tip);
     }
 
+    route_dropdown(ui, app, ctx, route_rect, channel, enabled);
+
     // 種類（形式の名前。ユーザーチャンネルは押すと替えられる）
     if user {
         let (response, b) = w::dropdown(
@@ -639,7 +725,7 @@ fn channel_row(
             ("channel.kind", channel.index()),
             None,
             &format,
-            Some(lang.pick("チャンネルの種類", "Channel type")),
+            Some(lang.t("panels-channel-type-tip")),
             enabled,
             0.0,
         );
@@ -647,7 +733,9 @@ fn channel_row(
             open(app, ctx, PopupKind::M2(Popup::ChannelKind(channel)), b);
         }
     } else {
-        w::text(&painter, kind_rect, &format, t::LABEL_DIM, Align::Right);
+        if !hide_format {
+            w::text(&painter, kind_rect, &format, t::LABEL_DIM, Align::Right);
+        }
     }
     response.widget_info(|| {
         WidgetInfo::selected(WidgetType::SelectableLabel, enabled, painting, &name)

@@ -32,7 +32,7 @@ use std::sync::Arc;
 
 use yolu_core::effects::{ImageId, ImageInput};
 use yolu_core::generator::{self, MapKind, MapState};
-use yolu_core::geometry::UvTopology;
+use yolu_core::geometry::{MaterialSet, UvTopology};
 use yolu_core::mesh_maps::{BakedMeshMap, MeshBakeInput, MeshMapKind, MeshMapState};
 use yolu_core::{
     Document, EffectInputs, InactiveEffect, InactiveReason, InactiveTarget, MapInput, ModelFrame,
@@ -113,9 +113,10 @@ pub struct InputsState {
     pub image_limit: Option<usize>,
     /// 試験用: 文書へ入力を渡した回数。
     pub passed: u64,
-    /// マテリアルの組ごとの UV の位相と、それを作った（または同じ位相と確かめた）モデル。モデルは持ち続ける: 番地や世代の数で比べると、
-    /// 解放されたモデルの番地に別のモデルが作られたときに、前のモデルの位相を使い続ける。持つのは次の同期までの間（毎フレーム見る）。
-    topologies: HashMap<i32, (Arc<ViewModel>, Arc<UvTopology>)>,
+    /// セット（uid）ごとの UV の位相（そのセットのマテリアルの組の三角形）と、それを作った（または同じ位相と確かめた）モデル。モデルは
+    /// 持ち続ける: 番地や世代の数で比べると、解放されたモデルの番地に別のモデルが作られたときに、前のモデルの位相を使い続ける。持つのは
+    /// 次の同期までの間（毎フレーム見る）。
+    topologies: HashMap<u32, (Arc<ViewModel>, Arc<UvTopology>)>,
 }
 
 impl InputsState {
@@ -220,24 +221,15 @@ fn what(
         InactiveTarget::Generator { mask, kind } => {
             let name = super::names::generator_name(lang, kind);
             if mask {
-                lang.pick(format!("{name}（マスク）"), format!("{name} (mask)"))
+                lang.f("fx-mask", &[("name", &name)])
             } else {
                 name.to_owned()
             }
         }
-        InactiveTarget::FillGradient(c) => lang.pick(
-            format!("グラデーション（{}）", channel_name(c)),
-            format!("Gradient ({})", channel_name(c)),
-        ),
-        InactiveTarget::Decal => lang.pick("デカール", "Decal").to_owned(),
-        InactiveTarget::FillImage(c) => lang.pick(
-            format!("画像（{}）", channel_name(c)),
-            format!("Image ({})", channel_name(c)),
-        ),
-        InactiveTarget::FillPoints(c) => lang.pick(
-            format!("点のグラデーション（{}）", channel_name(c)),
-            format!("Point gradient ({})", channel_name(c)),
-        ),
+        InactiveTarget::FillGradient(c) => lang.f("fx-gradient", &[("c", &channel_name(c))]),
+        InactiveTarget::Decal => lang.t("fx-decal").to_owned(),
+        InactiveTarget::FillImage(c) => lang.f("fx-image", &[("c", &channel_name(c))]),
+        InactiveTarget::FillPoints(c) => lang.f("fx-point-gradient", &[("c", &channel_name(c))]),
     }
 }
 
@@ -343,7 +335,9 @@ impl AppState {
     /// モデルが違っても返し、新しく作り始めない（`release_idle_bake_input` が毎フレーム捨てるので、作ってもできない）。
     /// 焼いたマップを 1 枚も持たなければ要らないので、入力無しとして Some(None)。
     fn effect_bake_input(&mut self, wait: bool) -> Option<Option<Arc<MeshBakeInput>>> {
-        if self.sets.iter().all(|s| s.mesh_maps.is_empty()) || self.view3d.full_model().is_none() {
+        if self.session.sets.iter().all(|s| s.mesh_maps.is_empty())
+            || self.view3d.full_model().is_none()
+        {
             return Some(None); // マップが無い・モデルが無い（照合できない）
         }
         if wait {
@@ -363,8 +357,13 @@ impl AppState {
     /// （済んでいて中身が同じなら何もしない）。持っている画素の合計が上限を超える画像は、理由つきで断る。
     fn refresh_effect_images(&mut self) {
         let mut pointed: HashSet<ImageId> = HashSet::new();
-        for i in 0..self.sets.len() {
-            if self.sets.get(i).is_some_and(|s| s.read_only.is_some()) {
+        for i in 0..self.session.sets.len() {
+            if self
+                .session
+                .sets
+                .get(i)
+                .is_some_and(|s| s.read_only.is_some())
+            {
                 continue;
             }
             for layer in self.set_doc(i).layers() {
@@ -375,6 +374,7 @@ impl AppState {
             pointed.extend(crate::look::image_ids(self.set_doc(i)));
         }
         let waiting_sets: HashSet<u32> = self
+            .session
             .sets
             .iter()
             .filter(|s| s.waiting_inputs)
@@ -455,25 +455,15 @@ impl AppState {
     /// 文書の画像の ID を返す（`Document::set_fill_image` に渡せる）。棚に無い・復号できないときは理由。
     pub fn use_shelf_image(&mut self, resource_id: &str) -> Result<ImageId, String> {
         let lang = self.lang;
-        let id = image_id(resource_id).ok_or_else(|| {
-            lang.pick(
-                "その画像はアセットにありません",
-                "No such image in the project's assets",
-            )
-            .to_owned()
-        })?;
+        let id =
+            image_id(resource_id).ok_or_else(|| lang.t("fx-no-such-image-in-the").to_owned())?;
         let present = self
             .shelf
             .resources()
             .iter()
             .any(|r| r.kind == "image" && r.id == resource_id);
         if !present {
-            return Err(lang
-                .pick(
-                    "その画像はアセットにありません",
-                    "No such image in the project's assets",
-                )
-                .into());
+            return Err(lang.t("fx-no-such-image-in-the").into());
         }
         self.fx.inputs.requested.insert(id);
         self.fx.inputs.image_errors.remove(&id);
@@ -494,26 +484,27 @@ impl AppState {
         }
     }
 
-    /// セットのマテリアルの組ごとの UV の位相を、今のモデルに合わせる（モデルが替わっても、UV と隣り合わせが同じなら前の物のまま）。
+    /// セットごとの UV の位相を、今のモデルとセットのマテリアルの組に合わせる（モデルが替わっても、UV と隣り合わせが同じで、組が同じ
+    /// なら前の物のまま。組が替われば作り直す）。アイランドの隣り合わせは今のままスロットの中だけ（組の別のマテリアルへはまたがない）。
     fn refresh_topologies(&mut self) {
         let Some(model) = self.view3d.full_model().cloned() else {
             self.fx.inputs.topologies.clear();
             return;
         };
-        let materials: HashSet<i32> = (0..self.sets.len())
-            .filter_map(|i| self.set_material(i))
+        let wanted: HashMap<u32, MaterialSet> = (0..self.session.sets.len())
+            .filter_map(|i| Some((self.session.sets.get(i)?.uid, self.set_material(i)?)))
             .collect();
         let held = &mut self.fx.inputs.topologies;
-        held.retain(|m, _| materials.contains(m));
-        for material in materials {
-            match held.get_mut(&material) {
+        held.retain(|uid, (_, t)| wanted.get(uid).is_some_and(|m| t.material() == Some(m)));
+        for (uid, material) in wanted {
+            match held.get_mut(&uid) {
                 Some((made_from, _)) if Arc::ptr_eq(made_from, &model) => {}
                 Some((made_from, topology)) if topology.same_layout(&model.geometry) => {
                     *made_from = model.clone();
                 }
                 _ => {
-                    let topology = UvTopology::new(model.geometry.clone(), Some(material));
-                    held.insert(material, (model.clone(), Arc::new(topology)));
+                    let topology = UvTopology::new(model.geometry.clone(), Some(&material));
+                    held.insert(uid, (model.clone(), Arc::new(topology)));
                 }
             }
         }
@@ -528,10 +519,12 @@ impl AppState {
         needed: &[MeshMapKind],
     ) -> SetKey {
         let topology = self
-            .set_material(index)
-            .and_then(|m| self.fx.inputs.topologies.get(&m))
+            .session
+            .sets
+            .get(index)
+            .and_then(|s| self.fx.inputs.topologies.get(&s.uid))
             .map_or(0, |(_, t)| Arc::as_ptr(t) as usize);
-        let Some(set) = self.sets.get(index) else {
+        let Some(set) = self.session.sets.get(index) else {
             return SetKey {
                 frame,
                 topology,
@@ -582,13 +575,15 @@ impl AppState {
         needed: &[MeshMapKind],
     ) -> EffectInputs {
         let topology = self
-            .set_material(index)
-            .and_then(|m| self.fx.inputs.topologies.get(&m))
+            .session
+            .sets
+            .get(index)
+            .and_then(|s| self.fx.inputs.topologies.get(&s.uid))
             .map(|(_, t)| t.clone());
         let mut inputs = EffectInputs::new()
             .with_frame(frame.then(ModelFrame::default))
             .with_topology(topology);
-        let Some(set) = self.sets.get(index) else {
+        let Some(set) = self.session.sets.get(index) else {
             return inputs;
         };
         let uid = set.uid;
@@ -642,12 +637,12 @@ impl AppState {
             return; // モデルの入力を作っている最中（前の入力のまま）
         };
         let frame = self.view3d.full_model().is_some();
-        let live: HashSet<u32> = self.sets.iter().map(|s| s.uid).collect();
+        let live: HashSet<u32> = self.session.sets.iter().map(|s| s.uid).collect();
         self.fx.inputs.keys.retain(|u, _| live.contains(u));
         self.fx.inputs.attempts.retain(|u, _| live.contains(u));
         self.fx.inputs.maps.retain(|(u, _), _| live.contains(u));
-        for index in 0..self.sets.len() {
-            let Some(set) = self.sets.get(index) else {
+        for index in 0..self.session.sets.len() {
+            let Some(set) = self.session.sets.get(index) else {
                 continue;
             };
             let (uid, waiting, read_only) = (set.uid, set.waiting_inputs, set.read_only.is_some());
@@ -656,7 +651,8 @@ impl AppState {
             }
             // 読むだけのセットの文書は保存した合成の 1 枚のレイヤー（効果が無い）なので、読むマップは持っている全部で見る
             let needed = if waiting {
-                self.sets
+                self.session
+                    .sets
                     .get(index)
                     .map(|s| s.mesh_maps.iter().map(|m| m.kind()).collect())
                     .unwrap_or_default()
@@ -715,10 +711,10 @@ impl AppState {
         frame: bool,
         budget: u64,
     ) -> bool {
-        let Some(set) = self.sets.get(index) else {
+        let Some(set) = self.session.sets.get(index) else {
             return false;
         };
-        let Some(project) = &self.project else {
+        let Some(project) = &self.session.project else {
             return false;
         };
         let Some(native) = project.project().sets().iter().find(|s| s.id == set.id) else {
@@ -735,14 +731,12 @@ impl AppState {
                 self.fail(
                     Source::TextureSet,
                     self.lang.with_reason(
-                        self.lang.pick(
-                            format!("テクスチャセット「{name}」を編集できません"),
-                            format!("Cannot edit texture set \"{name}\""),
-                        ),
+                        self.lang
+                            .f("fx-cannot-edit-texture-set", &[("name", &name)]),
                         &reason,
                     ),
                 );
-                if let Some(set) = self.sets.get_mut(index) {
+                if let Some(set) = self.session.sets.get_mut(index) {
                     set.read_only = Some(reason);
                 }
                 return false;
@@ -765,16 +759,15 @@ impl AppState {
         };
         let saved = Some((doc.id(), doc.revision()));
         self.put_set_doc(index, doc);
-        if let Some(set) = self.sets.get_mut(index) {
+        if let Some(set) = self.session.sets.get_mut(index) {
             set.read_only = None;
             set.waiting_inputs = false;
             set.saved = saved;
         }
-        let name = self.sets.get(index).map_or("", |s| s.name.as_str());
-        let mut text = self.lang.pick(
-            format!("入力がそろったので、テクスチャセット「{name}」を編集できます。"),
-            format!("Texture set \"{name}\" is editable now that its inputs are in place."),
-        );
+        let name = self.session.sets.get(index).map_or("", |s| s.name.as_str());
+        let mut text = self
+            .lang
+            .f("fx-texture-set-is-editable-now", &[("name", &name)]);
         // 選択範囲・見た目・覚えた選択範囲を戻せなかったら、開いたときと同じく理由を言う（気をつけること）
         let mut kind = crate::notice::Kind::Info;
         for e in [restored.err(), look_restored.err(), saved_restored.err()]
@@ -791,7 +784,7 @@ impl AppState {
     /// セットの文書を入れ替える（今のセットなら画面の文書。選んでいるレイヤー・選択の状態は新しい文書に合わせる）。
     fn put_set_doc(&mut self, index: usize, doc: Document) {
         self.eyedrop.sample_cache = None;
-        if index == self.sets.current_index() {
+        if index == self.session.sets.current_index() {
             // 同じ文書を編集できるようにするだけで大きさは変わらないので、表示は今のまま
             self.install_document(
                 doc,
@@ -799,10 +792,11 @@ impl AppState {
                     selected_layer: None,
                     view: None,
                     layer_scroll: Some(0.0),
+                    layer_set: None,
                 },
             );
         } else {
-            self.sets.replace_stashed_doc(index, doc);
+            self.session.sets.replace_stashed_doc(index, doc);
             self.sync_view3d();
         }
     }
@@ -812,8 +806,8 @@ impl AppState {
     pub fn lock_sets_missing_inputs(&mut self) -> Vec<String> {
         self.sync_effect_inputs_with(true);
         let mut locked = Vec::new();
-        for index in 0..self.sets.len() {
-            let Some(set) = self.sets.get(index) else {
+        for index in 0..self.session.sets.len() {
+            let Some(set) = self.session.sets.get(index) else {
                 continue;
             };
             if set.read_only.is_some() {
@@ -837,6 +831,7 @@ impl AppState {
                 missing_text(lang, &missing, &names, &failure)
             };
             let png = self
+                .session
                 .project
                 .as_ref()
                 .and_then(|p| {
@@ -868,17 +863,17 @@ impl AppState {
                         .collect::<Vec<_>>()
                 })
                 .collect();
-            let uid = self.sets.get(index).map_or(0, |s| s.uid);
+            let uid = self.session.sets.get(index).map_or(0, |s| s.uid);
             self.fx.inputs.waiting.insert(uid, wanted);
             self.put_set_doc(index, preview);
-            if let Some(set) = self.sets.get_mut(index) {
+            if let Some(set) = self.session.sets.get_mut(index) {
                 set.read_only = Some(reason);
                 set.waiting_inputs = true;
             }
             self.fx
                 .inputs
                 .keys
-                .remove(&self.sets.get(index).map_or(0, |s| s.uid));
+                .remove(&self.session.sets.get(index).map_or(0, |s| s.uid));
             locked.push(name);
         }
         locked
@@ -921,16 +916,18 @@ mod tests {
         let path = dir.join("waiting.ylp");
         // 256 × 256 の 4 タイルに画素のあるレイヤーと、プロジェクトにまだ無い画像を指す塗りつぶしレイヤー
         let mut source = AppState::new(256, 256);
-        let base = source.selected_layer.unwrap();
+        let base = source.session.selected_layer.unwrap();
         for (x, y) in [(0, 0), (128, 0), (0, 128), (128, 128)] {
             source
+                .session
                 .doc
                 .set_pixel(base, x, y, Rgba8::new(1, 2, 3, 255))
                 .unwrap();
         }
         source.apply(Action::M2(Edit::NewFill));
-        let fill = source.selected_layer.unwrap();
+        let fill = source.session.selected_layer.unwrap();
         source
+            .session
             .doc
             .set_fill_images_for_load(
                 fill,
@@ -939,8 +936,8 @@ mod tests {
             )
             .unwrap();
         source.apply(Action::SaveProjectAs(path.clone()));
-        assert!(!source.modified, "{}", source.message);
-        let native = yolu_io::NativeDocument::from_core(&source.doc).unwrap();
+        assert!(!source.session.is_modified(), "{}", source.message);
+        let native = yolu_io::NativeDocument::from_core(&source.session.doc).unwrap();
         let bytes = crate::project::to_core(
             &yolu_io::SetDocument::in_memory(native.clone()),
             Lang::Ja,
@@ -953,7 +950,7 @@ mod tests {
         // 開く（予算にちょうど収まる）: 画像が無いので、入力待ちの読むだけ
         let mut a = AppState::new(64, 64);
         open_within(&mut a, &path, bytes);
-        assert!(a.sets.current().waiting_inputs, "{}", a.message);
+        assert!(a.session.sets.current().waiting_inputs, "{}", a.message);
         assert!(a
             .read_only_reason()
             .is_some_and(|r| r.contains("効果の入力がそろっていない")));
@@ -993,16 +990,19 @@ mod tests {
             "{}",
             a.message
         );
-        assert!(a.sets.current().waiting_inputs, "予算を上げれば試せる");
+        assert!(
+            a.session.sets.current().waiting_inputs,
+            "予算を上げれば試せる"
+        );
 
         // ちょうどの予算なら、開く経路と同じく変換できて、入力もそろっているので編集できる
         assert!(a.unlock_set(0, None, false, bytes), "{}", a.message);
         assert!(a.read_only_reason().is_none());
-        assert!(!a.sets.current().waiting_inputs);
+        assert!(!a.session.sets.current().waiting_inputs);
         assert!(
-            a.doc.inactive_effect_list().is_empty(),
+            a.session.doc.inactive_effect_list().is_empty(),
             "{:?}",
-            a.doc.inactive_effect_list()
+            a.session.doc.inactive_effect_list()
         );
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -1073,10 +1073,10 @@ mod tests {
         let view = zoom(&mut s);
         stir(&mut s);
         let (doc, _) = crate::state::blank_document(32, 32);
-        s.put_set_doc(s.sets.current_index(), doc);
+        s.put_set_doc(s.session.sets.current_index(), doc);
         assert_settled(&s, "put_set_doc");
         assert_eq!(s.view, view, "表示は今のまま");
         assert_eq!(s.ui.layer_scroll, 0.0);
-        assert!(s.selected_layer.is_some());
+        assert!(s.session.selected_layer.is_some());
     }
 }

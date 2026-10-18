@@ -1,3 +1,4 @@
+use crate::common::drive::Drive;
 use std::path::PathBuf;
 use yolu_app::{
     colorsets::{
@@ -10,7 +11,7 @@ use yolu_app::{
 
 fn palette() -> Palette {
     Palette {
-        name: "試験 Sample".into(),
+        name: "テスト Sample".into(),
         colors: vec![
             Swatch {
                 name: "透明色".into(),
@@ -352,7 +353,7 @@ fn startup_preserves_settings_and_brush_errors_when_color_set_loading_also_fails
             .brush_problem_message()
             .expect("ブラシの読込エラー");
         let color_reason = Error::Header.message(lang);
-        let message = &app.state.message;
+        let message = app.message();
         for reason in [&settings_reason, &brush_reason, &color_reason] {
             assert!(
                 message.contains(reason),

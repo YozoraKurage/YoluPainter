@@ -1,4 +1,5 @@
-//! 画面の言葉（日本語と英語）。文言は呼ぶ場所に `lang.pick("日本語", "English")` と並べて置く（名前・状態・短い理由だけ。説明はツールチップ）。
+//! 画面の言葉（日本語と英語）。文は `locales/<言語>/<モジュール>.ftl` に置き、呼ぶ場所はキーで引く（`lang.t("キー")`・引数のある文は
+//! `lang.f("キー", &[("名前", &値)])`）。名前・状態・短い理由だけ。説明はツールチップ（キーの終わりが `-tip`）。
 //! 状態は `AppState::lang`。試験は同じ画面で言語を替えて文言を確かめる。
 
 /// 画面の言語。
@@ -18,6 +19,21 @@ impl Lang {
             Lang::Ja => ja,
             Lang::En => en,
         }
+    }
+
+    /// 画面の文（`locales/<言語>/<モジュール>.ftl` のキー）。引数の無い文。
+    pub fn t(self, key: &'static str) -> &'static str {
+        catalog::text(self, key)
+    }
+
+    /// 引数のある文。引数は Rust で書式を済ませた値（`Display`）で渡し、英語の複数形を選ぶ数だけは [`Count`] で渡す。
+    pub fn f(self, key: &'static str, args: &[(&'static str, &dyn Arg)]) -> String {
+        catalog::format_with(self, key, args)
+    }
+
+    /// core の断りの理由の文（キーは [`reason_key`]）。
+    pub fn reason(self, reason: yolu_core::Reason) -> &'static str {
+        catalog::reason(self, reason)
     }
 
     /// 言語の自分の言葉での名前（言語の選択肢に出す）。
@@ -54,7 +70,7 @@ impl Lang {
 
     /// 読めなかったがファイルには残っていることを添えた文（「〜を読めません（理由）。ファイルには残っています。」）。
     pub fn kept_in_file(self, sentence: String) -> String {
-        sentence + self.pick("ファイルには残っています。", " It is kept in the file.")
+        sentence + self.t("lang-it-is-kept-in-the")
     }
 
     /// 文の中に置く名前（「名前」・"name"。英語の文は ASCII の引用符で、日本語が混じらない限り ASCII のまま）。
@@ -135,6 +151,20 @@ mod tests {
         assert_eq!(Lang::Ja.pick("あ", "a"), "あ");
         assert_eq!(Lang::En.pick("あ".to_string(), "a".to_string()), "a");
         assert_eq!(Lang::default(), Lang::Ja);
+    }
+
+    /// `Lang::reason` が、本物の `Reason` から `.ftl` のキーを引いて、日英の文を返す。
+    #[test]
+    fn reason_comes_from_the_ftl() {
+        use yolu_core::Reason;
+        assert_eq!(
+            Lang::En.reason(Reason::ColorBalanceRange),
+            "Color balance (−100–100)"
+        );
+        assert_eq!(
+            Lang::Ja.reason(Reason::ColorBalanceRange),
+            "カラーバランス（−100〜100）"
+        );
     }
 
     fn env(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
@@ -239,9 +269,10 @@ mod tests {
     }
 }
 
+mod catalog;
 mod errors;
 pub mod refusals;
-pub(crate) use errors::budget_text;
+pub use catalog::{reason_key, Arg, Count};
 pub use errors::{
     brush_import_error, library_io_error, library_known_error, path_error, psd_copy_refusal,
     psd_copy_refusal_tooltip, rebind_error, shelf_io_error,

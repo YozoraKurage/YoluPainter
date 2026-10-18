@@ -184,6 +184,7 @@ fn child_crash() {
         // 復旧の書き手の panic は、書き手が受け止めて動き続ける（落ちではない）。実際の書き手で起こす。
         let mut state = crate::state::AppState::new_in(64, 64, Lang::En);
         state
+            .services
             .recovery
             .set_fault(Some(std::sync::Arc::new(|stage: &str| {
                 if stage == "snapshot" {
@@ -193,17 +194,22 @@ fn child_crash() {
             })));
         let root = std::env::temp_dir().join(format!("yolu-crash-writer-{}", stamp()));
         state
-            .recovery
-            .enable(root.clone(), crate::recovery::RecoverySettings::default())
+            .recovery_enable(root.clone(), crate::recovery::RecoverySettings::default())
             .unwrap();
-        let layer = state.selected_layer.unwrap();
+        let layer = state.session.selected_layer.unwrap();
         let brush = state.stroke_settings(false);
-        let mut stroke = state.doc.begin_stroke(layer, &brush).unwrap();
+        let mut stroke = state.session.doc.begin_stroke(layer, &brush).unwrap();
         stroke
-            .add_point(&mut state.doc, 20.0, 20.0, 1.0, crate::engine::DVec2::ZERO)
+            .add_point(
+                &mut state.session.doc,
+                20.0,
+                20.0,
+                1.0,
+                crate::engine::DVec2::ZERO,
+            )
             .unwrap();
-        state.doc.end_stroke(stroke).unwrap();
-        state.modified = true;
+        state.session.doc.end_stroke(stroke).unwrap();
+        state.session.mark_modified();
         state.recovery_flush();
         let _ = fs::remove_dir_all(root);
         panic!("final panic");
@@ -211,8 +217,12 @@ fn child_crash() {
     if mode == "app" {
         // AppState::apply の配線。レイヤーの名前は記録に入らず、操作の種類名と失敗の文（名前を除いた理由）だけが入る。
         let mut state = crate::state::AppState::new_in(32, 32, Lang::En);
-        let id = state.selected_layer.unwrap();
-        state.doc.set_layer_name(id, "SecretLayerName").unwrap();
+        let id = state.session.selected_layer.unwrap();
+        state
+            .session
+            .doc
+            .set_layer_name(id, "SecretLayerName")
+            .unwrap();
         for _ in 0..40 {
             state.apply(Action::ZoomIn);
         }
@@ -463,7 +473,7 @@ fn app_menu_indicator_and_recovery_open_the_same_report() {
             .record("test", "sample report")
             .unwrap();
         let mut state = crate::state::AppState::new_in(32, 32, lang);
-        state.crash = window::Report::load(dir.0.clone());
+        state.services.crash = window::Report::load(dir.0.clone());
         let mut h = Harness::builder()
             .with_size(egui::vec2(1280.0, 800.0))
             .build_eframe(move |cc| {
@@ -472,25 +482,25 @@ fn app_menu_indicator_and_recovery_open_the_same_report() {
         h.run();
         h.get_by_label("!").click();
         h.run();
-        assert!(h.state().state.crash.open);
+        assert!(h.state().state.services.crash.open);
         h.get_by_label(lang.pick("閉じる", "Close")).click();
         h.run();
-        assert!(!h.state().state.crash.unread);
+        assert!(!h.state().state.services.crash.unread);
         h.get_by_label(lang.pick("ヘルプ", "Help")).click();
         h.run();
         h.get_by_label(lang.pick("ログのフォルダを開く", "Open Log Folder"))
             .click();
         h.run();
         assert_eq!(
-            h.state_mut().state.crash.request.take(),
+            h.state_mut().state.services.crash.request.take(),
             Some(window::Request::Folder)
         );
-        h.state_mut().state.recovery.window = Some(Default::default());
+        h.state_mut().state.ui.recovery_window = Some(Default::default());
         h.run();
         h.get_by_label(lang.pick("クラッシュの報告", "Crash Report"))
             .click();
         h.run();
-        assert!(h.state().state.crash.open);
+        assert!(h.state().state.services.crash.open);
     }
 }
 

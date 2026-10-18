@@ -30,18 +30,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::Arc;
 
-use egui::Vec2;
 use yolu_update::{
     merge_channels, release_page, sha256, Asset, AvailableUpdate, Error, Transport, UpdateClient,
     Version, BETA_UPDATER_URL, LINUX_ARCHIVE, LINUX_ARM_ARCHIVE, MACOS_ARCHIVE, UPDATER_URL,
     WINDOWS_ARCHIVE, WINDOWS_INSTALLER,
 };
 
+use crate::features::{Feature, PollStage};
+use crate::jobs::CloseJob;
 use crate::jobs::{JobCard, JobSpec};
 use crate::lang::Lang;
 use crate::notice::Source;
 use crate::state::AppState;
-use crate::windows::CloseJob;
 pub use config::Preference;
 use http::{HttpTransport, Link};
 
@@ -165,28 +165,25 @@ pub struct Progress {
 pub(crate) const JOB: JobSpec = JobSpec {
     repaint: true,
     card: Some(|app, lang| {
-        let p = app.update.progress()?;
+        let p = app.services.update.progress()?;
         Some(JobCard {
-            text: format!(
-                "{} — {}",
-                lang.pick("更新をダウンロード中", "Downloading update"),
-                p.version
-            ),
+            text: format!("{} — {}", lang.t("update-downloading-update"), p.version),
             fraction: Some(p.fraction),
             cancel: Some(crate::state::Action::Update(UpdateAction::Cancel)),
             canceling: p.canceling,
         })
     }),
     close: Some(|app| {
-        app.update
+        app.services
+            .update
             .progress()
             .is_some()
             .then_some(CloseJob::UpdateDownload)
     }),
     cancel: Some(|app| app.apply(crate::state::Action::Update(UpdateAction::Cancel))),
     poll_while_stopping: Some(AppState::poll_update),
-    modal: Some(|app| app.update.window_open()),
-    ..JobSpec::new("update", |app| app.update.is_busy())
+    modal: Some(|app| app.services.update.window_open()),
+    ..JobSpec::new("update", |app| app.services.update.is_busy())
 };
 
 pub struct UpdateState {
@@ -201,7 +198,6 @@ pub struct UpdateState {
     config: Option<PathBuf>,
     /// 初回の問いを出している。
     asking: bool,
-    pub(crate) ask_offset: Vec2,
     transport: Factory,
     staging: Option<PathBuf>,
     launcher: Launcher,
@@ -215,7 +211,6 @@ pub struct UpdateState {
     ready_open: bool,
     /// 別の起動が動いていて、更新を始められなかった（準備のウィンドウが理由を出す。押し直すか「あとで」で消える）。
     pub(crate) ready_blocked: bool,
-    pub(crate) ready_offset: Vec2,
     /// 保存してから入れる、の保存の結果待ち。
     after_save: bool,
     /// 更新のために終わる（終了の確かめを聞き直さない）。
@@ -258,14 +253,14 @@ impl UpdateState {
         let (target, mode) = platform_target(installed);
         UpdateState {
             key: yolu_update::embedded_public_key().ok(),
-            current: Version::parse(env!("CARGO_PKG_VERSION")).expect("cargo の版は SemVer"),
+            current: Version::parse(env!("CARGO_PKG_VERSION"))
+                .expect("cargo のバージョンは SemVer"),
             target,
             mode,
             preference: Preference::Unset,
             beta: false,
             config: None,
             asking: false,
-            ask_offset: Vec2::ZERO,
             transport: Arc::new(|link| Box::new(HttpTransport::new(link))),
             staging: launch::staging_dir(),
             launcher: Arc::new(launch::run_installer),
@@ -277,7 +272,6 @@ impl UpdateState {
             ready_wanted: false,
             ready_open: false,
             ready_blocked: false,
-            ready_offset: Vec2::ZERO,
             after_save: false,
             quitting: false,
         }
@@ -373,7 +367,7 @@ impl UpdateState {
         mode: Mode,
     ) {
         self.key = key;
-        self.current = Version::parse(current).expect("試験の版");
+        self.current = Version::parse(current).expect("テストのバージョン");
         self.target = target;
         self.mode = mode;
     }
@@ -401,17 +395,13 @@ impl UpdateState {
         let offer = self.offer.as_ref()?;
         let version = &offer.version;
         Some(match (self.progress(), self.mode) {
-            (Some(_), _) => lang.pick(
-                format!("YoluPainter {version} をダウンロード中"),
-                format!("Downloading YoluPainter {version}"),
-            ),
-            (None, Mode::Installer) => lang.pick(
-                format!("YoluPainter {version} に更新"),
-                format!("Update to YoluPainter {version}"),
-            ),
-            (None, Mode::Page) => lang.pick(
-                format!("YoluPainter {version} のリリースを開く"),
-                format!("Open the YoluPainter {version} release"),
+            (Some(_), _) => lang.f("update-downloading-yolupainter", &[("version", &version)]),
+            (None, Mode::Installer) => {
+                lang.f("update-update-to-yolupainter", &[("version", &version)])
+            }
+            (None, Mode::Page) => lang.f(
+                "update-open-the-yolupainter-release",
+                &[("version", &version)],
             ),
         })
     }
@@ -565,10 +555,7 @@ fn staged_file_is_intact(ready: &Ready) -> bool {
 
 /// 別の起動が動いていて、更新を始められない理由（状態の知らせと準備のウィンドウが同じ文を出す）。
 pub(crate) fn blocked_text(lang: Lang) -> &'static str {
-    lang.pick(
-        "ほかの YoluPainter が開いています",
-        "Another YoluPainter is running",
-    )
+    lang.t("update-another-yolupainter-is-running")
 }
 
 /// 失敗の知らせの種類（取り消しは済んだ知らせ、ほかは失敗）。
@@ -582,26 +569,26 @@ fn failure_kind(failure: &Failure) -> crate::notice::Kind {
 impl AppState {
     /// 起動時に 1 度（実際のウィンドウだけ。試験は呼ばない）: 初めてなら問いを出し、「確かめる」を選んでいれば確かめる。
     pub fn update_startup(&mut self) {
-        if !self.update.enabled() {
+        if !self.services.update.enabled() {
             return;
         }
-        if let Some(dir) = &self.update.staging {
-            clear_staged(dir, &self.update.current);
+        if let Some(dir) = &self.services.update.staging {
+            clear_staged(dir, &self.services.update.current);
         }
-        match self.update.preference {
-            Preference::Unset => self.update.asking = true,
+        match self.services.update.preference {
+            Preference::Unset => self.services.update.asking = true,
             Preference::On => self.update_start_check(false),
             Preference::Off => {}
         }
     }
 
     pub(crate) fn update_apply(&mut self, action: UpdateAction) {
-        if !self.update.enabled() {
+        if !self.services.update.enabled() {
             return;
         }
         match action {
             UpdateAction::Answer(on) => {
-                self.update.asking = false;
+                self.services.update.asking = false;
                 self.update_set_preference(on);
                 if on {
                     self.update_start_check(false);
@@ -612,41 +599,47 @@ impl AppState {
             UpdateAction::Check => self.update_start_check(true),
             UpdateAction::Install => self.update_install(),
             UpdateAction::Cancel => {
-                if let Some(job) = &self.update.job {
+                if let Some(job) = &self.services.update.job {
                     job.link.cancel.store(true, Ordering::Relaxed);
                 }
             }
             UpdateAction::Run { save } => self.update_run(save),
             UpdateAction::Later => {
-                self.update.ready_open = false;
-                self.update.ready_wanted = false;
-                self.update.ready_blocked = false;
+                self.services.update.ready_open = false;
+                self.services.update.ready_wanted = false;
+                self.services.update.ready_blocked = false;
             }
         }
     }
 
     fn update_set_preference(&mut self, on: bool) {
-        self.update.preference = if on { Preference::On } else { Preference::Off };
+        self.services.update.preference = if on { Preference::On } else { Preference::Off };
         self.update_save_config();
     }
 
     /// 試験版の設定を替える。切にしたときは、見つけていた試験版の提案・落とし済みや落としている最中の試験版を残さない
     /// （切にしたら stable だけを勧める）。入にしても、その場では通信しない（次の確かめから効く）。
     fn update_set_beta(&mut self, on: bool) {
-        self.update.beta = on;
+        self.services.update.beta = on;
         if !on {
             let pre = |version: &Version| !version.pre.is_empty();
-            if self.update.offer.as_ref().is_some_and(|o| pre(&o.version)) {
-                self.update.offer = None;
+            if self
+                .services
+                .update
+                .offer
+                .as_ref()
+                .is_some_and(|o| pre(&o.version))
+            {
+                self.services.update.offer = None;
             }
-            if let Some(ready) = self.update.ready.take_if(|r| pre(&r.version)) {
+            if let Some(ready) = self.services.update.ready.take_if(|r| pre(&r.version)) {
                 // 置き場のインストーラーも消す（今の版より新しいファイルは、起動時の片付けでも消えない）。
                 let _ = std::fs::remove_file(&ready.path);
-                self.update.ready_wanted = false;
-                self.update.ready_open = false;
-                self.update.ready_blocked = false;
+                self.services.update.ready_wanted = false;
+                self.services.update.ready_open = false;
+                self.services.update.ready_blocked = false;
             }
-            if let Some(job) = &self.update.job {
+            if let Some(job) = &self.services.update.job {
                 if matches!(&job.kind, Kind::Download { version, .. } if pre(version)) {
                     job.link.cancel.store(true, Ordering::Relaxed);
                 }
@@ -658,17 +651,14 @@ impl AppState {
     /// 更新の設定（起動時の確かめ・試験版）を `update.conf` へ保存する。保存できなくても、この回の選択は効く。
     fn update_save_config(&mut self) {
         let stored = config::Stored {
-            check: self.update.preference,
-            beta: self.update.beta,
+            check: self.services.update.preference,
+            beta: self.services.update.beta,
         };
-        if let Some(path) = &self.update.config {
+        if let Some(path) = &self.services.update.config {
             if config::save(path, &stored).is_err() {
                 self.fail(
                     Source::Update,
-                    self.lang.pick(
-                        "更新の設定を保存できません。",
-                        "Cannot save the update setting.",
-                    ),
+                    self.lang.t("update-cannot-save-the-update-setting"),
                 );
             }
         }
@@ -676,27 +666,25 @@ impl AppState {
 
     fn update_start_check(&mut self, manual: bool) {
         let lang = self.lang;
-        if self.update.job.is_some() {
+        if self.services.update.job.is_some() {
             if manual {
-                self.refuse(
-                    Source::Update,
-                    lang.pick("更新を処理中です。", "An update job is running."),
-                );
+                self.refuse(Source::Update, lang.t("update-an-update-job-is-running"));
             }
             return;
         }
-        let (Some(key), Some(target)) = (self.update.key, self.update.target) else {
+        let (Some(key), Some(target)) = (self.services.update.key, self.services.update.target)
+        else {
             return;
         };
         let link = Link::default();
         let worker = Worker {
-            factory: self.update.transport.clone(),
+            factory: self.services.update.transport.clone(),
             link: link.clone(),
             key,
             failed: Arc::new(AtomicBool::new(false)),
         };
-        let current = self.update.current.clone();
-        let beta = self.update.beta;
+        let current = self.services.update.current.clone();
+        let beta = self.services.update.beta;
         let (tx, rx) = channel();
         let spawned = std::thread::Builder::new()
             .name("yolu-update-check".into())
@@ -711,12 +699,9 @@ impl AppState {
             return;
         }
         if manual {
-            self.info(
-                Source::Update,
-                lang.pick("更新を確かめています…", "Checking for updates…"),
-            );
+            self.info(Source::Update, lang.t("update-checking-for-updates"));
         }
-        self.update.job = Some(Job {
+        self.services.update.job = Some(Job {
             kind: Kind::Check { manual },
             link,
             rx,
@@ -729,56 +714,51 @@ impl AppState {
             self.refuse(Source::Update, crate::lang::refusals::during_stroke(lang));
             return;
         }
-        let Some(offer) = self.update.offer.clone() else {
+        let Some(offer) = self.services.update.offer.clone() else {
             return;
         };
-        match self.update.mode {
+        match self.services.update.mode {
             Mode::Page => {
                 let url = release_page(&offer.version);
-                match (self.update.opener)(&url) {
+                match (self.services.update.opener)(&url) {
                     Ok(()) => self.info(
                         Source::Update,
-                        lang.pick(
-                            format!(
-                                "YoluPainter {} のリリースのページを開きました。",
-                                offer.version
-                            ),
-                            format!("Opened the YoluPainter {} release page.", offer.version),
+                        lang.f(
+                            "update-opened-the-yolupainter-release-page",
+                            &[("version", &offer.version)],
                         ),
                     ),
                     Err(_) => self.fail(
                         Source::Update,
-                        lang.pick(
-                            format!("ページ{}を開けません。", lang.quote(&url)),
-                            format!("Cannot open the page {}.", lang.quote(&url)),
-                        ),
+                        lang.f("update-cannot-open-the-page", &[("url", &lang.quote(&url))]),
                     ),
                 }
             }
             Mode::Installer => {
                 // 落とし済みで、まだ変わっていなければ、落とし直さずに準備のウィンドウへ。
-                if let Some(ready) = &self.update.ready {
+                if let Some(ready) = &self.services.update.ready {
                     if ready.version == offer.version && staged_file_is_intact(ready) {
-                        self.update.ready_wanted = true;
+                        self.services.update.ready_wanted = true;
                         return;
                     }
                 }
-                self.update.ready = None;
-                self.update.ready_blocked = false;
-                if self.update.job.is_some() {
+                self.services.update.ready = None;
+                self.services.update.ready_blocked = false;
+                if self.services.update.job.is_some() {
                     return;
                 }
-                let (Some(key), Some(_)) = (self.update.key, self.update.target) else {
+                let (Some(key), Some(_)) = (self.services.update.key, self.services.update.target)
+                else {
                     return;
                 };
                 let link = Link::default();
                 let worker = Worker {
-                    factory: self.update.transport.clone(),
+                    factory: self.services.update.transport.clone(),
                     link: link.clone(),
                     key,
                     failed: Arc::new(AtomicBool::new(false)),
                 };
-                let staging = self.update.staging.clone();
+                let staging = self.services.update.staging.clone();
                 let total = offer.update.asset().size;
                 let version = offer.version.clone();
                 let (tx, rx) = channel();
@@ -798,12 +778,9 @@ impl AppState {
                 }
                 self.info(
                     Source::Update,
-                    lang.pick(
-                        format!("YoluPainter {version} をダウンロード中…"),
-                        format!("Downloading YoluPainter {version}…"),
-                    ),
+                    lang.f("update-downloading-yolupainter-2", &[("version", &version)]),
                 );
-                self.update.job = Some(Job {
+                self.services.update.job = Some(Job {
                     kind: Kind::Download { version, total },
                     link,
                     rx,
@@ -815,7 +792,7 @@ impl AppState {
     /// 毎フレームの初め: 終わった通信・ダウンロードを受ける。準備のウィンドウは、描いている最中は開かない。
     pub fn poll_update(&mut self) {
         let lang = self.lang;
-        if let Some(job) = &self.update.job {
+        if let Some(job) = &self.services.update.job {
             let outcome = match job.rx.try_recv() {
                 Ok(outcome) => Some(outcome),
                 Err(TryRecvError::Empty) => None,
@@ -825,32 +802,29 @@ impl AppState {
                 }),
             };
             if let Some(outcome) = outcome {
-                let job = self.update.job.take().expect("上で見た");
+                let job = self.services.update.job.take().expect("上で見た");
                 let manual = matches!(job.kind, Kind::Check { manual: true });
                 match outcome {
                     // 試験版も見る確かめの途中で設定を切ったときは、試験版の結果だけを捨てて stable の結果で答える（切にしたら stable だけ）。
-                    Outcome::Checked(checked) => match checked.settle(self.update.beta) {
+                    Outcome::Checked(checked) => match checked.settle(self.services.update.beta) {
                         Ok(Some(update)) => {
                             let version = update.version().clone();
                             if manual {
                                 self.info(
                                     Source::Update,
-                                    lang.pick(
-                                        format!("YoluPainter {version} があります。"),
-                                        format!("YoluPainter {version} is available."),
+                                    lang.f(
+                                        "update-yolupainter-is-available",
+                                        &[("version", &version)],
                                     ),
                                 );
                             }
-                            self.update.offer = Some(Offer { version, update });
+                            self.services.update.offer = Some(Offer { version, update });
                         }
                         Ok(None) => {
                             if manual {
                                 self.info(
                                     Source::Update,
-                                    lang.pick(
-                                        "YoluPainter は最新です。",
-                                        "YoluPainter is up to date.",
-                                    ),
+                                    lang.t("update-yolupainter-is-up-to-date"),
                                 );
                             }
                         }
@@ -869,7 +843,7 @@ impl AppState {
                         // 転送が済んだあとの確かめ・書き込みの間に、取り消された・試験版の設定が切になったものは受けない
                         // （置いたファイルも消す。取消は転送の途中でしか見ないので、ここで見る）。
                         if job.link.is_canceled()
-                            || (!self.update.beta && !ready.version.pre.is_empty())
+                            || (!self.services.update.beta && !ready.version.pre.is_empty())
                         {
                             let _ = std::fs::remove_file(&ready.path);
                             self.info(
@@ -877,8 +851,8 @@ impl AppState {
                                 crate::lang::update_failure(lang, "download", Failure::Canceled),
                             );
                         } else {
-                            self.update.ready = Some(ready);
-                            self.update.ready_wanted = true;
+                            self.services.update.ready = Some(ready);
+                            self.services.update.ready_wanted = true;
                         }
                     }
                     Outcome::Downloaded(Err(failure)) => {
@@ -891,9 +865,12 @@ impl AppState {
                 }
             }
         }
-        if self.update.ready_wanted && self.update.ready.is_some() && !self.is_stroking() {
-            self.update.ready_wanted = false;
-            self.update.ready_open = true;
+        if self.services.update.ready_wanted
+            && self.services.update.ready.is_some()
+            && !self.is_stroking()
+        {
+            self.services.update.ready_wanted = false;
+            self.services.update.ready_open = true;
         }
     }
 
@@ -903,7 +880,7 @@ impl AppState {
             self.refuse(Source::Update, crate::lang::refusals::during_stroke(lang));
             return;
         }
-        if self.update.ready.is_none() {
+        if self.services.update.ready.is_none() {
             return;
         }
         // 保存の途中は入れ替えない（保存の頼みは「変更あり」を下ろすので、いま入れ替えると、保存が失敗して変更が残っても、更新のために
@@ -912,7 +889,7 @@ impl AppState {
             self.refuse(
                 Source::Update,
                 lang.with_reason(
-                    lang.pick("更新できません", "Cannot update"),
+                    lang.t("update-cannot-update"),
                     crate::lang::refusals::saving(lang),
                 ),
             );
@@ -922,12 +899,12 @@ impl AppState {
         if self.update_blocked_by_another_instance() {
             return;
         }
-        if save && self.modified {
+        if save && self.session.is_modified() {
             // 保存の結果（成功の文・失敗の理由）は保存の側が message に書く。空にしておけば、保存先のウィンドウを取り消した
             // （message が空のまま）のと、保存が失敗した（理由が書かれている）のを、`update_finish_save` が見分けられる。
             self.clear_message();
             self.apply(crate::state::Action::SaveProject);
-            self.update.after_save = true;
+            self.services.update.after_save = true;
             self.update_finish_save();
         } else {
             self.update_launch();
@@ -938,18 +915,18 @@ impl AppState {
     /// 保存が失敗していれば、その理由（保存の側が書いた message）を残す。短い文を出すのは、保存先のウィンドウを取り消したときだけ。
     pub fn update_finish_save(&mut self) {
         // 保存の仕事が動いているあいだも待つ（裏のスレッドの保存が終わってから、その結果を見て入れる）
-        if !self.update.after_save || self.dialog_request.is_some() || self.is_saving() {
+        if !self.services.update.after_save
+            || self.outbox.dialog_request.is_some()
+            || self.is_saving()
+        {
             return;
         }
-        self.update.after_save = false;
-        if self.modified {
+        self.services.update.after_save = false;
+        if self.session.is_modified() {
             if self.message.is_empty() {
                 self.refuse(
                     Source::Update,
-                    self.lang.pick(
-                        "保存しなかったので、更新しません。",
-                        "Not updating because the project was not saved.",
-                    ),
+                    self.lang.t("update-not-updating-because-the-project"),
                 );
             }
             return;
@@ -960,8 +937,8 @@ impl AppState {
     /// 同じ実行ファイルの別の起動が動いていれば、理由を出して true（落としたインストーラーは残し、準備のウィンドウも開いたまま。
     /// 別のウィンドウを閉じてからもう一度押せばすぐ入る）。動いていなければ、理由の表示を消して false。
     fn update_blocked_by_another_instance(&mut self) -> bool {
-        let blocked = (self.update.other_instance)();
-        self.update.ready_blocked = blocked;
+        let blocked = (self.services.update.other_instance)();
+        self.services.update.ready_blocked = blocked;
         if blocked {
             self.refuse(Source::Update, blocked_text(self.lang));
         }
@@ -970,7 +947,7 @@ impl AppState {
 
     fn update_launch(&mut self) {
         let lang = self.lang;
-        let Some(ready) = self.update.ready.clone() else {
+        let Some(ready) = self.services.update.ready.clone() else {
             return;
         };
         // 入れ替えは、保存が終わって「変更あり」の印が確かなときだけ（ここへ来る道はどれも保存の途中を断るが、走らせる直前にも確かめる）
@@ -983,42 +960,39 @@ impl AppState {
         }
         if !staged_file_is_intact(&ready) {
             let _ = std::fs::remove_file(&ready.path);
-            self.update.ready = None;
-            self.update.ready_open = false;
+            self.services.update.ready = None;
+            self.services.update.ready_open = false;
             self.fail(
                 Source::Update,
-                lang.pick(
-                    "ダウンロードしたファイルが変わっています。更新しません。",
-                    "The downloaded file has changed. Not updating.",
-                ),
+                lang.t("update-the-downloaded-file-has-changed"),
             );
             return;
         }
-        match (self.update.launcher)(&ready.path) {
+        match (self.services.update.launcher)(&ready.path) {
             Ok(()) => {
                 self.info(
                     Source::Update,
-                    lang.pick(
-                        format!("YoluPainter {} に更新します。", ready.version),
-                        format!("Updating to YoluPainter {}.", ready.version),
+                    lang.f(
+                        "update-updating-to-yolupainter",
+                        &[("version", &ready.version)],
                     ),
                 );
-                self.update.ready_open = false;
-                self.update.quitting = true;
+                self.services.update.ready_open = false;
+                self.services.update.quitting = true;
                 self.quit = true;
             }
             Err(_) => {
-                self.fail(
-                    Source::Update,
-                    lang.pick(
-                        "インストーラーを起動できません。",
-                        "Cannot start the installer.",
-                    ),
-                );
+                self.fail(Source::Update, lang.t("update-cannot-start-the-installer"));
             }
         }
     }
 }
+
+/// 機能の表の行（毎フレーム、更新の確かめ・ダウンロードの終わりを受ける。準備のウィンドウは、描いている最中は開かない）。
+pub(crate) const FEATURE: Feature = Feature {
+    poll: Some((PollStage::BeforeTextColor, AppState::poll_update)),
+    ..Feature::new("update")
+};
 
 #[cfg(test)]
 mod tests {

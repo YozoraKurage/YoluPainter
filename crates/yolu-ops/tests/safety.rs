@@ -75,7 +75,7 @@ fn save_over_the_opened_file_needs_confirm_and_keeps_the_previous_version() {
     };
     assert!(saved.written);
     let backups = yolu_io::backups(&fx.path("a.ylp")).unwrap();
-    assert_eq!(backups.len(), 1, "前の版は退避のフォルダに残る");
+    assert_eq!(backups.len(), 1, "前のバージョンは退避のフォルダに残る");
     assert_eq!(read(&backups[0]), original);
     assert!(!host.has_unsaved_changes());
 }
@@ -700,7 +700,7 @@ fn save_as_naming_the_opened_file_another_way_is_still_the_same_file() {
     };
     assert!(
         saved.written && saved.backup.is_some(),
-        "同じファイルとして、前の版を残して置き換える"
+        "同じファイルとして、前のバージョンを残して置き換える"
     );
     assert_eq!(saved.path, opened.display().to_string());
     assert_eq!(host.path().unwrap(), opened);

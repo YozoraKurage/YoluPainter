@@ -1,5 +1,6 @@
 //! 大きなプロジェクトの保存・開き直し・復旧（アプリの状態だけ。画面は描かない）。閾値（`Thresholds`）を小さくして、小さな文書で
 //! 分けた正本（版 26）と `YLP-4` の道を通す。巨大な文書は作らない。
+use crate::common::drive::Drive;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -55,8 +56,8 @@ fn small() -> Thresholds {
 }
 /// レイヤーを足して、レイヤーごとに違う画素を入れる（文書が変わり、保存していない印が付く）。
 fn paint_layers(s: &mut AppState, layers: usize, seed: u64) {
-    fill_layers(&mut s.doc, layers, seed);
-    s.modified = true;
+    fill_layers(s.doc_mut(), layers, seed);
+    s.set_modified(true);
 }
 fn fill_layers(doc: &mut yolu_app::engine::Document, layers: usize, seed: u64) {
     let ts = doc.tile_size();
@@ -98,52 +99,57 @@ fn a_big_document_is_saved_split_reopened_and_saved_again() {
         let path = dir.0.join("大きな作品.ylp");
         let mut s = AppState::new_in(SIZE, SIZE, Lang::Ja);
         paint_layers(&mut s, 6, 1);
-        let painted = bytes_of(&s.doc);
-        s.apply(Action::SaveProjectAs(path.clone()));
-        assert!(s.message.starts_with("保存しました"), "{}", s.message);
-        assert!(!s.modified);
+        let painted = bytes_of(s.doc());
+        s.act(Action::SaveProjectAs(path.clone()));
+        assert!(s.message().starts_with("保存しました"), "{}", s.message());
+        assert!(!s.modified());
         let saved = package(&path);
         assert_eq!(saved.manifest_version(), 4, "今の上限に収まらない形");
         let first_parts = parts(&saved);
         assert!(first_parts.len() >= 3, "{first_parts:?}");
         // 開き直すと画素まで同じ
         let mut again = AppState::new_in(64, 64, Lang::Ja);
-        again.apply(Action::OpenProject(path.clone()));
-        assert!(again.message.starts_with("開きました"), "{}", again.message);
-        assert_eq!(bytes_of(&again.doc), painted);
-        // レイヤーを減らして保存し直す: 古い部分は残らない
-        let ids: Vec<_> = again.doc.layers().iter().map(|l| l.id()).collect();
-        again.doc.remove_layer(ids[0]).unwrap();
-        again.doc.remove_layer(ids[1]).unwrap();
-        again.modified = true;
-        let fewer = bytes_of(&again.doc);
-        again.apply(Action::SaveProject);
+        again.act(Action::OpenProject(path.clone()));
         assert!(
-            again.message.starts_with("保存しました"),
+            again.message().starts_with("開きました"),
             "{}",
-            again.message
+            again.message()
+        );
+        assert_eq!(bytes_of(again.doc()), painted);
+        // レイヤーを減らして保存し直す: 古い部分は残らない
+        let ids: Vec<_> = again.doc().layers().iter().map(|l| l.id()).collect();
+        again.doc_mut().remove_layer(ids[0]).unwrap();
+        again.doc_mut().remove_layer(ids[1]).unwrap();
+        again.set_modified(true);
+        let fewer = bytes_of(again.doc());
+        again.act(Action::SaveProject);
+        assert!(
+            again.message().starts_with("保存しました"),
+            "{}",
+            again.message()
         );
         let resaved = package(&path);
         assert!(parts(&resaved).len() < first_parts.len());
         let mut third = AppState::new_in(64, 64, Lang::Ja);
-        third.apply(Action::OpenProject(path.clone()));
-        assert_eq!(bytes_of(&third.doc), fewer);
+        third.act(Action::OpenProject(path.clone()));
+        assert_eq!(bytes_of(third.doc()), fewer);
         // 開いたまま、ほかの変更なしにもう 1 度保存しても読める（変わらない部分はファイルから写す）
+        let bottom = third.doc().layers()[0].id();
         third
-            .doc
-            .set_layer_opacity(third.doc.layers()[0].id(), 0.5, false)
+            .doc_mut()
+            .set_layer_opacity(bottom, 0.5, false)
             .unwrap();
-        third.modified = true;
-        let half = bytes_of(&third.doc);
-        third.apply(Action::SaveProject);
+        third.set_modified(true);
+        let half = bytes_of(third.doc());
+        third.act(Action::SaveProject);
         assert!(
-            third.message.starts_with("保存しました"),
+            third.message().starts_with("保存しました"),
             "{}",
-            third.message
+            third.message()
         );
         let mut fourth = AppState::new_in(64, 64, Lang::Ja);
-        fourth.apply(Action::OpenProject(path));
-        assert_eq!(bytes_of(&fourth.doc), half);
+        fourth.act(Action::OpenProject(path));
+        assert_eq!(bytes_of(fourth.doc()), half);
     });
 }
 
@@ -157,10 +163,9 @@ fn plenty() -> SpaceProbe {
 }
 fn session(root: &Path) -> AppState {
     let mut state = AppState::new_in(SIZE, SIZE, Lang::Ja);
-    state.recovery.set_space_probe(Some(plenty()));
+    state.recovery_mut().set_space_probe(Some(plenty()));
     state
-        .recovery
-        .enable(
+        .recovery_enable(
             root.to_path_buf(),
             RecoverySettings {
                 interval_seconds: 15,
@@ -175,7 +180,7 @@ fn session(root: &Path) -> AppState {
 }
 fn write_after(s: &mut AppState, from: Instant) -> Instant {
     s.recovery_tick_at(from);
-    let due = from + Duration::from_secs(s.recovery.settings().interval_seconds as u64 + 1);
+    let due = from + Duration::from_secs(s.recovery().settings().interval_seconds as u64 + 1);
     s.recovery_tick_at(due);
     s.recovery_wait();
     due
@@ -189,7 +194,7 @@ fn the_checkpoint_of_a_big_document_shares_unchanged_parts_and_opens_back() {
         let mut s = session(&root);
         paint_layers(&mut s, 6, 2);
         let t = write_after(&mut s, Instant::now());
-        let store = GenerationStore::new(s.recovery.session_dir().unwrap());
+        let store = GenerationStore::new(s.recovery().session_dir().unwrap());
         let first = store.load().unwrap();
         let first_parts: Vec<_> = first
             .files
@@ -199,9 +204,9 @@ fn the_checkpoint_of_a_big_document_shares_unchanged_parts_and_opens_back() {
             .collect();
         assert!(first_parts.len() >= 3, "書き置きも分けた正本");
         // 1 つのレイヤーの 1 タイルだけを変える: 変わらないレイヤーの部分は同じ中身（共有）
-        let ts = s.doc.tile_size();
-        let last = s.doc.layers()[s.doc.layers().len() - 1].id();
-        s.doc
+        let ts = s.doc().tile_size();
+        let last = s.doc().layers()[s.doc().layers().len() - 1].id();
+        s.doc_mut()
             .import_tile(
                 last,
                 Channel::Color,
@@ -209,8 +214,8 @@ fn the_checkpoint_of_a_big_document_shares_unchanged_parts_and_opens_back() {
                 &noise((ts * ts * 4) as usize, 4242),
             )
             .unwrap();
-        s.modified = true;
-        let painted = bytes_of(&s.doc);
+        s.set_modified(true);
+        let painted = bytes_of(s.doc());
         write_after(&mut s, t + Duration::from_secs(1));
         let second = store.load().unwrap();
         let same = first_parts
@@ -236,19 +241,19 @@ fn the_checkpoint_of_a_big_document_shares_unchanged_parts_and_opens_back() {
         );
         // 落ちた体から、復旧のウィンドウで開く
         drop(store);
-        assert!(s.recovery.is_idle());
+        assert!(s.recovery().is_idle());
         drop(s);
         let mut s2 = session(&root);
         s2.recovery_apply(RecoveryAction::Open);
-        assert!(s2.message.starts_with("復旧しました"), "{}", s2.message);
-        assert_eq!(bytes_of(&s2.doc), painted);
+        assert!(s2.message().starts_with("復旧しました"), "{}", s2.message());
+        assert_eq!(bytes_of(s2.doc()), painted);
         // 復旧したものを保存して開き直す
         let saved = dir.0.join("復旧した.ylp");
-        s2.apply(Action::SaveProjectAs(saved.clone()));
-        assert!(s2.message.starts_with("保存しました"), "{}", s2.message);
+        s2.act(Action::SaveProjectAs(saved.clone()));
+        assert!(s2.message().starts_with("保存しました"), "{}", s2.message());
         let mut s3 = AppState::new_in(64, 64, Lang::Ja);
-        s3.apply(Action::OpenProject(saved));
-        assert_eq!(bytes_of(&s3.doc), painted);
+        s3.act(Action::OpenProject(saved));
+        assert_eq!(bytes_of(s3.doc()), painted);
     });
 }
 
@@ -269,7 +274,7 @@ fn change_outside(dir: &TempDir, path: &Path, how: &str) -> Option<PathBuf> {
             let mut other = AppState::new_in(SIZE, SIZE, Lang::Ja);
             paint_layers(&mut other, 2, 9);
             let theirs = dir.0.join("別の作品.ylp");
-            other.apply(Action::SaveProjectAs(theirs.clone()));
+            other.act(Action::SaveProjectAs(theirs.clone()));
             std::fs::rename(&theirs, path).unwrap();
             Some(path.to_path_buf())
         }
@@ -295,36 +300,36 @@ fn a_moved_deleted_or_replaced_original_still_saves_under_another_name() {
             let path = dir.0.join("元.ylp");
             let mut s = AppState::new_in(SIZE, SIZE, Lang::Ja);
             paint_layers(&mut s, 4, 3);
-            painted = bytes_of(&s.doc);
-            s.apply(Action::SaveProjectAs(path.clone()));
-            assert!(s.message.starts_with("保存しました"), "{}", s.message);
+            painted = bytes_of(s.doc());
+            s.act(Action::SaveProjectAs(path.clone()));
+            assert!(s.message().starts_with("保存しました"), "{}", s.message());
             let mut opened = AppState::new_in(64, 64, Lang::Ja);
-            opened.apply(Action::OpenProject(path.clone()));
+            opened.act(Action::OpenProject(path.clone()));
             assert!(
-                opened.message.starts_with("開きました"),
+                opened.message().starts_with("開きました"),
                 "{}",
-                opened.message
+                opened.message()
             );
             // 外で: 動かす・消す・別のファイルを同じ名前へ置き換える。動かした・置き換えたファイルには、このあと触らない
             let outside = change_outside(&dir, &path, how);
             let before = outside.as_ref().map(|p| std::fs::read(p).unwrap());
             // 変えていないセットの中身は、開いたファイルから写す。別名の保存はできて、開き直すと開いたときの中身のまま
             let to = dir.0.join("別のフォルダ").join("別名.ylp");
-            opened.apply(Action::SaveProjectAs(to.clone()));
+            opened.act(Action::SaveProjectAs(to.clone()));
             assert!(
-                opened.message.starts_with("保存しました"),
+                opened.message().starts_with("保存しました"),
                 "{how}: {}",
-                opened.message
+                opened.message()
             );
             let mut check = AppState::new_in(64, 64, Lang::Ja);
-            check.apply(Action::OpenProject(to));
+            check.act(Action::OpenProject(to));
             assert!(
-                check.message.starts_with("開きました"),
+                check.message().starts_with("開きました"),
                 "{how}: {}",
-                check.message
+                check.message()
             );
             assert_eq!(
-                bytes_of(&check.doc),
+                bytes_of(check.doc()),
                 painted,
                 "{how}: 開いたときの中身のまま"
             );
@@ -366,57 +371,57 @@ fn saving_over_a_moved_or_replaced_original_is_refused_and_leaves_nothing() {
             let path = dir.0.join("original.ylp");
             let mut s = AppState::new_in(SIZE, SIZE, Lang::Ja);
             paint_layers(&mut s, 4, 3);
-            s.apply(Action::SaveProjectAs(path.clone()));
+            s.act(Action::SaveProjectAs(path.clone()));
             let mut opened = AppState::new_in(64, 64, lang);
-            opened.apply(Action::OpenProject(path.clone()));
+            opened.act(Action::OpenProject(path.clone()));
             // 別のファイルに置き換えられた後は、外の変更として断る
             let outside = change_outside(&dir, &path, "replaced").unwrap();
             let theirs = std::fs::read(&outside).unwrap();
-            opened.modified = true;
-            opened.apply(Action::SaveProject);
+            opened.set_modified(true);
+            opened.act(Action::SaveProject);
             assert!(
-                opened.message.contains(prefix),
+                opened.message().contains(prefix),
                 "{lang:?}: {}",
-                opened.message
+                opened.message()
             );
             assert!(
-                opened.message.contains(changed),
+                opened.message().contains(changed),
                 "{lang:?}: {}",
-                opened.message
+                opened.message()
             );
             assert!(
-                !opened.message.contains(deleted),
+                !opened.message().contains(deleted),
                 "{lang:?}: {}",
-                opened.message
+                opened.message()
             );
-            assert!(opened.modified, "保存していない印のまま");
+            assert!(opened.modified(), "保存していない印のまま");
             assert_eq!(std::fs::read(&path).unwrap(), theirs);
             // 消された後は、保存先が外で消されたと断る（新しく作らない）
             std::fs::remove_file(&path).unwrap();
-            opened.apply(Action::SaveProject);
+            opened.act(Action::SaveProject);
             assert!(
-                opened.message.contains(prefix),
+                opened.message().contains(prefix),
                 "{lang:?}: {}",
-                opened.message
+                opened.message()
             );
             assert!(
-                opened.message.contains(deleted),
+                opened.message().contains(deleted),
                 "{lang:?}: {}",
-                opened.message
+                opened.message()
             );
             assert!(
-                !opened.message.contains(changed),
+                !opened.message().contains(changed),
                 "{lang:?}: {}",
-                opened.message
+                opened.message()
             );
             assert_eq!(
                 lang == Lang::En,
-                opened.message.is_ascii(),
+                opened.message().is_ascii(),
                 "{lang:?}: {}",
-                opened.message
+                opened.message()
             );
             assert!(!path.exists());
-            assert!(opened.modified, "保存していない印のまま");
+            assert!(opened.modified(), "保存していない印のまま");
             assert!(
                 save_leftovers(&dir.0).is_empty(),
                 "{:?}",
@@ -458,13 +463,13 @@ fn a_set_locked_after_recovery_is_saved_even_after_its_generation_is_discarded()
         let spec = |id: &str, name: &str, slot: u16, doc: yolu_io::DocumentSource| SetSpec {
             id: id.to_owned(),
             name: name.into(),
-            material: MaterialRef::PendingSlot(slot),
+            materials: vec![MaterialRef::PendingSlot(slot)],
             document: Some(doc),
             composites: vec![],
         };
         let project = Project::create(
             WriterInfo {
-                app: "試験".into(),
+                app: "テスト".into(),
                 version: "0".into(),
                 unity: "standalone".into(),
             },
@@ -483,25 +488,29 @@ fn a_set_locked_after_recovery_is_saved_even_after_its_generation_is_discarded()
         );
 
         let mut s = session(&root);
-        s.apply(Action::OpenProject(path.clone()));
-        assert!(s.sets.get(1).unwrap().read_only.is_some(), "{}", s.message);
+        s.act(Action::OpenProject(path.clone()));
+        assert!(
+            s.sets().get(1).unwrap().read_only.is_some(),
+            "{}",
+            s.message()
+        );
         paint_layers(&mut s, 2, 5);
         write_after(&mut s, Instant::now());
-        assert_eq!(s.recovery.checkpoints(), 1, "{}", s.message);
+        assert_eq!(s.recovery().checkpoints(), 1, "{}", s.message());
         drop(s);
 
         let mut s2 = session(&root);
         s2.recovery_apply(RecoveryAction::Open);
-        assert!(s2.message.starts_with("復旧しました"), "{}", s2.message);
+        assert!(s2.message().starts_with("復旧しました"), "{}", s2.message());
         assert!(
-            s2.sets.get(1).unwrap().read_only.is_some(),
+            s2.sets().get(1).unwrap().read_only.is_some(),
             "開いたあとで入力がそろわず読むだけ"
         );
         let held = held_dirs(&root);
         assert_eq!(held.len(), 1, "{held:?}");
         // 開いた世代を復旧のウィンドウで捨てる（落ちた実行のプールごと消える）
         s2.recovery_apply(RecoveryAction::OpenWindow);
-        let rows = &s2.recovery.window.as_ref().unwrap().rows;
+        let rows = &s2.ui().recovery_window.as_ref().unwrap().rows;
         assert_eq!(rows.len(), 1);
         let pool = rows[0].pool.clone();
         s2.recovery_apply(RecoveryAction::Select(0));
@@ -510,8 +519,8 @@ fn a_set_locked_after_recovery_is_saved_even_after_its_generation_is_discarded()
         assert!(!pool.exists(), "捨てた世代の置き場");
         // 保存して読み直すと、読むだけのセットの正本は元のまま
         let saved = dir.0.join("復旧した.ylp");
-        s2.apply(Action::SaveProjectAs(saved.clone()));
-        assert!(s2.message.starts_with("保存しました"), "{}", s2.message);
+        s2.act(Action::SaveProjectAs(saved.clone()));
+        assert!(s2.message().starts_with("保存しました"), "{}", s2.message());
         let reopened = Project::read(&std::fs::read(&saved).unwrap()).unwrap();
         let kept = reopened.sets().iter().find(|x| x.id == locked).unwrap();
         assert_eq!(kept.document.to_bytes().unwrap(), generators.to_bytes());
@@ -551,14 +560,14 @@ fn two_sets(dir: &TempDir, name: &str) -> (PathBuf, Vec<String>) {
         .map(|(k, doc)| SetSpec {
             id: ids[k].clone(),
             name: format!("セット{k}"),
-            material: MaterialRef::PendingSlot(k as u16),
+            materials: vec![MaterialRef::PendingSlot(k as u16)],
             document: Some(NativeDocument::from_core(doc).unwrap().into()),
             composites: vec![],
         })
         .collect();
     let project = Project::create(
         WriterInfo {
-            app: "試験".into(),
+            app: "テスト".into(),
             version: "0".into(),
             unity: "standalone".into(),
         },
@@ -601,16 +610,20 @@ fn a_checkpoint_is_written_from_the_opened_contents_after_the_file_moved_or_chan
                 .entries()
                 .clone();
             let mut s = session(&root);
-            s.apply(Action::OpenProject(path.clone()));
-            assert!(s.message.starts_with("開きました"), "{how}: {}", s.message);
+            s.act(Action::OpenProject(path.clone()));
+            assert!(
+                s.message().starts_with("開きました"),
+                "{how}: {}",
+                s.message()
+            );
             let outside = change_outside(&dir, &path, how);
             let theirs = outside.as_ref().map(|p| std::fs::read(p).unwrap());
             // 描くセット（0 番）だけを変える。描かないセット（1 番）の正本は、開いたファイルから写す
             paint_layers(&mut s, 2, 6);
-            let painted = bytes_of(&s.doc);
+            let painted = bytes_of(s.doc());
             write_after(&mut s, Instant::now());
-            assert_eq!(s.recovery.checkpoints(), 1, "{how}: {}", s.message);
-            let mut files = GenerationStore::new(s.recovery.session_dir().unwrap())
+            assert_eq!(s.recovery().checkpoints(), 1, "{how}: {}", s.message());
+            let mut files = GenerationStore::new(s.recovery().session_dir().unwrap())
                 .load()
                 .unwrap()
                 .files;
@@ -654,11 +667,11 @@ fn a_checkpoint_is_written_from_the_opened_contents_after_the_file_moved_or_chan
             let mut s2 = session(&root);
             s2.recovery_apply(RecoveryAction::Open);
             assert!(
-                s2.message.starts_with("復旧しました"),
+                s2.message().starts_with("復旧しました"),
                 "{how}: {}",
-                s2.message
+                s2.message()
             );
-            assert_eq!(bytes_of(&s2.doc), painted, "{how}");
+            assert_eq!(bytes_of(s2.doc()), painted, "{how}");
         }
     });
 }
@@ -689,14 +702,14 @@ fn saving_over_the_open_file_waits_for_a_running_checkpoint() {
             .map(|(k, doc)| SetSpec {
                 id: ids[k].clone(),
                 name: format!("セット{k}"),
-                material: MaterialRef::PendingSlot(k as u16),
+                materials: vec![MaterialRef::PendingSlot(k as u16)],
                 document: Some(NativeDocument::from_core(doc).unwrap().into()),
                 composites: vec![],
             })
             .collect();
         let project = Project::create(
             WriterInfo {
-                app: "試験".into(),
+                app: "テスト".into(),
                 version: "0".into(),
                 unity: "standalone".into(),
             },
@@ -707,23 +720,24 @@ fn saving_over_the_open_file_waits_for_a_running_checkpoint() {
         let path = dir.0.join("重なり.ylp");
         SaveTarget::create(&path).unwrap().save(&project).unwrap();
         let mut s = session(&root);
-        s.apply(Action::OpenProject(path.clone()));
-        assert!(s.message.starts_with("開きました"), "{}", s.message);
+        s.act(Action::OpenProject(path.clone()));
+        assert!(s.message().starts_with("開きました"), "{}", s.message());
         // 書き置きのスレッドを、開いた .ylp から読む前で止める
         let (entered, wait_entered) = std::sync::mpsc::channel();
         let entered = std::sync::Mutex::new(entered);
         let release = Arc::new(AtomicBool::new(false));
         let armed = Arc::new(AtomicBool::new(true));
         let (r, a) = (release.clone(), armed.clone());
-        s.recovery.set_fault(Some(Arc::new(move |stage: &str| {
-            if stage == "snapshot" && a.swap(false, Ordering::SeqCst) {
-                let _ = entered.lock().unwrap().send(());
-                while !r.load(Ordering::SeqCst) {
-                    std::thread::sleep(Duration::from_millis(5));
+        s.recovery_mut()
+            .set_fault(Some(Arc::new(move |stage: &str| {
+                if stage == "snapshot" && a.swap(false, Ordering::SeqCst) {
+                    let _ = entered.lock().unwrap().send(());
+                    while !r.load(Ordering::SeqCst) {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
                 }
-            }
-            Ok(())
-        })));
+                Ok(())
+            })));
         paint_layers(&mut s, 2, 6);
         let t0 = Instant::now();
         s.recovery_tick_at(t0);
@@ -739,30 +753,38 @@ fn saving_over_the_open_file_waits_for_a_running_checkpoint() {
             })
         };
         // 上書きの保存: 書き置きが終わるのを待ってから置き換える
-        s.apply(Action::SaveProject);
-        assert!(s.message.starts_with("保存しました"), "{}", s.message);
+        s.act(Action::SaveProject);
+        assert!(s.message().starts_with("保存しました"), "{}", s.message());
         releaser.join().unwrap();
         s.recovery_wait();
         assert_eq!(
-            s.recovery.checkpoints(),
+            s.recovery().checkpoints(),
             1,
             "書き置きは前のファイルを読み終えて確定する: {}",
-            s.message
+            s.message()
         );
         let mut again = AppState::new_in(64, 64, Lang::Ja);
-        again.apply(Action::OpenProject(path.clone()));
-        assert!(again.message.starts_with("開きました"), "{}", again.message);
+        again.act(Action::OpenProject(path.clone()));
+        assert!(
+            again.message().starts_with("開きました"),
+            "{}",
+            again.message()
+        );
         // 配布用に保存の写しがある間は保存しない（写しは開いたファイルの位置から読む）
-        s.apply(Action::Distribute(DistributeAction::Start));
+        s.act(Action::Distribute(DistributeAction::Start));
         s.wait_distribute();
-        assert!(s.distribute.is_open());
-        s.modified = true;
-        s.apply(Action::SaveProject);
-        assert!(s.message.contains("保存できません"), "{}", s.message);
-        assert!(s.message.contains("配布用に保存の途中"), "{}", s.message);
-        s.apply(Action::Distribute(DistributeAction::CancelWindow));
-        s.dialog_request = None;
-        s.apply(Action::SaveProject);
-        assert!(s.message.starts_with("保存しました"), "{}", s.message);
+        assert!(s.distribute().is_open());
+        s.set_modified(true);
+        s.act(Action::SaveProject);
+        assert!(s.message().contains("保存できません"), "{}", s.message());
+        assert!(
+            s.message().contains("配布用に保存の途中"),
+            "{}",
+            s.message()
+        );
+        s.act(Action::Distribute(DistributeAction::CancelWindow));
+        *s.dialog_request_mut() = None;
+        s.act(Action::SaveProject);
+        assert!(s.message().starts_with("保存しました"), "{}", s.message());
     });
 }

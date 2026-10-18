@@ -1,7 +1,7 @@
 use yolu_core::*;
 fn scene(tile: u32) -> (Document, LayerId) {
     let mut d = Document::with_tile_size(16, 16, tile).unwrap();
-    let id = d.add_layer("試験").unwrap();
+    let id = d.add_layer("テスト").unwrap();
     for y in 0..16 {
         for x in 0..16 {
             d.set_pixel(
@@ -280,7 +280,7 @@ fn affine_subset_matches_existing_premultiplied_resampler() {
 #[test]
 fn source_budget_and_later_layer_lock_leave_all_targets_unchanged() {
     let mut d = Document::with_tile_size(16, 16, 4).unwrap();
-    let id = d.add_layer("試験").unwrap();
+    let id = d.add_layer("テスト").unwrap();
     d.set_pixel(id, 3, 3, Rgba8::new(40, 80, 120, 255)).unwrap();
     d.clear_history().unwrap();
     let before = bytes(&d, id);
@@ -351,7 +351,7 @@ fn overflowing_mesh_geometry_is_rejected_instead_of_erasing_pixels() {
 fn review_mesh_preserves_rgba_outside_both_grids_and_undo() {
     for selected in [false, true] {
         let mut d = Document::with_tile_size(16, 16, 4).unwrap();
-        let id = d.add_layer("試験").unwrap();
+        let id = d.add_layer("テスト").unwrap();
         for y in 0..16 {
             for x in 0..16 {
                 d.set_pixel(

@@ -3,6 +3,7 @@
 //! Esc・フォーカスを失う・ビューが隠れるの扱いと、どの切り方でも同じ画素になることを見る。
 //! 時間の枠は 0 にして（1 フレーム 1 ダブ）、フレームごとの進みを決めて見る。
 use crate::common;
+use crate::common::drive::Drive;
 use crate::view3d_brush::{cube_view, press_with, release_with, screen_of};
 
 use common::*;
@@ -41,10 +42,10 @@ fn second_line() -> [Vec3; 3] {
 /// 小さなダブをたくさん置く設定で、時間の枠を決めて始める。
 fn view(budget: Duration) -> (H, Rect) {
     let (mut h, rect) = cube_view();
-    let state = &mut h.state_mut().state;
-    state.brush.radius = 3.0;
-    state.brush.spacing = 0.2;
-    state.view3d.input.paint_budget = Some(budget);
+    let state = h.app_mut();
+    state.brush_mut().radius = 3.0;
+    state.brush_mut().spacing = 0.2;
+    state.view3d_mut().view.input.paint_budget = Some(budget);
     (h, rect)
 }
 
@@ -57,19 +58,12 @@ fn move_all(h: &mut H, points: &[Pos2]) {
 }
 
 fn queued(h: &H) -> Option<usize> {
-    h.state()
-        .state
-        .view3d
-        .input
-        .surface
-        .as_ref()
-        .map(|s| s.queued())
+    h.view3d().view.input.surface.as_ref().map(|s| s.queued())
 }
 
 fn painted_dabs(h: &H) -> usize {
-    h.state()
-        .state
-        .view3d
+    h.view3d()
+        .view
         .input
         .surface
         .as_ref()
@@ -77,20 +71,20 @@ fn painted_dabs(h: &H) -> usize {
 }
 
 fn snapshot(h: &H) -> Vec<u8> {
-    let doc = &h.state().state.doc;
+    let doc = h.doc();
     doc.composite(doc.bounds()).unwrap()
 }
 
 fn message(h: &H) -> String {
-    h.state().state.message.clone()
+    h.message().to_owned()
 }
 
 fn stroking(h: &H) -> bool {
-    h.state().state.is_stroking()
+    h.app().is_stroking()
 }
 
 fn released(h: &H) -> bool {
-    h.state().state.view3d.input.released
+    h.view3d().view.input.released
 }
 
 /// 離してから、描いている最中でなくなるまでフレームを進める（上限つき）。進んだフレームの数を返す。
@@ -114,7 +108,7 @@ fn leave_leftover(h: &mut H, rect: Rect, corners: &[Vec3]) {
     h.step();
     assert!(released(h) && stroking(h), "離した: 確定待ち");
     assert!(queued(h).unwrap() > 20, "残りを持ち越している");
-    assert_eq!(h.state().state.doc.undo_count(), 0, "まだ確定していない");
+    assert_eq!(h.doc().undo_count(), 0, "まだ確定していない");
 }
 
 /// 基準: 時間の枠が十分に長い（1 フレームで全部塗る）ときの、1 本の線の確定後の画素。
@@ -133,7 +127,7 @@ fn whole(lines: &[&[Vec3]]) -> (Vec<u8>, usize) {
     }
     assert!(message(&h).is_empty(), "{}", message(&h));
     assert_ne!(snapshot(&h), before, "線が描けている");
-    let undo = h.state().state.doc.undo_count();
+    let undo = h.doc().undo_count();
     (snapshot(&h), undo)
 }
 
@@ -163,9 +157,9 @@ fn a_released_stroke_keeps_painting_one_dab_per_frame_and_commits_once() {
     h.step();
     assert!(released(&h), "離した印");
     assert!(stroking(&h), "残りがあるあいだは描いている最中");
-    assert_eq!(h.state().state.doc.undo_count(), 0, "まだ確定していない");
-    assert!(h.state().state.view3d.input.surface.is_some());
-    assert!(!h.state().state.can_edit(), "ほかの編集は断る");
+    assert_eq!(h.doc().undo_count(), 0, "まだ確定していない");
+    assert!(h.view3d().view.input.surface.is_some());
+    assert!(!h.app().can_edit(), "ほかの編集は断る");
     let mut before = painted_dabs(&h);
     let mut left = queued(&h).unwrap();
     assert!(left > 20);
@@ -190,9 +184,9 @@ fn a_released_stroke_keeps_painting_one_dab_per_frame_and_commits_once() {
     }
     assert!(frames > 20, "何フレームにも分けて塗った ({frames})");
     assert!(!stroking(&h));
-    assert!(h.state().state.view3d.input.surface.is_none());
+    assert!(h.view3d().view.input.surface.is_none());
     assert!(!released(&h), "確定したら印は下ろす");
-    assert_eq!(h.state().state.doc.undo_count(), 1, "1 本の線");
+    assert_eq!(h.doc().undo_count(), 1, "1 本の線");
     assert!(message(&h).is_empty(), "{}", message(&h));
     assert!(snapshot(&h) == expected, "全部を一度に塗ったときと同じ画素");
 }
@@ -217,14 +211,10 @@ fn a_press_during_the_leftover_finishes_it_and_starts_the_next_stroke() {
     let second = path(&h, rect, &second_line());
     press_with(&h, second[0], Modifiers::NONE);
     h.step();
-    assert_eq!(
-        h.state().state.doc.undo_count(),
-        1,
-        "前の線は、押した時に確定した"
-    );
+    assert_eq!(h.doc().undo_count(), 1, "前の線は、押した時に確定した");
     assert!(!released(&h), "新しいストローク");
     assert!(
-        h.state().state.view3d.input.stroke.is_some(),
+        h.view3d().view.input.stroke.is_some(),
         "押しを受けて描き始めた"
     );
     assert_eq!(painted_dabs(&h), 1, "新しいストロークの押した点のダブ");
@@ -232,7 +222,7 @@ fn a_press_during_the_leftover_finishes_it_and_starts_the_next_stroke() {
     release_with(&h, *second.last().unwrap(), Modifiers::NONE);
     h.step();
     drain(&mut h);
-    assert_eq!(h.state().state.doc.undo_count(), 2, "2 本の線");
+    assert_eq!(h.doc().undo_count(), 2, "2 本の線");
     assert!(message(&h).is_empty(), "{}", message(&h));
     assert!(snapshot(&h) == expected, "それぞれ全部塗ったときと同じ画素");
 }
@@ -255,8 +245,8 @@ fn escape_before_the_release_still_discards_the_whole_stroke() {
     h.step();
     h.run();
     assert!(!stroking(&h));
-    assert!(h.state().state.view3d.input.surface.is_none());
-    assert_eq!(h.state().state.doc.undo_count(), 0, "Undo に積まない");
+    assert!(h.view3d().view.input.surface.is_none());
+    assert_eq!(h.doc().undo_count(), 0, "Undo に積まない");
     assert!(snapshot(&h) == before, "塗った分も戻る");
 }
 
@@ -270,8 +260,8 @@ fn escape_after_the_release_keeps_the_line() {
     h.step();
     h.run();
     assert!(!stroking(&h), "確定した");
-    assert!(h.state().state.view3d.input.surface.is_none());
-    assert_eq!(h.state().state.doc.undo_count(), 1, "線は残る");
+    assert!(h.view3d().view.input.surface.is_none());
+    assert_eq!(h.doc().undo_count(), 1, "線は残る");
     assert!(snapshot(&h) == expected, "残りを塗ってから確定");
 }
 
@@ -291,7 +281,7 @@ fn losing_focus_is_a_release_and_the_rest_is_painted_in_boxed_frames() {
     assert!(queued(&h).unwrap() > 20);
     let frames = drain(&mut h);
     assert!(frames > 20, "何フレームにも分けて塗った ({frames})");
-    assert_eq!(h.state().state.doc.undo_count(), 1);
+    assert_eq!(h.doc().undo_count(), 1);
     assert!(message(&h).is_empty(), "{}", message(&h));
     assert!(snapshot(&h) == expected, "全部を一度に塗ったときと同じ画素");
 }
@@ -311,7 +301,7 @@ fn hiding_the_3d_view_during_the_leftover_finishes_the_stroke() {
     click_tab(&mut h, yolu_app::Tab::Canvas);
     h.run();
     assert!(!stroking(&h), "隠れたら確定する");
-    assert_eq!(h.state().state.doc.undo_count(), 1);
+    assert_eq!(h.doc().undo_count(), 1);
     assert!(snapshot(&h) == expected, "全部塗ってから確定");
 }
 
@@ -321,10 +311,10 @@ fn the_default_time_box_paints_the_same_stroke() {
     let (expected, _) = whole(&[&first_line()]);
     let (mut h, rect) = cube_view();
     {
-        let state = &mut h.state_mut().state;
-        state.brush.radius = 3.0;
-        state.brush.spacing = 0.2;
-        assert!(state.view3d.input.paint_budget.is_none(), "既定の枠");
+        let state = h.app_mut();
+        state.brush_mut().radius = 3.0;
+        state.brush_mut().spacing = 0.2;
+        assert!(state.view3d().view.input.paint_budget.is_none(), "既定の枠");
     }
     let points = path(&h, rect, &first_line());
     press_with(&h, points[0], Modifiers::NONE);
@@ -333,7 +323,7 @@ fn the_default_time_box_paints_the_same_stroke() {
     release_with(&h, *points.last().unwrap(), Modifiers::NONE);
     h.step();
     drain(&mut h);
-    assert_eq!(h.state().state.doc.undo_count(), 1);
+    assert_eq!(h.doc().undo_count(), 1);
     assert!(snapshot(&h) == expected);
 }
 
@@ -348,16 +338,37 @@ fn ctrl_z_right_after_the_release_undoes_the_whole_line_in_one_step() {
     h.step();
     h.run();
     assert!(!stroking(&h));
-    assert_eq!(h.state().state.doc.undo_count(), 0, "1 回で戻った");
+    assert_eq!(h.doc().undo_count(), 0, "1 回で戻った");
     assert!(snapshot(&h) == before, "線が消えた");
-    assert!(h.state().state.doc.can_redo());
+    assert!(h.doc().can_redo());
     assert!(
         !message(&h).contains("描いている"),
         "断りの文は出ない: {}",
         message(&h)
     );
-    h.state_mut().state.apply(yolu_app::state::Action::Redo);
+    h.act(yolu_app::state::Action::Redo);
     assert!(snapshot(&h) == expected, "やり直しで、全部を塗った線が戻る");
+}
+
+/// 離した直後にヒストリーの行を押しても、Ctrl+Z と同じく残りを塗って確定してから戻る（断らない・確定待ちを残さない）。
+#[test]
+fn a_history_row_right_after_the_release_settles_the_line_first() {
+    let (expected, _) = whole(&[&first_line()]);
+    let (mut h, rect) = view(Duration::ZERO);
+    let before = snapshot(&h);
+    leave_leftover(&mut h, rect, &first_line());
+    yolu_app::panels::history::go_to(h.app_mut(), 0);
+    assert!(!stroking(&h), "確定待ちを残さない");
+    assert_eq!(h.doc().undo_count(), 0, "開始位置へ戻った");
+    assert_eq!(h.doc().redo_count(), 1, "確定した線が 1 段");
+    assert!(snapshot(&h) == before, "線が消えた");
+    assert!(
+        !message(&h).contains("描いている"),
+        "断りの文は出ない: {}",
+        message(&h)
+    );
+    yolu_app::panels::history::go_to(h.app_mut(), 1);
+    assert!(snapshot(&h) == expected, "進むと、全部を塗った線が戻る");
 }
 
 /// 保存・モードの切り替え・外からの操作（MCP/CLI の入り口）も、先に確定してから通す（断らない）。
@@ -366,22 +377,22 @@ fn saving_switching_the_mode_and_outside_operations_first_finish_the_leftover() 
     for what in ["save", "mode", "outside"] {
         let (mut h, rect) = view(Duration::ZERO);
         leave_leftover(&mut h, rect, &first_line());
-        let state = &mut h.state_mut().state;
+        let state = h.app_mut();
         match what {
-            "save" => state.apply(yolu_app::state::Action::SaveProject),
+            "save" => state.act(yolu_app::state::Action::SaveProject),
             "mode" => {
                 assert!(
                     state.set_mode(yolu_app::mode::EditorMode::Edit),
                     "切り替わる"
                 );
-                assert_eq!(state.mode, yolu_app::mode::EditorMode::Edit);
+                assert_eq!(state.mode(), yolu_app::mode::EditorMode::Edit);
             }
             _ => {
                 let _ = yolu_app::ops_host::AppHost::new(state);
             }
         }
         assert!(!stroking(&h), "{what}: 先に確定した");
-        assert_eq!(h.state().state.doc.undo_count(), 1, "{what}");
+        assert_eq!(h.doc().undo_count(), 1, "{what}");
         assert!(
             !message(&h).contains("描いている"),
             "{what}: 断りの文は出ない: {}",
@@ -395,7 +406,7 @@ fn saving_switching_the_mode_and_outside_operations_first_finish_the_leftover() 
 fn the_wheel_right_after_the_release_finishes_the_line_and_zooms() {
     let (mut h, rect) = view(Duration::ZERO);
     leave_leftover(&mut h, rect, &first_line());
-    let distance = h.state().state.view3d.camera.distance;
+    let distance = h.view3d().view.camera.distance;
     h.event(Event::PointerMoved(rect.center()));
     h.step();
     h.event(Event::MouseWheel {
@@ -407,9 +418,9 @@ fn the_wheel_right_after_the_release_finishes_the_line_and_zooms() {
     h.step();
     h.run();
     assert!(!stroking(&h), "確定した");
-    assert_eq!(h.state().state.doc.undo_count(), 1);
+    assert_eq!(h.doc().undo_count(), 1);
     assert_ne!(
-        h.state().state.view3d.camera.distance,
+        h.view3d().view.camera.distance,
         distance,
         "ホイールが効いた"
     );
@@ -421,11 +432,9 @@ fn a_hold_tool_key_right_after_the_release_switches_temporarily() {
     use yolu_app::state::{Action, Tool};
     use yolu_app::toolkeys::ToolKeyMode;
     let (mut h, rect) = view(Duration::ZERO);
-    h.state_mut()
-        .state
-        .apply(Action::ToolKeyMode("tool.eraser", ToolKeyMode::Hold));
+    h.act(Action::ToolKeyMode("tool.eraser", ToolKeyMode::Hold));
     h.run();
-    let previous = h.state().state.tool;
+    let previous = h.tool();
     leave_leftover(&mut h, rect, &first_line());
     h.event(Event::Key {
         key: Key::E,
@@ -436,9 +445,9 @@ fn a_hold_tool_key_right_after_the_release_switches_temporarily() {
     });
     h.step();
     assert!(!stroking(&h), "確定した");
-    assert_eq!(h.state().state.doc.undo_count(), 1);
-    assert_eq!(h.state().state.tool, Tool::Eraser, "消しゴムになった");
-    assert!(h.state().state.temp_tool.is_active(), "一時の切り替え");
+    assert_eq!(h.doc().undo_count(), 1);
+    assert_eq!(h.tool(), Tool::Eraser, "消しゴムになった");
+    assert!(h.temp_tool().is_active(), "一時の切り替え");
     h.event(Event::Key {
         key: Key::E,
         physical_key: None,
@@ -448,7 +457,7 @@ fn a_hold_tool_key_right_after_the_release_switches_temporarily() {
     });
     h.step();
     h.run();
-    assert_eq!(h.state().state.tool, previous, "離すと戻る");
+    assert_eq!(h.tool(), previous, "離すと戻る");
 }
 
 /// 3D ビューの外（パネル・メニューのある所）を押しても、描いている最中の判定で黙って効かなくならないよう、押しの前に確定する
@@ -470,7 +479,7 @@ fn a_press_anywhere_in_the_window_finishes_the_leftover_but_only_moving_does_not
     });
     h.step();
     assert!(!stroking(&h), "押したら、先に確定した");
-    assert_eq!(h.state().state.doc.undo_count(), 1);
+    assert_eq!(h.doc().undo_count(), 1);
 }
 
 /// 閉じる流れは、保存していない変更を聞く前に確定する。
@@ -483,10 +492,10 @@ fn closing_finishes_the_leftover_before_asking_about_unsaved_changes() {
     let seen: Rc<Cell<Option<(bool, usize)>>> = Rc::default();
     let record = seen.clone();
     h.state_mut().answer_close_question(move |state| {
-        record.set(Some((state.is_stroking(), state.doc.undo_count())));
+        record.set(Some((state.is_stroking(), state.doc().undo_count())));
         false
     });
-    h.state_mut().state.quit = true;
+    h.set_quit(true);
     h.step();
     assert_eq!(seen.get(), Some((false, 1)), "聞くときには確定している");
 }
@@ -507,7 +516,7 @@ fn a_press_on_the_2d_canvas_finishes_the_3d_leftover_and_draws() {
     let at = canvas_rect(&h).center();
     drag(&mut h, &[at, at + egui::vec2(40.0, 0.0)]);
     assert!(!stroking(&h));
-    assert_eq!(h.state().state.doc.undo_count(), 2, "3D の線と 2D の線");
+    assert_eq!(h.doc().undo_count(), 2, "3D の線と 2D の線");
     assert!(
         canvas_pixel(&h, at + egui::vec2(20.0, 0.0))[3] > 0,
         "2D の線が描かれた"
@@ -527,9 +536,9 @@ fn finishing_in_place_paints_the_whole_rest_before_committing() {
     h.step();
     assert!(released(&h) && stroking(&h));
     assert!(queued(&h).unwrap() > 20);
-    yolu_app::canvas::finish_stroke(&mut h.state_mut().state, false);
+    yolu_app::canvas::finish_stroke(h.app_mut(), false);
     assert!(!stroking(&h), "その場で確定した");
-    assert_eq!(h.state().state.doc.undo_count(), 1);
+    assert_eq!(h.doc().undo_count(), 1);
     assert!(snapshot(&h) == expected, "残りを全部塗ってから確定");
     assert!(message(&h).is_empty(), "{}", message(&h));
 }
@@ -566,12 +575,12 @@ fn lifting_the_pen_is_a_release_and_the_rest_is_painted_in_boxed_frames() {
         if budget == Duration::ZERO {
             assert!(released(&h) && stroking(&h), "ペンを離した");
             assert!(queued(&h).unwrap() > 20, "残りを持ち越している");
-            assert_eq!(h.state().state.doc.undo_count(), 0, "まだ確定していない");
+            assert_eq!(h.doc().undo_count(), 0, "まだ確定していない");
             frames = drain(&mut h);
         }
         h.run();
         assert!(!stroking(&h));
-        assert_eq!(h.state().state.doc.undo_count(), 1, "1 本の線");
+        assert_eq!(h.doc().undo_count(), 1, "1 本の線");
         assert!(message(&h).is_empty(), "{}", message(&h));
         (snapshot(&h), frames)
     };

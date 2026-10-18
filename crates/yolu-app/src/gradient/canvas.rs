@@ -14,7 +14,7 @@ pub fn press(app: &mut AppState, view: &CanvasView, pos: Pos2, source: StrokeSou
     if app.is_stroking()
         || app.tool != Tool::Gradient
         || app.gradient.drag.is_some()
-        || app.view3d.input.draft.is_some()
+        || app.view3d.view.input.draft.is_some()
     {
         return;
     }
@@ -91,11 +91,7 @@ pub fn pen_sample(
 pub fn cancel(app: &mut AppState) -> bool {
     let any = app.gradient_cancel_drag();
     if any {
-        app.info(
-            Source::Gradient,
-            app.lang
-                .pick("グラデーションをやめました。", "Gradient cancelled."),
-        );
+        app.info(Source::Gradient, app.lang.t("gradient-gradient-cancelled"));
     }
     any
 }

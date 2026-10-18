@@ -44,6 +44,7 @@ use std::io::{Seek, Write};
 use std::sync::atomic::AtomicBool;
 use yolu_core::curve::Curve;
 use yolu_core::generator::Ramp;
+use yolu_core::Reason;
 use yolu_core::{
     AdjustmentSettings, AdjustmentType, BalanceRange, Channel, ChannelKind, CoreError,
     Document as CoreDocument, EffectSettings, GradientMap, Layer as CoreLayer, LayerId,
@@ -106,7 +107,7 @@ impl ExportControl<'_> {
 pub struct FillSources {
     /// 画像を読む。
     pub image: bool,
-    /// グラデーション（ワールドスペースなど。ランプ付きの形のグラデーション）。
+    /// グラデーション（ワールドスペースなど。ランプ付きの形のグラデーションと、点のグラデーション）。
     pub gradient: bool,
     /// デカール。
     pub decal: bool,
@@ -119,7 +120,7 @@ impl FillSources {
         let decal = l.is_decal() && l.fill_value(c).is_some();
         Self {
             image,
-            gradient: l.fill_gradient(c).is_some(),
+            gradient: l.fill_gradient(c).is_some() || l.fill_points(c).is_some(),
             decal,
             projection: (image || decal).then(|| l.projection().mode),
         }
@@ -1100,6 +1101,8 @@ pub fn plan_export(
     options: &ExportOptions,
     ctl: &ExportControl,
 ) -> Result<ExportPlan> {
+    let wrapped = layer_sets_as_groups(d, options.channel)?;
+    let d = wrapped.as_ref().unwrap_or(d);
     precheck(d, options.channel, &ctl.limits())?;
     if ctl
         .cancel
@@ -1237,10 +1240,12 @@ impl ExportPlan {
         if let Some(b) = self.blockers.first() {
             return Err(Error::InvalidData(b.message()));
         }
+        let wrapped = layer_sets_as_groups(d, self.options.channel)?;
         if self.rounded.is_empty() {
-            Ok(None)
+            Ok(wrapped)
         } else {
-            Ok(Some(d.with_adjustments_replaced(&self.rounded)?))
+            let base = wrapped.as_ref().unwrap_or(d);
+            Ok(Some(base.with_adjustments_replaced(&self.rounded)?))
         }
     }
 
@@ -1562,8 +1567,8 @@ impl<'a> Builder<'a> {
     /// レイヤーが PSD で表示か。そのチャンネルで合成に出ないレイヤー（有効でない・面や値が無い・効かない調整）は隠して書く。
     fn visible(&self, l: &CoreLayer, baked_group: bool) -> bool {
         match l.kind() {
-            // 画素にしたグループは、合成が落とす（中身が無い・不透明度 0）なら隠す。残すと、クリッピングの組に入って、下地のグループの
-            // 通過（組が無いときだけ通過）を妨げる
+            // 画素にしたグループは、合成が落とす（中身が無い・不透明度 0）なら隠す（隠しても、下地のグループはクリッピングされたレイヤーが
+            // あるので分離のまま。合成も同じ）
             CoreKind::Group if baked_group => {
                 l.visible() && self.d.contributes(l.id(), self.c).unwrap_or(true)
             }
@@ -1995,5 +2000,41 @@ pub fn export_blockers(d: &CoreDocument) -> Vec<Blocker> {
 /// 厳密な書き出し（Color）: そのまま書けないもの（焼く・丸める・落とす）が 1 つでもあれば、レイヤーの名前と理由で断る。使う上限の値だけ `ctl` から
 /// （既定は C# と対の固定の上限）。振る舞い（何を断るか）は変わらない。
 pub(super) fn from_core_strict(d: &CoreDocument, ctl: &ExportControl) -> Result<Document> {
+    let wrapped = layer_sets_as_groups(d, Channel::Color)?;
+    let d = wrapped.as_ref().unwrap_or(d);
     Ok(Builder::new(d, &ExportOptions::color(), ctl, true)?.run(Compression::Raw)?)
+}
+
+/// レイヤーセットが 2 つ以上なら、レイヤーセットごとに一番上の段のグループ（分離）へ包んだ写し。グループの名前はレイヤーセットの名前で、空なら
+/// `Set <並びの番号（1 から）>`。表示するのは、書き出すチャンネルを出力しているレイヤーセットのグループだけ（PSD の合成が最終の結果と同じになる）。
+/// 書き出すチャンネルの出力の割り当てが無いときは、最終の結果がそのチャンネルの既定値なので、グループは全部非表示にして、一番下に既定値で塗った
+/// 表示のレイヤー（`Default`）を足す。割り当てがあってレイヤーセットが 1 つなら None（今の文書のまま書く。レイヤーセットの無かったときと同じバイト列）。
+fn layer_sets_as_groups(d: &CoreDocument, channel: Channel) -> Result<Option<CoreDocument>> {
+    let sets = d.layer_sets();
+    let output = d.channel_output(channel)?;
+    if sets.len() < 2 && output.is_some() {
+        return Ok(None);
+    }
+    let names: Vec<String> = sets
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            if s.name.is_empty() {
+                format!("Set {}", i + 1)
+            } else {
+                s.name.clone()
+            }
+        })
+        .collect();
+    let visible: Vec<bool> = sets.iter().map(|s| Some(s.id) == output).collect();
+    let mut wrapped = d.layer_sets_as_groups(&names, &visible)?;
+    if output.is_none() {
+        let default = d
+            .channel_info(channel)
+            .ok_or(CoreError::InvalidArgument(Reason::ChannelNotInProject))?
+            .default;
+        let fill = wrapped.add_fill_layer("Default", &[(channel, default)], None)?;
+        wrapped.move_layer(fill, 0)?;
+    }
+    Ok(Some(wrapped))
 }

@@ -26,11 +26,11 @@ pub const KINDS: [RulerKind; 5] = [
 /// 種類の名前。
 pub fn kind_name(lang: Lang, kind: RulerKind) -> &'static str {
     match kind {
-        RulerKind::Line => lang.pick("直線定規", "Straight Ruler"),
-        RulerKind::Parallel => lang.pick("平行線", "Parallel"),
-        RulerKind::Concentric => lang.pick("同心円", "Concentric"),
-        RulerKind::Perspective => lang.pick("パース", "Perspective"),
-        RulerKind::Symmetry => lang.pick("対称", "Symmetry"),
+        RulerKind::Line => lang.t("rulers-straight-ruler"),
+        RulerKind::Parallel => lang.t("rulers-parallel"),
+        RulerKind::Concentric => lang.t("rulers-concentric"),
+        RulerKind::Perspective => lang.t("rulers-perspective"),
+        RulerKind::Symmetry => lang.t("rulers-symmetry"),
     }
 }
 
@@ -53,7 +53,7 @@ pub fn snap_buttons(ui: &mut Ui, app: &mut AppState, straight: Rect, special: Re
             straight,
             "rulers.snap",
             "snap_ruler",
-            lang.pick("定規にスナップ", "Snap to Ruler"),
+            lang.t("rulers-snap-to-ruler"),
             RulerAction::ToggleSnapRuler,
             app.rulers.snap_ruler,
         ),
@@ -61,7 +61,7 @@ pub fn snap_buttons(ui: &mut Ui, app: &mut AppState, straight: Rect, special: Re
             special,
             "rulers.snap_special",
             "snap_special",
-            lang.pick("特殊定規にスナップ", "Snap to Special Ruler"),
+            lang.t("rulers-snap-to-special-ruler"),
             RulerAction::ToggleSnapSpecial,
             app.rulers.snap_special,
         ),
@@ -99,8 +99,8 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, mut x: f32) {
     }
     if app.rulers.kind == RulerKind::Perspective {
         for (two, id, name) in [
-            (false, "ruler.one", lang.pick("1 点", "1 Point")),
-            (true, "ruler.two", lang.pick("2 点", "2 Points")),
+            (false, "ruler.one", lang.t("rulers-1-point")),
+            (true, "ruler.two", lang.t("rulers-2-points")),
         ] {
             if button(ui, id, name, app.rulers.two_points == two, enabled) {
                 app.rulers.two_points = two;
@@ -112,7 +112,7 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, mut x: f32) {
     if button(
         ui,
         "ruler.delete",
-        lang.pick("削除", "Delete"),
+        lang.t("rulers-delete"),
         false,
         can_delete,
     ) {
@@ -158,14 +158,14 @@ pub fn props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Cont
         let items = [
             ChoiceButton {
                 id: "props.ruler.one",
-                label: lang.pick("1 点", "1 Point"),
+                label: lang.t("rulers-1-point"),
                 selected: !app.rulers.two_points,
                 enabled,
                 tooltip: None,
             },
             ChoiceButton {
                 id: "props.ruler.two",
-                label: lang.pick("2 点", "2 Points"),
+                label: lang.t("rulers-2-points"),
                 selected: app.rulers.two_points,
                 enabled,
                 tooltip: None,
@@ -181,7 +181,7 @@ pub fn props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Cont
             ui,
             rows,
             "props.ruler.lines",
-            lang.pick("線の本数", "Lines"),
+            lang.t("rulers-lines"),
             app.rulers.lines as f32,
             (2.0, 16.0),
             NumberFormat::int(""),
@@ -194,7 +194,7 @@ pub fn props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Cont
             ui,
             rows,
             "props.ruler.line_symmetry",
-            lang.pick("線対称", "Line Symmetry"),
+            lang.t("rulers-line-symmetry"),
             line_symmetry,
             None,
             enabled,
@@ -206,7 +206,7 @@ pub fn props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Cont
         ui,
         rows,
         "props.ruler.angle_step",
-        lang.pick("角度の刻み", "Angle Step"),
+        lang.t("rulers-angle-step"),
         app.rulers.angle_step,
         None,
         enabled,
@@ -218,7 +218,7 @@ pub fn props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Cont
             ui,
             rows,
             "props.ruler.step",
-            lang.pick("刻み", "Step"),
+            lang.t("rulers-step"),
             app.rulers.step as f32,
             (*STEP_RANGE.start() as f32, *STEP_RANGE.end() as f32),
             NumberFormat::int("°"),
@@ -232,7 +232,7 @@ pub fn props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Cont
         ui,
         rows,
         "props.ruler.on_layer",
-        lang.pick("編集レイヤーに作成", "Create on Edit Layer"),
+        lang.t("rulers-create-on-edit-layer"),
         app.rulers.on_layer,
         None,
         enabled,
@@ -241,7 +241,7 @@ pub fn props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Cont
     }
     let delete = [ChoiceButton {
         id: "props.ruler.delete",
-        label: lang.pick("削除", "Delete"),
+        label: lang.t("rulers-delete"),
         selected: false,
         enabled: enabled && app.has_ruler(),
         tooltip: None,
@@ -252,13 +252,13 @@ pub fn props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Cont
     for (id, name, value, op) in [
         (
             "props.ruler.snap",
-            lang.pick("定規にスナップ", "Snap to Ruler"),
+            lang.t("rulers-snap-to-ruler"),
             app.rulers.snap_ruler,
             RulerAction::ToggleSnapRuler,
         ),
         (
             "props.ruler.snap_special",
-            lang.pick("特殊定規にスナップ", "Snap to Special Ruler"),
+            lang.t("rulers-snap-to-special-ruler"),
             app.rulers.snap_special,
             RulerAction::ToggleSnapSpecial,
         ),

@@ -6,7 +6,7 @@
 //! 変えたセットは履歴を消す（元へ戻せない）。
 
 use super::{
-    groups_of, new_set_document, size_text, unique, used_channels, DraftOp, NpWindow, Prep,
+    groups_of, new_starter_set_document, size_text, unique, used_channels, DraftOp, NpWindow, Prep,
     SetDraft, MAX_NAME, MAX_SETS, RESOLUTIONS,
 };
 use crate::engine::{CanvasResampling, Document, PreparedResize};
@@ -59,10 +59,10 @@ impl Plan {
 /// 再標本化の名前。
 pub fn resampling_name(lang: Lang, method: Option<CanvasResampling>) -> &'static str {
     match method {
-        Some(CanvasResampling::Bilinear) => lang.pick("バイリニア", "Bilinear"),
-        Some(CanvasResampling::Area) => lang.pick("面積平均", "Area average"),
-        Some(CanvasResampling::Nearest) => lang.pick("ニアレストネイバー", "Nearest"),
-        None => lang.pick("自動", "Automatic"),
+        Some(CanvasResampling::Bilinear) => lang.t("newproject-bilinear"),
+        Some(CanvasResampling::Area) => lang.t("newproject-area-average"),
+        Some(CanvasResampling::Nearest) => lang.t("newproject-nearest"),
+        None => lang.t("newproject-automatic"),
     }
 }
 
@@ -109,24 +109,30 @@ pub(super) fn draft_op(app: &AppState, win: &mut NpWindow, i: usize, op: DraftOp
                 }
             }
         }
-        DraftOp::Material(group) => {
-            let taken = group.is_some_and(|g| {
-                win.drafts
-                    .iter()
-                    .enumerate()
-                    .any(|(j, d)| j != i && d.material == Some(g))
-            });
-            if taken {
+        DraftOp::Material(group, on) => {
+            let Some(g) = groups.get(group) else {
+                return;
+            };
+            if i >= win.drafts.len() {
                 return;
             }
-            if let Some(d) = win.drafts.get_mut(i) {
-                match group.and_then(|g| groups.get(g)) {
-                    Some(g) => {
-                        d.material = Some(g.index);
-                        d.key = g.key.clone();
-                    }
-                    None => d.material = None,
+            if on {
+                if win.drafts[i].paints(group) {
+                    return;
                 }
+                // ほかの行のマテリアルなら、そこから移す（1 つのマテリアルは 1 つのセットだけ。移した先の行が空になっても行は残す）
+                for d in &mut win.drafts {
+                    d.keys.retain(|(_, m)| *m != Some(group));
+                }
+                let d = &mut win.drafts[i];
+                // マテリアルなしの行の仮のスロットの鍵は、本当のマテリアルを選んだら外す（残すと、保存が形式 9 になり、モデルを替えたときに
+                // スロットの番号で別のマテリアルへ付く）。全部外したときの仮の鍵は `set_keys` が付け直す。外すのは組の番号の付いていない
+                // 仮の鍵だけ（`rematch_drafts` がスロットの番号で組へ付けた仮の鍵は、画面ではそのマテリアルのチェックとして見えている）
+                d.keys
+                    .retain(|(k, m)| !(m.is_none() && matches!(k, MaterialRef::PendingSlot(_))));
+                d.keys.push((g.key.clone(), Some(group)));
+            } else {
+                win.drafts[i].keys.retain(|(_, m)| *m != Some(group));
             }
         }
         DraftOp::Size(w, h) => {
@@ -140,30 +146,66 @@ pub(super) fn draft_op(app: &AppState, win: &mut NpWindow, i: usize, op: DraftOp
     }
 }
 
-/// 足すセットの下書きを作る（`group` がマテリアルの組、None ならどの組にも付けない）。
+/// 新規: マテリアルの組をテクスチャセットにする・しない（`NpAction::Material`）。入れるなら、どの行にも無いときだけ、その組だけの行を
+/// マテリアルの順の所に足す（上限まで）。外すなら、その組を描く行から外し、空になった行は消す。どの行にもマテリアルが残らなくなるなら外さない。
+pub(super) fn choose_new_material(app: &AppState, win: &mut NpWindow, group: usize, on: bool) {
+    let groups = win.groups(app);
+    win.error = None;
+    let Some(g) = groups.get(group) else {
+        return;
+    };
+    let Some(at) = win.drafts.iter().position(|d| d.paints(group)) else {
+        if on {
+            if win.drafts.len() >= MAX_SETS {
+                win.error = Some(crate::lang::refusals::set_limit(app.lang));
+                return;
+            }
+            let draft = new_draft(app, win, Some(g));
+            let at = win
+                .drafts
+                .iter()
+                .position(|d| d.materials().first().is_some_and(|m| *m > group))
+                .unwrap_or(win.drafts.len());
+            win.drafts.insert(at, draft);
+        }
+        return;
+    };
+    if on {
+        return;
+    }
+    let left = win
+        .drafts
+        .iter()
+        .map(|d| d.materials().len())
+        .sum::<usize>();
+    if left <= 1 {
+        return;
+    }
+    win.drafts[at].keys.retain(|(_, m)| *m != Some(group));
+    if win.drafts[at].keys.is_empty() && win.drafts.len() > 1 {
+        win.drafts.remove(at);
+    }
+}
+
+/// 足すセットの下書きを作る（`group` がマテリアルの組、None ならどの組にも付けない = マテリアルなし）。大きさは今の解像度。
 fn new_draft(app: &AppState, win: &NpWindow, group: Option<&super::Group>) -> SetDraft {
     let lang = app.lang;
     let base = match group {
         Some(g) => g.name.clone(),
         None => format!(
             "{} {}",
-            lang.pick("テクスチャセット", "Texture Set"),
+            lang.t("newproject-texture-set"),
             win.drafts.len() + 1
         ),
     };
     let name = unique(&base, win.drafts.iter().map(|d| d.name.as_str()));
-    let key = match group {
-        Some(g) => g.key.clone(),
-        None => {
-            let also: Vec<&MaterialRef> = win.drafts.iter().map(|d| &d.key).collect();
-            MaterialRef::PendingSlot(app.unbound_pending_slot(&also))
-        }
-    };
     SetDraft {
         uid: None,
         name,
-        material: group.map(|g| g.index),
-        key,
+        keys: group
+            .map(|g| (g.key.clone(), Some(g.index)))
+            .into_iter()
+            .collect(),
         size: (win.resolution, win.resolution),
         current: (0, 0),
         read_only: false,
@@ -180,7 +222,7 @@ pub(super) fn add_draft(app: &AppState, win: &mut NpWindow) {
     let groups = win.groups(app);
     let free = groups
         .iter()
-        .find(|g| win.drafts.iter().all(|d| d.material != Some(g.index)));
+        .find(|g| win.drafts.iter().all(|d| !d.paints(g.index)));
     let draft = new_draft(app, win, free);
     win.drafts.push(draft);
 }
@@ -190,7 +232,7 @@ pub(super) fn add_unused(app: &AppState, win: &mut NpWindow) {
     win.error = None;
     let groups = win.groups(app);
     for g in &groups {
-        if win.drafts.iter().all(|d| d.material != Some(g.index)) {
+        if win.drafts.iter().all(|d| !d.paints(g.index)) {
             if win.drafts.len() >= MAX_SETS {
                 // 上限で足せなかったマテリアルがある
                 win.error = Some(crate::lang::refusals::set_limit(app.lang));
@@ -206,11 +248,79 @@ pub(super) fn add_unused(app: &AppState, win: &mut NpWindow) {
 pub fn unused_groups(app: &AppState, win: &NpWindow) -> usize {
     win.groups(app)
         .iter()
-        .filter(|g| win.drafts.iter().all(|d| d.material != Some(g.index)))
+        .filter(|g| win.drafts.iter().all(|d| !d.paints(g.index)))
         .count()
 }
 
+/// 下書きのマテリアルの鍵を、セットの鍵にする（今のモデルの組に付いた鍵はその組の鍵、付いていない鍵はそのまま）。空なら、どのマテリアルにも
+/// 付けない仮のスロットの番号（`placed` は、ここまでに並べたセットの鍵）。
+fn set_keys(
+    app: &AppState,
+    d: &SetDraft,
+    groups: &[super::Group],
+    placed: &[MaterialRef],
+) -> Vec<MaterialRef> {
+    let keys: Vec<MaterialRef> = d
+        .keys
+        .iter()
+        .map(|(k, g)| {
+            g.and_then(|g| groups.get(g))
+                .map_or_else(|| k.clone(), |g| g.key.clone())
+        })
+        .collect();
+    if keys.is_empty() {
+        let also: Vec<&MaterialRef> = placed.iter().collect();
+        vec![MaterialRef::PendingSlot(app.unbound_pending_slot(&also))]
+    } else {
+        keys
+    }
+}
+
+/// モデルに無いマテリアルの鍵だけを持つセットの数（どのマテリアルにも付けないセット = マテリアルなしは数えない）。
+fn missing_sets(app: &AppState) -> usize {
+    app.session
+        .sets
+        .iter()
+        .filter(|s| {
+            s.bound.is_empty()
+                && s.materials
+                    .iter()
+                    .any(|m| !matches!(m, MaterialRef::PendingSlot(_)))
+        })
+        .count()
+}
+
+/// 下書きの描くマテリアルの番号（今のモデルの組の番号。昇順）。
+fn bound_of(d: &SetDraft, groups: &[super::Group]) -> Vec<u32> {
+    d.materials()
+        .into_iter()
+        .filter(|g| *g < groups.len())
+        .map(|g| g as u32)
+        .collect()
+}
+
 // ───────── 計画 ─────────
+
+/// 計画の行の真ん中の文字（「→ 割り当てるマテリアルの名前」）と、モデルに無いことの警告の印。
+fn plan_middle(lang: crate::lang::Lang, d: &SetDraft, groups: &[super::Group]) -> (String, bool) {
+    let names: Vec<&str> = d
+        .materials()
+        .into_iter()
+        .filter_map(|g| groups.get(g))
+        .map(|g| g.name.as_str())
+        .collect();
+    if names.is_empty() {
+        (
+            format!("→ {}", lang.t("newproject-not-in-this-model")),
+            true,
+        )
+    } else {
+        (
+            format!("→ {}", crate::sets::materials_label(lang, &names, |_| true)),
+            false,
+        )
+    }
+}
 
 /// 下書きを検めて、適用の計画（消す・大きさ・モデル）と確かめの一覧を作る。断るときは理由。何も変えない。
 pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
@@ -220,45 +330,30 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
     }
     let drafts = &win.drafts;
     if drafts.is_empty() {
-        return Err(lang
-            .pick(
-                "プロジェクトには少なくとも 1 つのテクスチャセットが要ります",
-                "A project keeps at least one texture set",
-            )
-            .into());
+        return Err(lang.t("newproject-a-project-keeps-at-least").into());
     }
     if drafts.len() > MAX_SETS {
         return Err(crate::lang::refusals::set_limit(lang));
     }
     if win.model.is_some() && !matches!(win.prep, Prep::Ready { .. }) {
-        return Err(lang
-            .pick("モデルを準備できていません", "The model is not ready")
-            .into());
+        return Err(lang.t("newproject-the-model-is-not-ready").into());
     }
     let mut seen_names: Vec<String> = Vec::new();
     for d in drafts {
         let Some(name) = clean_name(&d.name) else {
-            return Err(lang.pick(
-                format!("テクスチャセットの名前は 1〜{MAX_NAME} 文字で、制御文字は使えません"),
-                format!("A texture set name is 1–{MAX_NAME} characters with no control characters"),
+            return Err(lang.f(
+                "newproject-a-texture-set-name-is",
+                &[("max_name", &MAX_NAME)],
             ));
         };
         let upper = name.to_uppercase();
         if seen_names.contains(&upper) {
-            return Err(lang.pick(
-                format!("「{name}」という名前のセットが 2 つあります"),
-                format!("Two texture sets are named {name}"),
-            ));
+            return Err(lang.f("newproject-two-texture-sets-are-named", &[("name", &name)]));
         }
         seen_names.push(upper);
         if let Some(uid) = d.uid {
-            if app.sets.index_of(uid).is_none() {
-                return Err(lang
-                    .pick(
-                        "このプロジェクトに無いセットです",
-                        "The project has no such texture set",
-                    )
-                    .into());
+            if app.session.sets.index_of(uid).is_none() {
+                return Err(lang.t("newproject-the-project-has-no-such").into());
             }
         }
         let standard = d.size.0 == d.size.1 && RESOLUTIONS.contains(&d.size.0);
@@ -267,10 +362,7 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
         }
         if d.resizes() {
             if d.read_only {
-                return Err(lang.pick(
-                    format!("読むだけのセット「{}」は大きさを変えられません", d.name),
-                    format!("The read-only texture set “{}” cannot be resized", d.name),
-                ));
+                return Err(lang.f("newproject-the-read-only-texture-set", &[("name", &d.name)]));
             }
             if !standard {
                 return Err(crate::lang::refusals::set_size(lang));
@@ -279,24 +371,17 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
     }
     // 同じマテリアルを 2 つのセットが描かない
     for (i, a) in drafts.iter().enumerate() {
-        if let Some(group) = a.material {
-            if let Some(b) = drafts[i + 1..].iter().find(|b| b.material == Some(group)) {
-                return Err(lang.pick(
-                    format!(
-                        "「{}」と「{}」が同じマテリアルを描きます",
-                        a.name.trim(),
-                        b.name.trim()
-                    ),
-                    format!(
-                        "“{}” and “{}” paint the same material",
-                        a.name.trim(),
-                        b.name.trim()
-                    ),
+        for group in a.materials() {
+            if let Some(b) = drafts[i + 1..].iter().find(|b| b.paints(group)) {
+                return Err(lang.f(
+                    "newproject-and-paint-the-same-material",
+                    &[("name", &a.name.trim()), ("name_2", &b.name.trim())],
                 ));
             }
         }
     }
     let removed: Vec<u32> = app
+        .session
         .sets
         .iter()
         .map(|s| s.uid)
@@ -334,6 +419,7 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
         kinds.push(ConfirmKind::Removal);
         for uid in &removed {
             let name = app
+                .session
                 .sets
                 .by_uid(*uid)
                 .map(|s| s.name.clone())
@@ -341,7 +427,7 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
             rows.push(PlanRow {
                 left: name,
                 middle: String::new(),
-                right: lang.pick("消す", "Remove").into(),
+                right: lang.t("newproject-remove").into(),
                 warning: true,
             });
         }
@@ -364,7 +450,7 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
     if let Some(name) = &model {
         kinds.push(ConfirmKind::Model);
         // 前のモデルが無いときは、前の名前を出さず新しいモデルの名前だけ（「追加」）
-        let was = app.model.as_ref().map(|m| m.name.clone());
+        let was = app.session.model.as_ref().map(|m| m.name.clone());
         rows.push(PlanRow {
             left: match (&was, win.reload) {
                 (Some(was), false) => format!("{was} → {name}"),
@@ -372,11 +458,11 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
             },
             middle: String::new(),
             right: if win.reload {
-                lang.pick("読み直す", "Reload").into()
+                lang.t("newproject-reload").into()
             } else if was.is_none() {
-                lang.pick("追加", "Add").into()
+                lang.t("newproject-add").into()
             } else {
-                lang.pick("差し替え", "Change").into()
+                lang.t("newproject-change").into()
             },
             warning: false,
         });
@@ -387,7 +473,7 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
             let print = yolu_core::paths::fingerprint(model.geometry());
             let unbound = drafts
                 .iter()
-                .filter_map(|d| d.uid.and_then(|uid| app.sets.index_of(uid)))
+                .filter_map(|d| d.uid.and_then(|uid| app.session.sets.index_of(uid)))
                 .flat_map(|i| app.set_doc(i).layers())
                 .filter(|l| {
                     matches!(l.path(), Some(yolu_core::LayerPath::Surface(p)) if p.model_fingerprint != print)
@@ -395,23 +481,15 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
                 .count();
             if unbound > 0 {
                 rows.push(PlanRow {
-                    left: lang
-                        .pick("3D のパスレイヤー", "Layers with 3D paths")
-                        .into(),
+                    left: lang.t("newproject-layers-with-3d-paths").into(),
                     middle: unbound.to_string(),
-                    right: lang.pick("画素だけ残る", "Pixels stay").into(),
+                    right: lang.t("newproject-pixels-stay").into(),
                     warning: true,
                 });
             }
         }
         for d in drafts.iter().filter(|d| d.uid.is_some()) {
-            let (middle, warning) = match d.material.and_then(|g| groups.get(g)) {
-                Some(g) => (format!("→ {}", g.name), false),
-                None => (
-                    format!("→ {}", lang.pick("モデルに無い", "not in this model")),
-                    true,
-                ),
-            };
+            let (middle, warning) = plan_middle(lang, d, &groups);
             rows.push(PlanRow {
                 left: d.name.trim().to_owned(),
                 middle,
@@ -442,16 +520,19 @@ pub(super) fn apply(
     // ── 失敗しうる所（まだ何も変えない）──
     // 足すセットの文書: 今のセット（消すなら残るセットの先頭）と同じチャンネルと Normal の設定で、下書きの大きさ
     let like_index = {
-        let current = app.sets.current_index();
+        let current = app.session.sets.current_index();
         let kept = |i: usize| {
-            app.sets
+            app.session
+                .sets
                 .get(i)
                 .is_some_and(|s| !plan.removed.contains(&s.uid))
         };
         if kept(current) {
             current
         } else {
-            (0..app.sets.len()).find(|i| kept(*i)).unwrap_or(current)
+            (0..app.session.sets.len())
+                .find(|i| kept(*i))
+                .unwrap_or(current)
         }
     };
     let (channels, normal, tile) = {
@@ -466,7 +547,7 @@ pub(super) fn apply(
     for d in &win.drafts {
         fresh.push(match d.uid {
             Some(_) => None,
-            None => Some(new_set_document(
+            None => Some(new_starter_set_document(
                 d.size.0, d.size.1, tile, lang, &channels, normal,
             )?),
         });
@@ -474,7 +555,7 @@ pub(super) fn apply(
     // 大きさを変える（途中で断られたら、先に変えたセットを元へ戻す）
     let resized = resample(app, &plan)?;
     // ── ここから失敗しない ──
-    app.doc.end_coalescing();
+    app.session.doc.end_coalescing();
     // モデル
     let mut model_note = None;
     let mut pose_note = None;
@@ -485,7 +566,7 @@ pub(super) fn apply(
             if let Some(session) = app.view3d.pose.session.as_ref() {
                 let record = SceneModel::from_rig(&session.rig);
                 model_note = Some(record.name.clone());
-                app.model = Some(record);
+                app.session.model = Some(record);
             }
             app.np.model_file = Some(path);
             win.model = None;
@@ -495,41 +576,42 @@ pub(super) fn apply(
             pose_note = crate::view3d::pose::stored::restore_from_project(app);
         }
     }
-    let groups = app.model.as_ref().map(groups_of).unwrap_or_default();
-    // 足す・消す・並べる・名前とマテリアル
+    let groups = app
+        .session
+        .model
+        .as_ref()
+        .map(groups_of)
+        .unwrap_or_default();
+    // 足す・消す・並べる・名前とマテリアル（マテリアルを全部ほかへ移したセットは、どのマテリアルにも付けない鍵のまま残す）
     let mut order: Vec<u32> = Vec::with_capacity(win.drafts.len());
     let mut added: Vec<u32> = Vec::new();
+    let mut placed: Vec<MaterialRef> = Vec::new();
     for (d, doc) in win.drafts.iter().zip(fresh) {
         let name = clean_name(&d.name).expect("計画で検めた");
+        let keys = set_keys(app, d, &groups, &placed);
+        placed.extend(keys.iter().cloned());
+        let bound = bound_of(d, &groups);
         match (d.uid, doc) {
             (Some(uid), _) => {
                 order.push(uid);
-                if let Some(i) = app.sets.index_of(uid) {
-                    if let Some(set) = app.sets.get_mut(i) {
+                if let Some(i) = app.session.sets.index_of(uid) {
+                    if let Some(set) = app.session.sets.get_mut(i) {
                         if set.name != name && set.read_only.is_none() {
                             set.name = name;
                             set.auto_name = false;
                         }
-                        match d.material.and_then(|g| groups.get(g)) {
-                            Some(g) => {
-                                set.material = g.key.clone();
-                                set.bound = Some(g.index as u32);
-                            }
-                            None => set.bound = None,
-                        }
+                        set.materials = keys;
+                        set.bound = bound;
                     }
                 }
             }
             (None, Some(doc)) => {
-                let key = d.key.clone();
                 let i = app
+                    .session
                     .sets
-                    .push(guid_string(doc.id()), name, false, key, None, doc);
-                if let Some(set) = app.sets.get_mut(i) {
-                    set.bound = d
-                        .material
-                        .and_then(|g| groups.get(g))
-                        .map(|g| g.index as u32);
+                    .push(guid_string(doc.id()), name, false, keys, None, doc);
+                if let Some(set) = app.session.sets.get_mut(i) {
+                    set.bound = bound;
                     order.push(set.uid);
                     added.push(set.uid);
                 }
@@ -539,12 +621,12 @@ pub(super) fn apply(
     }
     // 消す（足したあとなので、全部を入れ替えるときも、消す途中でセットが 0 にならない）
     let removed_names = app.remove_sets(&plan.removed).unwrap_or_default();
-    app.sets.reorder(&order);
+    app.session.sets.reorder(&order);
     app.dedupe_set_keys();
     // 法線の形式（利用者がウィンドウで変えたときだけ、全部のセットへ。足したセットは作るときに入れてある）。セットごとに持てるので、
     // 触っていないときは、形式が混在したプロジェクトの別のセットを黙って書き換えない
     if win.normal != win.normal_opened {
-        for i in 0..app.sets.len() {
+        for i in 0..app.session.sets.len() {
             let doc = app.set_doc_mut(i);
             let settings = doc.normal_settings();
             if settings.file_direction() != win.normal {
@@ -554,9 +636,9 @@ pub(super) fn apply(
     }
     // 大きさを変えたセットは、履歴を消す（元の大きさへ戻せないので、段が残ると壊れた状態へ戻せてしまう）
     for uid in resized.iter().map(|r| r.uid) {
-        if let Some(i) = app.sets.index_of(uid) {
+        if let Some(i) = app.session.sets.index_of(uid) {
             let _ = app.set_doc_mut(i).clear_history();
-            if i == app.sets.current_index() {
+            if i == app.session.sets.current_index() {
                 app.view.fit();
             }
         }
@@ -567,71 +649,55 @@ pub(super) fn apply(
     app.ui.set_scroll = 0.0;
     app.sync_mesh_map_view();
     app.sync_view3d();
-    app.modified = true;
+    app.session.mark_modified();
     app.np.generation += 1;
     app.np.reopening = None;
     // 知らせ
-    let missing = app.sets.iter().filter(|s| s.bound.is_none()).count();
+    let missing = missing_sets(app);
     // 縮小で外れた覚えた選択範囲（履歴を消すので取り消しでも戻らない）。名前の変更を済ませたあとのセットの名前と数
     let dropped: Vec<(String, usize)> = resized
         .iter()
         .filter(|r| r.dropped_saved_selections > 0)
         .filter_map(|r| {
-            let i = app.sets.index_of(r.uid)?;
-            Some((app.sets.get(i)?.name.clone(), r.dropped_saved_selections))
+            let i = app.session.sets.index_of(r.uid)?;
+            Some((
+                app.session.sets.get(i)?.name.clone(),
+                r.dropped_saved_selections,
+            ))
         })
         .collect();
     let mut text = lang
-        .pick(
-            "プロジェクトの構成を変えました。",
-            "Project configuration applied.",
-        )
+        .t("newproject-project-configuration-applied")
         .to_owned();
     if let Some(name) = model_note {
-        text += &lang.pick(format!(" モデル: {name}。"), format!(" Model: {name}."));
+        text += &lang.f("newproject-model", &[("name", &name)]);
     }
     let pose_noted = pose_note.is_some();
     if let Some(note) = pose_note {
         text += &format!(" {note}");
     }
     if !removed_names.is_empty() {
-        text += &lang.pick(
-            format!(" 消したセット: {}。", removed_names.join("・")),
-            format!(" Removed: {}.", removed_names.join(", ")),
-        );
+        let names = removed_names.join(lang.t("newproject-name-separator"));
+        text += &lang.f("newproject-removed", &[("names", &names)]);
     }
     if !resized.is_empty() {
-        text += &lang.pick(
-            format!(" 大きさを変えたセット {}。", resized.len()),
-            format!(" Resized {}.", resized.len()),
-        );
+        text += &lang.f("newproject-resized", &[("resized", &resized.len())]);
     }
     if !dropped.is_empty() {
-        let list = |sep: &str, unit: &dyn Fn(usize) -> String| {
-            dropped
-                .iter()
-                .map(|(name, n)| format!("{name} {}", unit(*n)))
-                .collect::<Vec<_>>()
-                .join(sep)
-        };
+        let list = dropped
+            .iter()
+            .map(|(name, n)| format!("{name} {}", lang.f("newproject-count-unit", &[("n", n)])))
+            .collect::<Vec<_>>()
+            .join(lang.t("newproject-name-separator"));
         text += " ";
         text += &lang.with_reason(
-            lang.pick(
-                "縮小で消えた覚えた選択範囲があります",
-                "Some remembered selections were lost to the shrink",
-            ),
-            lang.pick(
-                list("・", &|n| format!("{n} 件")),
-                list(", ", &|n| n.to_string()),
-            ),
+            lang.t("newproject-some-remembered-selections-were-lost"),
+            list,
         );
     }
-    let not_in_model = app.model.is_some() && missing > 0;
+    let not_in_model = app.session.model.is_some() && missing > 0;
     if not_in_model {
-        text += &lang.pick(
-            format!(" モデルに無いセット {missing}。"),
-            format!(" Not in the model: {missing}."),
-        );
+        text += &lang.f("newproject-not-in-the-model", &[("missing", &missing)]);
     }
     let kind = if dropped.is_empty() && !not_in_model && !pose_noted {
         crate::notice::Kind::Info
@@ -654,7 +720,7 @@ fn resample(app: &mut AppState, plan: &Plan) -> Result<Vec<Resized>, String> {
     let lang = app.lang;
     let mut prepared: Vec<(u32, usize, PreparedResize)> = Vec::new();
     for (uid, size, method) in &plan.resizes {
-        let Some(index) = app.sets.index_of(*uid) else {
+        let Some(index) = app.session.sets.index_of(*uid) else {
             continue;
         };
         app.set_doc_mut(index).end_coalescing();
@@ -666,14 +732,15 @@ fn resample(app: &mut AppState, plan: &Plan) -> Result<Vec<Resized>, String> {
             Ok(None) => {}
             Err(e) => {
                 let name = app
+                    .session
                     .sets
                     .get(index)
                     .map(|s| s.name.clone())
                     .unwrap_or_default();
                 return Err(lang.with_reason(
-                    lang.pick(
-                        format!("テクスチャセット{}を変えられません", lang.quote(&name)),
-                        format!("Cannot change texture set {}", lang.quote(&name)),
+                    lang.f(
+                        "newproject-cannot-change-texture-set",
+                        &[("name", &lang.quote(&name))],
                     ),
                     lang.core_error(&e),
                 ));

@@ -20,6 +20,7 @@ use yolu_core::glam::{Vec2, Vec3};
 use yolu_core::paths::point_position;
 use yolu_core::{Channel, FilterTarget, LayerId, LayerKind, LayerPath, RulerId, RulerSpace};
 
+use crate::features::Feature;
 use crate::fillfx::gizmo::{self, Target};
 use crate::lang::Lang;
 use crate::mode::EditorMode;
@@ -146,7 +147,7 @@ pub fn transforming(app: &AppState) -> bool {
 /// 物の今の形（形のギズモの対象。投影は UV のときは無い）。
 pub fn shape_of(app: &AppState, t: Target) -> Option<sg::Shape> {
     if let Target::Projection(layer) = t {
-        let l = app.doc.layer(layer)?;
+        let l = app.session.doc.layer(layer)?;
         if l.kind() != LayerKind::Fill || l.projection().mode == ProjectionMode::Uv {
             return None;
         }
@@ -168,6 +169,7 @@ pub fn path_points_with_normals(
     let model = app.view3d.full_model()?;
     let fingerprint = app.path_fingerprint(&model.geometry);
     let entry = app
+        .session
         .doc
         .layer(layer)?
         .paths()
@@ -212,7 +214,7 @@ pub fn marker_of(app: &AppState, object: Object) -> Option<Vec3> {
             channel,
             index,
         } => {
-            let g = app.doc.layer(layer)?.fill_points(channel)?;
+            let g = app.session.doc.layer(layer)?.fill_points(channel)?;
             if g.space != PointSpace::Model {
                 return None;
             }
@@ -229,7 +231,8 @@ pub fn marker_of(app: &AppState, object: Object) -> Option<Vec3> {
 
 /// 編集のモードで選べる 3D の定規（モデルの空間で、表示が入っているもの）。
 pub fn ruler_of(app: &AppState, layer: LayerId, id: RulerId) -> Option<yolu_core::Ruler> {
-    app.doc
+    app.session
+        .doc
         .layer(layer)?
         .rulers()
         .iter()
@@ -242,7 +245,7 @@ pub fn shown(app: &AppState, layer: LayerId) -> bool {
     let mut at = Some(layer);
     let mut hops = 0;
     while let Some(id) = at {
-        let Some(l) = app.doc.layer(id) else {
+        let Some(l) = app.session.doc.layer(id) else {
             return false;
         };
         if !l.visible() {
@@ -250,7 +253,7 @@ pub fn shown(app: &AppState, layer: LayerId) -> bool {
         }
         at = l.parent();
         hops += 1;
-        if hops > app.doc.layers().len() {
+        if hops > app.session.doc.layers().len() {
             return false;
         }
     }
@@ -277,7 +280,7 @@ pub fn markers(app: &AppState) -> Vec<Marker> {
         return Vec::new();
     }
     let mut objects = Vec::new();
-    for layer in app.doc.layers() {
+    for layer in app.session.doc.layers() {
         if !shown(app, layer.id()) {
             continue;
         }
@@ -298,7 +301,7 @@ pub fn markers(app: &AppState) -> Vec<Marker> {
             }
         }
         for stack in [FilterTarget::Content, FilterTarget::Mask] {
-            for f in app.doc.filters_of(id, stack).unwrap_or(&[]) {
+            for f in app.session.doc.filters_of(id, stack).unwrap_or(&[]) {
                 objects.push(Object::Shape(Target::Filter(id, f.id())));
             }
         }
@@ -351,7 +354,7 @@ fn screen(rect: Rect, v: Vec2) -> Pos2 {
 
 /// 画面の点の近くの印（近い順。同じ近さなら並びの順）。
 fn hits(app: &AppState, rect: Rect, at: Pos2) -> Vec<Object> {
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     let mut near: Vec<(f32, Object)> = markers(app)
         .into_iter()
         .filter_map(|m| {
@@ -368,7 +371,7 @@ fn hits(app: &AppState, rect: Rect, at: Pos2) -> Vec<Object> {
 pub fn select(app: &mut AppState, object: Option<Object>) {
     app.objects.selected = object;
     if let Some(o) = object {
-        if app.selected_layer != Some(o.layer()) {
+        if app.session.selected_layer != Some(o.layer()) {
             app.select_single_layer(o.layer());
         }
         // 定規を選んだら、プロパティの「定規」の行も同じ定規を選ぶ
@@ -456,7 +459,7 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2, source: gizmo::Source) ->
 /// 印と、選んだ物の枠・線を 3D ビューへ重ねる（編集のモード）。`pointer` はポインタ（乗せた印を大きくする）。
 pub fn draw(ui: &Ui, app: &mut AppState, rect: Rect, pointer: Option<Pos2>) {
     sync(app);
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     let painter = ui.painter_at(rect);
     let line = |points: Vec<Pos2>, width: f32| {
         painter.add(EguiShape::line(
@@ -508,7 +511,8 @@ pub fn draw(ui: &Ui, app: &mut AppState, rect: Rect, pointer: Option<Pos2>) {
             }
         }
     }
-    let busy = transforming(app) || app.fillfx.drag.is_some() || app.view3d.input.nav.is_some();
+    let busy =
+        transforming(app) || app.fillfx.drag.is_some() || app.view3d.view.input.nav.is_some();
     let markers = markers(app);
     let hover = pointer.filter(|_| !busy).and_then(|p| {
         markers
@@ -546,20 +550,26 @@ pub fn draw(ui: &Ui, app: &mut AppState, rect: Rect, pointer: Option<Pos2>) {
 /// 物の名前（知らせの文に使う）。
 fn object_name(lang: Lang, o: Object) -> &'static str {
     match o {
-        Object::Shape(Target::Projection(_)) => lang.pick("投影の置き場", "Projection placement"),
-        Object::Shape(Target::Gradient(..)) => {
-            lang.pick("グラデーションデカール", "Gradient decal")
-        }
-        Object::Shape(Target::Filter(..)) => lang.pick("フィルターの形", "Filter shape"),
-        Object::Point { .. } => lang.pick("点", "Point"),
-        Object::Path { .. } => lang.pick("パス", "Path"),
-        Object::Ruler { .. } | Object::Shape(Target::Ruler(..)) => lang.pick("定規", "Ruler"),
+        Object::Shape(Target::Projection(_)) => lang.t("objects-projection-placement"),
+        Object::Shape(Target::Gradient(..)) => lang.t("objects-gradient-decal"),
+        Object::Shape(Target::Filter(..)) => lang.t("objects-filter-shape"),
+        Object::Point { .. } => lang.t("objects-point"),
+        Object::Path { .. } => lang.t("objects-path"),
+        Object::Ruler { .. } | Object::Shape(Target::Ruler(..)) => lang.t("objects-ruler"),
+    }
+}
+
+/// 英語の文の中では名前を小文字にする（日本語の名前は変えない）。
+pub(super) fn english_lowercase(lang: Lang, name: &str) -> String {
+    match lang {
+        Lang::Ja => name.to_owned(),
+        Lang::En => name.to_lowercase(),
     }
 }
 
 /// 選んでいる物が無いときの断り。
 fn nothing_selected(lang: Lang) -> &'static str {
-    lang.pick("選んだ物がありません", "Nothing is selected")
+    lang.t("objects-nothing-is-selected")
 }
 
 impl AppState {
@@ -584,10 +594,8 @@ impl AppState {
                     return;
                 }
                 let Some(o) = selected(self) else {
-                    let text = lang.with_reason(
-                        lang.pick("削除できません", "Cannot delete"),
-                        nothing_selected(lang),
-                    );
+                    let text =
+                        lang.with_reason(lang.t("objects-cannot-delete"), nothing_selected(lang));
                     self.refuse(Source::Edit, text);
                     return;
                 };
@@ -600,19 +608,13 @@ impl AppState {
 /// 選んだ物を消す（今の消す口を使う。消せない物は理由を知らせる）。
 fn delete(app: &mut AppState, o: Object) {
     let lang = app.lang;
-    let what = lang.pick(
-        format!("{}を削除できません", object_name(lang, o)),
-        format!("Cannot delete the {}", object_name(lang, o).to_lowercase()),
+    let what = lang.f(
+        "objects-cannot-delete-the",
+        &[("name", &english_lowercase(lang, object_name(lang, o)))],
     );
     match o {
         Object::Shape(Target::Projection(_)) => {
-            let text = lang.with_reason(
-                what,
-                lang.pick(
-                    "塗りつぶしレイヤーの投影です",
-                    "it is the fill layer's projection",
-                ),
-            );
+            let text = lang.with_reason(what, lang.t("objects-it-is-the-fill-layer"));
             app.refuse(Source::FillLayer, text);
         }
         Object::Shape(Target::Gradient(layer, channel)) => {
@@ -652,11 +654,11 @@ fn delete(app: &mut AppState, o: Object) {
                 app.refuse(Source::Path, text);
                 return;
             }
-            let Some(entries) = app.doc.layer(layer).map(|l| l.paths().to_vec()) else {
+            let Some(entries) = app.session.doc.layer(layer).map(|l| l.paths().to_vec()) else {
                 return;
             };
             let kept: Vec<_> = entries.into_iter().filter(|e| e.path.id() != id).collect();
-            app.doc.end_coalescing();
+            app.session.doc.end_coalescing();
             // パスの一覧の口（編集中のパス・選んだ点を外し、面から外れた標本を知らせる）
             if app.path_commit_list(layer, kept, None) {
                 app.objects.selected = None;
@@ -665,6 +667,16 @@ fn delete(app: &mut AppState, o: Object) {
     }
     sync(app);
 }
+
+/// 機能の表の行（編集のモードで選んだ物・隠した物は前の文書のもの。レイヤーの ID は文書をまたいで同じ値になりうるので、
+/// 文書を替えたら捨てる）。
+pub(crate) const FEATURE: Feature = Feature {
+    document_replaced: Some(|app| {
+        app.objects.selected = None;
+        app.objects.hidden.clear();
+    }),
+    ..Feature::new("objects")
+};
 
 #[cfg(test)]
 mod tests;

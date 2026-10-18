@@ -3,6 +3,7 @@
 //! ミップマップの段を選ぶ足跡（テクセル 1 つに当たる画像の画素の数）は、当たった三角形の面積と UV の面積からテクセルの大きさを出し、
 //! 画面の点にして、画像の画素 / 点を掛ける。ダブの中では一定とみなす。
 
+use crate::Reason;
 use glam::Vec3;
 
 use super::camera::CameraView;
@@ -24,7 +25,7 @@ impl SurfaceStencil {
     /// 有限でない値・負の比は断る。
     pub fn new(screen_to_image: StencilMapping, image_per_point: f64) -> Result<Self, CoreError> {
         if !image_per_point.is_finite() || image_per_point < 0.0 {
-            return Err(CoreError::InvalidArgument("ステンシルの画像の画素 / 点"));
+            return Err(CoreError::InvalidArgument(Reason::StencilImagePixelsPoints));
         }
         Ok(SurfaceStencil {
             screen_to_image,

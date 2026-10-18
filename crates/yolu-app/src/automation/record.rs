@@ -81,11 +81,14 @@ impl Recorder {
         Recorder {
             entries: Vec::new(),
             undone: Vec::new(),
-            doc_id: app.doc.id(),
-            start_selected: app.selected_layer.filter(|id| app.doc.layer(*id).is_some()),
+            doc_id: app.session.doc.id(),
+            start_selected: app
+                .session
+                .selected_layer
+                .filter(|id| app.session.doc.layer(*id).is_some()),
             top: None,
             redo_top: None,
-            seen: app.doc.revision(),
+            seen: app.session.doc.revision(),
             skipped: false,
             nested: false,
         }
@@ -117,6 +120,11 @@ impl Recorder {
             .map(|i| i + 1)
     }
 
+    /// 記録の中で作った物の数（`$created:<n>` の次の番号は、これ + 1）。
+    fn created_count(&self) -> usize {
+        self.entries.iter().map(|e| e.created.len()).sum()
+    }
+
     /// 記録の外で文書が変わっていたら印を出す（描く操作・外からの操作など）。
     fn sync(&mut self, doc: &Document) {
         if doc.id() == self.doc_id && doc.revision() != self.seen {
@@ -139,7 +147,7 @@ impl Recorder {
 
 /// 記録の外で文書が変わったか（記録のウィンドウが毎フレーム見る）。
 pub fn sync(app: &mut AppState) {
-    let doc_rev = (app.doc.id(), app.doc.revision());
+    let doc_rev = (app.session.doc.id(), app.session.doc.revision());
     if let Some(rec) = app.automation.recorder.as_mut() {
         if doc_rev.0 == rec.doc_id && doc_rev.1 != rec.seen {
             rec.skipped = true;
@@ -157,6 +165,8 @@ enum Plan {
     Skip,
     Undo,
     Redo,
+    /// ヒストリーの行で移った（取り消し・やり直しを、前後の取り消しの数の差の段だけ続けたのと同じ）。
+    History,
     Record {
         commands: Vec<Command>,
         creates: Option<Made>,
@@ -182,7 +192,7 @@ pub fn before(app: &mut AppState, action: &Action) -> Option<Pending> {
         if rec.nested {
             return None;
         }
-        if app.doc.id() == rec.doc_id {
+        if app.session.doc.id() == rec.doc_id {
             plan(app, rec, action)
         } else {
             Plan::Skip
@@ -191,30 +201,21 @@ pub fn before(app: &mut AppState, action: &Action) -> Option<Pending> {
     begin(app, plan)
 }
 
-/// レイヤーの名前を変える前に呼ぶ（名前の変更は、レイヤーの欄が文書へ直に当てる）。
+/// レイヤーの名前を変える前に呼ぶ（`AppState::apply` を通さずに名前を変えるとき。画面の名前の欄は `Action::RenameLayer` を通る）。
 pub fn before_rename(app: &mut AppState, id: LayerId, name: &str) -> Option<Pending> {
     let plan = {
         let rec = app.automation.recorder.as_ref()?;
-        if rec.nested || app.doc.id() != rec.doc_id {
+        if rec.nested || app.session.doc.id() != rec.doc_id {
             Plan::Skip
         } else {
-            match layer_ref(app, rec, id) {
-                Some(layer) => record(
-                    vec![Command::LayerSet(LayerSetArgs {
-                        name: Some(name.to_owned()),
-                        ..layer_set(layer)
-                    })],
-                    None,
-                ),
-                None => Plan::Skip,
-            }
+            plan_rename(app, rec, id, name)
         }
     };
     begin(app, plan)
 }
 
 fn begin(app: &mut AppState, plan: Plan) -> Option<Pending> {
-    let doc = &app.doc;
+    let doc = &app.session.doc;
     let before_ids = matches!(
         plan,
         Plan::Record {
@@ -232,7 +233,7 @@ fn begin(app: &mut AppState, plan: Plan) -> Option<Pending> {
         before_ids,
     };
     let rec = app.automation.recorder.as_mut()?;
-    rec.sync(&app.doc);
+    rec.sync(&app.session.doc);
     rec.nested = true;
     Some(pending)
 }
@@ -240,7 +241,7 @@ fn begin(app: &mut AppState, plan: Plan) -> Option<Pending> {
 /// 操作の後に呼ぶ。
 pub fn after(app: &mut AppState, pending: Option<Pending>) {
     let Some(p) = pending else { return };
-    let doc = &app.doc;
+    let doc = &app.session.doc;
     let Some(rec) = app.automation.recorder.as_mut() else {
         return;
     };
@@ -260,29 +261,14 @@ pub fn after(app: &mut AppState, pending: Option<Pending>) {
     rec.seen = now;
     match p.plan {
         Plan::Ui | Plan::Skip => rec.skipped = true,
-        Plan::Undo => {
-            if rec.top == Some(p.rev_before) {
-                let linked = rec.redo_top == Some(p.rev_before);
-                if let Some(entry) = rec.pop(now) {
-                    rec.undone.push((entry, linked));
-                    rec.redo_top = Some(now);
-                }
+        Plan::Undo => undo_steps(rec, p.rev_before, now, 1),
+        Plan::Redo => redo_steps(rec, p.rev_before, now, 1),
+        Plan::History => {
+            let undo = doc.undo_count();
+            if undo < p.undo_before {
+                undo_steps(rec, p.rev_before, now, (p.undo_before - undo) as u64);
             } else {
-                // 記録の外の段（描いた線など）を取り消した
-                rec.top = None;
-                rec.redo_top = None;
-            }
-        }
-        Plan::Redo => {
-            if rec.redo_top == Some(p.rev_before) {
-                if let Some((entry, linked)) = rec.undone.pop() {
-                    rec.entries.push(entry);
-                    rec.top = Some(now);
-                    rec.redo_top = linked.then_some(now);
-                }
-            } else {
-                rec.top = None;
-                rec.redo_top = None;
+                redo_steps(rec, p.rev_before, now, (undo - p.undo_before) as u64);
             }
         }
         Plan::Record {
@@ -342,10 +328,51 @@ pub fn after(app: &mut AppState, pending: Option<Pending>) {
     }
 }
 
+/// 取り消しを `steps` 段（1 段ずつ取り消しを続けたのと同じに、記録した段を外す）。`rev_before` は操作の前、`now` は後の文書の変更番号。
+/// 取り消し 1 段で変更番号は 1 つ進むので、途中の段の前後は `now` から数える（記録した段の番号とは比べない: 前の段の後と次の段の前を
+/// つなぐだけ）。
+fn undo_steps(rec: &mut Recorder, rev_before: u64, now: u64, steps: u64) {
+    let base = now.saturating_sub(steps);
+    for i in 0..steps {
+        let before = if i == 0 { rev_before } else { base + i };
+        let after = base + i + 1;
+        if rec.top == Some(before) {
+            let linked = rec.redo_top == Some(before);
+            if let Some(entry) = rec.pop(after) {
+                rec.undone.push((entry, linked));
+                rec.redo_top = Some(after);
+            }
+        } else {
+            // 記録の外の段（描いた線など）を取り消した
+            rec.top = None;
+            rec.redo_top = None;
+        }
+    }
+}
+
+/// やり直しを `steps` 段（1 段ずつやり直しを続けたのと同じに、外した段を戻す。番号の数え方は `undo_steps` と同じ）。
+fn redo_steps(rec: &mut Recorder, rev_before: u64, now: u64, steps: u64) {
+    let base = now.saturating_sub(steps);
+    for i in 0..steps {
+        let before = if i == 0 { rev_before } else { base + i };
+        let after = base + i + 1;
+        if rec.redo_top == Some(before) {
+            if let Some((entry, linked)) = rec.undone.pop() {
+                rec.entries.push(entry);
+                rec.top = Some(after);
+                rec.redo_top = linked.then_some(after);
+            }
+        } else {
+            rec.top = None;
+            rec.redo_top = None;
+        }
+    }
+}
+
 /// スライダーのドラッグを Esc で止めた（core がまとめた段を捨てた）: 最後の段がそのドラッグなら外す。
 pub fn drag_cancelled(app: &mut AppState, rev_before: u64) {
-    let now = app.doc.revision();
-    let doc_id = app.doc.id();
+    let now = app.session.doc.revision();
+    let doc_id = app.session.doc.id();
     let Some(rec) = app.automation.recorder.as_mut() else {
         return;
     };
@@ -388,8 +415,15 @@ fn layer_ref(app: &AppState, rec: &Recorder, id: LayerId) -> Option<String> {
     if let Some(n) = rec.created_number(Made::Layer, id.0) {
         return Some(format!("{CREATED_PREFIX}{n}"));
     }
-    let name = app.doc.layer(id)?.name();
-    let unique = app.doc.layers().iter().filter(|l| l.name() == name).count() == 1;
+    let name = app.session.doc.layer(id)?.name();
+    let unique = app
+        .session
+        .doc
+        .layers()
+        .iter()
+        .filter(|l| l.name() == name)
+        .count()
+        == 1;
     // 相対の指し方・ID と読める名前は、名前として引かれないので使わない
     let plain = parse_relative(name).is_ok_and(|r| r.is_none()) && parse_id(name).is_none();
     (unique && plain).then(|| name.to_owned())
@@ -523,7 +557,9 @@ fn adjustment_spec(settings: &AdjustmentSettings) -> Option<EffectSpec> {
 
 /// 選んでいるレイヤー（まだある物）。
 fn selected(app: &AppState) -> Option<LayerId> {
-    app.selected_layer.filter(|id| app.doc.layer(*id).is_some())
+    app.session
+        .selected_layer
+        .filter(|id| app.session.doc.layer(*id).is_some())
 }
 
 /// 選んでいるレイヤーの上に足す、の `above`（選んでいなければ一番上で None）。指せなければ Err。
@@ -532,6 +568,18 @@ fn above(app: &AppState, rec: &Recorder) -> Result<Option<String>, ()> {
         None => Ok(None),
         Some(id) => layer_ref(app, rec, id).map(Some).ok_or(()),
     }
+}
+
+/// `id` のすぐ下の兄弟（同じグループ・同じレイヤーセット）。一番下なら Ok(None)、兄弟を数えられなければ Err。
+fn sibling_below(app: &AppState, id: LayerId) -> Result<Option<LayerId>, ()> {
+    let layer = app.session.doc.layer(id).ok_or(())?;
+    let siblings = app
+        .session
+        .doc
+        .children_in_set(layer.layer_set(), layer.parent())
+        .map_err(|_| ())?;
+    let at = siblings.iter().position(|x| *x == id).ok_or(())?;
+    Ok(at.checked_sub(1).map(|i| siblings[i]))
 }
 
 fn creating(command: Command, made: Made) -> Plan {
@@ -545,7 +593,7 @@ fn creating(command: Command, made: Made) -> Plan {
 /// 操作を、同じ結果になる命令へ写す（写せる操作の表）。
 fn plan(app: &AppState, rec: &Recorder, action: &Action) -> Plan {
     let lref = |id: LayerId| layer_ref(app, rec, id);
-    let doc = &app.doc;
+    let doc = &app.session.doc;
     let one = |command: Option<Command>, merge: Option<MergeKey>| match command {
         Some(c) => record(vec![c], merge),
         None => Plan::Skip,
@@ -553,6 +601,8 @@ fn plan(app: &AppState, rec: &Recorder, action: &Action) -> Plan {
     match action {
         Action::Undo => Plan::Undo,
         Action::Redo => Plan::Redo,
+        Action::HistoryGoTo(_) => Plan::History,
+        Action::RenameLayer(id, name) => plan_rename(app, rec, *id, name),
         Action::NewLayer => match above(app, rec) {
             Ok(above) => creating(
                 Command::LayerAdd(layer_add(
@@ -586,8 +636,12 @@ fn plan(app: &AppState, rec: &Recorder, action: &Action) -> Plan {
             let Some(id) = selected(app) else {
                 return Plan::Ui;
             };
-            let parent = doc.layer(id).and_then(|l| l.parent());
-            let siblings = doc.children_of(parent).unwrap_or_default();
+            let layer = doc.layer(id);
+            let parent = layer.and_then(|l| l.parent());
+            // 位置はレイヤーセットの中で数える（core の `move_layer_to` と同じ数え方）
+            let siblings = layer
+                .and_then(|l| doc.children_in_set(l.layer_set(), parent).ok())
+                .unwrap_or_default();
             let Some(i) = siblings.iter().position(|v| *v == id) else {
                 return Plan::Skip;
             };
@@ -649,15 +703,78 @@ fn plan(app: &AppState, rec: &Recorder, action: &Action) -> Plan {
         | Action::Psd(_)
         | Action::Project(_)
         | Action::Recovery(_)
-        | Action::Bake(_) => Plan::Skip,
+        | Action::Bake(_)
+        | Action::Draft(_) => Plan::Skip,
         // 画面だけの操作（文書を替える操作は、記録の外の文書になるので記録しない）
         _ => Plan::Ui,
     }
 }
 
+/// レイヤーの名前の変更を、名前を変える命令へ写す（指せないレイヤーなら写さない）。
+fn plan_rename(app: &AppState, rec: &Recorder, id: LayerId, name: &str) -> Plan {
+    match layer_ref(app, rec, id) {
+        Some(layer) => record(
+            vec![Command::LayerSet(LayerSetArgs {
+                name: Some(name.to_owned()),
+                ..layer_set(layer)
+            })],
+            None,
+        ),
+        None => Plan::Skip,
+    }
+}
+
+/// 単色の追加を命令へ写す。単色は選んだレイヤーのすぐ下に作る（`AppState::add_fill_below_selected`）ので、記録は文書の位置の数字を
+/// 使わず、どの文書でも「選んだレイヤーのすぐ下」になる形にする: すぐ下に兄弟があれば、その兄弟の「すぐ上」へ足す 1 命令。選んだ
+/// レイヤーが兄弟の一番下なら、足してから兄弟の中の一番下（`index: 0`）へ動かす 2 命令。
+fn plan_new_fill(app: &AppState, rec: &Recorder) -> Plan {
+    let name = app.new_layer_name(LayerKind::Fill);
+    let mut move_to_bottom = false;
+    let above = match selected(app) {
+        None => None,
+        Some(id) => match sibling_below(app, id) {
+            // すぐ下の兄弟（指せなければ、その位置は写せない）
+            Ok(Some(below)) => match layer_ref(app, rec, below) {
+                Some(below) => Some(below),
+                None => return Plan::Skip,
+            },
+            // 一番下: 選んだレイヤーのすぐ上へ足してから、一番下へ動かす
+            Ok(None) => match layer_ref(app, rec, id) {
+                Some(this) => {
+                    move_to_bottom = true;
+                    Some(this)
+                }
+                None => return Plan::Skip,
+            },
+            Err(()) => return Plan::Skip,
+        },
+    };
+    let value = crate::m2::fill_from_color(app.color.main);
+    let mut args = layer_add(NewLayerKind::Fill, name, above);
+    args.fill.insert(
+        channel_name(&app.session.doc, app.m2.paint_channel),
+        format_color(value),
+    );
+    let mut commands = vec![Command::LayerAdd(args)];
+    if move_to_bottom {
+        commands.push(Command::LayerMove(LayerMoveArgs {
+            set: None,
+            layer: format!("{CREATED_PREFIX}{}", rec.created_count() + 1),
+            parent: None,
+            to_root: false,
+            index: Some(0),
+        }));
+    }
+    Plan::Record {
+        commands,
+        creates: Some(Made::Layer),
+        merge: None,
+    }
+}
+
 fn plan_edit(app: &AppState, rec: &Recorder, edit: &Edit) -> Plan {
     let lref = |id: LayerId| layer_ref(app, rec, id);
-    let doc = &app.doc;
+    let doc = &app.session.doc;
     let set = |id: LayerId, f: &dyn Fn(LayerSetArgs) -> LayerSetArgs, merge: Option<MergeKey>| {
         match lref(id) {
             Some(layer) => record(vec![Command::LayerSet(f(layer_set(layer)))], merge),
@@ -683,20 +800,7 @@ fn plan_edit(app: &AppState, rec: &Recorder, edit: &Edit) -> Plan {
             ),
             Err(()) => Plan::Skip,
         },
-        Edit::NewFill => match above(app, rec) {
-            Ok(above) => {
-                let value = crate::m2::fill_from_color(app.color.main);
-                let mut args = layer_add(
-                    NewLayerKind::Fill,
-                    app.new_layer_name(LayerKind::Fill),
-                    above,
-                );
-                args.fill
-                    .insert(channel_name(doc, app.m2.paint_channel), format_color(value));
-                creating(Command::LayerAdd(args), Made::Layer)
-            }
-            Err(()) => Plan::Skip,
-        },
+        Edit::NewFill => plan_new_fill(app, rec),
         Edit::NewAdjustment(kind) => {
             let (Ok(above), Some(spec)) = (above(app, rec), adjustment_spec(&kind.settings()))
             else {
@@ -900,7 +1004,7 @@ fn plan_edit(app: &AppState, rec: &Recorder, edit: &Edit) -> Plan {
             }
             record(commands, None)
         }
-        // 命令の無い操作（チャンネルごとの合成・複製・グループ化・結合・変形・チャンネルの構成・ノーマルの設定・複数のレイヤーの移動）
+        // 命令の無い操作（チャンネルごとの合成・複製・グループ化・結合・変形・チャンネルの構成・ノーマルの設定・複数のレイヤーの移動・黒のマスク・マスクのコピー・貼り付け・移動）
         _ => Plan::Skip,
     }
 }
@@ -918,7 +1022,7 @@ fn locks_patch(flag: LayerLocks, on: bool) -> LocksPatch {
 
 fn plan_fx(app: &AppState, rec: &Recorder, op: &FxOp) -> Plan {
     let lref = |id: LayerId| layer_ref(app, rec, id);
-    let doc = &app.doc;
+    let doc = &app.session.doc;
     let target_of = |t: FilterTarget| match t {
         FilterTarget::Content => EffectTarget::Content,
         FilterTarget::Mask => EffectTarget::Mask,

@@ -12,11 +12,47 @@ pub(crate) fn read_png_tip(bytes: &[u8], name: &str) -> Result<BrushTip> {
     read_gray(bytes, name, |lum, a| ((255 - lum) * a / 255) as u8)
 }
 
+/// 質感の明るさとコントラストの補正（CLIP STUDIO の質感の「明るさ」「コントラスト」。どちらも -100〜100 の整数。0 は補正なし）。
+/// 取り込みのときに画像へ焼き込む（元に戻せない）。式は一般的な明るさ・コントラスト（明るさは値を足し、コントラストは 0.5 を中心に広げる）で、
+/// CLIP STUDIO の式とは同じと確かめていない。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct Tone {
+    pub brightness: i32,
+    pub contrast: i32,
+}
+
+impl Tone {
+    pub const NONE: Tone = Tone {
+        brightness: 0,
+        contrast: 0,
+    };
+
+    pub fn is_none(self) -> bool {
+        self == Tone::NONE
+    }
+
+    /// 覆い（0〜255）に当てる: 明るさ（+ 明るさ / 100）のあと、コントラスト（0.5 を中心に × (1 + コントラスト / 100)）。0〜1 に収める。
+    fn apply(self, covered: u32) -> u32 {
+        let mut v = covered as f64 / 255.0;
+        v += self.brightness as f64 / 100.0;
+        v = (v - 0.5) * (1.0 + self.contrast as f64 / 100.0) + 0.5;
+        (v.clamp(0.0, 1.0) * 255.0).round() as u32
+    }
+}
+
 /// PNG の質感（CLIP STUDIO の素材）。Photoshop の模様と同じく白が塗れ、黒が塗れない（覆い = 輝度。透明な所は白として重ねる）。
-/// `invert` なら反転する。
-pub(crate) fn read_png_texture(bytes: &[u8], name: &str, invert: bool) -> Result<BrushTip> {
+/// 明るさ・コントラストの補正（`tone`）をしてから、`invert` なら反転する。補正が無ければ（`Tone::NONE`）今までと同じ画素。
+pub(crate) fn read_png_texture(
+    bytes: &[u8],
+    name: &str,
+    invert: bool,
+    tone: Tone,
+) -> Result<BrushTip> {
     read_gray(bytes, name, move |lum, a| {
-        let covered = (lum * a + 255 * (255 - a)) / 255;
+        let mut covered = (lum * a + 255 * (255 - a)) / 255;
+        if !tone.is_none() {
+            covered = tone.apply(covered);
+        }
         (if invert { 255 - covered } else { covered }) as u8
     })
 }

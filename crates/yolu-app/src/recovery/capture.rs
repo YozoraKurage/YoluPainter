@@ -22,7 +22,7 @@ use super::RecoveryError;
 /// 変わったか見分ける札。2 つが等しければ、書き置きの中身は同じ。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Fingerprint {
-    sets: Vec<(String, u128, u64, String, MaterialRef)>,
+    sets: Vec<(String, u128, u64, String, Vec<MaterialRef>)>,
     current: String,
     title: String,
     /// アセットの棚の素材（ID と名前）。
@@ -35,7 +35,7 @@ pub struct Fingerprint {
 pub(crate) struct SetCapture {
     pub id: String,
     pub name: String,
-    pub material: MaterialRef,
+    pub materials: Vec<MaterialRef>,
     /// 文書の写し（タイルは共有）。読むだけのセットと、開いた・保存した時から変わっていないセットは取らない（開いた時のバイト列のまま）。
     pub snapshot: Option<Arc<Document>>,
 }
@@ -66,6 +66,7 @@ pub(crate) struct Capture {
 pub(crate) fn fingerprint(state: &AppState) -> Fingerprint {
     Fingerprint {
         sets: state
+            .session
             .sets
             .iter()
             .enumerate()
@@ -76,12 +77,12 @@ pub(crate) fn fingerprint(state: &AppState) -> Fingerprint {
                     doc.id(),
                     doc.revision(),
                     s.name.clone(),
-                    s.material.clone(),
+                    s.materials.clone(),
                 )
             })
             .collect(),
-        current: state.sets.current().id.clone(),
-        title: state.project_name.clone(),
+        current: state.session.sets.current().id.clone(),
+        title: state.session.project_name.clone(),
         shelf: state
             .shelf
             .resources()
@@ -115,9 +116,9 @@ pub(crate) fn capture(state: &AppState, recovered_from: Option<&str>) -> Result<
     if state.psd.is_busy() {
         return Err(Refusal::Import);
     }
-    let base = state.project.as_ref().map(|p| p.project_shared());
-    let mut sets = Vec::with_capacity(state.sets.len());
-    for (i, set) in state.sets.iter().enumerate() {
+    let base = state.session.project.as_ref().map(|p| p.project_shared());
+    let mut sets = Vec::with_capacity(state.session.sets.len());
+    for (i, set) in state.session.sets.iter().enumerate() {
         let doc = state.set_doc(i);
         let in_base = base
             .as_ref()
@@ -138,12 +139,12 @@ pub(crate) fn capture(state: &AppState, recovered_from: Option<&str>) -> Result<
         sets.push(SetCapture {
             id: set.id.clone(),
             name: set.name.clone(),
-            material: set.material.clone(),
+            materials: set.materials.clone(),
             snapshot,
         });
     }
     // 今のセットを除いたときは、並びで最初の残るセットを今のセットにする（保存と同じ）。残るセットが無ければ書き置きを作らない
-    let current = state.sets.current().id.clone();
+    let current = state.session.sets.current().id.clone();
     let current = sets
         .iter()
         .find(|s| s.id == current)
@@ -154,13 +155,14 @@ pub(crate) fn capture(state: &AppState, recovered_from: Option<&str>) -> Result<
         base.as_deref(),
         // 読むだけのセットの文書は見せるだけの写しなので数えない（保存と同じ）
         state
+            .session
             .sets
             .iter()
             .enumerate()
             .filter(|(_, set)| set.read_only.is_none())
             .map(|(i, set)| (set.id.as_str(), state.set_doc(i).id())),
     );
-    let project_path = match state.project.as_ref().filter(|p| p.is_file()) {
+    let project_path = match state.session.project.as_ref().filter(|p| p.is_file()) {
         Some(p) => p.path().display().to_string(),
         None => recovered_from.unwrap_or_default().to_owned(),
     };
@@ -169,7 +171,7 @@ pub(crate) fn capture(state: &AppState, recovered_from: Option<&str>) -> Result<
     let title = if project_path.is_empty() {
         String::new()
     } else {
-        state.project_name.clone()
+        state.session.project_name.clone()
     };
     let shelf = (state.shelf.changed && state.shelf.unavailable.is_none())
         .then(|| state.shelf.shelf().clone());
@@ -209,7 +211,7 @@ pub(crate) fn build(capture: &Capture) -> Result<Project, RecoveryError> {
         specs.push(SetSpec {
             id: set.id.clone(),
             name: set.name.clone(),
-            material: set.material.clone(),
+            materials: set.materials.clone(),
             document,
             composites: Vec::new(),
         });

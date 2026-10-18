@@ -2,8 +2,6 @@
 //! 一覧・名前の検索・選び。選んだ物は今のグループの後ろへ置く（`BrushAction::AddFrom`。並びにある物と同梱の Krita は写しのファイルを作る）。
 //! 利用者のブラシのファイル（取り込んだ物・自分で作った物・写し）は、並びから外した物もここに出る。画面は `panels::brush_catalog`。
 
-use egui::Vec2;
-
 use crate::brushes::{builtin, store, BrushKey, Entry};
 use crate::lang::Lang;
 use crate::state::AppState;
@@ -56,12 +54,12 @@ impl Kind {
 
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            Kind::Builtin => lang.pick("組み込み", "Built-in"),
+            Kind::Builtin => lang.t("toolset-built-in"),
             Kind::Krita => "Krita",
             Kind::Photoshop => "Photoshop",
             Kind::ClipStudio => "CLIP STUDIO",
-            Kind::OtherImports => lang.pick("そのほかの取り込み", "Other Imports"),
-            Kind::Mine => lang.pick("自分のブラシ", "My Brushes"),
+            Kind::OtherImports => lang.t("toolset-other-imports"),
+            Kind::Mine => lang.t("toolset-my-brushes"),
         }
     }
 
@@ -96,8 +94,7 @@ pub struct Catalog {
     pub selected: Vec<CatalogItem>,
     pub scroll: f32,
     pub content: f32,
-    /// 見出しのドラッグで動いた量（画面の真ん中からの）。
-    pub offset: Vec2,
+    /// 初めの位置へ置いたか（位置は `UiState::toolset_catalog_offset`）。
     pub placed: bool,
     /// 右クリックのメニューの対象。
     pub context: Option<CatalogItem>,
@@ -114,7 +111,6 @@ impl Default for Catalog {
             selected: Vec::new(),
             scroll: 0.0,
             content: 0.0,
-            offset: Vec2::ZERO,
             placed: false,
             context: None,
             pending_delete: None,

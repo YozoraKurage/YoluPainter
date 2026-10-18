@@ -9,7 +9,7 @@ use yolu_io::{
 
 fn writer() -> WriterInfo {
     WriterInfo {
-        app: "試験の書き手".into(),
+        app: "テストの書き手".into(),
         version: "0.0.1".into(),
         unity: "standalone".into(),
     }
@@ -48,7 +48,7 @@ fn spec(id: &str, name: &str, material: MaterialRef, doc: Option<&Document>) -> 
     SetSpec {
         id: id.into(),
         name: name.into(),
-        material,
+        materials: vec![material],
         document: doc.map(|d| NativeDocument::from_core(d).unwrap().into()),
         composites: doc.map(|d| composite_pngs(d).unwrap()).unwrap_or_default(),
     }
@@ -83,8 +83,11 @@ fn a_new_project_round_trips_and_saves() {
     assert_eq!(p.info().created_by, Some(writer()));
     assert_eq!(p.current_set(), B);
     let sets = p.sets();
-    assert_eq!((sets[0].name.as_str(), &sets[0].material), ("Body", &skin));
-    assert_eq!(sets[1].material, MaterialRef::Unassigned);
+    assert_eq!(
+        (sets[0].name.as_str(), &sets[0].materials[0]),
+        ("Body", &skin)
+    );
+    assert_eq!(sets[1].materials[0], MaterialRef::Unassigned);
     let back = sets[0].document.to_core().unwrap();
     for (x, y) in [(10, 10), (30, 20), (60, 60)] {
         assert_eq!(
@@ -181,7 +184,7 @@ fn with_sets_renames_rebinds_adds_and_keeps_the_rest_byte_for_byte() {
     let names: Vec<&str> = q.sets().iter().map(|s| s.name.as_str()).collect();
     assert_eq!(names, ["肌", "Cloth", "Skin 2", "Hair"]);
     assert_eq!(
-        q.sets()[0].material,
+        q.sets()[0].materials[0],
         MaterialRef::Material {
             name: "Skin".into(),
             asset: None
@@ -247,7 +250,7 @@ fn with_sets_keeps_keys_it_does_not_know() {
         .map(|s| SetSpec {
             id: s.id.clone(),
             name: format!("{} 改", s.name),
-            material: s.material.clone(),
+            materials: s.materials.clone(),
             document: None,
             composites: Vec::new(),
         })
@@ -280,7 +283,7 @@ fn with_sets_dropping_removes_the_set_with_every_entry_and_keeps_the_rest_byte_f
             spec(
                 &ids[i],
                 &p.sets()[i].name,
-                p.sets()[i].material.clone(),
+                p.sets()[i].materials[0].clone(),
                 None,
             )
         })
@@ -321,7 +324,7 @@ fn with_sets_dropping_refuses_what_would_lose_a_set_silently() {
     let all: Vec<SetSpec> = p
         .sets()
         .iter()
-        .map(|s| spec(&s.id, &s.name, s.material.clone(), None))
+        .map(|s| spec(&s.id, &s.name, s.materials[0].clone(), None))
         .collect();
     // どちらにも無いセットは黙って消さない
     let lost = p.with_sets_dropping(writer(), &all[..2], &ids[0], &[]);

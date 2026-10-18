@@ -1,11 +1,12 @@
 //! 塗りつぶしレイヤーの画像と投影・デカール・形のギズモ・グラデーションのツールを、ウィンドウ（egui_kittest。描画は wgpu のソフトの描画）で本物のポインタとキーで
 //! 操作する試験。画面なしの試験は `fillfx.rs`。マップ（位置・法線）は、立方体を CPU で焼いた結果を文書の効果の入力へ足して使う。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::{pos2, vec2, Event, Key, Modifiers, PointerButton, Pos2, Rect};
 use egui_kittest::kittest::{NodeT, Queryable};
-use egui_kittest::{Harness, SnapshotResults};
+use egui_kittest::Harness;
 use yolu_app::bake::{BakeAction, BakeBackend};
 use yolu_app::engine::{Channel, LayerId};
 use yolu_app::fillfx::{gizmo, inputs, FillOp};
@@ -24,11 +25,11 @@ fn quad() -> Vec<u8> {
 }
 
 fn st<'a>(h: &'a Harness<'_, YoluApp>) -> &'a AppState {
-    &h.state().state
+    h.app()
 }
 
 fn apply(h: &mut Harness<'_, YoluApp>, a: Action) {
-    h.state_mut().state.apply(a);
+    h.act(a);
     h.run();
 }
 
@@ -41,23 +42,23 @@ fn undo(h: &mut Harness<'_, YoluApp>) {
 fn window() -> (Harness<'static, YoluApp>, Rect) {
     let mut h = app(1280.0, 1500.0, 64);
     {
-        let s = &mut h.state_mut().state;
-        s.bake.backend = BakeBackend::Cpu;
-        s.apply(Action::LoadDemoModel);
-        s.bake.settings.maps = vec![MeshMapKind::WorldNormal, MeshMapKind::Position];
-        s.bake.settings.padding = 4;
-        s.apply(Action::Bake(BakeAction::Start));
+        let s = h.app_mut();
+        s.bake_mut().backend = BakeBackend::Cpu;
+        s.act(Action::LoadDemoModel);
+        s.bake_mut().settings.maps = vec![MeshMapKind::WorldNormal, MeshMapKind::Position];
+        s.bake_mut().settings.padding = 4;
+        s.act(Action::Bake(BakeAction::Start));
         s.wait_bake();
-        let mut inputs = s.doc.effect_inputs().clone();
+        let mut inputs = s.doc().effect_inputs().clone();
         for kind in [MeshMapKind::Position, MeshMapKind::WorldNormal] {
-            let map = s.sets.current().mesh_maps.get(kind).unwrap().clone();
+            let map = s.sets().current().mesh_maps.get(kind).unwrap().clone();
             inputs = inputs
                 .with_map(MapInput::from_baked(&map, MapState::Current).unwrap())
                 .unwrap();
         }
-        s.doc.set_effect_inputs(inputs).unwrap();
-        s.view3d.camera.yaw = -40.0;
-        s.view3d.camera.pitch = 15.0;
+        s.doc_mut().set_effect_inputs(inputs).unwrap();
+        s.view3d_mut().view.camera.yaw = -40.0;
+        s.view3d_mut().view.camera.pitch = 15.0;
     }
     click_tab(&mut h, Tab::View3d);
     // 右上の組はテクスチャセットが前なので、棚（アセット）のタブを前へ出す
@@ -69,9 +70,7 @@ fn window() -> (Harness<'static, YoluApp>, Rect) {
 
 fn shelf_image(h: &mut Harness<'_, YoluApp>, name: &str) -> (String, ImageId) {
     let rid = h
-        .state_mut()
-        .state
-        .shelf
+        .shelf_mut()
         .add_image(yolu_app::lang::Lang::Ja, name, &quad(), 2, 2)
         .unwrap();
     h.run();
@@ -79,7 +78,7 @@ fn shelf_image(h: &mut Harness<'_, YoluApp>, name: &str) -> (String, ImageId) {
 }
 
 fn layer_projection(h: &Harness<'_, YoluApp>, id: LayerId) -> Projection {
-    *st(h).doc.layer(id).unwrap().projection()
+    *st(h).doc().layer(id).unwrap().projection()
 }
 
 /// 右上の組（アセット）の格子の中の素材。
@@ -92,19 +91,28 @@ fn card(h: &Harness<'_, YoluApp>, name: &str) -> Rect {
 fn dragging_a_shelf_image_onto_the_3d_model_places_a_decal_and_one_undo_removes_it() {
     let (mut h, rect) = window();
     let (_, image) = shelf_image(&mut h, "石の模様");
-    let layers = st(&h).doc.layers().len();
+    let layers = st(&h).doc().layers().len();
     let from = card(&h, "石の模様").center();
     let to = rect.center();
     drag(
         &mut h,
         &[from, from + vec2(30.0, 10.0), to + vec2(0.0, -40.0), to],
     );
-    assert_eq!(st(&h).doc.layers().len(), layers + 1, "{}", st(&h).message);
-    let id = st(&h).selected_layer.unwrap();
-    let layer = st(&h).doc.layer(id).unwrap();
+    assert_eq!(
+        st(&h).doc().layers().len(),
+        layers + 1,
+        "{}",
+        st(&h).message()
+    );
+    let id = st(&h).selected_layer().unwrap();
+    let layer = st(&h).doc().layer(id).unwrap();
     assert_eq!(layer.fill_image(Channel::Color), Some(image));
     assert_eq!(layer.projection().mode, ProjectionMode::Decal);
-    assert!(st(&h).message.contains("石の模様"), "{}", st(&h).message);
+    assert!(
+        st(&h).message().contains("石の模様"),
+        "{}",
+        st(&h).message()
+    );
     assert!(
         !egui::DragAndDrop::has_any_payload(&h.ctx),
         "ドラッグの荷物は残さない"
@@ -113,12 +121,12 @@ fn dragging_a_shelf_image_onto_the_3d_model_places_a_decal_and_one_undo_removes_
     assert_eq!(gizmo::target(st(&h)), Some(gizmo::Target::Projection(id)));
     assert!(gizmo::handle_point(st(&h), rect, Handle::MoveFree).is_some());
     undo(&mut h);
-    assert_eq!(st(&h).doc.layers().len(), layers);
+    assert_eq!(st(&h).doc().layers().len(), layers);
     // 3D ビューの外へ落としても何も置かない
     let canvas_tab = h.state().tab_rects.get(&Tab::Canvas).unwrap().center();
     let outside = pos2(canvas_tab.x, rect.bottom() + 5.0);
     drag(&mut h, &[from, from + vec2(30.0, 10.0), outside]);
-    assert_eq!(st(&h).doc.layers().len(), layers);
+    assert_eq!(st(&h).doc().layers().len(), layers);
 }
 
 #[test]
@@ -126,30 +134,38 @@ fn dragging_a_shelf_image_onto_the_image_box_sets_it_and_the_box_opens_the_list(
     let (mut h, _) = window();
     let (rid, image) = shelf_image(&mut h, "石の模様");
     apply(&mut h, Action::M2(yolu_app::m2::Edit::NewFill));
-    let layer = st(&h).selected_layer.unwrap();
+    let layer = st(&h).selected_layer().unwrap();
     assert!(st(&h).fill_image_problem(layer, Channel::Color).is_none());
     // 画像の箱（右の列。同じ名前の格子の素材は右上の組）。まだ画像が無いので名前は「画像」。欄は縦に長く、箱がウィンドウの下端の外に
     // 出ることがあるので、右の列を箱が見える所まで送ってから位置を取る
     let in_column = |r: Rect| r.left() > rx() && r.height() < 40.0 && r.width() > 100.0;
     let first = rect_of(&h, "画像", in_column);
-    let scroll = st(&h).m2.props_scroll + (first.top() - props_mid(&h)).max(0.0);
-    h.state_mut().state.m2.props_scroll = scroll;
+    let scroll = st(&h).m2().props_scroll + (first.top() - props_mid(&h)).max(0.0);
+    h.m2_mut().props_scroll = scroll;
     h.run();
     let boxed = rect_of(&h, "画像", in_column);
     // 押すと一覧
     click(&mut h, boxed.center());
-    assert!(st(&h).popup.is_some(), "画像の一覧が開く");
+    assert!(st(&h).popup().is_some(), "画像の一覧が開く");
     let item = popup_item(&h, "石の模様  (2 × 2)");
     click(&mut h, item.center());
     assert_eq!(
-        st(&h).doc.layer(layer).unwrap().fill_image(Channel::Color),
+        st(&h)
+            .doc()
+            .layer(layer)
+            .unwrap()
+            .fill_image(Channel::Color),
         Some(image),
         "{}",
-        st(&h).message
+        st(&h).message()
     );
     undo(&mut h);
     assert_eq!(
-        st(&h).doc.layer(layer).unwrap().fill_image(Channel::Color),
+        st(&h)
+            .doc()
+            .layer(layer)
+            .unwrap()
+            .fill_image(Channel::Color),
         None
     );
     // 棚の画像をドラッグして落とす
@@ -167,10 +183,14 @@ fn dragging_a_shelf_image_onto_the_image_box_sets_it_and_the_box_opens_the_list(
         ],
     );
     assert_eq!(
-        st(&h).doc.layer(layer).unwrap().fill_image(Channel::Color),
+        st(&h)
+            .doc()
+            .layer(layer)
+            .unwrap()
+            .fill_image(Channel::Color),
         Some(image),
         "{}",
-        st(&h).message
+        st(&h).message()
     );
     assert!(!egui::DragAndDrop::has_any_payload(&h.ctx));
     // 画像の箱の名前は画像の名前になり、外すボタンで戻る
@@ -180,7 +200,11 @@ fn dragging_a_shelf_image_onto_the_image_box_sets_it_and_the_box_opens_the_list(
     let clear = pos2(boxed.right() + 14.0, boxed.center().y);
     click(&mut h, clear);
     assert_eq!(
-        st(&h).doc.layer(layer).unwrap().fill_image(Channel::Color),
+        st(&h)
+            .doc()
+            .layer(layer)
+            .unwrap()
+            .fill_image(Channel::Color),
         None
     );
     let _ = rid;
@@ -192,10 +216,10 @@ fn the_fill_image_box_gets_its_picture_from_another_thread_even_with_the_shelf_t
     // 右上の組をテクスチャセットへ（棚の格子が絵を頼まない）。別のスレッドは、頼まれても止めておく
     click_tab(&mut h, Tab::TextureSets);
     h.run();
-    h.state_mut().state.shelf.hold_inspections(true);
+    h.shelf().hold_inspections(true);
     let (rid, image) = shelf_image(&mut h, "石の模様");
     apply(&mut h, Action::M2(yolu_app::m2::Edit::NewFill));
-    let layer = st(&h).selected_layer.unwrap();
+    let layer = st(&h).selected_layer().unwrap();
     apply(
         &mut h,
         Action::Fill(FillOp::Image {
@@ -212,22 +236,22 @@ fn the_fill_image_box_gets_its_picture_from_another_thread_even_with_the_shelf_t
         h.step();
     }
     assert!(
-        st(&h).shelf.info(&rid).is_none(),
+        st(&h).shelf().info(&rid).is_none(),
         "画面のスレッドで展開しない"
     );
-    assert!(st(&h).shelf.inspections_pending(), "別のスレッドへ頼んだ");
+    assert!(st(&h).shelf().inspections_pending(), "別のスレッドへ頼んだ");
     // 別のスレッドが終わると、箱の絵になる（受け取りは棚のタブが閉じていても毎フレーム）
-    h.state_mut().state.shelf.hold_inspections(false);
+    h.shelf().hold_inspections(false);
     let started = std::time::Instant::now();
-    while st(&h).shelf.info(&rid).is_none() {
+    while st(&h).shelf().info(&rid).is_none() {
         assert!(started.elapsed().as_secs() < 30, "絵ができない");
         std::thread::sleep(std::time::Duration::from_millis(2));
         h.step();
     }
     h.run();
-    assert!(!st(&h).shelf.inspections_pending());
+    assert!(!st(&h).shelf().inspections_pending());
     let ctx = h.ctx.clone();
-    assert!(h.state_mut().state.shelf.texture(&ctx, &rid).is_some());
+    assert!(h.shelf_mut().texture(&ctx, &rid).is_some());
 }
 
 #[test]
@@ -235,7 +259,7 @@ fn dragging_a_gizmo_handle_in_the_3d_view_moves_the_box_in_one_undo_and_escape_p
     let (mut h, rect) = window();
     let (_, image) = shelf_image(&mut h, "石の模様");
     apply(&mut h, Action::M2(yolu_app::m2::Edit::NewFill));
-    let layer = st(&h).selected_layer.unwrap();
+    let layer = st(&h).selected_layer().unwrap();
     apply(
         &mut h,
         Action::Fill(FillOp::Image {
@@ -253,7 +277,7 @@ fn dragging_a_gizmo_handle_in_the_3d_view_moves_the_box_in_one_undo_and_escape_p
     );
     let start = layer_projection(&h, layer);
     let from = gizmo::handle_point(st(&h), rect, Handle::MoveX).expect("X の矢印");
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     let target = from + vec2(60.0, 0.0);
     drag(
         &mut h,
@@ -266,12 +290,12 @@ fn dragging_a_gizmo_handle_in_the_3d_view_moves_the_box_in_one_undo_and_escape_p
         moved.placement.center
     );
     assert!(moved.placement.center[1].abs() < 1e-6, "X の軸だけ動く");
-    assert_eq!(st(&h).doc.undo_count(), steps + 1, "1 回の Undo");
+    assert_eq!(st(&h).doc().undo_count(), steps + 1, "1 回の Undo");
     assert!(!gizmo::dragging(st(&h)));
     undo(&mut h);
     assert_eq!(layer_projection(&h, layer), start);
     // Esc: ドラッグの途中で押すと、前へ戻して履歴にも残さない
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     press(&h, from, PointerButton::Primary);
     h.step();
     move_to(&h, from + vec2(30.0, 0.0));
@@ -287,7 +311,7 @@ fn dragging_a_gizmo_handle_in_the_3d_view_moves_the_box_in_one_undo_and_escape_p
     release(&h, from + vec2(55.0, 0.0), PointerButton::Primary);
     h.run();
     assert_eq!(layer_projection(&h, layer), start, "離しても動かない");
-    assert_eq!(st(&h).doc.undo_count(), steps);
+    assert_eq!(st(&h).doc().undo_count(), steps);
     // ウィンドウがフォーカスを失ったら、そこまでを捨てる
     press(&h, from, PointerButton::Primary);
     h.step();
@@ -311,7 +335,7 @@ fn while_dragging_the_gizmo_the_3d_view_shows_a_coarse_picture_and_release_makes
     let (mut h, rect) = window();
     let (_, image) = shelf_image(&mut h, "石の模様");
     apply(&mut h, Action::M2(yolu_app::m2::Edit::NewFill));
-    let layer = st(&h).selected_layer.unwrap();
+    let layer = st(&h).selected_layer().unwrap();
     apply(
         &mut h,
         Action::Fill(FillOp::Image {
@@ -341,7 +365,7 @@ fn while_dragging_the_gizmo_the_3d_view_shows_a_coarse_picture_and_release_makes
     h.step();
     h.step();
     assert!(gizmo::dragging(st(&h)));
-    assert!(st(&h).doc.is_coalescing());
+    assert!(st(&h).doc().is_coalescing());
     let stats = h.state().view3d_stats().unwrap();
     assert!(
         stats.paint_coarse_tiles > 0,
@@ -377,7 +401,7 @@ fn while_dragging_the_gizmo_the_3d_view_shows_a_coarse_picture_and_release_makes
 fn q_hides_and_shows_the_handles_and_the_gizmo_shows_move_and_rotate_together() {
     let (mut h, rect) = window();
     apply(&mut h, Action::M2(yolu_app::m2::Edit::NewFill));
-    let layer = st(&h).selected_layer.unwrap();
+    let layer = st(&h).selected_layer().unwrap();
     apply(
         &mut h,
         Action::Fill(FillOp::ProjectionMode {
@@ -388,7 +412,7 @@ fn q_hides_and_shows_the_handles_and_the_gizmo_shows_move_and_rotate_together() 
     assert!(gizmo::target(st(&h)).is_some());
     key(&h, Key::Q, Modifiers::NONE);
     h.run();
-    assert!(st(&h).fillfx.handles_hidden && gizmo::target(st(&h)).is_none());
+    assert!(st(&h).fillfx().handles_hidden && gizmo::target(st(&h)).is_none());
     key(&h, Key::Q, Modifiers::NONE);
     h.run();
     assert!(gizmo::target(st(&h)).is_some());
@@ -404,7 +428,7 @@ fn q_hides_and_shows_the_handles_and_the_gizmo_shows_move_and_rotate_together() 
             "{handle:?}"
         );
     }
-    h.state_mut().state.m2.props_scroll = 330.0;
+    h.m2_mut().props_scroll = 330.0;
     h.run();
     for label in ["移動", "回転"] {
         assert!(
@@ -428,32 +452,32 @@ fn q_hides_and_shows_the_handles_and_the_gizmo_shows_move_and_rotate_together() 
     // ポインタを何も無い所へ置いて、押したあとのホバーの動き・ツールチップが絵に入らないようにしてから撮る
     move_to(&h, rect.min + vec2(14.0, 40.0));
     // 焼いた時間を載せた知らせは撮るたびに変わる（状態の帯に出る）ので消す
-    h.state_mut().state.message.clear();
+    h.message_mut().clear();
     h.run();
     // 棚の素材の絵は別のスレッドで作る。できるまで待ってから撮る
-    h.state_mut().state.shelf.wait_inspections();
+    h.shelf_mut().wait_inspections();
     h.run();
-    h.snapshot("fillfx_gizmo_3d");
+    common::shot::region(&mut h, "fillfx_gizmo_3d", rect);
 }
 
 #[test]
 fn the_gradient_tool_paints_with_a_real_drag_on_the_canvas_and_shift_g_selects_it() {
     let mut h = app(1280.0, 1400.0, 64);
-    h.state_mut().state.color.set_main([1.0, 0.0, 0.0, 1.0]);
+    h.color_mut().set_main([1.0, 0.0, 0.0, 1.0]);
     key(&h, Key::G, Modifiers::SHIFT);
     h.run();
-    assert_eq!(st(&h).tool, Tool::Gradient);
+    assert_eq!(st(&h).tool(), Tool::Gradient);
     let canvas = canvas_rect(&h);
     let a = canvas.center() + vec2(-120.0, 0.0);
     let b = canvas.center() + vec2(120.0, 0.0);
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     drag(&mut h, &[a, a + vec2(30.0, 0.0), a + vec2(100.0, 0.0), b]);
-    assert_eq!(st(&h).doc.undo_count(), steps + 1, "{}", st(&h).message);
+    assert_eq!(st(&h).doc().undo_count(), steps + 1, "{}", st(&h).message());
     let left = canvas_pixel(&h, a + vec2(2.0, 0.0));
     let right = canvas_pixel(&h, b - vec2(2.0, 0.0));
     assert!(left[0] > 200 && left[3] > 200, "始点の側は描画色: {left:?}");
     assert!(right[3] < 60, "終点の側は透明: {right:?}");
-    assert!(st(&h).gradient.drag.is_none());
+    assert!(st(&h).gradient().drag.is_none());
     undo(&mut h);
     assert_eq!(canvas_pixel(&h, a)[3], 0);
     // Esc: ドラッグの途中でやめる（何も塗らない）
@@ -461,24 +485,25 @@ fn the_gradient_tool_paints_with_a_real_drag_on_the_canvas_and_shift_g_selects_i
     h.step();
     move_to(&h, a + vec2(80.0, 0.0));
     h.step();
-    assert!(st(&h).gradient.drag.is_some());
+    assert!(st(&h).gradient().drag.is_some());
     key(&h, Key::Escape, Modifiers::NONE);
     h.step();
-    assert!(st(&h).gradient.drag.is_none());
+    assert!(st(&h).gradient().drag.is_none());
     release(&h, a + vec2(80.0, 0.0), PointerButton::Primary);
     h.run();
-    assert_eq!(st(&h).doc.undo_count(), steps, "何も塗らない");
+    assert_eq!(st(&h).doc().undo_count(), steps, "何も塗らない");
     // ツールの帯のボタンと英語の名前
     apply(&mut h, Action::SelectTool(Tool::Brush));
     h.get_by_label("グラデーション（Shift+G）").click();
     h.run();
-    assert_eq!(st(&h).tool, Tool::Gradient);
+    assert_eq!(st(&h).tool(), Tool::Gradient);
     apply(
         &mut h,
         Action::M2Ui(yolu_app::m2::UiOp::Language(yolu_app::lang::Lang::En)),
     );
     assert!(h.query_by_label("Gradient (Shift+G)").is_some());
-    h.snapshot("fillfx_gradient_tool_options");
+    let rect = crate::tool_panels(&h);
+    common::shot::region(&mut h, "fillfx_gradient_tool_options", rect);
     // 3D ビューでは使わない
     click_tab(&mut h, Tab::View3d);
     st(&h);
@@ -487,36 +512,38 @@ fn the_gradient_tool_paints_with_a_real_drag_on_the_canvas_and_shift_g_selects_i
 
 #[test]
 fn the_fill_panel_draws_in_both_languages_without_clipped_text() {
-    let mut results = SnapshotResults::new();
     for lang in yolu_app::lang::Lang::ALL {
         let (mut h, _) = window();
         {
-            let s = &mut h.state_mut().state;
-            s.apply(Action::M2Ui(yolu_app::m2::UiOp::Language(lang)));
-            s.apply(Action::M2(yolu_app::m2::Edit::NewFill));
-            let layer = s.selected_layer.unwrap();
-            let rid = s.shelf.add_image(lang, "tile", &quad(), 2, 2).unwrap();
+            let s = h.app_mut();
+            s.act(Action::M2Ui(yolu_app::m2::UiOp::Language(lang)));
+            s.act(Action::M2(yolu_app::m2::Edit::NewFill));
+            let layer = s.selected_layer().unwrap();
+            let rid = s
+                .shelf_mut()
+                .add_image(lang, "tile", &quad(), 2, 2)
+                .unwrap();
             let id = inputs::image_id(&rid).unwrap();
-            s.apply(Action::Fill(FillOp::Image {
+            s.act(Action::Fill(FillOp::Image {
                 layer,
                 channel: Channel::Color,
                 image: Some(id),
             }));
-            s.apply(Action::Fill(FillOp::ProjectionMode {
+            s.act(Action::Fill(FillOp::ProjectionMode {
                 layer,
                 mode: ProjectionMode::Decal,
             }));
-            s.apply(Action::M2Ui(yolu_app::m2::UiOp::PaintChannel(
+            s.act(Action::M2Ui(yolu_app::m2::UiOp::PaintChannel(
                 Channel::Roughness,
             )));
-            s.apply(Action::Fill(FillOp::AddGradient {
+            s.act(Action::Fill(FillOp::AddGradient {
                 layer,
                 channel: Channel::Roughness,
             }));
             for key in ["fill-image", "fill-projection", "fill-gradient"] {
-                s.ui.sections.insert(key, true);
+                s.ui_mut().sections.insert(key, true);
             }
-            s.m2.props_scroll = 0.0;
+            s.m2_mut().props_scroll = 0.0;
         }
         h.run();
         let want = lang.pick("投影", "Projection");
@@ -544,8 +571,8 @@ fn the_fill_panel_draws_in_both_languages_without_clipped_text() {
             }
         }
         for (k, scroll) in [0.0f32, 420.0, 900.0].into_iter().enumerate() {
-            h.state_mut().state.message.clear();
-            h.state_mut().state.m2.props_scroll = scroll;
+            h.message_mut().clear();
+            h.m2_mut().props_scroll = scroll;
             h.run();
             // 右の列（プロパティ）に描いた文字は、行の名前・状態・短い理由だけ（使い方の説明・開発用の数・長い文が無い）
             let mut shown = 0;
@@ -568,11 +595,14 @@ fn the_fill_panel_draws_in_both_languages_without_clipped_text() {
                 "{lang:?} {k}: 欄の文字を集められていない（{shown}）"
             );
             // 棚の素材の絵は別のスレッドで作る。できるまで待ってから撮る
-            h.state_mut().state.shelf.wait_inspections();
+            h.shelf_mut().wait_inspections();
             h.run();
-            h.snapshot(format!("fillfx_panel_{}_{k}", lang.pick("ja", "en")));
+            // 英語の絵は撮らない（欄の並びは文字の長さで変わらない。英語の画面に日本語が残らないことは上で確かめる）
+            if lang == yolu_app::lang::Lang::Ja {
+                let rect = crate::common::shot::group(&h, yolu_app::Tab::Properties);
+                common::shot::region(&mut h, &format!("fillfx_panel_ja_{k}"), rect);
+            }
         }
-        results.extend_harness(&mut h);
     }
 }
 
@@ -614,7 +644,7 @@ fn collect_clipped(shape: &egui::epaint::Shape, clip: Rect, out: &mut Vec<String
 fn dragging_a_ramp_slider_makes_one_undo_step_and_a_stop_click_makes_another() {
     let (mut h, _) = window();
     apply(&mut h, Action::M2(yolu_app::m2::Edit::NewFill));
-    let layer = st(&h).selected_layer.unwrap();
+    let layer = st(&h).selected_layer().unwrap();
     apply(
         &mut h,
         Action::M2Ui(yolu_app::m2::UiOp::PaintChannel(Channel::Roughness)),
@@ -626,17 +656,13 @@ fn dragging_a_ramp_slider_makes_one_undo_step_and_a_stop_click_makes_another() {
             channel: Channel::Roughness,
         }),
     );
-    h.state_mut()
-        .state
-        .ui
-        .sections
-        .insert("fill-gradient", true);
+    h.ui_mut().sections.insert("fill-gradient", true);
     // 欄のいちばん下（階調の分岐点の欄とカーブ）まで送る
-    h.state_mut().state.m2.props_scroll = 100_000.0;
+    h.m2_mut().props_scroll = 100_000.0;
     h.run();
     let stops = |h: &Harness<'_, YoluApp>| {
         st(h)
-            .doc
+            .doc()
             .layer(layer)
             .unwrap()
             .fill_gradient(Channel::Roughness)
@@ -655,8 +681,8 @@ fn dragging_a_ramp_slider_makes_one_undo_step_and_a_stop_click_makes_another() {
             .expect("分岐点の位置")
     };
     let found = position(&h);
-    let scroll = st(&h).m2.props_scroll + (found.top() - props_mid(&h));
-    h.state_mut().state.m2.props_scroll = scroll;
+    let scroll = st(&h).m2().props_scroll + (found.top() - props_mid(&h));
+    h.m2_mut().props_scroll = scroll;
     h.run();
     let slider = position(&h);
     assert!(
@@ -664,7 +690,7 @@ fn dragging_a_ramp_slider_makes_one_undo_step_and_a_stop_click_makes_another() {
         "{slider:?}"
     );
     let y = slider.bottom() - 6.0;
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     let x0 = slider.left() + 20.0;
     drag(
         &mut h,
@@ -676,7 +702,7 @@ fn dragging_a_ramp_slider_makes_one_undo_step_and_a_stop_click_makes_another() {
         ],
     );
     assert_eq!(
-        st(&h).doc.undo_count(),
+        st(&h).doc().undo_count(),
         steps + 1,
         "スライダーのドラッグは 1 回の取り消し"
     );
@@ -687,7 +713,7 @@ fn dragging_a_ramp_slider_makes_one_undo_step_and_a_stop_click_makes_another() {
     );
     undo(&mut h);
     assert_eq!(stops(&h).colors()[0].position, 0.0);
-    assert_eq!(st(&h).doc.undo_count(), steps);
+    assert_eq!(st(&h).doc().undo_count(), steps);
 }
 
 fn pen_sample(at: Pos2, contact: bool) -> yolu_app::pen::PenSample {
@@ -708,13 +734,9 @@ fn pen_sample(at: Pos2, contact: bool) -> yolu_app::pen::PenSample {
 fn projection_window() -> (Harness<'static, YoluApp>, LayerId, Pos2) {
     let (mut h, _) = window();
     apply(&mut h, Action::M2(yolu_app::m2::Edit::NewFill));
-    let layer = st(&h).selected_layer.unwrap();
-    h.state_mut()
-        .state
-        .ui
-        .sections
-        .insert("fill-projection", true);
-    h.state_mut().state.m2.props_scroll = 0.0;
+    let layer = st(&h).selected_layer().unwrap();
+    h.ui_mut().sections.insert("fill-projection", true);
+    h.m2_mut().props_scroll = 0.0;
     h.run();
     let tile_u = |h: &Harness<'_, YoluApp>| {
         let mut us: Vec<Rect> = h
@@ -726,8 +748,8 @@ fn projection_window() -> (Harness<'static, YoluApp>, LayerId, Pos2) {
         us.first().copied().expect("タイルの U の欄")
     };
     let top = tile_u(&h).top();
-    let scroll = st(&h).m2.props_scroll + (top - props_mid(&h));
-    h.state_mut().state.m2.props_scroll = scroll;
+    let scroll = st(&h).m2().props_scroll + (top - props_mid(&h));
+    h.m2_mut().props_scroll = scroll;
     h.run();
     let field = tile_u(&h);
     assert!(
@@ -745,7 +767,7 @@ fn tiles(h: &Harness<'_, YoluApp>, layer: LayerId) -> [f64; 2] {
 fn dragging_a_number_field_in_the_panel_is_one_undo_and_escape_leaves_the_value_and_no_step() {
     let (mut h, layer, c) = projection_window();
     assert_eq!(tiles(&h, layer), [1.0, 1.0]);
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     // 離すまでの変更は 1 回の Undo
     drag(
         &mut h,
@@ -759,10 +781,14 @@ fn dragging_a_number_field_in_the_panel_is_one_undo_and_escape_leaves_the_value_
     let dragged = tiles(&h, layer)[0];
     assert!((dragged - 1.5).abs() < 0.011, "50 画素 × 0.01: {dragged}");
     assert_eq!(tiles(&h, layer)[1], 1.0, "V は動かさない");
-    assert_eq!(st(&h).doc.undo_count(), steps + 1, "ドラッグは 1 回の Undo");
+    assert_eq!(
+        st(&h).doc().undo_count(),
+        steps + 1,
+        "ドラッグは 1 回の Undo"
+    );
     undo(&mut h);
     assert_eq!(tiles(&h, layer), [1.0, 1.0]);
-    assert_eq!(st(&h).doc.undo_count(), steps);
+    assert_eq!(st(&h).doc().undo_count(), steps);
     // 押したまま Esc: 押し始めの値へ戻り、履歴にも残らない（離しても動かない）
     press(&h, c, PointerButton::Primary);
     h.step();
@@ -775,7 +801,7 @@ fn dragging_a_number_field_in_the_panel_is_one_undo_and_escape_leaves_the_value_
     h.step();
     assert_eq!(tiles(&h, layer), [1.0, 1.0]);
     assert_eq!(
-        st(&h).doc.undo_count(),
+        st(&h).doc().undo_count(),
         steps,
         "Esc で止めた分は履歴に残さない"
     );
@@ -784,13 +810,13 @@ fn dragging_a_number_field_in_the_panel_is_one_undo_and_escape_leaves_the_value_
     release(&h, c + vec2(70.0, 0.0), PointerButton::Primary);
     h.run();
     assert_eq!(tiles(&h, layer), [1.0, 1.0], "離しても動かない");
-    assert_eq!(st(&h).doc.undo_count(), steps);
+    assert_eq!(st(&h).doc().undo_count(), steps);
 }
 
 #[test]
 fn clicking_a_number_field_types_a_value_clamped_to_its_range_and_escape_throws_it_away() {
     let (mut h, layer, c) = projection_window();
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     // クリックして打つ（範囲の外は端へ。タイルは 1e-3〜1e4）
     click(&mut h, c);
     key(&h, Key::A, Modifiers::COMMAND);
@@ -800,7 +826,11 @@ fn clicking_a_number_field_types_a_value_clamped_to_its_range_and_escape_throws_
     key(&h, Key::Enter, Modifiers::NONE);
     h.run();
     assert_eq!(tiles(&h, layer)[0], 2.5);
-    assert_eq!(st(&h).doc.undo_count(), steps + 1, "打った値も 1 回の Undo");
+    assert_eq!(
+        st(&h).doc().undo_count(),
+        steps + 1,
+        "打った値も 1 回の Undo"
+    );
     click(&mut h, c);
     key(&h, Key::A, Modifiers::COMMAND);
     h.step();
@@ -809,7 +839,7 @@ fn clicking_a_number_field_types_a_value_clamped_to_its_range_and_escape_throws_
     key(&h, Key::Enter, Modifiers::NONE);
     h.run();
     assert_eq!(tiles(&h, layer)[0], 1e4, "範囲の上の端");
-    assert_eq!(st(&h).doc.undo_count(), steps + 2);
+    assert_eq!(st(&h).doc().undo_count(), steps + 2);
     // Esc で捨てる
     click(&mut h, c);
     key(&h, Key::A, Modifiers::COMMAND);
@@ -820,7 +850,7 @@ fn clicking_a_number_field_types_a_value_clamped_to_its_range_and_escape_throws_
     h.run();
     assert_eq!(tiles(&h, layer)[0], 1e4);
     assert_eq!(
-        st(&h).doc.undo_count(),
+        st(&h).doc().undo_count(),
         steps + 2,
         "捨てたものは履歴に残さない"
     );
@@ -844,7 +874,7 @@ fn a_pen_drag_on_a_gizmo_handle_is_one_undo_with_the_property_fields_drawn_and_e
     let (mut h, rect) = window();
     let (_, image) = shelf_image(&mut h, "石の模様");
     apply(&mut h, Action::M2(yolu_app::m2::Edit::NewFill));
-    let layer = st(&h).selected_layer.unwrap();
+    let layer = st(&h).selected_layer().unwrap();
     apply(
         &mut h,
         Action::Fill(FillOp::Image {
@@ -868,7 +898,7 @@ fn a_pen_drag_on_a_gizmo_handle_is_one_undo_with_the_property_fields_drawn_and_e
     );
     let start = layer_projection(&h, layer);
     let from = gizmo::handle_point(st(&h), rect, Handle::MoveX).expect("X の矢印");
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     // 接触・動く・離れる
     for (k, p) in [
         from,
@@ -882,9 +912,9 @@ fn a_pen_drag_on_a_gizmo_handle_is_one_undo_with_the_property_fields_drawn_and_e
         pen_frames(&mut h, &[(p, true)]);
         assert!(gizmo::dragging(st(&h)), "{k}: ペンで掴んでいる");
         assert!(
-            st(&h).doc.undo_count() <= steps + 1,
+            st(&h).doc().undo_count() <= steps + 1,
             "{k}: ドラッグの途中で別の Undo の段にならない（{} 段）",
-            st(&h).doc.undo_count() - steps
+            st(&h).doc().undo_count() - steps
         );
     }
     let moved = layer_projection(&h, layer);
@@ -899,14 +929,14 @@ fn a_pen_drag_on_a_gizmo_handle_is_one_undo_with_the_property_fields_drawn_and_e
     assert!(!gizmo::dragging(st(&h)));
     assert_eq!(layer_projection(&h, layer), moved);
     assert_eq!(
-        st(&h).doc.undo_count(),
+        st(&h).doc().undo_count(),
         steps + 1,
         "ペンのドラッグは 1 回の Undo"
     );
     undo(&mut h);
     assert_eq!(layer_projection(&h, layer), start);
     // Esc: ペンの途中で押すと、前へ戻して履歴にも残さない。ペンが触れたままの点では、掴み直さず・描き始めもしない
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     pen_frames(
         &mut h,
         &[
@@ -930,13 +960,17 @@ fn a_pen_drag_on_a_gizmo_handle_is_one_undo_with_the_property_fields_drawn_and_e
     pen_frames(&mut h, &[(from, false)]);
     h.run();
     assert_eq!(layer_projection(&h, layer), start, "離しても動かない");
-    assert_eq!(st(&h).doc.undo_count(), steps);
+    assert_eq!(st(&h).doc().undo_count(), steps);
     // 離したあとの触れ直しは、また掴める
     pen_frames(&mut h, &[(from, true)]);
     assert!(gizmo::dragging(st(&h)));
     pen_frames(&mut h, &[(from, false)]);
     h.run();
-    assert_eq!(st(&h).doc.undo_count(), steps, "動かさなければ段を足さない");
+    assert_eq!(
+        st(&h).doc().undo_count(),
+        steps,
+        "動かさなければ段を足さない"
+    );
     // ウィンドウがフォーカスを失ったら、そこまでを捨てる
     pen_frames(&mut h, &[(from, true), (from + vec2(30.0, 0.0), true)]);
     assert!(gizmo::dragging(st(&h)));
@@ -944,20 +978,20 @@ fn a_pen_drag_on_a_gizmo_handle_is_one_undo_with_the_property_fields_drawn_and_e
     h.step();
     assert_eq!(layer_projection(&h, layer), start);
     assert!(!gizmo::dragging(st(&h)));
-    assert_eq!(st(&h).doc.undo_count(), steps);
+    assert_eq!(st(&h).doc().undo_count(), steps);
     pen_frames(&mut h, &[(from + vec2(30.0, 0.0), false)]);
     h.run();
     assert_eq!(layer_projection(&h, layer), start);
-    assert_eq!(st(&h).doc.undo_count(), steps);
+    assert_eq!(st(&h).doc().undo_count(), steps);
 }
 
 /// 点のグラデーションのレイヤーを作る（点 2 つ）。右の列のプロパティが描かれていることも確かめる。
 fn points_layer(h: &mut Harness<'_, YoluApp>) -> LayerId {
     let layer = {
-        let s = &mut h.state_mut().state;
-        s.apply(Action::M2(yolu_app::m2::Edit::NewFill));
-        let layer = s.selected_layer.unwrap();
-        s.apply(Action::Fill(FillOp::AddPoints {
+        let s = h.app_mut();
+        s.act(Action::M2(yolu_app::m2::Edit::NewFill));
+        let layer = s.selected_layer().unwrap();
+        s.act(Action::Fill(FillOp::AddPoints {
             layer,
             channel: Channel::Color,
         }));
@@ -977,7 +1011,7 @@ fn gradient_points(
     layer: LayerId,
 ) -> yolu_core::fill_points::PointGradient {
     st(h)
-        .doc
+        .doc()
         .layer(layer)
         .unwrap()
         .fill_points(Channel::Color)
@@ -994,9 +1028,9 @@ fn pen_drag_keeping_one_step(h: &mut Harness<'_, YoluApp>, path: &[Pos2], steps:
             "{k}: ペンで点を掴んでいる"
         );
         assert!(
-            st(h).doc.undo_count() <= steps + 1,
+            st(h).doc().undo_count() <= steps + 1,
             "{k}: ドラッグの途中で別の Undo の段にならない（{} 段）",
-            st(h).doc.undo_count() - steps
+            st(h).doc().undo_count() - steps
         );
     }
 }
@@ -1008,11 +1042,15 @@ fn a_pen_drag_on_a_point_in_the_3d_view_is_one_undo_with_the_property_fields_dra
     let (mut h, rect) = window();
     let layer = points_layer(&mut h);
     let start = gradient_points(&h, layer);
-    let view = st(&h).view3d.camera.view(rect.width(), rect.height());
+    let view = st(&h)
+        .view3d()
+        .view
+        .camera
+        .view(rect.width(), rect.height());
     let c = view.to_screen(yolu_core::glam::Vec3::ZERO).unwrap();
     let at = pos2(rect.left() + c.x, rect.top() + c.y);
     // 面を押して点を追加し、そのままドラッグ。右の列の欄は、ペンの接触では毎フレームまとめを終えようとする
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     pen_drag_keeping_one_step(
         &mut h,
         &[
@@ -1030,7 +1068,7 @@ fn a_pen_drag_on_a_point_in_the_3d_view_is_one_undo_with_the_property_fields_dra
     assert!(!points::dragging(st(&h)));
     assert_eq!(gradient_points(&h, layer), moved);
     assert_eq!(
-        st(&h).doc.undo_count(),
+        st(&h).doc().undo_count(),
         steps + 1,
         "ペンの追加とドラッグで 1 回の Undo"
     );
@@ -1043,7 +1081,8 @@ fn a_pen_drag_on_a_point_in_the_3d_view_is_one_undo_with_the_property_fields_dra
     let mark = {
         let p = moved.points[2].position;
         let g = st(&h)
-            .view3d
+            .view3d()
+            .view
             .camera
             .view(rect.width(), rect.height())
             .to_screen(yolu_core::glam::Vec3::new(
@@ -1054,7 +1093,7 @@ fn a_pen_drag_on_a_point_in_the_3d_view_is_one_undo_with_the_property_fields_dra
             .unwrap();
         pos2(rect.left() + g.x, rect.top() + g.y)
     };
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     pen_drag_keeping_one_step(
         &mut h,
         &[mark, mark + vec2(-15.0, 0.0), mark + vec2(-30.0, 0.0)],
@@ -1070,7 +1109,7 @@ fn a_pen_drag_on_a_point_in_the_3d_view_is_one_undo_with_the_property_fields_dra
     h.step();
     assert_eq!(gradient_points(&h, layer), moved);
     assert!(!points::dragging(st(&h)));
-    assert_eq!(st(&h).doc.undo_count(), steps, "Esc は履歴に残さない");
+    assert_eq!(st(&h).doc().undo_count(), steps, "Esc は履歴に残さない");
     pen_frames(&mut h, &[(mark + vec2(-40.0, 0.0), true)]);
     assert!(
         !points::dragging(st(&h)),
@@ -1079,7 +1118,7 @@ fn a_pen_drag_on_a_point_in_the_3d_view_is_one_undo_with_the_property_fields_dra
     pen_frames(&mut h, &[(mark + vec2(-40.0, 0.0), false)]);
     h.run();
     assert_eq!(gradient_points(&h, layer), moved);
-    assert_eq!(st(&h).doc.undo_count(), steps);
+    assert_eq!(st(&h).doc().undo_count(), steps);
     // ウィンドウがフォーカスを失ったら、そこまでを捨てる
     pen_drag_keeping_one_step(
         &mut h,
@@ -1090,11 +1129,11 @@ fn a_pen_drag_on_a_point_in_the_3d_view_is_one_undo_with_the_property_fields_dra
     h.step();
     assert_eq!(gradient_points(&h, layer), moved);
     assert!(!points::dragging(st(&h)));
-    assert_eq!(st(&h).doc.undo_count(), steps);
+    assert_eq!(st(&h).doc().undo_count(), steps);
     pen_frames(&mut h, &[(mark + vec2(-30.0, 0.0), false)]);
     h.run();
     assert_eq!(gradient_points(&h, layer), moved);
-    assert_eq!(st(&h).doc.undo_count(), steps);
+    assert_eq!(st(&h).doc().undo_count(), steps);
 }
 
 #[test]
@@ -1123,11 +1162,11 @@ fn a_pen_drag_on_a_point_in_the_2d_canvas_is_one_undo_and_escape_puts_it_back() 
     click_tab(&mut h, Tab::Canvas);
     h.run();
     let r = canvas_rect(&h);
-    let (w, hh) = (st(&h).doc.width(), st(&h).doc.height());
-    let view = st(&h).view.view(r, w, hh);
+    let (w, hh) = (st(&h).doc().width(), st(&h).doc().height());
+    let view = st(&h).view().view(r, w, hh);
     let at = view.to_screen(w as f64 * 0.25, hh as f64 * 0.75);
     let start = gradient_points(&h, layer);
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     pen_drag_keeping_one_step(
         &mut h,
         &[
@@ -1145,7 +1184,7 @@ fn a_pen_drag_on_a_point_in_the_2d_canvas_is_one_undo_and_escape_puts_it_back() 
     assert!(!points::dragging(st(&h)));
     assert_eq!(gradient_points(&h, layer), moved);
     assert_eq!(
-        st(&h).doc.undo_count(),
+        st(&h).doc().undo_count(),
         steps + 1,
         "ペンの追加とドラッグで 1 回の Undo"
     );
@@ -1158,7 +1197,7 @@ fn a_pen_drag_on_a_point_in_the_2d_canvas_is_one_undo_and_escape_puts_it_back() 
         let p = moved.points[1].position;
         view.to_screen(p[0] * w as f64, p[1] * hh as f64)
     };
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     pen_drag_keeping_one_step(
         &mut h,
         &[mark, mark + vec2(-12.0, 0.0), mark + vec2(-24.0, 0.0)],
@@ -1169,43 +1208,42 @@ fn a_pen_drag_on_a_point_in_the_2d_canvas_is_one_undo_and_escape_puts_it_back() 
     h.step();
     assert_eq!(gradient_points(&h, layer), moved);
     assert!(!points::dragging(st(&h)));
-    assert_eq!(st(&h).doc.undo_count(), steps, "Esc は履歴に残さない");
+    assert_eq!(st(&h).doc().undo_count(), steps, "Esc は履歴に残さない");
     pen_frames(&mut h, &[(mark, false)]);
     h.run();
     assert_eq!(gradient_points(&h, layer), moved);
-    assert_eq!(st(&h).doc.undo_count(), steps);
+    assert_eq!(st(&h).doc().undo_count(), steps);
 }
 
 #[test]
 fn the_point_gradient_panel_and_its_markers_draw_in_both_languages() {
-    let mut results = SnapshotResults::new();
     for lang in yolu_app::lang::Lang::ALL {
         let (mut h, rect) = window();
         let layer = {
-            let s = &mut h.state_mut().state;
-            s.apply(Action::M2Ui(yolu_app::m2::UiOp::Language(lang)));
-            s.apply(Action::M2(yolu_app::m2::Edit::NewFill));
-            let layer = s.selected_layer.unwrap();
-            s.color.main = [0.9, 0.2, 0.1, 1.0];
-            s.color.sub = [0.1, 0.3, 0.9, 1.0];
-            s.apply(Action::Fill(FillOp::AddPoints {
+            let s = h.app_mut();
+            s.act(Action::M2Ui(yolu_app::m2::UiOp::Language(lang)));
+            s.act(Action::M2(yolu_app::m2::Edit::NewFill));
+            let layer = s.selected_layer().unwrap();
+            s.color_mut().main = [0.9, 0.2, 0.1, 1.0];
+            s.color_mut().sub = [0.1, 0.3, 0.9, 1.0];
+            s.act(Action::Fill(FillOp::AddPoints {
                 layer,
                 channel: Channel::Color,
             }));
-            s.apply(Action::Fill(FillOp::SelectPoint(Some(1))));
+            s.act(Action::Fill(FillOp::SelectPoint(Some(1))));
             for key in ["fill-image", "fill-projection", "fill-gradient"] {
-                s.ui.sections.insert(key, false);
+                s.ui_mut().sections.insert(key, false);
             }
-            s.ui.sections.insert("fill-points", true);
+            s.ui_mut().sections.insert("fill-points", true);
             layer
         };
         h.run();
         // 塗りつぶしレイヤーの欄の下の、点のグラデーションの欄まで送る
-        h.state_mut().state.m2.props_scroll = 490.0;
+        h.m2_mut().props_scroll = 490.0;
         h.run();
         // 3D ビューに点の印（点の色）が出る
         let g = st(&h)
-            .doc
+            .doc()
             .layer(layer)
             .unwrap()
             .fill_points(Channel::Color)
@@ -1241,12 +1279,16 @@ fn the_point_gradient_panel_and_its_markers_draw_in_both_languages() {
             }
         }
         assert!(shown > 8, "{lang:?}: 欄の文字を集められていない（{shown}）");
-        let _ = rect;
-        h.state_mut().state.shelf.wait_inspections();
+        h.shelf_mut().wait_inspections();
         h.run();
-        h.state_mut().state.message.clear();
+        h.message_mut().clear();
         h.run();
-        h.snapshot(format!("fillfx_points_{}", lang.pick("ja", "en")));
+        // 英語の絵は撮らない（欄の並びは文字の長さで変わらない）
+        let ja = lang == yolu_app::lang::Lang::Ja;
+        if ja {
+            let props = crate::common::shot::group(&h, yolu_app::Tab::Properties);
+            common::shot::region(&mut h, "fillfx_points_ja", props);
+        }
         // UV の空間: 立方体の UV の継ぎ目で色が切れる（モデルの空間は切れない）。2D のキャンバスにも印が出る
         let uv = yolu_core::fill_points::PointGradient {
             space: yolu_core::fill_points::PointSpace::Uv,
@@ -1271,19 +1313,23 @@ fn the_point_gradient_panel_and_its_markers_draw_in_both_languages() {
                 coalesce: false,
             }),
         );
-        h.state_mut().state.m2.props_scroll = 490.0;
+        h.m2_mut().props_scroll = 490.0;
         h.run();
-        h.state_mut().state.message.clear();
+        h.message_mut().clear();
         h.run();
-        h.snapshot(format!("fillfx_points_uv_{}", lang.pick("ja", "en")));
+        if ja {
+            common::shot::region(&mut h, "fillfx_points_uv_ja", rect);
+        }
         click_tab(&mut h, Tab::Canvas);
         // 焼いたメッシュマップの重ね表示を外して、塗った絵を見せる
-        h.state_mut().state.bake.view = yolu_app::bake::MeshMapView::None;
+        h.bake_mut().view = yolu_app::bake::MeshMapView::None;
         h.run();
-        h.state_mut().state.message.clear();
+        h.message_mut().clear();
         h.run();
-        h.snapshot(format!("fillfx_points_canvas_{}", lang.pick("ja", "en")));
-        results.extend_harness(&mut h);
+        if ja {
+            let rect = canvas_rect(&h);
+            common::shot::region(&mut h, "fillfx_points_canvas_ja", rect);
+        }
     }
 }
 
@@ -1291,10 +1337,10 @@ fn the_point_gradient_panel_and_its_markers_draw_in_both_languages() {
 fn clicking_the_model_while_editing_points_adds_a_point_and_delete_removes_it() {
     let (mut h, rect) = window();
     let layer = {
-        let s = &mut h.state_mut().state;
-        s.apply(Action::M2(yolu_app::m2::Edit::NewFill));
-        let layer = s.selected_layer.unwrap();
-        s.apply(Action::Fill(FillOp::AddPoints {
+        let s = h.app_mut();
+        s.act(Action::M2(yolu_app::m2::Edit::NewFill));
+        let layer = s.selected_layer().unwrap();
+        s.act(Action::Fill(FillOp::AddPoints {
             layer,
             channel: Channel::Color,
         }));
@@ -1303,7 +1349,7 @@ fn clicking_the_model_while_editing_points_adds_a_point_and_delete_removes_it() 
     h.run();
     let count = |h: &Harness<'_, YoluApp>| {
         st(h)
-            .doc
+            .doc()
             .layer(layer)
             .unwrap()
             .fill_points(Channel::Color)
@@ -1312,12 +1358,16 @@ fn clicking_the_model_while_editing_points_adds_a_point_and_delete_removes_it() 
             .len()
     };
     assert_eq!(count(&h), 2);
-    let view = st(&h).view3d.camera.view(rect.width(), rect.height());
+    let view = st(&h)
+        .view3d()
+        .view
+        .camera
+        .view(rect.width(), rect.height());
     let c = view.to_screen(yolu_core::glam::Vec3::ZERO).unwrap();
     let at = pos2(rect.left() + c.x, rect.top() + c.y);
     click(&mut h, at);
-    assert_eq!(count(&h), 3, "{}", st(&h).message);
-    assert_eq!(st(&h).fillfx.point_selected, Some(2));
+    assert_eq!(count(&h), 3, "{}", st(&h).message());
+    assert_eq!(st(&h).fillfx().point_selected, Some(2));
     // 描かない（塗りつぶしレイヤーに描こうとした断りが出ない）
     assert!(!st(&h).is_stroking());
     key(&h, Key::Delete, Modifiers::NONE);
@@ -1347,18 +1397,18 @@ fn clicking_the_model_while_editing_points_adds_a_point_and_delete_removes_it() 
     click_tab(&mut h, Tab::Canvas);
     h.run();
     let r = canvas_rect(&h);
-    let (w, hh) = (st(&h).doc.width(), st(&h).doc.height());
-    let v = st(&h).view.view(r, w, hh);
+    let (w, hh) = (st(&h).doc().width(), st(&h).doc().height());
+    let v = st(&h).view().view(r, w, hh);
     let at = v.to_screen(w as f64 * 0.25, hh as f64 * 0.75);
     click(&mut h, at);
     let g = st(&h)
-        .doc
+        .doc()
         .layer(layer)
         .unwrap()
         .fill_points(Channel::Color)
         .unwrap()
         .clone();
-    assert_eq!(g.points.len(), 2, "{}", st(&h).message);
+    assert_eq!(g.points.len(), 2, "{}", st(&h).message());
     let p = g.points[1].position;
     assert!(
         (p[0] - 0.25).abs() < 0.03 && (p[1] - 0.75).abs() < 0.03 && p[2] == 0.0,
@@ -1372,27 +1422,27 @@ fn the_point_colour_opens_the_colour_window_and_one_drag_in_it_is_one_undo() {
     use yolu_app::panels::color_window;
     let (mut h, _) = window();
     let layer = {
-        let s = &mut h.state_mut().state;
-        s.color.main = [0.9, 0.2, 0.1, 1.0];
-        s.apply(Action::M2(yolu_app::m2::Edit::NewFill));
-        let layer = s.selected_layer.unwrap();
-        s.apply(Action::Fill(FillOp::AddPoints {
+        let s = h.app_mut();
+        s.color_mut().main = [0.9, 0.2, 0.1, 1.0];
+        s.act(Action::M2(yolu_app::m2::Edit::NewFill));
+        let layer = s.selected_layer().unwrap();
+        s.act(Action::Fill(FillOp::AddPoints {
             layer,
             channel: Channel::Color,
         }));
-        s.apply(Action::Fill(FillOp::SelectPoint(Some(0))));
+        s.act(Action::Fill(FillOp::SelectPoint(Some(0))));
         for key in ["fill-image", "fill-projection", "fill-gradient"] {
-            s.ui.sections.insert(key, false);
+            s.ui_mut().sections.insert(key, false);
         }
-        s.ui.sections.insert("fill-points", true);
+        s.ui_mut().sections.insert("fill-points", true);
         layer
     };
     h.run();
-    h.state_mut().state.m2.props_scroll = 490.0;
+    h.m2_mut().props_scroll = 490.0;
     h.run();
     let colors = |h: &Harness<'_, YoluApp>| {
         st(h)
-            .doc
+            .doc()
             .layer(layer)
             .unwrap()
             .fill_points(Channel::Color)
@@ -1402,11 +1452,11 @@ fn the_point_colour_opens_the_colour_window_and_one_drag_in_it_is_one_undo() {
             .map(|p| p.color)
             .collect::<Vec<_>>()
     };
-    let doc = st(&h).doc.id();
+    let doc = st(&h).doc().id();
     let target =
         |i: usize| egui::Id::new(("fill.points.color", doc, layer.0, Channel::Color.index(), i));
     let first = colors(&h);
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     // 点 1 の色の欄を押すと、色のウィンドウがその点を相手に開く（描画色は入れない）
     let swatch = h.get_by_label("点の色").rect();
     click(&mut h, swatch.center());
@@ -1432,15 +1482,19 @@ fn the_point_colour_opens_the_colour_window_and_one_drag_in_it_is_one_undo() {
     assert_eq!(dragged[0].a, first[0].a, "不透明度はそのまま");
     assert_eq!(dragged[1], first[1], "ほかの点はそのまま");
     assert_eq!(
-        st(&h).doc.undo_count(),
+        st(&h).doc().undo_count(),
         steps + 1,
         "ドラッグは 1 回の取り消し"
     );
-    assert_eq!(st(&h).color.main, [0.9, 0.2, 0.1, 1.0], "描画色は動かない");
+    assert_eq!(
+        st(&h).color().main,
+        [0.9, 0.2, 0.1, 1.0],
+        "描画色は動かない"
+    );
     // 一覧で点 2 を選ぶと、ウィンドウはそのままで相手が点 2 へ替わる
     let second = h.get_by_label("点 2").rect();
     click(&mut h, second.center());
-    assert_eq!(st(&h).fillfx.point_selected, Some(1));
+    assert_eq!(st(&h).fillfx().point_selected, Some(1));
     assert!(color_window::is_target(&h.ctx, target(1)));
     // 1 回の取り消しで、ドラッグの前の色へ戻る
     color_window::close(&h.ctx);
@@ -1451,58 +1505,60 @@ fn the_point_colour_opens_the_colour_window_and_one_drag_in_it_is_one_undo() {
 
 #[test]
 fn the_image_row_has_an_anisotropic_toggle_that_is_one_undo_step() {
-    let mut results = SnapshotResults::new();
     for lang in yolu_app::lang::Lang::ALL {
         let (mut h, _) = window();
         let layer = {
-            let s = &mut h.state_mut().state;
-            s.apply(Action::M2Ui(yolu_app::m2::UiOp::Language(lang)));
-            s.apply(Action::M2(yolu_app::m2::Edit::NewFill));
-            let layer = s.selected_layer.unwrap();
-            let rid = s.shelf.add_image(lang, "tile", &quad(), 2, 2).unwrap();
+            let s = h.app_mut();
+            s.act(Action::M2Ui(yolu_app::m2::UiOp::Language(lang)));
+            s.act(Action::M2(yolu_app::m2::Edit::NewFill));
+            let layer = s.selected_layer().unwrap();
+            let rid = s
+                .shelf_mut()
+                .add_image(lang, "tile", &quad(), 2, 2)
+                .unwrap();
             let id = inputs::image_id(&rid).unwrap();
-            s.apply(Action::Fill(FillOp::Image {
+            s.act(Action::Fill(FillOp::Image {
                 layer,
                 channel: Channel::Color,
                 image: Some(id),
             }));
-            s.apply(Action::Fill(FillOp::ProjectionMode {
+            s.act(Action::Fill(FillOp::ProjectionMode {
                 layer,
                 mode: ProjectionMode::Triplanar,
             }));
             for key in ["fill-projection", "fill-gradient", "fill-points"] {
-                s.ui.sections.insert(key, false);
+                s.ui_mut().sections.insert(key, false);
             }
-            s.ui.sections.insert("fill-image", true);
+            s.ui_mut().sections.insert("fill-image", true);
             layer
         };
         h.run();
-        h.state_mut().state.m2.props_scroll = 300.0;
+        h.m2_mut().props_scroll = 300.0;
         h.run();
         let label = lang.pick("異方性フィルター", "Anisotropic filtering");
         let toggle = rect_of(&h, label, |r| r.left() > rx());
         let on = |h: &Harness<'_, YoluApp>| {
             st(h)
-                .doc
+                .doc()
                 .layer(layer)
                 .unwrap()
                 .fill_anisotropic(Channel::Color)
         };
         assert!(on(&h), "既定は入");
-        h.state_mut().state.shelf.wait_inspections();
+        h.shelf_mut().wait_inspections();
         h.run();
-        h.state_mut().state.message.clear();
+        h.message_mut().clear();
         h.run();
-        h.snapshot(format!(
-            "fillfx_image_anisotropic_{}",
-            lang.pick("ja", "en")
-        ));
-        let steps = st(&h).doc.undo_count();
+        // 英語の絵は撮らない（行の並びは文字の長さで変わらない）
+        if lang == yolu_app::lang::Lang::Ja {
+            let rect = crate::common::shot::group(&h, yolu_app::Tab::Properties);
+            common::shot::region(&mut h, "fillfx_image_anisotropic_ja", rect);
+        }
+        let steps = st(&h).doc().undo_count();
         click(&mut h, toggle.center());
         assert!(!on(&h));
-        assert_eq!(st(&h).doc.undo_count(), steps + 1);
+        assert_eq!(st(&h).doc().undo_count(), steps + 1);
         undo(&mut h);
         assert!(on(&h));
-        results.extend_harness(&mut h);
     }
 }

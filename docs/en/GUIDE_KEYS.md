@@ -6,7 +6,7 @@ A list of keyboard, mouse and pen controls. You can view and change the keys and
 
 ## Change shortcuts
 
-Press Keyboard Shortcuts on the left of Edit → Settings… (`Ctrl+,`) to view the keys and mouse combinations and change them. Choose one of the sections listed below it (Everywhere & View / Paint / Edit / Pose / During an Operation / Pie Menus); the table on the right shows each action's name, keys and mouse combination.
+Press Keyboard Shortcuts on the left of Edit → Settings… (`Ctrl+,`) to view the keys and mouse combinations and change them. Choose one of the sections listed below it (Everywhere & View / Paint / Edit / Pose / Hide / During an Operation / Pie Menus); the table on the right shows each action's name, keys and mouse combination.
 
 | Action | Input |
 |---|---|
@@ -18,7 +18,7 @@ Press Keyboard Shortcuts on the left of Edit → Settings… (`Ctrl+,`) to view 
 | Export / import | "Export…" / "Import…" at the bottom (keys, mouse combinations and pie menus together. Importing replaces the current changes; unknown actions are skipped and their number is reported) |
 
 - When the same key points to different actions in the same section and situation, the rows turn red and the tooltip names the other action. While a conflict remains, the changed assignments work but are not saved to the file (the bottom bar shows the reason).
-- A key in a mode section (Paint, Edit, Pose) taking the same key before the Everywhere section is not a conflict (the tooltip names the action that takes it first).
+- A key in a mode section (Paint, Edit, Pose, Hide) taking the same key before the Everywhere section is not a conflict (the tooltip names the action that takes it first).
 - For the mouse, putting a 2D or 3D view action (including one done on releasing without moving) on the left button without modifiers conflicts with painting. The 2D canvas looks at a press for the view actions first, then the selection combinations, then the eyedropper, so besides the same combination, giving a later action an earlier action's combination with extra modifiers is also a conflict (for example, with rotation on `Alt` + left button, making selection Add `Alt+Shift` + left button).
 - A mouse combination also matches when you hold modifiers it does not name (rotation on `Alt` + left button also rotates with `Alt+Shift` + left button). Actions done on releasing without moving and the 2D eyedropper match only the modifiers as written.
 - The clipboard keys (copy, cut, copy merged, paste), the fixed roles of `Esc`, `Enter` and `Backspace`, and the left click that selects objects in Edit mode cannot be changed.
@@ -33,7 +33,7 @@ Press Keyboard Shortcuts on the left of Edit → Settings… (`Ctrl+,`) to view 
 
 ## Modes and pie menus
 
-There are three modes: Paint, Edit and Pose. You paint only in Paint mode. The tool keys, the brush size (`[` / `]`), swapping colors and the default colors (`X` / `D`), the keys for paths and point gradients, Quick Mask (`Shift+Q`), the arrow keys of Move / Transform, screen color picking (Windows), and the keys that change pixels (`Delete` for Erase Selection, `Ctrl+X` for Cut, `Ctrl+V` for Paste, `Ctrl+E` for Merge Down and `Ctrl+Shift+E` for Merge Visible) work only in Paint mode. Menu items and buttons work in every mode (menus show only the keys that work in the current mode).
+There are four modes: Paint, Edit, Pose and Hide. You paint only in Paint mode. The tool keys, the brush size (`[` / `]`), swapping colors and the default colors (`X` / `D`), the keys for paths and point gradients, Quick Mask (`Shift+Q`), the arrow keys of Move / Transform, screen color picking (Windows), and the keys that change pixels (`Delete` for Erase Selection, `Ctrl+X` for Cut, `Ctrl+V` for Paste, `Ctrl+E` for Merge Down and `Ctrl+Shift+E` for Merge Visible) work only in Paint mode. Menu items and buttons work in every mode (menus show only the keys that work in the current mode).
 
 | Action | Input |
 |---|---|
@@ -58,6 +58,8 @@ In Edit mode, the white markers in the 3D view select fill projection boxes and 
 | Delete the selected object (Edit) | `Delete` (projection boxes and decals, and the last point of a point gradient, cannot be deleted. Holding the key deletes only one) |
 | Hide / show the shape handles (Edit) | `Q` |
 
+In Hide mode, `H` hides the faces of the selected UV islands, `Alt+H` shows all, and `Ctrl+A` and `Ctrl+D` select all and deselect ("Hide" in the table below; see "Hide faces (Hide mode)" in [GUIDE_3D.md](GUIDE_3D.md)).
+
 Each move, rotation or scale is one undo step (one pose undo step for bones). A 3D path is placed back onto the nearest surface points when you apply (only on surfaces facing the same way as where it was drawn, so a path on the front of a thin plate does not move to the back). If a point is too far from the surface, it cannot be applied: keep moving or cancel. Objects on hidden layers (including layers in a hidden group) cannot be selected or moved.
 
 ## Modifiers while painting
@@ -65,7 +67,7 @@ Each move, rotation or scale is one undo step (one pose undo step for bones). A 
 | Action | Input |
 |---|---|
 | Draw a straight line from the end of the previous stroke | `Shift`-click with the brush or eraser (when there is no previous point, hold `Shift` and drag to lock the direction to 45° steps; in 2D and 3D, with the mouse and the pen) |
-| Set the clone source | `Alt`-click with the Clone brush (release without moving; in 2D and 3D. If you move, 2D rotates the view and 3D snap-orbits) |
+| Set the clone source | `Alt`-click with the Clone brush (release without moving; in 2D and 3D. If you move, 2D rotates the view and 3D does nothing) |
 | Pick a color with any tool (eyedropper) | In 2D, press the right button (while it is held, the swatch at the pointer follows it; the color where you release is picked; `Esc` cancels). In 3D, release the right button without moving it (if you move it, the view just orbits). With Polygon Fill, the right button opens the island menu |
 | Shape: 45° steps, square or circle / draw from the center | `Shift` / `Alt` pressed after starting to drag |
 | Turn Snap to Ruler on or off | `Ctrl+1` |
@@ -75,9 +77,9 @@ Each move, rotation or scale is one undo step (one pose undo step for bones). A 
 
 ## View controls and `Alt`
 
-View controls are the same in 2D and 3D. `Alt` is a view control (rotating the view in 2D, snap orbit in 3D) if it is held at the moment you press the button; if you press it after pressing the button, it is the tool's modifier (From center for shapes, rectangles and ellipses, breaking a path handle, and so on). A drag of a selection or shape that starts with `Alt` held becomes a view rotation.
+View controls are the same in 2D and 3D. `Alt` is a view control (rotating the view with `Alt` + left-drag in 2D, the snap orbit with `Alt` + right-drag in 3D) if it is held at the moment you press the button; if you press it after pressing the button, it is the tool's modifier (From center for shapes, rectangles and ellipses, breaking a path handle, and so on). In 2D, a drag of a selection or shape that starts with `Alt` held becomes a view rotation. In 3D, an `Alt` + left-drag neither moves the view nor starts painting (setting the clone source by releasing without moving works as before).
 
-These combinations no longer work. In 3D, `Shift` + right-drag and `Alt` + `Shift` + left-drag (move; with `Shift` held, a right-drag orbits and an `Alt` + left-drag snap-orbits). In 2D, `R` + left-drag and `Shift` + middle-drag (rotate; with `Shift` held, a middle-drag pans). In 2D, `Alt`-click as a temporary eyedropper (`Alt` + left-drag now rotates the view, and the eyedropper moved to the right button). In 3D, `Alt` + left-drag as a free orbit (it is now the snap orbit).
+These combinations no longer work. In 3D, `Shift` + right-drag and `Alt` + `Shift` + left-drag (move; with `Shift` held, a right-drag orbits). In 2D, `R` + left-drag and `Shift` + middle-drag (rotate; with `Shift` held, a middle-drag pans). In 2D, `Alt`-click as a temporary eyedropper (`Alt` + left-drag now rotates the view, and the eyedropper moved to the right button). In 3D, `Alt` + left-drag as an orbit (the snap orbit is now `Alt` + right-drag, and a free orbit is a right-drag). In 3D, starting the right button with `Alt` held, then releasing `Alt` while the right button is still held to move the view with `W`/`A`/`S`/`D`/`Q`/`E` (that press is now a snap orbit; moving during an orbit you started with the right button alone still works).
 
 ## Situational keys and notes
 
@@ -87,17 +89,20 @@ These combinations no longer work. In 3D, `Shift` + right-drag and `Alt` + `Shif
 - With the Path tool, `Delete` / `Backspace` delete the selected point (or the last point if none is selected). While a point of a point gradient is selected, they delete that point.
 - In the layer list, `Ctrl`-click toggles, `Shift`-click selects a range, and `Ctrl+Shift`-click adds a range.
 - The wheel also zooms. `Ctrl+Space` + left-drag zooms as you move horizontally, around the pressed point (releasing without moving zooms in, and adding `Alt` zooms out).
-- Rotating the 2D view goes in 15° steps, and is free with `Shift` also held. The 3D snap orbit snaps to an axis view (front, back, right, left, top, bottom) when the direction comes within 15° of it.
+- Rotating the 2D view goes in 15° steps, and is free with `Shift` also held. The 3D snap orbit (`Alt` + right-drag) switches from the current view to the axis view (front, back, right, left, top, bottom) 90° away in the direction you drag (whichever of horizontal and vertical is larger), once you move about 40 points from where you pressed. One drag switches only once; to keep going, release and press again.
 - Rotating the view right uses the `^` character, and the `=` key also works (keyboard layouts put the keys in different places).
 - While the right button is held in the 3D view, `W` / `S`, `A` / `D` and `Q` / `E` move the view forward / back, left / right and down / up (`Shift` for faster; meanwhile these keys are not used for switching tools and so on). In orthographic, `W` / `S` zoom in and out.
-- The 3D axis views (Front, Back, Right, Left, Top, Bottom) and Toggle Orthographic are in the View Pie Menu and on the axis widget in the top right of the 3D view (neither has a key at first). Choosing an axis view or snapping onto an axis makes the view orthographic, and leaving the axis brings back perspective ("Axis views and orthographic" in [GUIDE_3D.md](GUIDE_3D.md)).
+- The 3D axis views (Front, Back, Right, Left, Top, Bottom) and Toggle Orthographic are in the View Pie Menu and on the axis widget in the top right of the 3D view (neither has a key at first). Choosing an axis view or switching to one with the snap orbit makes the view orthographic, and leaving the axis brings back perspective ("Axis views and orthographic" in [GUIDE_3D.md](GUIDE_3D.md)).
 - In Edit mode `H` hides the selected object's marker, so flip the 2D view with View → Flip View.
 - The stencil rotates with a left-drag while `Y` is held (15° steps with `Shift`), moves with a middle-drag or `Ctrl` + left-drag, and scales with a right-drag or `Alt` + left-drag (in 2D and 3D). It is not used while `N` is held.
 - The Liquify tool has no default key.
+- `Tab` hides the UI except the menu bar and the views, and pressing it again brings it back ("Hide the UI" in [GUIDE_START.md](GUIDE_START.md)).
+- Holding the right button and moving over a list (Layers, brushes, Assets and so on) scrolls the list. Holding the right button and moving over the toolbar on the left selects the tools the pointer passes over. Releasing without moving opens the right-click menu.
+- Erase Mode and Export with Previous Settings have no default key (you can assign one in Keyboard Shortcuts).
 
 ## Pen
 
-The side buttons act as the right button (in 2D they pick a color; in 3D they orbit, and releasing without moving picks a color; with Polygon Fill in 2D they do nothing). `Alt`, `Space` and `Ctrl+Space` act the same as with the left mouse button. Only a pen tip with neither `Ctrl` nor a side button pressed (and the eraser end) paints, and a pen tip with `Shift` pressed draws a straight line (in 2D and 3D).
+The side buttons act as the right button (in 2D they pick a color; in 3D they orbit, and releasing without moving picks a color; with Polygon Fill in 2D they do nothing). `Space` and `Ctrl+Space` act the same as with the left mouse button. A pen tip touching with `Alt` held rotates the view in 2D, and in 3D it neither orbits nor paints. The 3D snap orbit is a side-button touch with `Alt` held. Only a pen tip with neither `Ctrl` nor a side button pressed (and the eraser end) paints, and a pen tip with `Shift` pressed draws a straight line (in 2D and 3D).
 
 ## Default assignments
 
@@ -131,6 +136,7 @@ The side buttons act as the right button (in 2D they pick a color; in 3D they or
 | Settings… | `Ctrl+,` |
 | Reset Rotation | `Shift+R` |
 | Mode Pie Menu | `Ctrl+Tab` |
+| Hide or Show UI | `Tab` |
 | Flip View | `H` |
 | Rotate View Left | `-` |
 | Rotate View Right | `^` / `=` |
@@ -220,6 +226,15 @@ The side buttons act as the right button (in 2D they pick a color; in 3D they or
 | Reset Scale of Selected | `Alt+S` |
 | Toggle Snapping | `Shift+Tab` |
 
+### Hide
+
+| Action | Key |
+|---|---|
+| Hide Selected Faces | `H` |
+| Show All | `Alt+H` |
+| Select All | `Ctrl+A` |
+| Deselect | `Ctrl+D` |
+
 ### During an Operation
 
 | Action | Key |
@@ -242,12 +257,12 @@ The side buttons act as the right button (in 2D they pick a color; in 3D they or
 | Intersect with Selection (Selection) | Ctrl+Shift+Left Button | Paint |
 | Add to Selection (Selection) | Shift+Left Button | Paint |
 | Subtract from Selection (Selection) | Ctrl+Left Button | Paint |
+| Snap Orbit (3D) | Alt+Right Button | Everywhere & View |
 | Orbit (3D) | Right Button | Everywhere & View |
 | Eyedropper (3D) | Right Button Released without Moving | Everywhere & View |
 | Pan (3D) | Middle Button | Everywhere & View |
 | Zoom (3D) | Space+Ctrl+Left Button | Everywhere & View |
 | Pan (3D) | Space+Left Button | Everywhere & View |
-| Snap Orbit (3D) | Alt+Left Button | Everywhere & View |
 | Set Clone Source (3D) | Alt+Left Button Released without Moving | Paint |
 | Move Stencil (Stencil) | Y+Middle Button | Paint |
 | Move Stencil (Stencil) | Y+Ctrl+Left Button | Paint |

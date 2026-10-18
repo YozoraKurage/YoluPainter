@@ -115,7 +115,10 @@ fn legacy_material_slot_fallback_is_reported() {
     let mut f = files(1);
     f.insert("view.json".into(), b"{\"materialSlot\":-1}".to_vec());
     let p = open(f).unwrap();
-    assert_eq!(p.sets()[0].material, yolu_io::MaterialRef::PendingSlot(0));
+    assert_eq!(
+        p.sets()[0].materials[0],
+        yolu_io::MaterialRef::PendingSlot(0)
+    );
     assert!(p
         .notes()
         .iter()
@@ -561,8 +564,14 @@ fn broken_normal_settings_are_refused() {
         b
     };
     let cases: Vec<(&str, Vec<u8>)> = vec![
-        ("アルゴリズムの版が新しい", tampered(0, &2i32.to_le_bytes())),
-        ("アルゴリズムの版が 0", tampered(0, &0i32.to_le_bytes())),
+        (
+            "アルゴリズムのバージョンが新しい",
+            tampered(0, &2i32.to_le_bytes()),
+        ),
+        (
+            "アルゴリズムのバージョンが 0",
+            tampered(0, &0i32.to_le_bytes()),
+        ),
         ("強さが NaN", tampered(5, &f64::NAN.to_le_bytes())),
         ("強さが無限大", tampered(5, &f64::INFINITY.to_le_bytes())),
         ("強さが範囲外", tampered(5, &1e6f64.to_le_bytes())),
@@ -600,16 +609,16 @@ fn a_layout_older_than_what_the_document_holds_is_refused() {
         assert_eq!(
             NativeDocument::read(&older).unwrap().version(),
             version,
-            "版 {version}はまだ設定を持つ"
+            "バージョン {version}はまだ設定を持つ"
         );
     }
     for version in [13i32, 12, 11, 10, 9] {
         let mut older = bytes.clone();
         older[8..12].copy_from_slice(&version.to_le_bytes());
-        let err = refusal(&older, &format!("版 {version}"));
+        let err = refusal(&older, &format!("バージョン {version}"));
         if version >= 12 {
             // 属性の 1 バイトの並び。設定の印（ビット 2）は版 14 から
-            assert!(err.contains("属性"), "版 {version}: {err}");
+            assert!(err.contains("属性"), "バージョン {version}: {err}");
         }
     }
     // 調整レイヤーは版 3 の並び（種類が塗りつぶしまで）では読めない
@@ -621,7 +630,7 @@ fn a_layout_older_than_what_the_document_holds_is_refused() {
     let bytes = save(&adjusted);
     NativeDocument::read(&bytes).unwrap();
     let v3 = as_version(&bytes, "A", 3);
-    assert!(refusal(&v3, "版 3 に調整レイヤー").contains("kind"));
+    assert!(refusal(&v3, "バージョン 3 に調整レイヤー").contains("kind"));
     // 4 以上なら調整を持てる
     NativeDocument::read(&as_version(&bytes, "A", 4)).unwrap();
     // 設定を持たない文書は、版の数だけ古くても読める（読み書きは compatibility.rs）
@@ -642,7 +651,7 @@ fn the_rich_document_is_refused_under_every_older_version_label() {
         assert!(
             rich.with_value("version", NativeValue::Int(version))
                 .is_err(),
-            "版 {version}"
+            "バージョン {version}"
         );
     }
     rich.with_value("version", NativeValue::Int(21)).unwrap();

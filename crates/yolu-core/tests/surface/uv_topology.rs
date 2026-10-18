@@ -35,7 +35,7 @@ fn quad(x0: f32, z: f32, uv: impl Fn(f32, f32) -> Vec2) -> [SurfaceTriangle; 2] 
 
 fn topology(triangles: Vec<SurfaceTriangle>) -> UvTopology {
     let g = SurfaceGeometry::new(triangles, 1, DEFAULT_WELD_TOLERANCE).unwrap();
-    UvTopology::new(Arc::new(g), Some(0))
+    UvTopology::new(Arc::new(g), Some(&yolu_core::geometry::MaterialSet::one(0)))
 }
 
 /// A は UV の (0.1..0.4, 0.1..0.4)、B は b の写像。

@@ -210,7 +210,7 @@ impl ViewModel {
         match self.materials.get(slot) {
             Some(_) if self.demo => self.display_name(lang).to_owned(),
             Some(Some(name)) => name.clone(),
-            Some(None) => lang.pick("マテリアルなし", "No material").into(),
+            Some(None) => lang.t("view3d-no-material").into(),
             None => slot.to_string(),
         }
     }
@@ -218,7 +218,7 @@ impl ViewModel {
     /// 見出しに出す名前（試しの立方体は表示の言語で）。
     pub fn display_name(&self, lang: crate::lang::Lang) -> &str {
         if self.demo {
-            lang.pick("試しの立方体", "Test Cube")
+            lang.t("view3d-test-cube")
         } else {
             &self.name
         }

@@ -32,7 +32,7 @@ pub fn validate(bytes: &[u8]) -> Result<()> {
     )?;
     check(
         format == Some(FORMAT),
-        "livelink.json の形式はこの版では読めません",
+        "livelink.json の形式はこのバージョンでは読めません",
     )
 }
 

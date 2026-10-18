@@ -21,7 +21,7 @@ fn chain(groups: usize) -> (Document, LayerId) {
 }
 
 fn too_deep(e: &CoreError) -> bool {
-    matches!(e, CoreError::InvalidArgument(why) if why.contains("入れ子が深すぎる"))
+    matches!(e, CoreError::InvalidArgument(why) if why.ja().contains("入れ子が深すぎる"))
 }
 
 #[test]

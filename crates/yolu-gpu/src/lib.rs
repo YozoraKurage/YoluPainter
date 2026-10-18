@@ -3,10 +3,12 @@
 use bytemuck::{Pod, Zeroable};
 use std::{fmt, sync::mpsc, time::Duration};
 use wgpu::util::DeviceExt;
-use yolu_core::{BrushSettings, Channel, Document, Rect, TileCoord};
+use yolu_core::{BrushSettings, Channel, Document, PressureSwitches, Rect, TileCoord};
 
+mod dx12;
 mod plan;
 mod source;
+pub use dx12::{dx12_compiler, instance_descriptor};
 use plan::Plan;
 pub use plan::{supports, Unsupported};
 
@@ -223,8 +225,7 @@ impl GpuPainter {
         pollster::block_on(Self::create(options))
     }
     async fn create(options: Options) -> Result<Self, GpuError> {
-        let instance =
-            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let instance = wgpu::Instance::new(instance_descriptor());
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 force_fallback_adapter: options.force_fallback_adapter,
@@ -414,14 +415,15 @@ impl GpuPainter {
         })
     }
 
-    /// 同じストロークの判子を順番に適用する。start はストローク開始前の矩形。
-    /// 戻り値はプレビューのみ。取消は戻り値を捨て、正本への描画は core の Stroke で行う。
+    /// 同じストロークの判子を順番に適用する。start はストローク開始前の矩形。`pressure` は筆圧で大きさ・不透明度・流量を変えるか
+    /// （それぞれ直線）。戻り値はプレビューのみ。取消は戻り値を捨て、正本への描画は core の Stroke で行う。
     pub fn brush_dabs(
         &mut self,
         width: u32,
         height: u32,
         start: &[u8],
         settings: &BrushSettings,
+        pressure: PressureSwitches,
         dabs: &[Dab],
     ) -> Result<Vec<u8>, GpuError> {
         settings.validate()?;
@@ -453,25 +455,11 @@ impl GpuPainter {
             data.push(DabData {
                 x: d.x as f32,
                 y: d.y as f32,
-                radius: (settings.radius
-                    * if settings.pressure_size {
-                        d.pressure
-                    } else {
-                        1.0
-                    }) as f32,
+                radius: (settings.radius * if pressure.size { d.pressure } else { 1.0 }) as f32,
                 hardness: settings.hardness as f32,
-                ceiling: (settings.opacity
-                    * if settings.pressure_opacity {
-                        d.pressure
-                    } else {
-                        1.0
-                    }) as f32,
-                flow: (settings.flow
-                    * if settings.pressure_flow {
-                        d.pressure
-                    } else {
-                        1.0
-                    }) as f32,
+                ceiling: (settings.opacity * if pressure.opacity { d.pressure } else { 1.0 })
+                    as f32,
+                flow: (settings.flow * if pressure.flow { d.pressure } else { 1.0 }) as f32,
                 color: u32::from_le_bytes(settings.color.to_array()),
                 erase: u32::from(settings.erase),
             });
@@ -847,7 +835,7 @@ mod tests {
             Ok(p) => p,
             Err(e) => {
                 assert!(e.to_string().starts_with("GPU 利用不可:"), "{e}");
-                eprintln!("GPU の試験をスキップ: {e}");
+                eprintln!("GPU のテストをスキップ: {e}");
                 // CI の画面の試験のジョブは YOLUPAINTER_REQUIRE_GPU を付け、アダプターを取れないときに通った扱いにしない
                 assert!(
                     std::env::var_os("YOLUPAINTER_REQUIRE_GPU").is_none(),

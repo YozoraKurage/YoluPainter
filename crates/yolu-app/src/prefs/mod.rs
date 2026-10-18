@@ -39,6 +39,7 @@ use std::path::PathBuf;
 
 use yolu_io::{BackupKeep, MAX_BACKUPS_TO_KEEP};
 
+use crate::features::{Feature, PollStage};
 use crate::gpu_memory::{self, GpuMemory};
 use crate::lang::Lang;
 use crate::m2::UiOp;
@@ -180,8 +181,6 @@ pub struct PrefsState {
     gpu_memory_before_drag: Option<GpuMemory>,
     /// 右の欄のずらした量（中身が欄に収まらないとき、共通のスクロールで送る。区分を移すと 0 に戻す）。
     scroll: f32,
-    /// ウィンドウの見出しをドラッグして動かした量（画面の真ん中からの）。
-    offset: egui::Vec2,
     /// 前のフレームに、右の欄がショートカットの表だったか（離れたとき・閉じたときに、割り当て待ちとパイの項目選びをやめる）。
     shortcuts_shown: bool,
     /// 前のフレームに開いていたか（閉じたフレームに、ぶつかるキーを保存していないことを知らせる）。
@@ -216,7 +215,6 @@ impl Default for PrefsState {
             pen_input_row: cfg!(windows),
             gpu_memory_before_drag: None,
             scroll: 0.0,
-            offset: egui::Vec2::ZERO,
             shortcuts_shown: false,
             was_open: false,
             side_scroll: 0.0,
@@ -247,7 +245,7 @@ impl AppState {
         Settings {
             lang: self.lang,
             color_wheel: self.color.wheel,
-            view3d_post: self.view3d.display.post,
+            view3d_post: self.view3d.view.display.post,
             view3d_paint: self.view3d.projection,
             ..self.prefs.settings.clone()
         }
@@ -259,7 +257,9 @@ impl AppState {
         self.prefs.threads_at_start = settings.cpu_threads;
         self.prefs.vsync_at_start = settings.vsync;
         self.color.wheel = settings.color_wheel;
-        self.view3d.display.post = settings.view3d_post;
+        for view in self.view3d.views_mut() {
+            view.display.post = settings.view3d_post;
+        }
         self.view3d.projection = settings.view3d_paint;
         // 「すべて残す」を外したときに戻る数も、保存してあった数にする
         if let BackupKeep::Count(n) = settings.backups {
@@ -297,12 +297,12 @@ impl AppState {
                 self.prefs.settings.backups = keep;
             }
             PrefsAction::ChooseLibraryFolder => {
-                self.dialog_request = Some(DialogRequest::PrefsLibraryFolder)
+                self.outbox.dialog_request = Some(DialogRequest::PrefsLibraryFolder)
             }
             PrefsAction::GpuDetails(open) => self.prefs.gpu_details = open,
             PrefsAction::CacheDetails(open) => self.prefs.cache_details = open,
             PrefsAction::ChooseCacheFolder => {
-                self.dialog_request = Some(DialogRequest::PrefsCacheFolder)
+                self.outbox.dialog_request = Some(DialogRequest::PrefsCacheFolder)
             }
             PrefsAction::Set(pref) => match pref {
                 Pref::LiveLinkOnStartup(v) => self.prefs.settings.livelink_on_startup = v,
@@ -318,13 +318,7 @@ impl AppState {
                     if yolu_mcp::valid_port(port) {
                         self.prefs.settings.external_ops_port = port;
                     } else {
-                        self.refuse(
-                            Source::Settings,
-                            lang.pick(
-                                "ポート番号は 1024〜65535 です。",
-                                "The port is a number from 1024 to 65535.",
-                            ),
-                        );
+                        self.refuse(Source::Settings, lang.t("prefs-the-port-is-a-number"));
                     }
                 }
                 Pref::ExportPadding(v) => {
@@ -368,13 +362,7 @@ impl AppState {
                 Pref::AxisOrthographic(on) => self.prefs.settings.navigation.axis_ortho = on,
                 Pref::LibraryFolder(folder) => match folder {
                     Some(path) if !path.is_absolute() => {
-                        self.refuse(
-                            Source::Settings,
-                            lang.pick(
-                                "ライブラリの場所は絶対パスで指定します。",
-                                "The library folder must be an absolute path.",
-                            ),
-                        );
+                        self.refuse(Source::Settings, lang.t("prefs-the-library-folder-must-be"));
                     }
                     folder => self.prefs.settings.library_folder = folder,
                 },
@@ -394,13 +382,7 @@ impl AppState {
                 }
                 Pref::DiskCacheFolder(folder) => match folder {
                     Some(path) if !path.is_absolute() => {
-                        self.refuse(
-                            Source::Settings,
-                            lang.pick(
-                                "キャッシュの場所は絶対パスで指定します。",
-                                "The cache folder must be an absolute path.",
-                            ),
-                        );
+                        self.refuse(Source::Settings, lang.t("prefs-the-cache-folder-must-be"));
                     }
                     folder => {
                         self.prefs.settings.disk_cache_folder = folder;
@@ -449,21 +431,22 @@ impl AppState {
         }
         self.prefs.cache_failures = failures;
         let lang = self.lang;
-        let reason = lang.pick(
-            "ディスクのキャッシュから読めないタイルがあります",
-            "Some tiles cannot be read back from the disk cache",
-        );
+        let reason = lang.t("prefs-some-tiles-cannot-be-read");
         // 保存したプロジェクトの中にあるセットは、開いたときの中身のまま書ける。無いセット（新しいプロジェクト・前の保存の後に
         // 追加したセット）は元の中身が無いので、そのセットだけ保存と復旧用の書き置きに入らない（保存のたびに知らせる）
-        let base = self.project.as_ref().map(|p| p.project_shared());
+        let base = self.session.project.as_ref().map(|p| p.project_shared());
         let (mut names, mut unsaved) = (Vec::new(), Vec::new());
-        for i in 0..self.sets.len() {
-            if self.sets.get(i).is_some_and(|s| s.read_only.is_some())
+        for i in 0..self.session.sets.len() {
+            if self
+                .session
+                .sets
+                .get(i)
+                .is_some_and(|s| s.read_only.is_some())
                 || !self.set_doc(i).has_unreadable_tiles()
             {
                 continue;
             }
-            if let Some(set) = self.sets.get_mut(i) {
+            if let Some(set) = self.session.sets.get_mut(i) {
                 set.read_only = Some(reason.into());
                 set.waiting_inputs = false;
                 names.push(set.name.clone());
@@ -479,38 +462,35 @@ impl AppState {
             return;
         }
         // どのセットか・保存できないものを、短い理由として添える
-        let ja = |v: &[String]| v.iter().map(|n| format!("「{n}」")).collect::<String>();
-        let en = |v: &[String]| {
-            let quoted: Vec<String> = v.iter().map(|n| format!("\"{n}\"")).collect();
-            quoted.join(", ")
+        // 名前を引用符で囲んで並べる（日本語は続けて、英語は「, 」で区切る）
+        let quoted = |v: &[String]| {
+            v.iter()
+                .map(|n| lang.quote(n))
+                .collect::<Vec<_>>()
+                .join(lang.t("prefs-quoted-name-separator"))
         };
-        let (mut ja_why, mut en_why): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+        let mut why: Vec<String> = Vec::new();
         if names.len() > unsaved.len() {
-            ja_why.push("最後に保存した後の編集は保存できません".to_owned());
-            en_why.push("Edits since the last save cannot be saved".to_owned());
+            why.push(lang.t("prefs-edits-since-the-last-save").to_owned());
         }
         if !unsaved.is_empty() {
-            ja_why.push(format!(
-                "{}は保存したことが無いため、保存に入りません",
-                ja(&unsaved)
-            ));
-            en_why.push(format!(
-                "{} has never been saved, so it will be left out of the save",
-                en(&unsaved)
+            why.push(lang.f(
+                "prefs-has-never-been-saved",
+                &[("names", &quoted(&unsaved))],
             ));
         }
         // 「何を（なぜ）」の 1 文のあとに、保存で失うものを文で続ける
         let mut text = lang.with_reason(
-            lang.pick(
-                format!("テクスチャセット{}を読むだけにしました", ja(&names)),
-                format!("Texture set {} is now read-only", en(&names)),
+            lang.f(
+                "prefs-texture-set-is-now-read",
+                &[("names", &quoted(&names))],
             ),
             reason,
         );
-        for why in lang.pick(ja_why, en_why) {
-            text += lang.pick("", " ");
+        for why in why {
+            text += lang.t("prefs-text");
             text += &why;
-            text += lang.pick("。", ".");
+            text += lang.t("prefs-text-2");
         }
         self.fail(Source::TextureSet, text);
     }
@@ -533,21 +513,21 @@ impl AppState {
         } else {
             wanted.source
         };
-        let current = self.sets.current_index();
+        let current = self.session.sets.current_index();
         let (mut other_source, mut other_history) = (0u64, 0u64);
-        for i in (0..self.sets.len()).filter(|&i| i != current) {
+        for i in (0..self.session.sets.len()).filter(|&i| i != current) {
             let doc = self.set_doc(i);
             other_source = other_source.saturating_add(doc.allocated_bytes());
             other_history = other_history.saturating_add(doc.history_bytes());
         }
         let undo = wanted.undo.saturating_sub(other_history);
         let source = total_source.saturating_sub(other_source);
-        let own = self.doc.allocated_bytes();
+        let own = self.session.doc.allocated_bytes();
         let over = source < own;
-        let id = self.doc.id();
+        let id = self.session.doc.id();
         // 4 つとも core が断らない値（画素の予算は今の画素以上）。同じ値は入れ直さない（履歴の整理を毎フレーム走らせない）
         let source = source.max(own);
-        let doc = &mut self.doc;
+        let doc = &mut self.session.doc;
         if doc.minimum_undo_steps() != wanted.min_undo_steps {
             let _ = doc.set_minimum_undo_steps(wanted.min_undo_steps);
         }
@@ -565,12 +545,10 @@ impl AppState {
         } else if self.prefs.over != Some((id, source)) {
             self.prefs.over = Some((id, source));
             let lang = self.lang;
-            self.refuse(Source::Settings, lang
-                .pick(
-                    "レイヤーのメモリがすでに予算を超えているので、予算を上げるまで追加できません。",
-                    "The layer memory is already over the budget; nothing can be added until it is raised.",
-                )
-                );
+            self.refuse(
+                Source::Settings,
+                lang.t("prefs-the-layer-memory-is-already"),
+            );
         }
     }
 
@@ -608,9 +586,9 @@ impl AppState {
 
 pub(crate) fn padding_name(lang: Lang, texels: i32) -> String {
     match texels {
-        0 => lang.pick("なし", "No padding").into(),
-        n if n < 0 => lang.pick("無限に広げる", "Dilation infinite").into(),
-        n => lang.pick(format!("{n} px 広げる"), format!("Dilation {n} px")),
+        0 => lang.t("prefs-no-padding").into(),
+        n if n < 0 => lang.t("prefs-dilation-infinite").into(),
+        n => lang.f("prefs-dilation-px", &[("n", &n)]),
     }
 }
 
@@ -618,7 +596,7 @@ fn budget_name(lang: Lang, kind: BudgetKind, budget: Budget, ram_mib: u64) -> St
     match budget {
         Budget::Auto => {
             let mib = kind.automatic_mib(ram_mib);
-            lang.pick(format!("自動（{mib} MiB）"), format!("Auto ({mib} MiB)"))
+            lang.f("prefs-auto-mib", &[("mib", &mib)])
         }
         Budget::Mib(n) => format!("{n} MiB"),
     }
@@ -639,7 +617,7 @@ fn disk_limit_name(lang: Lang, limit: DiskLimit, free: Option<u64>) -> String {
     match limit {
         DiskLimit::Auto => {
             let gib = DiskLimit::Auto.bytes(free) >> 30;
-            lang.pick(format!("自動（{gib} GiB）"), format!("Auto ({gib} GiB)"))
+            lang.f("prefs-auto-gib", &[("gib", &gib)])
         }
         DiskLimit::Gib(n) => format!("{n} GiB"),
     }
@@ -665,10 +643,8 @@ impl AppState {
 
 fn threads_name(lang: Lang, threads: Option<u32>, cores: u32) -> String {
     match threads {
-        None => lang.pick(format!("自動（{cores}）"), format!("Automatic ({cores})")),
-        Some(1) => lang
-            .pick("1（並列にしない）", "1 (no parallel work)")
-            .into(),
+        None => lang.f("prefs-automatic", &[("cores", &cores)]),
+        Some(1) => lang.t("prefs-1-no-parallel-work").into(),
         Some(n) => n.to_string(),
     }
 }
@@ -683,7 +659,7 @@ fn pen_api_name(api: PenApi) -> &'static str {
 
 fn compositing_name(lang: Lang, c: Compositing) -> &'static str {
     match c {
-        Compositing::Auto => lang.pick("自動", "Automatic"),
+        Compositing::Auto => lang.t("prefs-automatic-2"),
         Compositing::Gpu => "GPU",
         Compositing::Cpu => "CPU",
     }
@@ -807,3 +783,15 @@ pub fn entries(app: &AppState, choice: PrefChoice) -> Vec<Entry<Action>> {
         }
     }
 }
+
+/// 機能の表の行（毎フレーム、予算を設定に合わせる）。
+pub(crate) const BUDGETS: Feature = Feature {
+    poll: Some((PollStage::BeforeDroppedPsds, AppState::sync_budgets)),
+    ..Feature::new("budgets")
+};
+
+/// 機能の表の行（毎フレーム、タイルのキャッシュの置き場を確かめる）。
+pub(crate) const TILE_CACHE: Feature = Feature {
+    poll: Some((PollStage::BeforeDroppedPsds, AppState::check_tile_cache)),
+    ..Feature::new("tile_cache")
+};

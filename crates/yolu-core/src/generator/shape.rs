@@ -1,6 +1,7 @@
 //! ワールドの Position マップから、モデルのルートに置いた形へ変換する。
 use super::{unit, Error};
 use crate::math::clamp01;
+use crate::Reason;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Shape {
@@ -40,7 +41,7 @@ impl Volume {
                 .any(|x| !x.is_finite() || !(1e-6..=1e6).contains(x))
             || !unit(self.falloff)
         {
-            Err(Error::Invalid("形の中心・角度・大きさ・減衰が範囲外です"))
+            Err(Error::Invalid(Reason::ShapeSettingsRange))
         } else {
             Ok(())
         }
@@ -66,7 +67,7 @@ impl Volume {
     pub fn value_at(&self, p: [f64; 3]) -> Result<f64, Error> {
         self.validate()?;
         if p.iter().any(|x| !x.is_finite()) {
-            return Err(Error::Invalid("形の入力は有限値が必要です"));
+            return Err(Error::Invalid(Reason::ShapeInputNotFinite));
         }
         let r = self.rotation_matrix();
         let p = std::array::from_fn::<_, 3, _>(|i| p[i] - self.center[i]);
@@ -160,7 +161,7 @@ impl ModelFrame {
             || !len.is_finite()
             || len <= 1e-9
         {
-            return Err(Error::Invalid("モデルの位置・回転が不正です"));
+            return Err(Error::Invalid(Reason::ModelFrameInvalid));
         }
         Ok(Self {
             position,

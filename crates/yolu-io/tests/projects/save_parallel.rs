@@ -96,7 +96,7 @@ fn project() -> Project {
             SetSpec {
                 id: (*id).into(),
                 name: format!("セット {i}"),
-                material: MaterialRef::PendingSlot(i as u16),
+                materials: vec![MaterialRef::PendingSlot(i as u16)],
                 composites: composite_pngs(&doc).unwrap(),
                 document: Some(DocumentSource::Core(Arc::new(
                     doc.capture_snapshot().unwrap(),

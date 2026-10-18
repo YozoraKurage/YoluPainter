@@ -306,6 +306,7 @@ impl Psd {
                 .name
                 .bytes()
                 .map(|b| if b < 128 { b } else { b'?' })
+                .take(255)
                 .collect();
             extra.push(name.len() as u8);
             extra.extend(&name);
@@ -441,6 +442,86 @@ impl Psd {
         };
         channel(&plane, w, h, compression)
     }
+}
+
+/// 一様な色の大きなレイヤー 1 枚だけの PSD（RLE。画素の面を作らずに行を直に書くので、辺が数万のレイヤーも小さなファイルにできる）。
+/// `rect` は上・左・下・右。統合画像は白（無圧縮）。
+fn uniform_layer_psd(
+    width: u32,
+    height: u32,
+    rect: (i32, i32, i32, i32),
+    rgba: [u8; 4],
+) -> Vec<u8> {
+    let w = (rect.3 - rect.1) as usize;
+    let h = (rect.2 - rect.0) as usize;
+    let rle_row = |v: u8| -> Vec<u8> {
+        let mut row = Vec::new();
+        for _ in 0..w / 128 {
+            row.extend([0x81, v]);
+        }
+        match w % 128 {
+            0 => {}
+            1 => row.extend([0, v]),
+            r => row.extend([(1 - r as i16) as i8 as u8, v]),
+        }
+        row
+    };
+    let planes: Vec<Vec<u8>> = [rgba[0], rgba[1], rgba[2], rgba[3]]
+        .iter()
+        .map(|&v| {
+            let row = rle_row(v);
+            let mut ch = be16(1).to_vec();
+            for _ in 0..h {
+                ch.extend(be16(row.len() as u16));
+            }
+            for _ in 0..h {
+                ch.extend(&row);
+            }
+            ch
+        })
+        .collect();
+    let mut info = be16(1).to_vec();
+    for v in [rect.0, rect.1, rect.2, rect.3] {
+        info.extend(be32(v as u32));
+    }
+    info.extend(be16(4));
+    for (id, plane) in [0i16, 1, 2, -1].iter().zip(&planes) {
+        info.extend(be16(*id as u16));
+        info.extend(be32(plane.len() as u32));
+    }
+    info.extend(b"8BIMnorm");
+    info.extend([255, 0, 0, 0]);
+    let mut extra = Vec::new();
+    extra.extend(be32(0)); // マスクなし
+    extra.extend(be32(0)); // Blend-If なし
+    extra.extend([4, b'b', b'i', b'g', b'0', 0, 0, 0]);
+    tagged(&mut extra, b"lyid", &1i32.to_be_bytes());
+    info.extend(be32(extra.len() as u32));
+    info.extend(extra);
+    for plane in &planes {
+        info.extend(plane);
+    }
+    if info.len() % 2 == 1 {
+        info.push(0)
+    }
+    let mut lm = be32(info.len() as u32).to_vec();
+    lm.extend(info);
+    lm.extend(be32(0)); // 全体マスクなし
+    let mut out = b"8BPS".to_vec();
+    out.extend(be16(1));
+    out.extend([0; 6]);
+    out.extend(be16(3));
+    out.extend(be32(height));
+    out.extend(be32(width));
+    out.extend(be16(8));
+    out.extend(be16(3));
+    out.extend(be32(0)); // 色モードデータ
+    out.extend(be32(0)); // 画像リソース
+    out.extend(be32(lm.len() as u32));
+    out.extend(lm);
+    out.extend(be16(0));
+    out.extend(vec![255u8; width as usize * height as usize * 3]);
+    out
 }
 
 fn run(bytes: &[u8], budget: u64) -> CopyOutcome {
@@ -1846,6 +1927,23 @@ fn more_layers_than_a_ylp_holds_are_refused_and_group_dividers_do_not_count() {
         }
     );
     assert!(!why.raised_by_budget());
+    // 予算から決めた上限（4096 MiB なら 4096 枚）も超える数は、予算でなく .ylp の上限で知らせる（予算を上げても取り込めない）
+    let many = Psd::new(2, 2, (0..5000).map(leaf).collect()).build();
+    assert_eq!(
+        refused(&many, 4096 * MIB),
+        CopyRefusal::LayerCountOverLimit {
+            count: 5000,
+            limit: 2048
+        }
+    );
+    // 予算が小さいときも同じ（予算の上限は 256 枚）。.ylp の上限に収まる数だけが、予算の上限で断られる
+    assert_eq!(
+        refused(&many, 256 * MIB),
+        CopyRefusal::LayerCountOverLimit {
+            count: 5000,
+            limit: 2048
+        }
+    );
     // グループはレイヤーに数える。区切りの記録は数えない: 1024 個のグループ（各 1 枚入り）はレイヤー 2048 枚（記録は 3072）で取り込め、
     // 1 枚足すと断る
     let groups = |extra: bool| {
@@ -1864,12 +1962,286 @@ fn more_layers_than_a_ylp_holds_are_refused_and_group_dividers_do_not_count() {
         CopyOutcome::Imported(i) => assert_eq!(i.document.layers().len(), 2048),
         CopyOutcome::Refused(why) => panic!("{}", why.message()),
     }
+    // 記録の数（区切りを含む 3072）が予算の上限を超えるが、レイヤーは 2048 枚で .ylp に収まるときは、予算の上限で断る
+    assert_eq!(
+        refused(&groups(false), 256 * MIB),
+        CopyRefusal::TooManyLayers {
+            count: 3072,
+            limit: 256
+        }
+    );
     assert_eq!(
         refused(&groups(true), 4096 * MIB),
         CopyRefusal::LayerCountOverLimit {
             count: 2049,
             limit: 2048
         }
+    );
+}
+
+#[test]
+fn a_layer_name_over_the_limit_is_cut_and_told_instead_of_refusing_the_whole_file() {
+    // 10 万字の名前のレイヤーが 1 枚あっても、ファイル全体は断らない。名前を上限（4096 UTF-16 単位）まで切り詰めて、落としたものとして知らせる
+    let limit = Limits::default().max_name_code_units;
+    let long = "あ".repeat(100_000);
+    // 長い名前のあとに続く付加情報（塗りの不透明度）と、次の記録も読めること（読み手の位置が記録の末尾まで進む）
+    let layers = vec![
+        red("普通", (0, 0, 2, 2)).id(1),
+        red(&long, (0, 0, 2, 2)).id(2).tag(b"iOpa", &[128, 0, 0, 0]),
+        red("後", (0, 0, 2, 2)).id(3),
+    ];
+    let bytes = Psd::new(2, 2, layers).build();
+    // 原本を保つ読みは、原本の名前を変えられないのでこれまでどおり断る
+    assert_eq!(
+        psd::read(&bytes, &Limits::default()).unwrap().mode(),
+        CompatibilityMode::Rejected
+    );
+    let (d, notes) = imported(&bytes);
+    assert_eq!(d.layers().len(), 3);
+    let cut = d
+        .layers()
+        .iter()
+        .find(|l| l.name().starts_with('あ'))
+        .unwrap();
+    assert_eq!(cut.name().chars().count(), limit);
+    assert!(
+        (cut.opacity() - 128.0 / 255.0).abs() < 0.01,
+        "{}",
+        cut.opacity()
+    );
+    assert_eq!(pixel(&d, "後", 0, 0), [255, 0, 0, 255]);
+    assert!(cut.name().chars().all(|c| c == 'あ'));
+    assert_eq!(pixel(&d, cut.name(), 0, 0), [255, 0, 0, 255]);
+    let n = note(&notes, ImportFeature::LayerNameTruncated).unwrap_or_else(|| panic!("{notes:?}"));
+    assert_eq!((n.action, n.count), (ImportAction::Dropped, 1));
+    assert_eq!(n.layers, vec![cut.name().to_string()]);
+    // 上限ちょうどの名前は切らず、知らせない
+    let exact = Psd::new(2, 2, vec![red(&"い".repeat(limit), (0, 0, 2, 2)).id(1)]).build();
+    let (d, notes) = imported(&exact);
+    assert_eq!(d.layers()[0].name().chars().count(), limit);
+    assert!(note(&notes, ImportFeature::LayerNameTruncated).is_none());
+    // 2 単位の文字（代用対）の途中では切らない: 1 + 2×2047 = 4095 単位で止め、4096 単位目で対の片方だけを残さない
+    let name = format!("a{}", "\u{20bb7}".repeat(3000));
+    let (d, notes) = imported(&Psd::new(2, 2, vec![red(&name, (0, 0, 2, 2)).id(1)]).build());
+    let kept = d.layers()[0].name();
+    assert_eq!(kept.encode_utf16().count(), limit - 1);
+    assert!(kept.starts_with('a') && kept.chars().skip(1).all(|c| c == '\u{20bb7}'));
+    assert!(note(&notes, ImportFeature::LayerNameTruncated).is_some());
+}
+
+#[test]
+fn a_layer_name_over_the_limit_is_read_only_up_to_the_limit() {
+    // 上限より長い名前は、上限までの単位だけを読んで String にし、残りは読み飛ばす。取り込みの間の作業メモリのピークは、
+    // 付加情報の 1 区間（名前の 2 バイト × n）を持つ分で済み、その上に名前の全体（Vec<u16> と String）を載せない
+    use crate::alloc_probe::peak_live_bytes;
+    let limit = Limits::default().max_name_code_units;
+    let n = 2_000_000usize;
+    let bytes = Psd::new(
+        2,
+        2,
+        vec![
+            red(&"あ".repeat(n), (0, 0, 2, 2)).id(1),
+            red("後", (0, 0, 2, 2)).id(2),
+        ],
+    )
+    .build();
+    let (outcome, peak) = peak_live_bytes(|| {
+        psd::import_copy(
+            &mut Cursor::new(&bytes[..]),
+            &CopyOptions {
+                source_budget: 2048 * MIB,
+                cancel: None,
+            },
+        )
+        .unwrap()
+    });
+    let CopyOutcome::Imported(i) = outcome else {
+        panic!("断られた")
+    };
+    let d = i.document;
+    assert_eq!(d.layers().len(), 2);
+    assert!(d.layers().iter().any(|l| l.name().chars().count() == limit));
+    assert_eq!(pixel(&d, "後", 0, 0), [255, 0, 0, 255]);
+    assert!(
+        peak < 3 * n,
+        "作業メモリのピーク {peak} バイト（名前の 2 バイト × n = {}）",
+        2 * n
+    );
+}
+
+#[test]
+fn a_layer_over_the_canvas_edge_keeps_the_same_pixels_in_every_compression() {
+    // 4×4 のキャンバスに、四辺のすべてからはみ出す 9×7 のレイヤー（場所 (-3, -2)）。画素は場所ごとに違う値
+    let shaped = |compression: u16, outside_alpha: u8| {
+        let mut l = red("はみ出す", (-2, -3, 5, 6));
+        l.compression = compression;
+        for y in 0..7usize {
+            for x in 0..9usize {
+                let inside = (3..7).contains(&x) && (2..6).contains(&y);
+                let i = (y * 9 + x) * 4;
+                let alpha = if inside { 255 } else { outside_alpha };
+                l.rgba[i..i + 4].copy_from_slice(&[x as u8 * 10 + 1, y as u8 * 10 + 1, 7, alpha]);
+            }
+        }
+        l
+    };
+    for compression in 0..=3u16 {
+        let (d, notes) = imported(&Psd::new(4, 4, vec![shaped(compression, 0)]).build());
+        // キャンバスの中の 16 画素の全部が、圧縮によらず同じバイト
+        for cy in 0..4u32 {
+            for cx in 0..4u32 {
+                assert_eq!(
+                    pixel(&d, "はみ出す", cx, cy),
+                    [(cx as u8 + 3) * 10 + 1, (cy as u8 + 2) * 10 + 1, 7, 255],
+                    "圧縮 {compression} の ({cx}, {cy})"
+                );
+            }
+        }
+        assert!(
+            note(&notes, ImportFeature::OutsideCanvas).is_none(),
+            "圧縮 {compression}: 外が透明なら知らせない"
+        );
+        // 外にも見える画素があれば、切り捨てたものとして知らせる（中の画素は同じ）
+        let (d, notes) = imported(&Psd::new(4, 4, vec![shaped(compression, 9)]).build());
+        assert_eq!(pixel(&d, "はみ出す", 2, 1), [51, 31, 7, 255]);
+        assert!(
+            note(&notes, ImportFeature::OutsideCanvas).is_some(),
+            "圧縮 {compression}"
+        );
+    }
+    // キャンバスにかからないレイヤーも、圧縮によらず取り込める（透明なら知らせず、見える画素があれば知らせる）
+    for compression in 0..=3u16 {
+        for (alpha, told) in [(0u8, false), (200, true)] {
+            let mut l = L::new("外", (10, 10, 13, 13), [1, 2, 3, alpha]);
+            l.compression = compression;
+            let (d, notes) = imported(&Psd::new(4, 4, vec![l]).build());
+            assert_eq!(pixel(&d, "外", 0, 0)[3], 0);
+            assert_eq!(
+                note(&notes, ImportFeature::OutsideCanvas).is_some(),
+                told,
+                "圧縮 {compression}・アルファ {alpha}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_layer_far_bigger_than_the_canvas_is_cut_while_reading_so_it_fits_the_budget() {
+    // 512² のキャンバスに 8192² のレイヤー（全画素が見える赤）。丸ごと持てば 256 MiB だが、取り込みはキャンバスの中だけを持つので、予算 64 MiB に収まる
+    let bytes = uniform_layer_psd(512, 512, (-3000, -3000, 5192, 5192), [255, 0, 0, 255]);
+    assert!(bytes.len() < 8 * MIB as usize, "{} バイト", bytes.len());
+    let (d, notes) = match run(&bytes, 64 * MIB) {
+        CopyOutcome::Imported(i) => (i.document, i.notes),
+        CopyOutcome::Refused(why) => panic!("断られた: {}", why.message()),
+    };
+    assert_eq!((d.width(), d.height(), d.layers().len()), (512, 512, 1));
+    for (x, y) in [(0, 0), (511, 0), (0, 511), (511, 511), (256, 256)] {
+        assert_eq!(pixel(&d, "big0", x, y), [255, 0, 0, 255], "({x}, {y})");
+    }
+    // 外にも見える画素があるので、切り捨てたものとして知らせる
+    let n = note(&notes, ImportFeature::OutsideCanvas).unwrap_or_else(|| panic!("{notes:?}"));
+    assert_eq!(
+        (n.action, n.layers.clone()),
+        (ImportAction::Dropped, vec!["big0".to_string()])
+    );
+    // 読んだ文書の PSD は、元のバイトに触れない（取り込みは読むだけ）
+    let again = bytes.clone();
+    let _ = run(&again, 64 * MIB);
+    assert_eq!(again, bytes);
+    // キャンバスにかからないレイヤーは、画素を持たずに（見える画素があれば知らせて）取り込む
+    let away = uniform_layer_psd(512, 512, (10_000, 10_000, 18_192, 18_192), [0, 255, 0, 255]);
+    let (d, notes) = match run(&away, 64 * MIB) {
+        CopyOutcome::Imported(i) => (i.document, i.notes),
+        CopyOutcome::Refused(why) => panic!("断られた: {}", why.message()),
+    };
+    assert_eq!(d.layers().len(), 1);
+    assert_eq!(pixel(&d, "big0", 0, 0)[3], 0);
+    assert!(note(&notes, ImportFeature::OutsideCanvas).is_some());
+}
+
+#[test]
+fn an_uncompressed_layer_bigger_than_the_canvas_keeps_the_pixels_inside_and_tells_the_outside() {
+    // 64×64 のキャンバスに、無圧縮の 1500×1200 のレイヤー（場所 (-700, -500)）。チャンネルを行ごとに読む道で、画素は場所ごとに違う値
+    let (lw, lh) = (1500usize, 1200usize);
+    let mut l = red("大", (-500, -700, 700, 800));
+    l.compression = 0;
+    for y in 0..lh {
+        for x in 0..lw {
+            let i = (y * lw + x) * 4;
+            l.rgba[i..i + 4].copy_from_slice(&[(x % 251) as u8, (y % 241) as u8, 9, 255]);
+        }
+    }
+    let bytes = Psd::new(64, 64, vec![l]).build();
+    // 読み手を包み、1 回の読み取りの最大の大きさを数える: 行ごとの読みなら 1 行（lw バイト）の数倍を超えない。チャンネルを全部（lw × lh = 1.8 MB）
+    // 読む作りに戻すと、ここで落ちる
+    struct Counting<'a> {
+        inner: Cursor<&'a [u8]>,
+        largest: usize,
+    }
+    impl Read for Counting<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let n = self.inner.read(buf)?;
+            self.largest = self.largest.max(n);
+            Ok(n)
+        }
+    }
+    impl Seek for Counting<'_> {
+        fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+            self.inner.seek(pos)
+        }
+    }
+    let mut reader = Counting {
+        inner: Cursor::new(&bytes[..]),
+        largest: 0,
+    };
+    let outcome = psd::import_copy(
+        &mut reader,
+        &CopyOptions {
+            source_budget: 2048 * MIB,
+            cancel: None,
+        },
+    )
+    .unwrap();
+    let CopyOutcome::Imported(i) = outcome else {
+        panic!("断られた")
+    };
+    let (d, notes) = (i.document, i.notes);
+    assert!(
+        reader.largest <= 4 * lw,
+        "1 回の読み取りの最大 {} バイト（1 行は {lw} バイト）",
+        reader.largest
+    );
+    for (cx, cy) in [(0usize, 0usize), (63, 0), (0, 63), (63, 63), (30, 20)] {
+        let (x, y) = (cx + 700, cy + 500);
+        assert_eq!(
+            pixel(&d, "大", cx as u32, cy as u32),
+            [(x % 251) as u8, (y % 241) as u8, 9, 255],
+            "({cx}, {cy})"
+        );
+    }
+    assert!(note(&notes, ImportFeature::OutsideCanvas).is_some());
+}
+
+#[test]
+fn records_after_the_ylp_layer_limit_are_counted_without_refusing_for_their_own_size() {
+    // 2049 枚で .ylp の上限を超えたあとの記録は、数えるだけ: 付加情報が予算を超える記録があっても、断る理由は .ylp の上限のまま
+    let leaf = |i: i32| L::new(&format!("L{i}"), (0, 0, 1, 1), [1, 2, 3, 255]).id(i + 1);
+    let mut layers: Vec<L> = (0..2049).map(leaf).collect();
+    layers.push(leaf(2049).tag(b"SoLd", &vec![7u8; 2 * MIB as usize]));
+    let bytes = Psd::new(2, 2, layers).build();
+    assert_eq!(
+        refused(&bytes, MIB),
+        CopyRefusal::LayerCountOverLimit {
+            count: 2050,
+            limit: 2048
+        }
+    );
+    // 上限の中にある記録なら、今までどおり付加情報の大きさで断る
+    let mut layers: Vec<L> = (0..3).map(leaf).collect();
+    layers.push(leaf(3).tag(b"SoLd", &vec![7u8; 2 * MIB as usize]));
+    assert_eq!(
+        refused(&Psd::new(2, 2, layers).build(), MIB),
+        CopyRefusal::LayerDataTooLarge { layer: "#4".into() }
     );
 }
 

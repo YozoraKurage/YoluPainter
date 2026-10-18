@@ -6,7 +6,7 @@
 //! - `Mathf.Min`・`Mathf.Max` は `a < b ? a : b` の比較（f32::min とは −0 と NaN の扱いが違う）。
 //! - `Bounds` は中心と半分の大きさで持つ（min・max は毎回 中心 ∓ 半分）。これも Unity と同じ丸めにするため。
 //! - `Bounds.SqrDistance` は Unity ではネイティブの関数なので、その C++ の式（Wild Magic の点と箱の距離）を写した。ダブの三角形の
-//!   ふるい（箱の距離が半径を超えたら飛ばす）と最近点の探索の枝刈りにしか使わないので、境目のぴったりの値でしか結果に効かない。
+//!   ふるい（箱の距離が半径を超えたら飛ばす）と最近点の探索の刈り込みにしか使わないので、境目のぴったりの値でしか結果に効かない。
 
 use glam::{Vec2, Vec3};
 
@@ -238,7 +238,7 @@ mod tests {
     #[test]
     #[allow(clippy::excessive_precision)] // 同梱の Mono が "R" で書いた値をそのまま
     fn single_precision_like_mono() {
-        // 同梱の Mono で求めた値（tools/csharp-golden の確かめ。0.1f × 0.2f + 0.3f を FMA に縮めない）
+        // 同梱の Mono で求めた値（0.1f × 0.2f + 0.3f を FMA に縮めない）
         let (x, y, z) = (0.1f32, 0.2f32, 0.3f32);
         assert_eq!((x * y + z).to_bits(), 0x3ea3d70b);
         assert_eq!(normalized(Vec3::new(x, y, z)).x, 0.2672612);

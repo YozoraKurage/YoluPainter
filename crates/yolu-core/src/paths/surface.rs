@@ -33,9 +33,124 @@ pub fn render_surface(
     path.validate()?;
     o.check()?;
     check_model(path, g)?;
+    let target = Target::new(g, o)?;
     let mut painter = Painter::new(o)?;
-    let (samples, dabs, gaps) = draw_surface(&mut painter, path, g, o)?;
+    let (samples, dabs, gaps) = draw_surface(&mut painter, path, &target, o)?;
     painter.finish(samples, dabs, gaps)
+}
+
+/// 3D のパスを描く形: 点を置く形（`full`。パスの点の三角形の番号はこの形のもの）と、レイを当ててダブを広げる形（`Options::hidden` の
+/// 面を除いて作り直した形。除く面が無ければ `full` そのもの）。除いた形の三角形の番号は詰め直してあるので、`to_full`・`shown_of` で直す。
+pub(super) struct Target<'g> {
+    pub full: &'g SurfaceGeometry,
+    cut: Option<Cut>,
+}
+
+/// 除いた面の無い形と、その三角形の番号の対応。
+struct Cut {
+    /// 残した面だけの形（全部の面を除いたなら None: どこにも描かない）。
+    geometry: Option<SurfaceGeometry>,
+    /// 残した形の番号 → 描く形の番号。
+    to_full: Vec<u32>,
+    /// 描く形の番号 → 残した形の番号（除いた面は `u32::MAX`）。
+    from_full: Vec<u32>,
+}
+
+impl<'g> Target<'g> {
+    pub fn new(full: &'g SurfaceGeometry, o: &Options<'_>) -> Result<Target<'g>, Error> {
+        let Some(hidden) = o.hidden.filter(|h| h.iter().any(|x| *x)) else {
+            return Ok(Target { full, cut: None });
+        };
+        if hidden.len() != full.triangle_count() {
+            return Err(Error::ModelMismatch);
+        }
+        o.check()?;
+        let keep: Vec<bool> = hidden.iter().map(|h| !h).collect();
+        let mut to_full = Vec::new();
+        let mut from_full = vec![u32::MAX; keep.len()];
+        let mut triangles = Vec::new();
+        for (i, t) in full.triangles().iter().enumerate() {
+            if keep[i] {
+                from_full[i] = to_full.len() as u32;
+                to_full.push(i as u32);
+                triangles.push(*t);
+            }
+        }
+        let geometry = if triangles.is_empty() {
+            None
+        } else {
+            Some(
+                full.restrict(&keep, triangles, full.revision())
+                    .map_err(|_| Error::ModelMismatch)?,
+            )
+        };
+        Ok(Target {
+            full,
+            cut: Some(Cut {
+                geometry,
+                to_full,
+                from_full,
+            }),
+        })
+    }
+
+    /// レイを当ててダブを広げる形（全部の面を除いたなら None）。
+    pub fn hit(&self) -> Option<&SurfaceGeometry> {
+        match &self.cut {
+            None => Some(self.full),
+            Some(c) => c.geometry.as_ref(),
+        }
+    }
+
+    /// 1 点のパスの点を面の当たりにする（点の三角形が除いた面なら None）。
+    pub fn point_hit(&self, p: &PathPoint, position: Vec3, normal: Vec3) -> Option<SurfaceHit> {
+        self.hit()?;
+        let triangle = self.shown_of(p.triangle)?;
+        let t = &self.full.triangles()[p.triangle as usize];
+        Some(SurfaceHit {
+            revision: self.full.revision(),
+            renderer: t.renderer,
+            material_slot: t.material_slot,
+            material: t.material,
+            triangle,
+            position,
+            normal,
+            barycentric: Vec3::new((1.0 - p.u - p.v) as f32, p.u as f32, p.v as f32),
+            uv: t.uv_a * (1.0 - p.u - p.v) as f32 + t.uv_b * p.u as f32 + t.uv_c * p.v as f32,
+            distance: 0.0,
+        })
+    }
+
+    /// 曲線の上の点 `q` から法線 `normal` の向きにレイを当てる（法線の上から下へ、当たらなければ下から上へ。向きが法線と 0.2 より合う面だけ）。
+    pub fn ray_hit(&self, q: Vec3, normal: Vec3, reach: f32) -> Option<SurfaceHit> {
+        let hg = self.hit()?;
+        hg.raycast(Ray::new(q + normal * reach, -normal), true, reach * 2.0)
+            .filter(|h| dot(h.normal, normal) > 0.2)
+            .or_else(|| {
+                hg.raycast(Ray::new(q - normal * reach, normal), false, reach * 2.0)
+                    .filter(|h| dot(h.normal, normal) > 0.2)
+            })
+    }
+
+    /// `hit` の形の三角形の番号を、描く形の番号へ。
+    pub fn to_full(&self, triangle: u32) -> u32 {
+        match &self.cut {
+            None => triangle,
+            Some(c) => c.to_full[triangle as usize],
+        }
+    }
+
+    /// 描く形の三角形の番号を、`hit` の形の番号へ（除いた面なら None）。
+    pub fn shown_of(&self, triangle: u32) -> Option<u32> {
+        match &self.cut {
+            None => Some(triangle),
+            Some(c) => c
+                .from_full
+                .get(triangle as usize)
+                .copied()
+                .filter(|t| *t != u32::MAX),
+        }
+    }
 }
 /// パスがこの形（指紋・三角形の数）に結び付くか。
 pub(super) fn check_model(path: &SurfacePath, g: &SurfaceGeometry) -> Result<(), Error> {
@@ -125,7 +240,9 @@ pub(super) fn surface_curve(
 }
 
 /// 曲線の点を面へ投影する（描くストロークと同じレイ: 法線の上から下へ、当たらなければ下から上へ。向きが法線と 0.2 より合う面だけ）。
-pub(super) fn project(g: &SurfaceGeometry, q: &CurvePoint) -> Option<SurfaceHit> {
+/// 当てるのは `Target::hit` の形（当たりの三角形の番号もその形のもの）。
+pub(super) fn project(t: &Target<'_>, q: &CurvePoint) -> Option<SurfaceHit> {
+    let g = t.hit()?;
     let (normal, reach) = (q.normal, q.reach);
     g.raycast(
         Ray::new(q.position + normal * reach, -normal),
@@ -148,15 +265,15 @@ pub(super) fn project(g: &SurfaceGeometry, q: &CurvePoint) -> Option<SurfaceHit>
 pub(super) fn draw_surface(
     painter: &mut Painter<'_, '_>,
     path: &SurfacePath,
-    g: &SurfaceGeometry,
+    t: &Target<'_>,
     o: &Options<'_>,
 ) -> Result<(usize, usize, usize), Error> {
-    let (mut samples, mut dabs, mut gaps) = draw_surface_one(painter, path, g, o)?;
+    let (mut samples, mut dabs, mut gaps) = draw_surface_one(painter, path, t, o)?;
     if let PathSymmetry::Mirror { point, normal } = path.style.symmetry {
         o.check()?;
-        match mirrored_surface(path, g, point, normal) {
+        match mirrored_surface(path, t.full, point, normal, o.material) {
             Some(copy) => {
-                let (s, d, k) = draw_surface_one(painter, &copy, g, o)?;
+                let (s, d, k) = draw_surface_one(painter, &copy, t, o)?;
                 samples += s;
                 dabs += d;
                 gaps += k;
@@ -167,12 +284,14 @@ pub(super) fn draw_surface(
     Ok((samples, dabs, gaps))
 }
 
-/// 鏡の面で映したパス（点は映した位置のいちばん近い面へ。同じマテリアル・向きの合う面・許す距離の内側。置けない点があれば None）。
+/// 鏡の面で映したパス（点は映した位置のいちばん近い面へ。`material` の組のマテリアル（無ければ元の点と同じマテリアル）・向きの合う面・許す距離の
+/// 内側。置けない点があれば None）。
 fn mirrored_surface(
     path: &SurfacePath,
     g: &SurfaceGeometry,
     point: Vec3,
     normal: Vec3,
+    material: Option<&crate::geometry::MaterialSet>,
 ) -> Option<SurfacePath> {
     let plane = crate::geometry::MirrorPlane::new(point, normal, Vec3::X, Vec3::Y).ok()?;
     let tolerance = super::rebind_tolerance(g, path);
@@ -180,13 +299,21 @@ fn mirrored_surface(
     for p in &path.points {
         let t = g.triangles().get(p.triangle as usize)?;
         let (position, n) = super::point_position(g, p)?;
+        let own;
+        let allowed = match material {
+            Some(set) => set,
+            None => {
+                own = crate::geometry::MaterialSet::one(t.material);
+                &own
+            }
+        };
         let hit = g
             .find_closest_point(
                 plane.reflect(position),
                 tolerance,
                 plane.reflect_direction(n),
                 super::REBIND_MAX_NODE_VISITS,
-                t.material,
+                Some(allowed),
             )
             .ok()??;
         let tangent = match p.tangent {
@@ -212,46 +339,57 @@ fn mirrored_surface(
     })
 }
 
-fn draw_surface_one(
-    painter: &mut Painter<'_, '_>,
-    path: &SurfacePath,
-    g: &SurfaceGeometry,
-    o: &Options<'_>,
-) -> Result<(usize, usize, usize), Error> {
-    match path.style.kind {
-        PathKind::Fill => return super::fill::draw_surface(painter, path, g, o),
-        PathKind::Ribbon(r) => return super::ribbon::draw_surface(painter, path, g, o, r),
-        PathKind::Stroke | PathKind::Smudge { .. } | PathKind::Erase => {}
-    }
-    let smudge = matches!(path.style.kind, PathKind::Smudge { .. });
-    let b = path.brush.0;
-    painter.begin(
-        paints(path.channel, path.brush, &path.material)?,
-        &super::render::kind_brush(BrushSettings { radius: 1.0, ..b }, &path.style),
-    )?;
-    // 指先: 直前のダブの中心（キャンバスの画素）と、ダブの画素の広がり（継ぎ目をまたいだかを見る）
-    let mut previous: Option<glam::DVec2> = None;
-    let ps = &path.points;
-    let positions: Vec<_> = ps
+/// パスの点ごとの、モデル上の位置と面の法線。
+fn point_frames(points: &[PathPoint], g: &SurfaceGeometry) -> (Vec<Vec3>, Vec<Vec3>) {
+    let positions = points
         .iter()
         .map(|p| {
             let t = &g.triangles()[p.triangle as usize];
             t.a * (1.0 - p.u - p.v) as f32 + t.b * p.u as f32 + t.c * p.v as f32
         })
         .collect();
-    let normals: Vec<_> = ps
+    let normals = points
         .iter()
         .map(|p| g.triangles()[p.triangle as usize].normal())
         .collect();
+    (positions, normals)
+}
+
+fn draw_surface_one(
+    painter: &mut Painter<'_, '_>,
+    path: &SurfacePath,
+    target: &Target<'_>,
+    o: &Options<'_>,
+) -> Result<(usize, usize, usize), Error> {
+    match path.style.kind {
+        PathKind::Fill => return super::fill::draw_surface(painter, path, target, o),
+        PathKind::Ribbon(r) => return super::ribbon::draw_surface(painter, path, target, o, r),
+        PathKind::Stroke | PathKind::Smudge { .. } | PathKind::Erase => {}
+    }
+    let g = target.full;
+    let smudge = matches!(path.style.kind, PathKind::Smudge { .. });
+    let b = path.brush.0;
+    painter.begin(
+        paints(path.channel, path.brush, &path.material)?,
+        &super::render::kind_brush(
+            BrushSettings { radius: 1.0, ..b },
+            path.brush.1,
+            &path.style,
+        ),
+    )?;
+    // 指先: 直前のダブの中心（キャンバスの画素）と、ダブの画素の広がり（継ぎ目をまたいだかを見る）
+    let mut previous: Option<glam::DVec2> = None;
+    let ps = &path.points;
+    let (positions, normals) = point_frames(ps, g);
     let (mut dabs, mut gaps, mut samples) = (0, 0, 0);
     let tip = path.style.tip.clone();
     let mut dab = |hit: SurfaceHit, pressure: f64, direction: Vec3| -> Result<(), Error> {
         o.check()?;
-        if b.pressure_size && pressure <= 0.0 {
+        if path.brush.1.size && pressure <= 0.0 {
             return Ok(());
         }
         let radius = (b.radius
-            * if b.pressure_size {
+            * if path.brush.1.size {
                 pressure.max(0.001)
             } else {
                 1.0
@@ -263,7 +401,10 @@ fn draw_surface_one(
             radius
         };
         // 丸い筆先は縁のアンチエイリアス（筆先の画像は覆いを筆先から読むので、今のまま）
-        let mut result = g.build_surface_dabs_anti_aliased(
+        let Some(hg) = target.hit() else {
+            return Ok(());
+        };
+        let mut result = hg.build_surface_dabs_anti_aliased(
             &hit,
             reach,
             o.width as i32,
@@ -334,23 +475,12 @@ fn draw_surface_one(
     };
     if ps.len() == 1 {
         let p = ps[0];
-        let t = &g.triangles()[p.triangle as usize];
-        dab(
-            SurfaceHit {
-                revision: g.revision(),
-                renderer: t.renderer,
-                material_slot: t.material_slot,
-                material: t.material,
-                triangle: p.triangle,
-                position: positions[0],
-                normal: normals[0],
-                barycentric: Vec3::new((1.0 - p.u - p.v) as f32, p.u as f32, p.v as f32),
-                uv: t.uv_a * (1.0 - p.u - p.v) as f32 + t.uv_b * p.u as f32 + t.uv_c * p.v as f32,
-                distance: 0.0,
-            },
-            p.pressure,
-            Vec3::ZERO,
-        )?;
+        // 除いた面の上の点は描かない（欠落に数える）
+        let Some(hit) = target.point_hit(&p, positions[0], normals[0]) else {
+            painter.end()?;
+            return Ok((1, 0, 1));
+        };
+        dab(hit, p.pressure, Vec3::ZERO)?;
         samples = 1;
     } else if ps.len() > 1 {
         let step = (b.radius * 2.0 * b.spacing).max(1e-6);
@@ -400,13 +530,7 @@ fn draw_surface_one(
                         .max(chord * 0.25)
                         .max((b.radius as f32) * 4.0),
                 };
-                let hit = g
-                    .raycast(Ray::new(q + normal * reach, -normal), true, reach * 2.0)
-                    .filter(|h| dot(h.normal, normal) > 0.2)
-                    .or_else(|| {
-                        g.raycast(Ray::new(q - normal * reach, normal), false, reach * 2.0)
-                            .filter(|h| dot(h.normal, normal) > 0.2)
-                    });
+                let hit = target.ray_hit(q, normal, reach);
                 if let Some(h) = hit {
                     dab(
                         h,

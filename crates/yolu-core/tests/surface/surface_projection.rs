@@ -124,8 +124,16 @@ fn settings() -> ProjectionSettings {
 
 /// 凸の形: 表の面の、画面の円の中のテクセルは塗られ（面の向きで弱める角度より手前）、裏の面と円の外は塗られない。
 fn check_convex(g: &Arc<SurfaceGeometry>, view: &CameraView, center: Vec2, radius: f32, size: i32) {
-    let mut p =
-        SurfaceProjector::new(g.clone(), view, Some(0), size, size, radius, settings()).unwrap();
+    let mut p = SurfaceProjector::new(
+        g.clone(),
+        view,
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
+        size,
+        size,
+        radius,
+        settings(),
+    )
+    .unwrap();
     let dab = p.dab(center, radius, 1.0, u64::MAX);
     assert!(dab.refusal.is_none());
     let got = painted(&dab.pixels);
@@ -183,7 +191,16 @@ fn a_flat_plane_is_painted_exactly_inside_the_screen_circle() {
     let g = geometry(t);
     let view = front_view(Vec3::ZERO, 4.0, 400.0);
     let center = Vec2::new(200.0, 200.0);
-    let mut p = SurfaceProjector::new(g.clone(), &view, Some(0), 64, 64, 60.0, settings()).unwrap();
+    let mut p = SurfaceProjector::new(
+        g.clone(),
+        &view,
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
+        64,
+        64,
+        60.0,
+        settings(),
+    )
+    .unwrap();
     let dab = p.dab(center, 60.0, 1.0, u64::MAX);
     let got = painted(&dab.pixels);
     for y in 0..64 {
@@ -284,7 +301,16 @@ fn nearer_faces_of_another_texture_set_hide_texels_unless_hidden_areas_are_paint
             paint_hidden: hidden,
             ..settings()
         };
-        let mut p = SurfaceProjector::new(g.clone(), &view, Some(0), 64, 64, radius, s).unwrap();
+        let mut p = SurfaceProjector::new(
+            g.clone(),
+            &view,
+            Some(&yolu_core::geometry::MaterialSet::one(0)),
+            64,
+            64,
+            radius,
+            s,
+        )
+        .unwrap();
         let got = painted(&p.dab(center, radius, 1.0, u64::MAX).pixels);
         let (mut seen, mut behind) = (0, 0);
         for (x, y, point, _) in texel_points(&g, 64, 64, 0) {
@@ -324,13 +350,31 @@ fn back_faces_are_painted_only_when_asked() {
     let g = geometry(t);
     let view = front_view(Vec3::ZERO, 4.0, 400.0);
     let center = Vec2::new(200.0, 200.0);
-    let mut p = SurfaceProjector::new(g.clone(), &view, Some(0), 32, 32, 80.0, settings()).unwrap();
+    let mut p = SurfaceProjector::new(
+        g.clone(),
+        &view,
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
+        32,
+        32,
+        80.0,
+        settings(),
+    )
+    .unwrap();
     assert!(p.dab(center, 80.0, 1.0, u64::MAX).pixels.is_empty());
     let s = ProjectionSettings {
         paint_backfaces: true,
         ..settings()
     };
-    let mut p = SurfaceProjector::new(g.clone(), &view, Some(0), 32, 32, 80.0, s).unwrap();
+    let mut p = SurfaceProjector::new(
+        g.clone(),
+        &view,
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
+        32,
+        32,
+        80.0,
+        s,
+    )
+    .unwrap();
     let dab = p.dab(center, 80.0, 1.0, u64::MAX);
     assert!(dab.pixels.len() > 100, "{}", dab.pixels.len());
     // 裏から見た角度で弱める（正面から見ているので弱めない）
@@ -362,8 +406,16 @@ fn the_angle_falloff_is_monotone_in_the_angle_and_follows_its_range() {
         }
         let g = geometry(t);
         let view = front_view(Vec3::ZERO, 4.0, 400.0);
-        let mut p =
-            SurfaceProjector::new(g.clone(), &view, Some(0), 64, 64, 100.0, settings()).unwrap();
+        let mut p = SurfaceProjector::new(
+            g.clone(),
+            &view,
+            Some(&yolu_core::geometry::MaterialSet::one(0)),
+            64,
+            64,
+            100.0,
+            settings(),
+        )
+        .unwrap();
         let dab = p.dab(Vec2::new(200.0, 200.0), 100.0, 1.0, u64::MAX);
         // 中心の 2 × 2 のテクセルの覆いの最大（無ければ 0）
         let at = dab
@@ -386,7 +438,16 @@ fn the_angle_falloff_is_monotone_in_the_angle_and_follows_its_range() {
             angle_falloff: false,
             ..settings()
         };
-        let mut p = SurfaceProjector::new(g.clone(), &view, Some(0), 64, 64, 100.0, s).unwrap();
+        let mut p = SurfaceProjector::new(
+            g.clone(),
+            &view,
+            Some(&yolu_core::geometry::MaterialSet::one(0)),
+            64,
+            64,
+            100.0,
+            s,
+        )
+        .unwrap();
         let flat = p.dab(Vec2::new(200.0, 200.0), 100.0, 1.0, u64::MAX);
         if degrees <= 86.0 {
             assert!(flat.pixels.iter().all(|p| p.coverage == 1.0), "{degrees}°");
@@ -429,7 +490,16 @@ fn seam_bleed_paints_n_texels_outside_the_island_edges_and_no_further() {
             seam_bleed: bleed,
             ..settings()
         };
-        let mut p = SurfaceProjector::new(g.clone(), &view, Some(0), 32, 16, 150.0, s).unwrap();
+        let mut p = SurfaceProjector::new(
+            g.clone(),
+            &view,
+            Some(&yolu_core::geometry::MaterialSet::one(0)),
+            32,
+            16,
+            150.0,
+            s,
+        )
+        .unwrap();
         let dab = p.dab(center, 150.0, 1.0, u64::MAX);
         let row: BTreeSet<i32> = dab
             .pixels
@@ -489,7 +559,16 @@ fn seam_bleed_never_writes_into_another_island_of_the_same_set() {
         seam_bleed: 4,
         ..settings()
     };
-    let mut p = SurfaceProjector::new(g.clone(), &view, Some(0), 32, 16, 150.0, s).unwrap();
+    let mut p = SurfaceProjector::new(
+        g.clone(),
+        &view,
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
+        32,
+        16,
+        150.0,
+        s,
+    )
+    .unwrap();
     let dab = p.dab(center, 150.0, 1.0, u64::MAX);
     let row: BTreeSet<i32> = dab
         .pixels
@@ -594,7 +673,7 @@ fn crowded_stroke(
         g.clone(),
         view,
         &brush,
-        Some(0),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
         from,
         1.0,
     )
@@ -714,7 +793,7 @@ fn a_dab_whose_buckets_do_not_fit_cancels_the_stroke_like_2d() {
         g.clone(),
         view,
         &brush,
-        Some(0),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
         Vec2::new(200.0, 180.0),
         1.0,
     )
@@ -752,8 +831,17 @@ fn one_undo_takes_a_stroke_back_and_a_new_camera_builds_new_buckets() {
     let paint = |d: &mut Document, view: CameraView| -> (BTreeSet<usize>, SurfaceStroke) {
         let mut stroke = d.begin_stroke(l, &brush).unwrap();
         let at = view.to_screen(Vec3::ZERO).unwrap();
-        let mut s = SurfaceStroke::begin(d, &mut stroke, g.clone(), view, &brush, Some(0), at, 1.0)
-            .unwrap();
+        let mut s = SurfaceStroke::begin(
+            d,
+            &mut stroke,
+            g.clone(),
+            view,
+            &brush,
+            Some(&yolu_core::geometry::MaterialSet::one(0)),
+            at,
+            1.0,
+        )
+        .unwrap();
         // ダブは線の長さで間隔ごとに置くので、間隔より長く動かす（重なるダブが前の区画を使い回す）
         for i in 1..=6 {
             s.add(d, &mut stroke, at + Vec2::new(4.0 * i as f32, 0.0), 1.0)
@@ -840,7 +928,7 @@ fn blur_along_the_seam(
         g.clone(),
         view,
         &brush.base,
-        Some(0),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
         a,
         1.0,
         SurfaceStrokeOptions {
@@ -971,7 +1059,7 @@ fn stroke_through(
         g.clone(),
         view,
         brush,
-        Some(0),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
         screen[0],
         1.0,
         options,

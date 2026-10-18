@@ -43,7 +43,7 @@ ID Color Select picks the area whose baked ID-map color is close to the pressed 
 
 Select → Remembered Selections… (or Remember Selection… on the button bar) opens the Remembered Selections window. Give the current selection a name and press Remember to keep it (up to 32 per texture set). A remembered selection can be recalled with New, Add, Subtract or Intersect, renamed and removed. Each is one undo step. When you change the size of a texture set, remembered selections are rebuilt the same way as the current selection, and any that nothing remains of after shrinking are dropped and reported.
 
-A `.ylp` that uses remembered selections cannot be opened by older apps (the 0.3.x standalone and the Unity version), which refuse it and say why ([UNITY.md](UNITY.md)).
+A `.ylp` that uses remembered selections cannot be opened by older apps (the 0.3.x standalone app and Unity bridge), which refuse it and say why ([UNITY.md](UNITY.md)).
 
 ## Moving and transforming
 

@@ -19,17 +19,17 @@ pub const GAP: f32 = 4.0;
 /// プリセットの名前。
 pub fn preset_name(lang: Lang, preset: GrungePreset) -> &'static str {
     match preset {
-        GrungePreset::Stain => lang.pick("汚れの斑", "Stains"),
-        GrungePreset::Rust => lang.pick("錆の斑", "Rust"),
-        GrungePreset::Scratches => lang.pick("傷の筋", "Scratches"),
-        GrungePreset::Dust => lang.pick("ほこり", "Dust"),
-        GrungePreset::Fingerprints => lang.pick("指紋", "Fingerprints"),
-        GrungePreset::Weave => lang.pick("布目", "Weave"),
-        GrungePreset::Cracks => lang.pick("ひび", "Cracks"),
-        GrungePreset::Splatter => lang.pick("飛沫", "Splatter"),
-        GrungePreset::Peeling => lang.pick("塗装の剥げ", "Peeling"),
-        GrungePreset::WoodGrain => lang.pick("木目", "Wood Grain"),
-        GrungePreset::Pebbles => lang.pick("革のしぼ", "Leather Grain"),
+        GrungePreset::Stain => lang.t("panels-stains"),
+        GrungePreset::Rust => lang.t("panels-rust"),
+        GrungePreset::Scratches => lang.t("panels-scratches"),
+        GrungePreset::Dust => lang.t("panels-dust"),
+        GrungePreset::Fingerprints => lang.t("panels-fingerprints"),
+        GrungePreset::Weave => lang.t("panels-weave"),
+        GrungePreset::Cracks => lang.t("panels-cracks"),
+        GrungePreset::Splatter => lang.t("panels-splatter"),
+        GrungePreset::Peeling => lang.t("panels-peeling"),
+        GrungePreset::WoodGrain => lang.t("panels-wood-grain"),
+        GrungePreset::Pebbles => lang.t("panels-leather-grain"),
     }
 }
 

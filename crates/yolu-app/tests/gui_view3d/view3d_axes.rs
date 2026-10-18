@@ -1,5 +1,6 @@
 //! 3D ビューの軸の印（右上のアイコンの下）と正投影: 丸を押すと軸の視点（軸の向きで正投影の設定なら正投影）、真ん中の丸で透視と
 //! 正投影の切り替え、印の上のドラッグで回る、設定のパネルが開いている間は出ない。正投影の 3D の絵（立方体）と、印の絵（日英）。
+use crate::common::drive::Drive;
 use crate::common::{self, click_tab};
 use egui::{pos2, vec2, Event, Modifiers, PointerButton, Pos2, Rect};
 use egui_kittest::{kittest::Queryable, Harness};
@@ -12,16 +13,16 @@ type H = Harness<'static, YoluApp>;
 
 fn view(lang: Lang) -> H {
     let mut h = common::app(1100.0, 760.0, 64);
-    h.state_mut().state.lang = lang;
+    h.set_lang(lang);
     click_tab(&mut h, yolu_app::Tab::View3d);
-    h.state_mut().state.view3d.load_demo();
+    h.view3d_mut().load_demo();
     h.event(Event::PointerMoved(pos2(1.0, 1.0)));
     h.run();
     h
 }
 
 fn camera(h: &H) -> OrbitCamera {
-    h.state().state.view3d.camera
+    h.view3d().view.camera
 }
 
 /// 軸の印の矩形（読み上げの名前で探す）。
@@ -71,13 +72,13 @@ fn pressing_a_ball_looks_from_that_axis_and_the_middle_switches_the_projection()
     let c = camera(&h);
     assert_eq!(c.pitch, 90.0);
     assert!(c.is_orthographic());
-    assert!(h.state().state.view3d.auto_orthographic);
+    assert!(h.view3d().view.auto_orthographic);
     // 真ん中: 手で透視へ（自動の印は外れる）、もう一度で正投影
     click(&mut h, r.center());
     assert!(!camera(&h).is_orthographic());
     click(&mut h, r.center());
     assert!(camera(&h).is_orthographic());
-    assert!(!h.state().state.view3d.auto_orthographic);
+    assert!(!h.view3d().view.auto_orthographic);
     // 反対の側の小さい丸: 右の視点からは −Z の丸が横に見える。押すと背面の視点
     let at = ball(&h, r, AxisView::Right);
     click(&mut h, at);
@@ -92,8 +93,8 @@ fn pressing_a_ball_looks_from_that_axis_and_the_middle_switches_the_projection()
         Some(AxisView::Back)
     );
     // 押しは 3D ビューの描く入力に渡らない（塗っていない・取り消しに積まない）
-    assert!(!h.state().state.doc.can_undo());
-    assert!(h.state().state.view3d.input.stroke.is_none());
+    assert!(!h.doc().can_undo());
+    assert!(h.view3d().view.input.stroke.is_none());
 }
 
 #[test]
@@ -129,7 +130,7 @@ fn dragging_the_widget_orbits_and_leaves_the_automatic_orthographic() {
     assert!(c.yaw > before.yaw + 5.0, "{} → {}", before.yaw, c.yaw);
     assert_eq!(c.pitch, before.pitch);
     assert!(!c.is_orthographic(), "軸から外れたら透視");
-    assert!(!h.state().state.doc.can_undo());
+    assert!(!h.doc().can_undo());
 }
 
 /// 丸の無い所（中心からの斜めのずれ。丸は中心から 30 の所）。
@@ -141,7 +142,7 @@ fn the_widget_hides_while_the_settings_panel_is_open() {
     assert!(h.query_by_label("視点の軸").is_some());
     h.get_by_label("光・環境・トーンマッピング").click();
     h.run();
-    assert!(h.state().state.view3d.display.settings_open);
+    assert!(h.view3d().view.display.settings_open);
     assert!(h.query_by_label("視点の軸").is_none());
     h.get_by_label("光・環境・トーンマッピング").click();
     h.run();
@@ -151,7 +152,7 @@ fn the_widget_hides_while_the_settings_panel_is_open() {
 #[test]
 fn the_axis_setting_turns_the_automatic_orthographic_off() {
     let mut h = view(Lang::Ja);
-    h.state_mut().state.prefs.settings.navigation.axis_ortho = false;
+    h.prefs_mut().settings.navigation.axis_ortho = false;
     let r = gizmo(&h, Lang::Ja);
     let at = ball(&h, r, AxisView::Top);
     click(&mut h, at);
@@ -167,20 +168,11 @@ fn shot(h: &mut H, name: &str) {
     let content = h.state().view3d_rect().unwrap();
     h.event(Event::PointerGone);
     h.run();
-    let image = h.render().expect("描画");
     let r = Rect::from_min_max(
         pos2(content.right() - 140.0, content.top()),
         pos2(content.right(), content.top() + 140.0),
     );
-    let cropped = image::imageops::crop_imm(
-        &image,
-        r.left().floor() as u32,
-        r.top().floor() as u32,
-        r.width().ceil() as u32,
-        r.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+    crate::common::shot::region(h, name, r);
 }
 
 #[test]
@@ -188,16 +180,19 @@ fn snapshot_the_axis_widget_in_both_languages_and_both_projections() {
     for lang in Lang::ALL {
         let mut h = view(lang);
         assert_eq!(camera(&h).yaw, DEFAULT_YAW);
-        shot(&mut h, lang.pick("view3d_axes_ja", "view3d_axes_en"));
+        // 英語の絵は撮らない（軸の印に文字は無い）
+        let ja = lang == Lang::Ja;
+        if ja {
+            shot(&mut h, "view3d_axes_ja");
+        }
         // 正面の視点（正投影。+Z の丸が真ん中に重なり、真ん中の丸は明るく塗られる）
         let r = gizmo(&h, lang);
         let at = ball(&h, r, AxisView::Front);
         click(&mut h, at);
         assert!(camera(&h).is_orthographic());
-        shot(
-            &mut h,
-            lang.pick("view3d_axes_front_ortho_ja", "view3d_axes_front_ortho_en"),
-        );
+        if ja {
+            shot(&mut h, "view3d_axes_front_ortho_ja");
+        }
         // ツールチップの名前は視点のパイと同じ
         assert_eq!(
             axis_gizmo::name(Part::Axis(AxisView::Top), lang),
@@ -215,8 +210,8 @@ fn snapshot_the_cube_in_orthographic_from_above() {
     let mut h = view(Lang::Ja);
     let r = gizmo(&h, Lang::Ja);
     // 斜め上から: 正投影では、奥の辺も手前の辺も同じ長さで、平行な辺は平行に見える
-    h.state_mut().state.view3d.camera.yaw = DEFAULT_YAW;
-    h.state_mut().state.view3d.camera.pitch = 30.0;
+    h.view3d_mut().view.camera.yaw = DEFAULT_YAW;
+    h.view3d_mut().view.camera.pitch = 30.0;
     click(&mut h, r.center());
     assert!(camera(&h).is_orthographic());
     let content = h.state().view3d_rect().unwrap();
@@ -234,5 +229,6 @@ fn snapshot_the_cube_in_orthographic_from_above() {
     assert!(((d - a).length() - (cc - b).length()).abs() < 1e-3);
     h.event(Event::PointerGone);
     h.run();
-    h.snapshot("view3d_cube_orthographic");
+    // 正投影の立方体を見る、ウィンドウ全体の見本
+    crate::common::shot::window(&mut h, "view3d_cube_orthographic");
 }

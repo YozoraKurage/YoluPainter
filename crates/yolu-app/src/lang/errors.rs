@@ -5,7 +5,9 @@ use crate::view3d::model::ViewError;
 use yolu_core::generator::{self, anchor};
 use yolu_core::geometry::GeometryError;
 use yolu_core::skin::RigError;
-use yolu_core::{CoreError, FallbackEffect, InactiveEffect, InactiveReason, InactiveTarget};
+use yolu_core::{
+    CoreError, FallbackEffect, InactiveEffect, InactiveReason, InactiveTarget, Reason,
+};
 use yolu_model::ModelError;
 
 use crate::library::{REFUSAL_PNG, REFUSAL_PNG_SIZE, REFUSAL_UNSUPPORTED};
@@ -31,27 +33,29 @@ fn lock_list(lang: Lang, lock: yolu_core::LayerLocks) -> String {
     if lock.contains(L::ALL) {
         return crate::layerops::lock_name(lang, L::ALL).into();
     }
-    crate::layerops::lock_names(lang, lock).join(lang.pick("、", ", "))
-}
-
-/// 設定の予算で断った理由（yolu-io の `OVER_LAYER_PIXELS_*`）の英語。どの予算かだけを言う（数は出さない）。
-pub(crate) fn budget_text(text: &str) -> Option<&'static str> {
-    if text.contains(yolu_io::OVER_LAYER_PIXELS_DOCUMENT) {
-        Some("A project exceeds the Layer memory budget")
-    } else if text.contains(yolu_io::OVER_LAYER_PIXELS_TOTAL) {
-        Some("The whole exceeds the Layer memory budget")
-    } else if text.contains("グループの入れ子の上限") {
-        Some("Groups are nested too deeply")
-    } else if text.contains("キャンバスの辺の上限") {
-        Some("The canvas edge exceeds the limit (8192)")
-    } else if text.contains("レイヤーの数の上限") {
-        Some("Too many layers (limit 2048)")
-    } else {
-        None
-    }
+    crate::layerops::lock_names(lang, lock).join(lang.t("lang-text"))
 }
 
 impl Lang {
+    /// 設定の予算で断った理由のうち、どの予算かを言う文（yolu-io の理由の文で見分ける。数は出さない）。日本語は yolu-io の文、
+    /// 英語は短い文。どの予算か分からなければ None。
+    pub(crate) fn budget_reason(self, text: &str) -> Option<String> {
+        let key = if text.contains(yolu_io::OVER_LAYER_PIXELS_DOCUMENT) {
+            self.f("lang-a-project-exceeds-the-layer", &[("text", &text)])
+        } else if text.contains(yolu_io::OVER_LAYER_PIXELS_TOTAL) {
+            self.f("lang-the-whole-exceeds-the-layer", &[("text", &text)])
+        } else if text.contains("グループの入れ子の上限") {
+            self.f("lang-groups-are-nested-too-deeply-2", &[("text", &text)])
+        } else if text.contains("キャンバスの辺の上限") {
+            self.f("lang-the-canvas-edge-exceeds-the", &[("text", &text)])
+        } else if text.contains("レイヤーの数の上限") {
+            self.f("lang-too-many-layers-limit-2048", &[("text", &text)])
+        } else {
+            return None;
+        };
+        Some(key)
+    }
+
     pub fn core_error(self, error: &CoreError) -> String {
         crate::crash::problem(self.core_error_text(error))
     }
@@ -72,95 +76,55 @@ impl Lang {
                     (Lang::En, false) => format!("A parent group has {locks} locked"),
                 }
             }
-            CoreError::Cancelled => self.pick("取り消しました", "Cancelled").into(),
+            CoreError::Cancelled => self.t("lang-cancelled").into(),
             CoreError::StrokeActive => super::refusals::during_stroke(self).into(),
-            CoreError::NoActiveStroke => self
-                .pick("ストロークは終わっています", "Stroke already ended")
-                .into(),
-            CoreError::LayerNotFound
-            | CoreError::InvalidArgument("保存するレイヤーがありません") => {
-                self.pick("レイヤーがありません", "Layer not found").into()
+            CoreError::NoActiveStroke => self.t("lang-stroke-already-ended").into(),
+            CoreError::LayerNotFound | CoreError::InvalidArgument(Reason::NoLayersToSave) => {
+                self.t("lang-layer-not-found").into()
             }
-            CoreError::ChannelNotFound => self
-                .pick("チャンネルがありません", "Channel not found")
-                .into(),
+            CoreError::ChannelNotFound => self.t("lang-channel-not-found").into(),
             // 予算は設定のウィンドウの名前（レイヤーのメモリ・1 回の操作）で言う
-            CoreError::SourceBudgetExceeded => self
-                .pick(
-                    "レイヤーのメモリの予算を超えます",
-                    "Over the Layer memory budget",
-                )
-                .into(),
-            CoreError::StrokeBudgetExceeded => self
-                .pick(
-                    "1 回の操作のメモリの予算を超えます（取り消しました）",
-                    "Over the memory budget of one operation (cancelled)",
-                )
-                .into(),
-            CoreError::WorkingBudgetExceeded => self
-                .pick(
-                    "作業のメモリの上限を超えます",
-                    "Working memory budget exceeded",
-                )
-                .into(),
-            CoreError::Unsupported("ユーザーチャンネルの対応が一致しません") => {
-                self.pick("チャンネルが合いません", "Channels do not match")
-                    .into()
+            CoreError::SourceBudgetExceeded => self.t("lang-over-the-layer-memory-budget").into(),
+            CoreError::StrokeBudgetExceeded => self.t("lang-over-the-memory-budget-of").into(),
+            CoreError::WorkingBudgetExceeded => {
+                self.t("lang-working-memory-budget-exceeded").into()
             }
-            CoreError::InvalidArgument("レイヤーは2048個までです") => {
-                self.pick("レイヤーが多すぎます", "Too many layers").into()
+            CoreError::Unsupported(Reason::UserChannelMappingDoesNotMatch) => {
+                self.t("lang-channels-do-not-match").into()
             }
-            CoreError::InvalidArgument("保存するマスクがありません") => {
-                self.pick("マスクがありません", "No mask").into()
+            CoreError::InvalidArgument(Reason::TooManyLayers) => {
+                self.t("lang-too-many-layers").into()
             }
-            CoreError::InvalidArgument("スマート素材の名前") => {
-                self.pick("名前が使えません", "Name not allowed").into()
+            CoreError::InvalidArgument(Reason::NoMaskToSave) => self.t("lang-no-mask").into(),
+            CoreError::InvalidArgument(Reason::SmartMaterialName) => {
+                self.t("lang-name-not-allowed").into()
             }
-            CoreError::InvalidArgument("配置先がグループではありません") => self
-                .pick("置き先がグループではありません", "Target is not a group")
-                .into(),
-            CoreError::InvalidArgument("選択範囲の名前が長すぎる") => self.pick(
-                format!(
-                    "名前が長すぎます（{} 文字まで）。",
-                    yolu_core::MAX_SAVED_NAME_CHARS
-                ),
-                format!(
-                    "The name is too long (up to {} characters).",
-                    yolu_core::MAX_SAVED_NAME_CHARS
-                ),
+            CoreError::InvalidArgument(Reason::TargetNotGroup) => {
+                self.t("lang-target-is-not-a-group").into()
+            }
+            CoreError::InvalidArgument(Reason::SelectionNameTooLong) => self.f(
+                "lang-the-name-is-too-long",
+                &[("max_saved_name_chars", &yolu_core::MAX_SAVED_NAME_CHARS)],
             ),
-            CoreError::InvalidArgument("同じ名前の選択範囲がある") => self
-                .pick(
-                    "同じ名前の選択範囲があります。",
-                    "A saved selection with that name exists.",
-                )
-                .into(),
+            CoreError::InvalidArgument(Reason::SavedSelectionNameExists) => {
+                self.t("lang-a-saved-selection-with-that").into()
+            }
             // core の文（「できない: 〜」のようにコロンでつないだ形）は、何が（なぜ）の 1 つの文に組み直す
-            CoreError::MergeRefused(reason) => self.with_reason(
-                self.pick("結合できません", "Cannot merge"),
-                self.pick(reason.to_string(), merge_refusal(*reason).to_owned()),
-            ),
+            CoreError::MergeRefused(reason) => {
+                self.with_reason(self.t("lang-cannot-merge"), self.merge_refusal(*reason))
+            }
             CoreError::MergeAppearance(report) => self.with_reason(
-                self.pick(
-                    "結合で見た目が許容差を超えて変わります",
-                    "Merge changes the appearance beyond the tolerance",
-                ),
+                self.t("lang-merge-changes-the-appearance-beyond"),
                 report.max_visible_difference.to_string(),
             ),
             CoreError::InactiveEffect { reason, .. } => self.with_reason(
-                self.pick(
-                    "効いていない効果は焼き込めません",
-                    "Cannot bake an inactive effect",
-                ),
+                self.t("lang-cannot-bake-an-inactive-effect"),
                 self.inactive_reason(reason),
             ),
-            CoreError::InvalidArgument(what) => self.with_reason(
-                self.pick("値が範囲外です", "Invalid value"),
-                self.pick(*what, core_reason(what)),
-            ),
-            CoreError::Unsupported(what) => {
-                self.with_reason(self.pick(*what, core_reason(what)), "")
+            CoreError::InvalidArgument(what) => {
+                self.with_reason(self.t("lang-invalid-value"), self.reason(*what))
             }
+            CoreError::Unsupported(what) => self.with_reason(self.reason(*what), ""),
             _ if self == Self::Ja => error.to_string(),
             CoreError::Clipboard(reason) => clipboard_refusal(*reason).into(),
             CoreError::BatchActive => "Not allowed inside a batch of edits".into(),
@@ -178,76 +142,69 @@ impl Lang {
         match error {
             Error::Core(e) => self.core_error(e),
             Error::Io(e) => self.file_error(e),
-            Error::Json(e) => self.pick(error.to_string(), format!("Invalid JSON: {e}")),
-            Error::InvalidData(text) => {
-                self.pick(text.clone(), "Invalid or unsupported project data".into())
-            }
+            // 日本語は yolu-io が作った診断をそのまま出し（.ftl は `{ $text }`）、英語は種類ごとの短い文（.ftl は
+            // `{ $text -> *[other] 英語の文 }`。`text` は日英で引数の組を揃えるための印で、英語の文には出ない）
+            Error::Json(e) => self.f("lang-invalid-json", &[("e", e)]),
+            Error::InvalidData(text) => self.f(
+                "lang-invalid-or-unsupported-project-data",
+                &[("text", text)],
+            ),
             // 設定の予算で断ったものは、どの予算かを英語でも言う（yolu-io の理由の文で見分ける）
-            Error::Budget(text) => self.pick(
-                text.clone(),
-                budget_text(text)
-                    .unwrap_or("Size, count or memory limit exceeded")
-                    .into(),
-            ),
-            Error::Unwritable(what) => self.pick(
-                what.to_string(),
-                match what {
-                    Unwritable::GeneratorRampMixing => {
-                        "Color mixing in a fill gradient cannot be saved to .ylp".into()
-                    }
-                },
-            ),
+            Error::Budget(text) => self
+                .budget_reason(text)
+                .unwrap_or_else(|| self.f("lang-size-count-or-memory-limit", &[("text", text)])),
+            Error::Unwritable(what) => match what {
+                Unwritable::GeneratorRampMixing => self.f(
+                    "lang-color-mixing-in-a-fill",
+                    &[("text", &what.to_string())],
+                ),
+            },
             // 保存の衝突のうち、保存先が外で変わったのではない理由（yolu-io の store.rs）は言い分ける。
             // 別の保存がロックを持っているのは待ち、前の版の置き場とロックの場所の不具合は保存先の周りの事情
             Error::SaveConflict(text) if text.contains("進行中") => {
-                self.pick(text.clone(), "Another save is in progress".into())
+                self.f("lang-another-save-is-in-progress", &[("text", text)])
             }
             Error::SaveConflict(text)
                 if text.contains("バックアップ先がフォルダーではありません") =>
             {
-                self.pick(text.clone(), "Backup location is not a folder".into())
+                self.f("lang-backup-location-is-not-a", &[("text", text)])
             }
             Error::SaveConflict(text) if text.contains("バックアップ先がシンボリックリンク") => {
-                self.pick(text.clone(), "Backup location is a link".into())
+                self.f("lang-backup-location-is-a-link", &[("text", text)])
             }
             Error::SaveConflict(text) if text.contains("ロックのファイル") => {
-                self.pick(text.clone(), "Save lock file is a link".into())
+                self.f("lang-save-lock-file-is-a", &[("text", text)])
             }
             // 保存先の名前（.ylp で終わらない）と、保存の直前に外から作られた新規の保存先
             Error::SaveConflict(text) if text.contains(".ylp で終わっていません") => {
-                self.pick(text.clone(), "The file name must end with .ylp".into())
+                self.f("lang-the-file-name-must-end", &[("text", text)])
             }
-            Error::SaveConflict(text) if text.contains("外部で作られました") => self.pick(
-                text.clone(),
-                "A file appeared at the save target; not overwritten".into(),
-            ),
+            Error::SaveConflict(text) if text.contains("外部で作られました") => {
+                self.f("lang-a-file-appeared-at-the", &[("text", text)])
+            }
             // 保存先が、開いたあとで外で消された・動かされた（変わったのとは言い分ける）
-            Error::SaveConflict(text) if text.contains("外部で消されています") => self
-                .pick(
-                    text.clone(),
-                    "The save target was deleted or moved outside; not overwritten".into(),
-                ),
+            Error::SaveConflict(text) if text.contains("外部で消されています") => {
+                self.f("lang-the-save-target-was-deleted", &[("text", text)])
+            }
             // 開いた .ylp の古い版の写し（置換の規則が POSIX でないファイルシステムで、保存が置き換えるために手放した）
-            Error::SaveConflict(text) if text.contains(yolu_io::SOURCE_RELEASED) => self.pick(
-                text.clone(),
-                "The opened .ylp was replaced by a save; this copy can no longer be read".into(),
-            ),
+            Error::SaveConflict(text) if text.contains(yolu_io::SOURCE_RELEASED) => {
+                self.f("lang-the-opened-ylp-was-replaced", &[("text", text)])
+            }
             Error::SaveConflict(text) => {
-                self.pick(text.clone(), "Save target or backup changed".into())
+                self.f("lang-save-target-or-backup-changed", &[("text", text)])
             }
             Error::UnsupportedFormat {
                 format,
                 app,
                 version,
-            } => self.pick(
-                format!(
-                    "未対応の .ylp の形式 {format} です（{app} {version} で保存。上限 {}）",
-                    yolu_io::MAX_FORMAT
-                ),
-                format!(
-                    "The .ylp format {format} is not supported (saved by {app} {version}; maximum {})",
-                    yolu_io::MAX_FORMAT
-                ),
+            } => self.f(
+                "lang-the-ylp-format-is-not",
+                &[
+                    ("value", &format),
+                    ("app", &app),
+                    ("version", &version),
+                    ("max_format", &yolu_io::MAX_FORMAT),
+                ],
             ),
         }
     }
@@ -259,32 +216,34 @@ impl Lang {
     fn file_error_text(self, error: &std::io::Error) -> String {
         use std::io::ErrorKind::*;
         let reason = match error.kind() {
-            NotFound => self.pick(
-                "ファイルまたはフォルダーがありません",
-                "File or folder not found",
-            ),
-            PermissionDenied => self.pick("アクセスが拒否されました", "Access denied"),
-            AlreadyExists => self.pick("ファイルが既にあります", "File already exists"),
-            InvalidData => self.pick("ファイルのデータが不正です", "Invalid file data"),
-            StorageFull => self.pick("ディスクの空きがありません", "Disk full"),
-            QuotaExceeded => self.pick("容量の割り当てを超えました", "Disk quota exceeded"),
-            ReadOnlyFilesystem => self.pick("読み取り専用の場所です", "Read-only location"),
-            ResourceBusy => self.pick("ファイルが使用中です", "File in use"),
-            FileTooLarge => self.pick("ファイルが大きすぎます", "File too large"),
-            _ => self.pick("ファイルの読み書きに失敗しました", "File I/O failed"),
+            NotFound => self.t("lang-file-or-folder-not-found"),
+            PermissionDenied => self.t("lang-access-denied"),
+            AlreadyExists => self.t("lang-file-already-exists"),
+            InvalidData => self.t("lang-invalid-file-data"),
+            StorageFull => self.t("lang-disk-full"),
+            QuotaExceeded => self.t("lang-disk-quota-exceeded"),
+            ReadOnlyFilesystem => self.t("lang-read-only-location"),
+            ResourceBusy => self.t("lang-file-in-use"),
+            FileTooLarge => self.t("lang-file-too-large"),
+            _ => self.t("lang-file-i-o-failed"),
         };
         match error.raw_os_error() {
-            Some(code) => self.pick(
-                format!("{reason}（OS エラー {code}）"),
-                format!("{reason} (OS error {code})"),
-            ),
+            Some(code) => self.f("lang-os-error", &[("reason", &reason), ("code", &code)]),
             None => reason.into(),
         }
     }
 
-    /// メッシュマップの誤りの文（core は日本語の文だけを持つので、英語は知っている理由の英語か、一般の文）。
+    /// メッシュマップの誤りの文（英語は理由の種類から引く。スレッドの束の失敗は OS・rayon の文）。
     pub fn mesh_map_error(self, error: &yolu_core::mesh_maps::MeshMapError) -> String {
-        crate::crash::problem(self.pick(error.0.clone(), core_reason(&error.0).to_owned()))
+        use yolu_core::mesh_maps::MeshMapError;
+        crate::crash::problem(match error {
+            MeshMapError::Refused(why) => self.reason(*why).into(),
+            // スレッドの束の失敗は OS・rayon の文（英語ならそのまま）
+            MeshMapError::Threads(why) if self == Lang::Ja || why.is_ascii() => why.clone(),
+            MeshMapError::Threads(why) => {
+                self.f("lang-unsupported-value-or-operation", &[("text", why)])
+            }
+        })
     }
 
     /// 別のスレッドを起こせなかった理由（OS の英語の文をそのまま出さず、種類で言い分けて、OS のエラー番号を添える）。
@@ -292,19 +251,11 @@ impl Lang {
     pub fn thread_error(self, error: &std::io::Error) -> String {
         use std::io::ErrorKind::*;
         let reason = match error.kind() {
-            WouldBlock | OutOfMemory => {
-                self.pick("システムの資源が足りません", "Not enough system resources")
-            }
-            _ => self.pick(
-                "システムが処理の開始を断りました",
-                "The system refused to start the task",
-            ),
+            WouldBlock | OutOfMemory => self.t("lang-not-enough-system-resources"),
+            _ => self.t("lang-the-system-refused-to-start"),
         };
         crate::crash::problem(match error.raw_os_error() {
-            Some(code) => self.pick(
-                format!("{reason}（OS エラー {code}）"),
-                format!("{reason} (OS error {code})"),
-            ),
+            Some(code) => self.f("lang-os-error", &[("reason", &reason), ("code", &code)]),
             None => reason.into(),
         })
     }
@@ -317,23 +268,16 @@ impl Lang {
         match error {
             StencilError::Core(e) => self.core_error(e),
             StencilError::File(e) => self.file_error(e),
-            StencilError::NotPng => self
-                .pick("PNG として読めません", "Not a readable PNG")
-                .into(),
+            StencilError::NotPng => self.t("lang-not-a-readable-png").into(),
             StencilError::TooLarge {
                 width,
                 height,
                 side,
-            } => self.pick(
-                format!("画像が大きすぎます（{width} × {height}、1 辺は {side} まで）"),
-                format!("Image too large ({width} × {height}; maximum side {side})"),
+            } => self.f(
+                "lang-image-too-large-maximum-side",
+                &[("width", &width), ("height", &height), ("side", &side)],
             ),
-            StencilError::Limits => self
-                .pick(
-                    "画像が大きすぎます（メモリの上限）",
-                    "Image too large (memory limit)",
-                )
-                .into(),
+            StencilError::Limits => self.t("lang-image-too-large-memory-limit").into(),
         }
     }
 
@@ -551,549 +495,28 @@ fn clipboard_refusal(reason: yolu_core::ClipboardRefusal) -> &'static str {
     }
 }
 
-fn merge_refusal(reason: yolu_core::MergeRefusal) -> &'static str {
-    use yolu_core::MergeRefusal::*;
-    match reason {
-        NoLayerBelow => "No layer below",
-        LayerBelowIsGroup => "The layer below is a group",
-        LayerBelowIsAdjustment => "The layer below is an adjustment layer",
-        HiddenLayer => "A layer is hidden",
-        IsGroup => "The target is a group",
-        NotGroup => "Not a group",
-        EmptyGroup => "The group is empty",
-        NothingVisible => "No visible layers",
-        DifferentGroups => "Layers have different parent groups",
-        TooManyRulers => "The merged layer would have too many rulers",
-    }
-}
-
-/// core の理由の文（`&'static str`）の英語。無ければ、英語の文はそのまま、日本語の文は一般の文に落とす。
-fn core_reason(reason: &str) -> &str {
-    known_core_reason(reason).unwrap_or(if reason.is_ascii() {
-        reason
-    } else {
-        "Unsupported value or operation"
-    })
-}
-
-fn known_core_reason(reason: &str) -> Option<&'static str> {
-    Some(match reason {
-        "手動ID色の数・番号・色が範囲外です" => "Manual ID colors are out of range",
-        "リボンの画像が無い" => "The ribbon image is missing",
-        "パスレイヤーにはパスが 1 本以上要る" => "A path layer needs at least one path",
-        "パスで描けるのはラスターと塗りつぶしレイヤーだけ" => {
-            "Paths draw only on raster and fill layers"
-        }
-        "パスを付けられるのはパスの無いラスターか塗りつぶしレイヤーだけ" => {
-            "Paths can be attached only to a raster or fill layer without paths"
-        }
-        "塗りつぶしレイヤーのパスは画素にできない" => {
-            "The paths of a fill layer cannot be rasterized"
-        }
-        "塗りつぶしレイヤーのパスの画素は塗りつぶしレイヤーだけ" => {
-            "Fill-layer path pixels belong to a fill layer"
-        }
-        "3D のパスは呼び手が形で描いて set_paths へ渡す" => {
-            "Paths on a model are drawn with the model and set with set_paths"
-        }
-        "塗りのパスが 1 つの UV アイランドに収まらない" => {
-            "The fill path does not stay on one UV island"
-        }
-        "手動ID色のモデル指紋が不正です" => {
-            "The model fingerprint of the manual ID colors is invalid"
-        }
-        "手動ID色が別のモデルに属しています" => {
-            "The manual ID colors belong to another model"
-        }
-        "手で選んだアイランドが別のモデルに属しています" => {
-            "The chosen islands belong to another model"
-        }
-        "手で選んだアイランドの番号がモデルにありません" => {
-            "A chosen island is not in the model"
-        }
-        "手で選んだアイランドの数か番号が範囲外です" => {
-            "Too many chosen islands, or an island out of range"
-        }
-        "同じアイランドが「焼かない」と「優先する」の両方にあります" => {
-            "The same island is both not baked and preferred"
-        }
-        "手で選んだアイランドのモデル指紋が不正です" => {
-            "The model fingerprint of the chosen islands is invalid"
-        }
-        "ベイクの優先の値が範囲外です" => {
-            "The overlapping UV priority is out of range"
-        }
-        "UVが0〜1の外です。繰り返し・UDIMのUVはベイクできません" => {
-            "UVs outside 0–1 (tiled or UDIM UVs) cannot be baked"
-        }
-        "マスクへのストロークはチャンネルの合成を読めない" => {
-            "A mask stroke cannot read the channel composite"
-        }
-        "合成の参照元はクローンか色の混ぜの最初のダブの前にだけ決められる" => {
-            "The composite source can only be set before the first dab of a clone or color mixing"
-        }
-        "写像されたダブはクローンか指先だけ" => "Mapped dabs need clone or smudge",
-        "写像されたダブはクローン・指先・ぼかし・色の混ぜの伸ばすだけ" => {
-            "Mapped dabs need clone, smudge, blur or the smear of color mixing"
-        }
-        "混ぜるブラシは画素ごとには塗れない（apply_dab で下地を凍結する）" => {
-            "A mixing brush cannot paint pixel by pixel"
-        }
-        "絵の具の量（0〜1）" => "Paint amount (0–1)",
-        "絵の具の濃さ（0〜1）" => "Paint density (0–1)",
-        "色延び（0〜1）" => "Color stretch (0–1)",
-        "写像されたダブの画素" => "Mapped dab pixel",
-        "写像されたダブの参照" => "Mapped dab source",
-        "写像された画素に参照が無い" => "A mapped pixel needs a source",
-        "写像されたダブの画素が重複" => "Duplicate mapped dab pixel",
-        "1 区間のダブが百万を超える" => "More than one million dabs per segment",
-        "1 区間のデュアルブラシのダブが百万を超える" => {
-            "More than one million dual brush dabs per segment"
-        }
-        "Height → Normal が読むのは Height のチャンネルだけ" => {
-            "Height to Normal requires the Height channel"
-        }
-        "Height → Normal の強さ（±256）" => "Height to Normal strength (±256)",
-        "Height の合成は幅 × 高さ × 4 バイト" => {
-            "Height buffer size must be width × height × 4 bytes"
-        }
-        "Normal の合成は幅 × 高さ × 4 バイト" => {
-            "Normal buffer size must be width × height × 4 bytes"
-        }
-        "PassThrough はグループだけ" => "Pass Through requires a group",
-        "jitter（0〜1）" => "Jitter (0–1)",
-        "purity（−1〜1）" => "Purity (−1–1)",
-        "texture depth（0〜1）" => "Texture depth (0–1)",
-        "texture scale（0.05〜64）" => "Texture scale (0.05–64)",
-        "その番号のチャンネルはもうある" => "Channel ID already exists",
-        "ぼかしの半径（1〜64）" => "Blur radius (1–64)",
-        "ラスターと塗りつぶし以外には、レイヤーの出力の画素が無い" => {
-            "Only raster and fill layers have layer output pixels"
-        }
-        "グループ以外には、グループの出力が無い" => {
-            "Only groups have a group output"
-        }
-        "調整レイヤーではない" => "Not an adjustment layer",
-        "筆圧の曲線（点 2〜16・両端は 0 と 1・間隔 0.02 以上・値 0〜1）" => {
-            "Pen pressure curve (2–16 points, ends at 0 and 1, at least 0.02 apart, values 0–1)"
-        }
-        "筆圧の最小値（0〜1）" => "Pen pressure minimum (0–1)",
-        "まとめるレイヤーが無い" => "No layers to merge",
-        "ガンマ（0.1〜9.99）" => "Gamma (0.1–9.99)",
-        "クローンの位置（±1e7）" => "Clone position (±1e7)",
-        "グループでないレイヤーの中に入っている" => "Parent is not a group",
-        "グループではない" => "Not a group",
-        "グループにだけ入れられる" => "Parent must be a group",
-        "グループには描けない" => "Cannot paint a group",
-        "グループの中身が続いていない" => "Group children are not contiguous",
-        "グループの入れ子が輪になっている" => "Cyclic group hierarchy",
-        "グループの入れ子が深すぎる" => "Group nesting is too deep",
-        "グループを自分の中へは入れられない" => "Cannot move a group into itself",
-        "ステンシルにキャンバスからの写しが無いので、2D のダブは読めない" => {
-            "Missing canvas-to-stencil transform for 2D dabs"
-        }
-        "ステンシルにキャンバスからの写しが無い（画素ごとにステンシルの上の点を渡す）" => {
-            "Missing canvas-to-stencil transform"
-        }
-        "ステンシルの footprint" => "Stencil footprint",
-        "ステンシルのミップマップが予算を超える（小さい画像にする）" => {
-            "Stencil mipmap budget exceeded"
-        }
-        "ステンシルの点は画素ごとに 1 つ" => {
-            "Stencil point count must match pixel count"
-        }
-        "ステンシルの画像の画素 / 点" => "Stencil image pixels / points",
-        "大きさの変更の準備のあとにプロジェクトが変わった" => {
-            "The project changed after the resize was prepared"
-        }
-        "ステンシルの点（±1e9）" => "Stencil point (±1e9)",
-        "ステンシルの画像のバイト数が幅 × 高さ × 4 でない" => {
-            "Stencil buffer size must be width × height × 4 bytes"
-        }
-        "ステンシルの画像の大きさ（1〜8192）" => "Stencil image size (1–8192)",
-        "タイルがキャンバスの外" => "Tile outside canvas",
-        "タイルのバイト数が違う" => "Invalid tile byte count",
-        "歩幅がタイルの一辺の約数でない" => "The step does not divide the tile edge",
-        "タイルの座標がキャンバスの外" => "Tile coordinates outside canvas",
-        "タイルの長さ" => "Tile length",
-        "チャンネルの名前" => "Channel name",
-        "チャンネルは 64 まで" => "Maximum 64 channels",
-        "デュアルブラシの半径（0.5〜65536）" => "Dual brush radius (0.5–65536)",
-        "デュアルブラシの散布" => "Dual brush scatter",
-        "デュアルブラシの数" => "Dual brush count",
-        "デュアルブラシの真円率" => "Dual brush roundness",
-        "デュアルブラシの硬さ" => "Dual brush hardness",
-        "デュアルブラシの間隔" => "Dual brush spacing",
-        "フェード（0〜10000）" => "Fade (0–10000)",
-        "マスクの画素の RGB は 0" => "Mask RGB must be zero",
-        "レベル補正の入力の範囲" => "Levels input range",
-        "レベル補正の出力の範囲" => "Levels output range",
-        "予算が今の画素より小さい" => "Budget is smaller than existing pixels",
-        "写した画素のバイト数が幅 × 高さ × 4 でない" => {
-            "Copied pixels must be width × height × 4 bytes"
-        }
-        "写したキャンバスの大きさ" => "Size of the source canvas",
-        "写した矩形がキャンバスの外" => "Copied rectangle lies outside the canvas",
-        "写した矩形が空" => "Copied rectangle is empty",
-        "画素が矩形の外" => "Pixel outside the rectangle",
-        "画素を置き換えられるのはラスターレイヤーだけ" => {
-            "Only paint layers have pixels to replace"
-        }
-        "画像の大きさがキャンバスと違う" => "Image size differs from the canvas",
-        "無効のチャンネルは切り取れない" => "Cannot cut a disabled channel",
-        "無効のチャンネルは置き換えられない" => {
-            "Cannot replace a disabled channel"
-        }
-        "入れ子が輪になっている" => "Cyclic hierarchy",
-        "入力の座標が範囲外" => "Input coordinates out of range",
-        "入力の時刻が戻った" => "Input time moved backwards",
-        "出力の大きさが矩形と違う" => "Output size does not match rectangle",
-        "効果のブラシは消しゴムにできない" => "Effect brushes cannot erase",
-        "効果のブラシは画素ごとには塗れない（apply_dab で読み元を凍結する）" => {
-            "Effect brushes require dab painting"
-        }
-        "半径（0〜200）" => "Radius (0–200)",
-        "同じグループの中のレイヤーだけをまとめられる" => {
-            "Merge requires layers in the same group"
-        }
-        "同じ名前のチャンネルがある" => "Channel name already exists",
-        "塗りつぶしレイヤーだけが値を持つ" => "Values require a fill layer",
-        "塗りつぶしレイヤーではありません" => "Not a fill layer",
-        "塗りつぶしレイヤーには描けない" => "Cannot paint a fill layer",
-        "塗りつぶしはラスターレイヤーだけ" => "Fill requires a raster layer",
-        "多角形の点が多すぎる（100000 まで）" => {
-            "Too many polygon points (maximum 100000)"
-        }
-        "大きさ" => "Size",
-        "対称の中心（±1e7）" => "Symmetry center (±1e7)",
-        "レイヤーにマスクが無い" => "Layer has no mask",
-        "レイヤーはもうマスクを持っている" => "Layer already has a mask",
-        "レイヤーはグループの下に並ぶ" => "Layers must follow their group",
-        "手ぶれ補正・入り抜き（0〜10000）" => "Stabilizer and taper (0–10000)",
-        "指先の強さ（0〜1）" => "Smudge strength (0–1)",
-        "指先・クローンは対称と組めない（写しごとに読み元と動きが要る）" => {
-            "Smudge and clone do not support symmetry"
-        }
-        "放射状の写しの数（2〜16）" => "Radial symmetry count (2–16)",
-        "有効なチャンネルに使えない調整" => {
-            "Adjustment not supported by enabled channels"
-        }
-        "標準のチャンネルは変えられない" => "Cannot change a built-in channel",
-        "標準のチャンネルは消せない" => "Cannot remove a built-in channel",
-        "無いグループに入っている" => "Parent group not found",
-        "無効のチャンネルには塗れない" => "Cannot fill a disabled channel",
-        "無効のチャンネルには描けない" => "Cannot paint a disabled channel",
-        "キャンバスの外の余白は 0 でなければならない" => {
-            "Padding outside canvas must be zero"
-        }
-        "画素がキャンバスの外" => "Pixel outside canvas",
-        "矩形がキャンバスの外" => "Rectangle outside canvas",
-        "種がキャンバスの外" => "Seed outside canvas",
-        "筆先の並び（1〜256 枚）" => "Brush tip sequence (1–256)",
-        "筆先の大きさ（1〜2048）" => "Brush tip size (1–2048)",
-        "筆先の覆いの長さが幅 × 高さでない" => {
-            "Brush tip coverage size must be width × height"
-        }
-        "範囲の大きさがキャンバスと違う" => "Region size does not match canvas",
-        "色のゆらぎ（0〜1）" => "Color dynamics (0–1)",
-        "色相/彩度のレイヤーが有効" => "Hue/Saturation layer enabled",
-        "色相/彩度は色のチャンネルだけ" => "Hue/Saturation requires a color channel",
-        "色相・彩度・明度" => "Hue, saturation and value",
-        "この種類は 8 つの値では組み立てられない（種類ごとの組み立てを使う）" => {
-            "This adjustment kind cannot be built from the eight values"
-        }
-        "調整の種類と値が合わない" => "The adjustment kind and its values do not match",
-        "カラーバランス（−100〜100）" => "Color balance (−100–100)",
-        "明るさ（−150〜150）・コントラスト（−50〜100）" => {
-            "Brightness (−150–150) and contrast (−50–100)"
-        }
-        "しきい値（1〜255）" => "Threshold (1–255)",
-        "階調（2〜255）" => "Posterize levels (2–255)",
-        "グラデーションマップとカラーバランスは色のチャンネルだけに適用できます" => {
-            "Gradient Map and Color Balance apply only to color channels"
-        }
-        "接空間法線には再正規化するぼかしだけを適用できます" => {
-            "Only the renormalizing blur applies to tangent-space normals"
-        }
-        "値の切り出し・値の幅・太らせる・細らせる・輪郭の検出はスカラーとマスクだけに適用できます" => {
-            "Histogram Scan, Histogram Range, Dilate / Erode and Edge Detect apply only to scalar channels and masks"
-        }
-        "グローは色のチャンネルだけに適用できます" => {
-            "Glow applies only to color channels"
-        }
-        "親の数がレイヤーの数と違う" => "Parent count does not match layer count",
-        "調整レイヤーだけが調整の設定を持つ" => {
-            "Adjustment settings require an adjustment layer"
-        }
-        "調整レイヤーには描けない" => "Cannot paint an adjustment layer",
-        "速さの上限（0 より大きい）" => "Maximum speed (greater than zero)",
-        "選択範囲のタイルがキャンバスの外" => "Selection tile outside canvas",
-        "選択範囲のタイルが空" => "Empty selection tile",
-        "選択範囲のタイルが重なっている" => "Overlapping selection tiles",
-        "選択範囲のタイルの余白が 0 でない" => "Selection tile padding must be zero",
-        "選択範囲のタイルの大きさ" => "Selection tile size",
-        "選択範囲のタイルの長さ" => "Selection tile length",
-        "選択範囲の大きさ" => "Selection size",
-        "選択範囲の大きさがキャンバスと違う" => "Selection size does not match canvas",
-        "選択範囲の名前が空" => "The selection name is empty",
-        "選択範囲の名前が長すぎる" => "The selection name is too long",
-        "選択範囲の名前に制御文字がある" => {
-            "The selection name has control characters"
-        }
-        "選択範囲の名前が整っていない" => {
-            "The selection name has leading or trailing spaces"
-        }
-        "選択範囲が無い" => "There is no selection",
-        "残せる選択範囲の数の上限" => "Too many saved selections",
-        "残した選択範囲の番号" => "No such saved selection",
-        "同じ名前の選択範囲がある" => "A saved selection with that name exists",
-        "残した選択範囲を戻せるのは読み込みの直後だけ" => {
-            "Saved selections can only be restored right after loading"
-        }
-        "選択範囲の大きさが違う" => "Selection size mismatch",
-        "選択範囲を戻せるのは読み込みの直後だけ" => {
-            "Selection restore requires a freshly loaded project"
-        }
-        "面が無い" => "Surface not found",
-        "UV 比較の解像度" => "UV comparison resolution",
-        "グラデーション" => "Gradient",
-        "三角形の座標" => "Triangle coordinates",
-        "三角形番号" => "Triangle index",
-        "空のマテリアル" => "Empty material",
-        "重複したチャンネル" => "Duplicate channel",
-        "ID 色の復元は読み込み直後だけ" => {
-            "ID colors can only be restored right after loading"
-        }
-        "グラデーション両端のチャンネル" => "Channels at both ends of the gradient",
-        "保存するレイヤーがありません" => "No layers to save",
-        "保存するマスクがありません" => "No mask to save",
-        "空のスマート素材" => "Empty smart material",
-        "スマートマスクの断片が不正" => "Invalid smart mask fragment",
-        "スマートマスクはレイヤーに置けません" => {
-            "A smart mask cannot be placed on a layer"
-        }
-        "配置先がグループではありません" => "The target is not a group",
-        "レイヤーは2048個までです" => "Maximum 2048 layers",
-        "スマートマテリアルはマスクに置けません" => {
-            "A smart material cannot be placed on a mask"
-        }
-        "ユーザーチャンネルの対応が一致しません" => {
-            "User channel mapping does not match"
-        }
-        "ID マップが必要" => "An ID map is required",
-        "ID マップの大きさ" => "ID map size",
-        "ID の色" => "ID color",
-        "スマート素材の名前" => "Smart material name",
-        "変形は有限値" => "Transform must be finite",
-        "変形が潰れる、または範囲外" => "Transform is degenerate or out of range",
-        "動かすラスターレイヤーが無い" => "No raster layer to move",
-        "画像の辺は 1〜8192" => "Image side (1–8192)",
-        "移動先のグループ" => "Destination group",
-        "未知のロック" => "Unknown lock",
-        "結合は 2 レイヤー以上" => "Merging requires at least two layers",
-        "1 つのスタックの段は 32 まで" => "Maximum 32 effects per stack",
-        "Anchor のジェネレーターではない" => "Not an anchor generator",
-        "Anchor の ID が空" => "Anchor ID is empty",
-        "Anchor の ID が空か重なっている" => "Anchor ID is empty or duplicated",
-        "Anchor の ID が重なっている" => "Anchor ID is duplicated",
-        "Anchor の名前が空" => "Anchor name is empty",
-        "Anchor の名前が長すぎる" => "Anchor name is too long",
-        "Anchor は Normal を読めない" => "An anchor cannot read Normal",
-        "ジェネレーターではない" => "Not a generator",
-        "ジェネレーターの設定" => "Generator settings",
-        "ジェネレーターは 1 画素に 1 つの値を作るので、接空間の法線には置けない" => {
-            "A generator makes one value per pixel and cannot be placed on a tangent-space normal"
-        }
-        "ジェネレーターはジェネレーターの設定で置く" => {
-            "A generator is placed with generator settings"
-        }
-        "グラデーションの設定" => "Gradient settings",
-        "グループの合成へのフィルターは無い" => {
-            "Groups have no filters on their composite"
-        }
-        "このマスクにはもう Anchor がある" => "This mask already has an anchor",
-        "このレイヤーにはもう Anchor がある" => "This layer already has an anchor",
-        "スタックの到達半径の合計が 512 画素を超える" => {
-            "Total reach of the stack exceeds 512 pixels"
-        }
-        "その Anchor が無い" => "Anchor not found",
-        "そのチャンネルにグラデーションが無い" => "The channel has no gradient",
-        "そのレイヤーにそのフィルターが無い" => "The layer has no such filter",
-        "パスが参照する三角形が無い" => "The path refers to a missing triangle",
-        "パスで描かれたチャンネルは無効にできない" => {
-            "Cannot disable a channel drawn by a path"
-        }
-        "パスで描かれたレイヤーには手で描けない" => {
-            "Cannot paint by hand on a path layer"
-        }
-        "パスのチャンネルがレイヤーで有効でない" => {
-            "The path channel is not enabled on the layer"
-        }
-        "パスのチャンネルの面がレイヤーに無い" => {
-            "The layer has no surface for the path channel"
-        }
-        "フィルターの ID" => "Filter ID",
-        "フィルターの ID が空" => "Filter ID is empty",
-        "フィルターの ID が空か重なっている" => "Filter ID is empty or duplicated",
-        "フィルターの ID が重なっている" => "Filter ID is duplicated",
-        "フィルターのチャンネル" => "Filter channels",
-        "フィルターのチャンネルが選ばれていない" => "No filter channel selected",
-        "フィルターのチャンネルが重なっている" => {
-            "Filter channels are duplicated"
-        }
-        "フィルターの設定" => "Filter settings",
-        "ブラシの間隔に対してパスが長すぎる" => {
-            "The path is too long for the brush spacing"
-        }
-        "プロジェクトにその画像が無い" => "The project has no such image",
-        "マスクが無い" => "No mask",
-        "マスクのフィルターのチャンネル" => "Mask filter channels",
-        "マスクのフィルターはチャンネルを持たない" => {
-            "Mask filters have no channels"
-        }
-        "マスクのフィルターはチャンネルを持たない（マスクは全チャンネルで共有）" => {
-            "Mask filters have no channels (a mask is shared by all channels)"
-        }
-        "マスクの無いレイヤーのマスクには Anchor を置けない" => {
-            "Cannot place a mask anchor on a layer without a mask"
-        }
-        "マップの境界箱" => "Map bounding box",
-        "マップの大きさと長さが合わない" => "Map size and length do not match",
-        "マップの幅" => "Map width",
-        "マップの条件の鍵" => "Map condition key",
-        "マップの高さ" => "Map height",
-        "メッシュマップの種類" => "Mesh map kind",
-        "モデルの位置・回転" => "Model position and rotation",
-        "モデルの指紋がパスを作ったときと違う" => {
-            "The model fingerprint differs from when the path was made"
-        }
-        "予算が今のフィルターの要る量より小さい" => {
-            "Budget is smaller than the current filters need"
-        }
-        "効果（フィルター・画像・グラデーション）は標準のチャンネルだけに置ける" => {
-            "Effects (filters, images, gradients) can only be placed on standard channels"
-        }
-        "塗りつぶしのグラデーションのチャンネル" => "Fill gradient channel",
-        "ベイクの優先の復元は読み込み直後だけ" => {
-            "Bake priority can only be restored right after loading"
-        }
-        "画像の無いチャンネル" => "Channel without an image",
-        "異方性を切る塗りつぶしの画像のチャンネル" => {
-            "Fill image channel for turning anisotropic filtering off"
-        }
-        "塗りつぶしの点のグラデーションのチャンネル" => "Fill point gradient channel",
-        "そのチャンネルに点のグラデーションが無い" => "The channel has no point gradient",
-        "点のグラデーションは色かスカラーで、法線ではない" => {
-            "A point gradient is for colour or scalar channels, not the normal"
-        }
-        "塗りつぶしのグラデーションはランプ付きの形のグラデーション" => {
-            "A fill gradient is a shape gradient with a ramp"
-        }
-        "塗りつぶしのグラデーションは置き換え" => "A fill gradient replaces",
-        "塗りつぶしの入力" => "Fill input",
-        "塗りつぶしレイヤーだけが持つ" => "Only fill layers have this",
-        "塗りつぶしの画像のチャンネルか ID" => "Fill image channel or ID",
-        "レイヤーのパスはチャンネルを変えない" => {
-            "A layer path does not change its channel"
-        }
-        "レイヤーのパスは種類（モデルの上かキャンバスの上か）を変えない" => {
-            "A layer path does not change its kind (model or canvas)"
-        }
-        "名前を替えるパスがレイヤーに無い" => "The layer has no such path to rename",
-        "形のグラデーションは色かスカラーで、法線ではない" => {
-            "A shape gradient is a color or scalar, not a normal"
-        }
-        "投影の値" => "Projection values",
-        "描いた面のチャンネルが重なっている" => {
-            "Painted surface channels are duplicated"
-        }
-        "描いた面は、パスのチャンネルごとに、キャンバスと同じ大きさで 1 つ" => {
-            "One painted surface per path channel, at the canvas size"
-        }
-        "画像の ID が空" => "Image ID is empty",
-        "画像の大きさ" => "Image size",
-        "画像の大きさと画素の長さ" => "Image size and pixel length do not match",
-        "自分のレイヤーの Anchor を読むジェネレーター（値が自分に戻る）" => {
-            "A generator reading an anchor on its own layer (the value would feed back)"
-        }
-        "調整レイヤーには画素が無い" => "Adjustment layers have no pixels",
-        "面のダブを拒否した" => "The surface dab was refused",
-        "見た目の設定の復元は読み込み直後だけ" => {
-            "Look settings can only be restored right after loading"
-        }
-        "見た目のシェーダーの名前" => "Look shader name",
-        "見た目のシェーダーの身元" => "Look shader identity",
-        "見た目のプロパティの数" => "Number of look properties",
-        "見た目のテクスチャの数" => "Number of look textures",
-        "見た目のキーワードの数" => "Number of look keywords",
-        "受けた見た目の出どころ" => "Source of the received look",
-        "受けた見た目の絵の数" => "Number of received look textures",
-        "受けた見た目の絵" => "Received look texture",
-        "受けた見た目のスロットの名前" => "Received look slot name",
-        "見た目のプロパティの名前" => "Look property name",
-        "見た目のプロパティの値" => "Look property value",
-        "見た目のテクスチャの名前" => "Look texture name",
-        "見た目の詰め合わせの成分" => "Look packed texture component",
-        "見た目の画像の ID" => "Look image ID",
-        "見た目のキーワード" => "Look keyword",
-        "テキストを塗る面は空であること" => "The text surface must be empty",
-        "フォントのファイルを読めない" => "Cannot read the font file",
-        "フォントに輪郭が無い" => "The font has no outlines",
-        "同梱のフォントの名前" => "Bundled font name",
-        "フォントのファイルの道" => "Font file path",
-        "フォントの名前" => "Font name",
-        "文の長さ" => "Text length",
-        "文の制御文字" => "Control characters in the text",
-        "文字のサイズ" => "Text size",
-        "行間" => "Line spacing",
-        "字間" => "Tracking",
-        "文字の位置" => "Text position",
-        "文字の回転" => "Text rotation",
-        "折り返しの幅" => "Wrap width",
-        "テキストレイヤーではない" => "Not a text layer",
-        "テキストレイヤーには手で描けない" => "Cannot paint by hand on a text layer",
-        "テキストレイヤーにはパスを付けられない" => "A text layer cannot have a path",
-        "テキストレイヤーの Color は無効にできない" => "Cannot disable Color on a text layer",
-        "テキストの値を付けられるのはパスとテキストの無いラスターのレイヤーだけ" => {
-            "Text needs a raster layer without a path or text"
-        }
-        "テキストレイヤーの Color が無い" => "The text layer has no Color",
-        "まとめるテキストの段が無い" => "No text step to merge into",
-        "線対称の線の本数（偶数）" => "Line symmetry needs an even number of lines",
-        "対称の角度（±360 度）" => "The symmetry angle must be within ±360 degrees",
-        "レイヤーに付けられる定規は 64 個まで" => "A layer can have at most 64 rulers",
-        "定規の ID が重なっている" => "Ruler IDs overlap",
-        "定規の ID がほかのレイヤーの定規と重なっている" => {
-            "A ruler ID overlaps a ruler on another layer"
-        }
-        "移し先が同じレイヤー" => "The target layer is the same layer",
-        "移す定規がそのレイヤーに無い" => "The ruler to move is not on that layer",
-        "その定規がそのレイヤーに無い" => "That ruler is not on that layer",
-        "直線定規はスナップする特殊定規にならない" => {
-            "A straight ruler cannot be the snapping special ruler"
-        }
-        "定規の ID（0 は使わない）" => "A ruler ID cannot be 0",
-        "定規の点（有限・±1e7）" => "Ruler points must be finite and within ±1e7",
-        "定規の 2 点が近すぎる（0.01 画素以上）" => {
-            "The two ruler points are too close (at least 0.01 px apart)"
-        }
-        "見えない面にも写すのは 3D の対称だけ" => {
-            "Mirroring onto hidden faces is for 3D symmetry only"
-        }
-        "定規の点（有限・±1e6）" => "Ruler points must be finite and within ±1e6",
-        "定規の 2 点が近すぎる（1e-6）" => "The two ruler points are too close (at least 1e-6 apart)",
-        "定規の向きが 0" => "The ruler direction is zero",
-        "対称定規の最初の線が回転の軸と平行" => {
-            "The first line of a symmetry ruler is parallel to its rotation axis"
-        }
-        "2 点はパースだけ" => "Two points are for a perspective ruler only",
-        "対称定規の線の本数（2〜16）" => "A symmetry ruler has 2 to 16 lines",
-        "線の本数と線対称は対称定規だけ" => "Line count and line symmetry are for symmetry rulers only",
-        _ => return None,
-    })
-}
-
 impl Lang {
+    /// 統合を断った理由。日本語は core の文（`MergeRefusal` の `Display`）、英語は種類ごとの短い文。
+    fn merge_refusal(self, reason: yolu_core::MergeRefusal) -> String {
+        use yolu_core::MergeRefusal::*;
+        let text = reason.to_string();
+        match reason {
+            NoLayerBelow => self.f("lang-no-layer-below", &[("text", &text)]),
+            LayerBelowIsGroup => self.f("lang-the-layer-below-is-a", &[("text", &text)]),
+            LayerBelowIsAdjustment => self.f("lang-the-layer-below-is-an", &[("text", &text)]),
+            HiddenLayer => self.f("lang-a-layer-is-hidden", &[("text", &text)]),
+            IsGroup => self.f("lang-the-target-is-a-group", &[("text", &text)]),
+            NotGroup => self.f("lang-not-a-group", &[("text", &text)]),
+            EmptyGroup => self.f("lang-the-group-is-empty", &[("text", &text)]),
+            NothingVisible => self.f("lang-no-visible-layers", &[("text", &text)]),
+            DifferentGroups => self.f(
+                "lang-layers-have-different-parent-groups",
+                &[("text", &text)],
+            ),
+            TooManyRulers => self.f("lang-the-merged-layer-would-have", &[("text", &text)]),
+        }
+    }
+
     pub fn surface_error(self, error: &yolu_core::geometry::SurfaceStrokeError) -> String {
         crate::crash::problem(self.surface_error_text(error))
     }
@@ -1102,25 +525,10 @@ impl Lang {
         match error {
             SurfaceStrokeError::Core(e) => self.core_error(e),
             SurfaceStrokeError::Dab(e) => self.dab_refusal(*e).into(),
-            SurfaceStrokeError::TooManyDabs => self
-                .pick(
-                    "ストロークが長すぎるため、取り消しました",
-                    "Cancelled: the stroke is too long",
-                )
-                .into(),
+            SurfaceStrokeError::TooManyDabs => self.t("lang-cancelled-the-stroke-is-too").into(),
             SurfaceStrokeError::Sampling(e) => self.sampling_error(*e).into(),
-            SurfaceStrokeError::EffectWithSymmetry => self
-                .pick(
-                    "指先・クローンでは対称を使えません",
-                    "Smudge and clone do not work with symmetry",
-                )
-                .into(),
-            SurfaceStrokeError::CloneSource => self
-                .pick(
-                    "クローンの元が今のモデルの面ではありません",
-                    "The clone source is not on this model",
-                )
-                .into(),
+            SurfaceStrokeError::EffectWithSymmetry => self.t("lang-smudge-and-clone-do-not").into(),
+            SurfaceStrokeError::CloneSource => self.t("lang-the-clone-source-is-not").into(),
         }
     }
     /// 指先・クローンの読み元を決められなかった理由。どれもストロークごと取り消すので、「取り消し」を言う。内部の言葉（スナップショット・予算・図）は使わない。
@@ -1130,61 +538,28 @@ impl Lang {
     fn sampling_error_text(self, error: yolu_core::geometry::SamplingError) -> &'static str {
         use yolu_core::geometry::SamplingError::*;
         match error {
-            SnapshotChanged => self.pick(
-                "モデルが変わったため、取り消しました",
-                "Cancelled: the model changed",
-            ),
-            BindingMismatch => self.pick(
-                "面がモデルと合わないため、取り消しました",
-                "Cancelled: the surface does not match the model",
-            ),
-            InvalidArguments => self.pick(
-                "ブラシの大きさか位置が範囲外のため、取り消しました",
-                "Cancelled: brush size or position out of range",
-            ),
-            ChartBudget => self.pick(
-                "読み取る面が多すぎるため、取り消しました",
-                "Cancelled: too many faces to read from",
-            ),
-            LookupBudget => self.pick(
-                "読み取る範囲が広すぎるため、取り消しました",
-                "Cancelled: the area to read from is too large",
-            ),
-            Unreachable => self.pick(
-                "読み取り先に届かない画素があるため、取り消しました",
-                "Cancelled: some pixels cannot reach the source",
-            ),
+            SnapshotChanged => self.t("lang-cancelled-the-model-changed"),
+            BindingMismatch => self.t("lang-cancelled-the-surface-does-not"),
+            InvalidArguments => self.t("lang-cancelled-brush-size-or-position"),
+            ChartBudget => self.t("lang-cancelled-too-many-faces-to"),
+            LookupBudget => self.t("lang-cancelled-the-area-to-read"),
+            Unreachable => self.t("lang-cancelled-some-pixels-cannot-reach"),
         }
     }
     /// 対称の写しが塗られなかった理由（短い状態）。
     pub fn mirror_note(self, outcome: yolu_core::geometry::MirrorOutcome) -> &'static str {
         use yolu_core::geometry::MirrorOutcome::*;
         match outcome {
-            NoSurface => self.pick(
-                "近くに面が無い対称の写しは飛ばしました",
-                "Symmetry copies with no surface nearby were skipped",
-            ),
-            OtherSlot => self.pick(
-                "別のテクスチャセットにある対称の写しは飛ばしました",
-                "Symmetry copies on another texture set were skipped",
-            ),
-            Hidden => self.pick(
-                "見えない対称の写しは飛ばしました",
-                "Symmetry copies that cannot be seen were skipped",
-            ),
-            UvMismatch => self.pick(
-                "UV が潰れているか大きさが合わない対称の写しは飛ばしました",
-                "Symmetry copies with flat or mismatched UVs were skipped",
-            ),
+            NoSurface => self.t("lang-symmetry-copies-with-no-surface"),
+            OtherSlot => self.t("lang-symmetry-copies-on-another-texture"),
+            Hidden => self.t("lang-symmetry-copies-that-cannot-be"),
+            UvMismatch => self.t("lang-symmetry-copies-with-flat-or"),
             Painted | OnPlane => "",
         }
     }
     /// 指先が、つながらない面で拾い直したときの状態。
     pub fn smudge_lost(self) -> &'static str {
-        self.pick(
-            "指先はつながらない面で拾い直しました",
-            "Smudge picked up again on a disconnected surface",
-        )
+        self.t("lang-smudge-picked-up-again-on")
     }
     pub fn dab_refusal(self, error: yolu_core::geometry::DabRefusal) -> &'static str {
         crate::crash::problem(self.dab_refusal_text(error))
@@ -1197,38 +572,14 @@ impl Lang {
     fn path_dab_refusal_text(self, error: yolu_core::geometry::DabRefusal) -> &'static str {
         use yolu_core::geometry::DabRefusal::*;
         match error {
-            SnapshotChanged => self.pick(
-                "モデルが変わったため、塗れませんでした",
-                "Not painted because the model changed",
-            ),
-            InvalidArguments => self.pick(
-                "ブラシの大きさが範囲外のため、塗れませんでした",
-                "Not painted: brush size out of range",
-            ),
-            BindingMismatch => self.pick(
-                "面がモデルと合わないため、塗れませんでした",
-                "Not painted: the surface does not match the model",
-            ),
-            TriangleBudget => self.pick(
-                "ブラシがまたがる面が多すぎるため、塗れませんでした",
-                "Not painted: the brush covers too many faces",
-            ),
-            PixelBudget => self.pick(
-                "ブラシの範囲が広すぎるため、塗れませんでした",
-                "Not painted: the brush area is too large",
-            ),
-            VisibilityBudget => self.pick(
-                "見える面の判定が多すぎるため、塗れませんでした",
-                "Not painted: too many points to check for visibility",
-            ),
-            BvhBudget => self.pick(
-                "重なった面が多すぎるため、塗れませんでした",
-                "Not painted: too many overlapping faces under the brush",
-            ),
-            MemoryBudget => self.pick(
-                "1 回の操作のメモリが足りないため、塗れませんでした",
-                "Not painted: not enough memory for one operation",
-            ),
+            SnapshotChanged => self.t("lang-not-painted-because-the-model"),
+            InvalidArguments => self.t("lang-not-painted-brush-size-out"),
+            BindingMismatch => self.t("lang-not-painted-the-surface-does"),
+            TriangleBudget => self.t("lang-not-painted-the-brush-covers"),
+            PixelBudget => self.t("lang-not-painted-the-brush-area"),
+            VisibilityBudget => self.t("lang-not-painted-too-many-points"),
+            BvhBudget => self.t("lang-not-painted-too-many-overlapping"),
+            MemoryBudget => self.t("lang-not-painted-not-enough-memory"),
         }
     }
     /// 3D のブラシのストロークで、打ち（ブラシの 1 回分。対称の写し・デュアルブラシの 2 つ目の打ちも）を塗れなかった理由。2D の
@@ -1238,39 +589,15 @@ impl Lang {
     fn dab_refusal_text(self, error: yolu_core::geometry::DabRefusal) -> &'static str {
         use yolu_core::geometry::DabRefusal::*;
         match error {
-            SnapshotChanged => self.pick(
-                "モデルが変わったため、取り消しました",
-                "Cancelled: the model changed",
-            ),
-            InvalidArguments => self.pick(
-                "ブラシの大きさかカメラが範囲外のため、取り消しました",
-                "Cancelled: brush size or camera out of range",
-            ),
-            BindingMismatch => self.pick(
-                "面がモデルと合わないため、取り消しました",
-                "Cancelled: the surface does not match the model",
-            ),
-            TriangleBudget => self.pick(
-                "ブラシがまたがる面が多すぎるため、取り消しました",
-                "Cancelled: the brush covers too many faces",
-            ),
-            PixelBudget => self.pick(
-                "ブラシの範囲が広すぎるため、取り消しました",
-                "Cancelled: the brush area is too large",
-            ),
-            VisibilityBudget => self.pick(
-                "見える面の判定が多すぎるため、取り消しました",
-                "Cancelled: too many points to check for visibility",
-            ),
-            BvhBudget => self.pick(
-                "重なった面が多すぎるため、取り消しました",
-                "Cancelled: too many overlapping faces under the brush",
-            ),
+            SnapshotChanged => self.t("lang-cancelled-the-model-changed"),
+            InvalidArguments => self.t("lang-cancelled-brush-size-or-camera"),
+            BindingMismatch => self.t("lang-cancelled-the-surface-does-not"),
+            TriangleBudget => self.t("lang-cancelled-the-brush-covers-too"),
+            PixelBudget => self.t("lang-cancelled-the-brush-area-is"),
+            VisibilityBudget => self.t("lang-cancelled-too-many-points-to"),
+            BvhBudget => self.t("lang-cancelled-too-many-overlapping-faces"),
             // 2D の `CoreError::StrokeBudgetExceeded` と同じ文
-            MemoryBudget => self.pick(
-                "1 回の操作のメモリの予算を超えます（取り消しました）",
-                "Over the memory budget of one operation (cancelled)",
-            ),
+            MemoryBudget => self.t("lang-over-the-memory-budget-of"),
         }
     }
 }
@@ -1342,26 +669,12 @@ impl Lang {
     }
     fn geometry_error_text(self, error: GeometryError) -> &'static str {
         match error {
-            GeometryError::NonFinite => self.pick(
-                "メッシュの位置か UV に有限でない値があります",
-                "Non-finite position or UV in the mesh",
-            ),
-            GeometryError::BoundsOverflow => self.pick(
-                "メッシュの大きさが扱える範囲を超えています",
-                "Mesh bounds exceed the supported range",
-            ),
-            GeometryError::InvalidTolerance => self.pick(
-                "溶接の許しは正の値でなければなりません",
-                "Weld tolerance must be positive",
-            ),
-            GeometryError::TooManyTriangles => {
-                self.pick("三角形が多すぎます", "Too many triangles")
-            }
-            GeometryError::Canceled => self.pick("取り消しました", "Cancelled"),
-            GeometryError::Mismatch => self.pick(
-                "三角形の並びが元のモデルと違います",
-                "Triangle order differs from the original model",
-            ),
+            GeometryError::NonFinite => self.t("lang-non-finite-position-or-uv"),
+            GeometryError::BoundsOverflow => self.t("lang-mesh-bounds-exceed-the-supported"),
+            GeometryError::InvalidTolerance => self.t("lang-weld-tolerance-must-be-positive"),
+            GeometryError::TooManyTriangles => self.t("lang-too-many-triangles"),
+            GeometryError::Canceled => self.t("lang-cancelled"),
+            GeometryError::Mismatch => self.t("lang-triangle-order-differs-from-the"),
         }
     }
 
@@ -1377,12 +690,8 @@ impl Lang {
     fn model_error_text(self, error: &ModelError) -> String {
         match error {
             // 「〜できません: 理由」のコロンでつないだ形にしない
-            ModelError::Io(e) => {
-                self.with_reason(self.pick("ファイルを読めません", "Cannot read the file"), e)
-            }
-            ModelError::Parse(e) => {
-                self.with_reason(self.pick("FBX として読めません", "Invalid FBX"), e)
-            }
+            ModelError::Io(e) => self.with_reason(self.t("lang-cannot-read-the-file"), e),
+            ModelError::Parse(e) => self.with_reason(self.t("lang-invalid-fbx"), e),
             _ if self == Self::Ja => error.to_string(),
             ModelError::FileTooLarge { bytes, limit } => format!(
                 "File too large ({:.1} MiB, maximum {:.0} MiB)",
@@ -1432,41 +741,21 @@ pub fn shelf_io_error(lang: Lang, e: &yolu_io::Error) -> String {
     } else if m.contains(REFUSAL_GENERATORS) {
         Block::Generators.reason(lang)
     } else if m.contains(REFUSAL_MEMORY_BUDGET) {
-        lang.pick("アセットの予算を超えます", "Over the asset budget")
-            .into()
+        lang.t("lang-over-the-asset-budget").into()
     } else if m.contains(REFUSAL_ARCHIVE_BUDGET) {
-        lang.pick(
-            "ファイルの大きさの上限を超えます",
-            "Over the file size limit",
-        )
-        .into()
+        lang.t("lang-over-the-file-size-limit").into()
     } else if m.contains(REFUSAL_USER_CHANNELS) {
-        lang.pick("ユーザーチャンネルを使っています", "It uses user channels")
-            .into()
+        lang.t("lang-it-uses-user-channels").into()
     } else if m.contains(REFUSAL_RUST_GENERATORS) {
-        lang.pick("ノイズ・グランジを使っています", "It uses Noise and Grunge")
-            .into()
+        lang.t("lang-it-uses-noise-and-grunge").into()
     } else if m.contains(REFUSAL_RUST_ADJUSTMENTS) {
-        lang.pick("色調補正を使っています", "It uses colour adjustments")
-            .into()
+        lang.t("lang-it-uses-colour-adjustments").into()
     } else if m.contains(REFUSAL_NEW_FILTERS) {
-        lang.pick(
-            "0.5.0 で追加したフィルター・ジェネレーターを使っています",
-            "It uses filters or generators added in 0.5.0",
-        )
-        .into()
+        lang.t("lang-it-uses-filters-or-generators").into()
     } else if m.contains(REFUSAL_PATH_LISTS) {
-        lang.pick(
-            "パスの一覧か新しいパスの設定を使っています",
-            "It uses a path list or new path settings",
-        )
-        .into()
+        lang.t("lang-it-uses-a-path-list").into()
     } else if m.contains(REFUSAL_POINT_GRADIENTS) {
-        lang.pick(
-            "点のグラデーションか、異方性フィルターを切った画像を使っています",
-            "It uses a point gradient or an image with anisotropic filtering off",
-        )
-        .into()
+        lang.t("lang-it-uses-a-point-gradient").into()
     } else {
         lang.io_error(e)
     }
@@ -1477,36 +766,27 @@ pub fn library_known_error(lang: Lang, e: &yolu_io::Error) -> Option<String> {
     let m = e.to_string();
     let has = |text: &str| m.contains(text);
     let short = if has(files::REFUSAL_ROOT_LINK) {
-        lang.pick(
-            "ライブラリの場所がリンクです",
-            "The library folder is a link",
-        )
+        lang.t("lang-the-library-folder-is-a")
     } else if has(files::REFUSAL_ROOT_NOT_FOLDER) {
-        lang.pick(
-            "ライブラリの場所がフォルダではありません",
-            "The library location is not a folder",
-        )
+        lang.t("lang-the-library-location-is-not")
     } else if has(files::REFUSAL_LINK) {
-        lang.pick("リンクはたどりません", "Links are not followed")
+        lang.t("lang-links-are-not-followed")
     } else if has(files::REFUSAL_PATH) {
-        lang.pick(
-            "名前に使えない文字があります",
-            "The name has disallowed characters",
-        )
+        lang.t("lang-the-name-has-disallowed-characters")
     } else if has(files::REFUSAL_NOT_FILE) {
-        lang.pick("ファイルではありません", "Not a file")
+        lang.t("lang-not-a-file")
     } else if has(files::REFUSAL_TOO_LARGE) {
-        lang.pick("大きすぎます", "Too large")
+        lang.t("lang-too-large")
     } else if has(files::REFUSAL_EMPTY) {
-        lang.pick("空のファイルです", "Empty file")
+        lang.t("lang-empty-file")
     } else if has(files::REFUSAL_NO_NAME) {
-        lang.pick("名前を決められません", "Cannot choose a name")
+        lang.t("lang-cannot-choose-a-name")
     } else if has(REFUSAL_UNSUPPORTED) {
-        lang.pick("PNG と .ylsmart だけです", "PNG and .ylsmart only")
+        lang.t("lang-png-and-ylsmart-only")
     } else if has(REFUSAL_PNG_SIZE) {
-        lang.pick(REFUSAL_PNG_SIZE, "Image sides must be 1 to 8192")
+        lang.t("lang-image-sides-must-be-1")
     } else if has(REFUSAL_PNG) {
-        lang.pick(REFUSAL_PNG, "Not a readable PNG")
+        lang.t("lang-not-a-readable-png")
     } else {
         return None;
     };
@@ -1531,63 +811,36 @@ pub fn path_error(lang: Lang, error: &paths::Error) -> String {
     use paths::Error;
     match error {
         // 点の検査の理由は、そのまま短い理由（「値が範囲外です（…）」で包まない）
-        Error::Invalid(why) => crate::crash::problem(lang.pick(*why, core_reason(why))).into(),
-        Error::ModelMismatch => lang
-            .pick(
-                "モデルが、パスを描いたときと違います",
-                "The model differs from the one the path was drawn on",
-            )
-            .into(),
-        Error::MissingTriangle => lang
-            .pick(
-                "パスが指す三角形がモデルにありません",
-                "The path refers to a triangle the model does not have",
-            )
-            .into(),
-        Error::TooManySamples => lang
-            .pick(
-                "ブラシの間隔に対してパスが長すぎます",
-                "The path is too long for the brush spacing",
-            )
-            .into(),
-        Error::Canceled => lang.pick("取り消しました", "Cancelled").into(),
+        Error::Invalid(why) => crate::crash::problem(lang.reason(*why)).into(),
+        Error::ModelMismatch => lang.t("lang-the-model-differs-from-the").into(),
+        Error::MissingTriangle => lang.t("lang-the-path-refers-to-a").into(),
+        Error::TooManySamples => lang.t("lang-the-path-is-too-long").into(),
+        Error::Canceled => lang.t("lang-cancelled").into(),
         Error::Core(e) => lang.core_error(e),
         Error::Dab(d) => lang.path_dab_refusal(*d).into(),
-        Error::MissingImage => lang
-            .pick(
-                "リボンの画像がアセットにありません",
-                "The ribbon image is not in the assets",
-            )
-            .into(),
-        Error::FillIslands => lang
-            .pick(
-                "塗りのパスが 1 つの UV アイランドに収まっていません",
-                "The fill path does not stay on one UV island",
-            )
-            .into(),
+        Error::MissingImage => lang.t("lang-the-ribbon-image-is-not").into(),
+        Error::FillIslands => lang.t("lang-the-fill-path-does-not").into(),
     }
 }
 
 /// 付け直せなかった理由の文（画面の言語で）。
 pub fn rebind_error(lang: Lang, error: RebindError) -> String {
     match error {
-        RebindError::OtherModel => lang
-            .pick("別のモデルで描かれたパスです", "The path was drawn on another model")
-            .into(),
-        RebindError::NoMaterial => lang
-            .pick("マテリアルが新しいモデルにありません", "Its material is not in the new model")
-            .into(),
-        RebindError::MissingTriangle { point } => lang.pick(
-            format!("点 {} はモデルに無い三角形を指しています", point + 1),
-            format!("Point {} refers to a triangle the model does not have", point + 1),
+        RebindError::OtherModel => lang.t("lang-the-path-was-drawn-on").into(),
+        RebindError::NoMaterial => lang.t("lang-its-material-is-not-in").into(),
+        RebindError::MissingTriangle { point } => lang.f(
+            "lang-point-refers-to-a-triangle",
+            &[("point", &(point + 1))],
         ),
-        RebindError::SearchBudget { point } => lang.pick(
-            format!("点 {} を新しいメッシュで探すのに時間がかかりすぎました", point + 1),
-            format!("Finding point {} on the new mesh took too long", point + 1),
-        ),
-        RebindError::NoSurface { point, tolerance } => lang.pick(
-            format!("点 {} の近く（{tolerance:.4} 以内）に、同じマテリアルの面が新しいメッシュにありません", point + 1),
-            format!("Point {} has no surface of its material within {tolerance:.4} on the new mesh", point + 1),
+        RebindError::SearchBudget { point } => {
+            lang.f("lang-finding-point-on-the-new", &[("point", &(point + 1))])
+        }
+        RebindError::NoSurface { point, tolerance } => lang.f(
+            "lang-point-has-no-surface-of",
+            &[
+                ("point", &(point + 1)),
+                ("tolerance", &format!("{:.4}", tolerance)),
+            ],
         ),
     }
 }
@@ -1595,80 +848,64 @@ pub fn rebind_error(lang: Lang, error: RebindError) -> String {
 /// 取り込めない理由（画面の言語。レイヤーの名前は利用者の名前なのでそのまま）。
 pub fn psd_copy_refusal(lang: Lang, why: &CopyRefusal) -> String {
     match why {
-        CopyRefusal::Malformed(text) => lang.pick(
-            text.clone(),
-            "Not a readable PSD (damaged or unsupported)".into(),
-        ),
-        CopyRefusal::LargeDocument => lang.pick(
-            "PSB 形式は取り込めません".into(),
-            "PSB files cannot be imported".into(),
-        ),
+        CopyRefusal::Malformed(text) => {
+            lang.f("lang-not-a-readable-psd-damaged", &[("text", text)])
+        }
+        CopyRefusal::LargeDocument => lang.t("lang-psb-files-cannot-be-imported").into(),
         CopyRefusal::ColorFormat { depth, mode } => {
             let name = crate::psd_import::color_mode_name(lang, *mode);
-            lang.pick(
-                format!("RGB 8 bit 以外は取り込めません（{name}・{depth} bit）"),
-                format!("Only RGB 8-bit PSDs can be imported ({name}, {depth}-bit)"),
+            lang.f(
+                "lang-only-rgb-8-bit-psds",
+                &[("name", &name), ("depth", &depth)],
             )
         }
-        CopyRefusal::NoLayers => lang.pick(
-            "レイヤーがありません（統合画像だけの PSD）".into(),
-            "No layers (a flattened image only)".into(),
+        CopyRefusal::NoLayers => lang.t("lang-no-layers-a-flattened-image").into(),
+        CopyRefusal::TooManyLayers { count, limit } => lang.f(
+            "lang-too-many-layers-limit",
+            &[("value", &count), ("limit", &limit)],
         ),
-        CopyRefusal::TooManyLayers { count, limit } => lang.pick(
-            format!("レイヤーが多すぎます（{count} 枚・上限 {limit} 枚）"),
-            format!("Too many layers ({count}; limit {limit})"),
+        CopyRefusal::CanvasTooLarge { width, height } => lang.f(
+            "lang-canvas-too-large",
+            &[("width", &width), ("height", &height)],
         ),
-        CopyRefusal::CanvasTooLarge { width, height } => lang.pick(
-            format!("キャンバスが大きすぎます（{width}×{height}）"),
-            format!("Canvas too large ({width}×{height})"),
-        ),
-        CopyRefusal::LayerTooLarge { layer } => lang.pick(
-            format!("「{layer}」の画素が大きすぎます"),
-            format!("\"{layer}\" has too many pixels"),
-        ),
-        CopyRefusal::BudgetExceeded { layer } => lang.pick(
-            format!("「{layer}」でレイヤーのメモリの予算を超えました"),
-            format!("Layer memory budget exceeded at \"{layer}\""),
-        ),
-        CopyRefusal::LayerDataTooLarge { layer } => lang.pick(
-            format!("「{layer}」の付加情報が大きすぎます"),
-            format!("\"{layer}\" has too much extra data"),
-        ),
+        CopyRefusal::LayerTooLarge { layer } => {
+            lang.f("lang-has-too-many-pixels", &[("layer", &layer)])
+        }
+        CopyRefusal::BudgetExceeded { layer } => {
+            lang.f("lang-layer-memory-budget-exceeded-at", &[("layer", &layer)])
+        }
+        CopyRefusal::LayerDataTooLarge { layer } => {
+            lang.f("lang-has-too-much-extra-data", &[("layer", &layer)])
+        }
         CopyRefusal::EdgeOverLimit {
             width,
             height,
             limit,
-        } => lang.pick(
-            format!("キャンバスが大きすぎます（{width}×{height}・上限 {limit}）"),
-            format!("Canvas too large ({width}×{height}; limit {limit})"),
+        } => lang.f(
+            "lang-canvas-too-large-limit",
+            &[("width", &width), ("height", &height), ("limit", &limit)],
         ),
-        CopyRefusal::LayerCountOverLimit { count, limit } => lang.pick(
-            format!("レイヤーが多すぎます（{count} 枚・上限 {limit} 枚）"),
-            format!("Too many layers ({count}; limit {limit})"),
+        CopyRefusal::LayerCountOverLimit { count, limit } => lang.f(
+            "lang-too-many-layers-limit",
+            &[("value", &count), ("limit", &limit)],
         ),
-        CopyRefusal::NestingTooDeep { limit } => lang.pick(
-            format!("グループの入れ子が深すぎます（上限 {limit} 段）"),
-            format!("Groups are nested too deeply (limit {limit})"),
-        ),
+        CopyRefusal::NestingTooDeep { limit } => {
+            lang.f("lang-groups-are-nested-too-deeply", &[("limit", &limit)])
+        }
     }
 }
 
 /// 理由のツールチップ（予算で断ったものは、設定で上げられること）。
 pub fn psd_copy_refusal_tooltip(lang: Lang, why: &CopyRefusal) -> Option<String> {
-    why.raised_by_budget().then(|| {
-        lang.pick(
-            "上限は設定の「レイヤーのメモリ」から決まります。上げると取り込めることがあります",
-            "The limit follows Layer memory in Settings. Raising it may let this import",
-        )
-        .into()
-    })
+    why.raised_by_budget()
+        .then(|| lang.t("lang-the-limit-follows-layer-memory-tip").into())
 }
 
 /// 更新の失敗の「何が」（`what` は "check" か "download"）。
 fn update_head(lang: Lang, what: &str) -> &'static str {
     match what {
-        "check" => lang.pick("更新を確かめられません", "Cannot check for updates"),
-        _ => lang.pick("更新をダウンロードできません", "Cannot download the update"),
+        "check" => lang.t("lang-cannot-check-for-updates"),
+        _ => lang.t("lang-cannot-download-the-update"),
     }
 }
 
@@ -1680,19 +917,12 @@ pub(crate) fn update_start_failure(lang: Lang, what: &str, error: &std::io::Erro
 pub(crate) fn update_failure(lang: Lang, what: &'static str, failure: UpdateFailure) -> String {
     let head = update_head(lang, what);
     let reason = match failure {
-        UpdateFailure::Network => lang.pick("通信できません", "connection failed"),
-        UpdateFailure::Verify => lang.pick("検証を通りません", "verification failed"),
-        UpdateFailure::NoAsset => lang.pick(
-            "この環境向けの配布物がありません",
-            "no download for this system",
-        ),
-        UpdateFailure::Disk => lang.pick("ファイルを保存できません", "cannot save the file"),
-        UpdateFailure::Stopped => lang.pick("処理が止まりました", "the job stopped"),
-        UpdateFailure::Canceled => {
-            return lang
-                .pick("ダウンロードを取り消しました。", "Download canceled.")
-                .into()
-        }
+        UpdateFailure::Network => lang.t("lang-connection-failed"),
+        UpdateFailure::Verify => lang.t("lang-verification-failed"),
+        UpdateFailure::NoAsset => lang.t("lang-no-download-for-this-system"),
+        UpdateFailure::Disk => lang.t("lang-cannot-save-the-file"),
+        UpdateFailure::Stopped => lang.t("lang-the-job-stopped"),
+        UpdateFailure::Canceled => return lang.t("lang-download-canceled").into(),
     };
     lang.with_reason(head, reason)
 }
@@ -1708,35 +938,21 @@ pub(crate) fn inactive_effect_reason(
         (&effect.target, &effect.reason)
     {
         if let Some(why) = failure {
-            return lang.pick(
-                format!("画像を読めません（{why}）"),
-                format!("Cannot read the image ({why})"),
-            );
+            return lang.f("lang-cannot-read-the-image", &[("why", &why)]);
         }
         if why.contains("その画像が無い") {
-            return lang
-                .pick(
-                    "プロジェクトに画像が無い",
-                    "The image is not in the project",
-                )
-                .into();
+            return lang.t("lang-the-image-is-not-in").into();
         }
     }
     lang.inactive_reason(&effect.reason)
 }
 
 pub(crate) fn hide_preset_save_error(lang: Lang, e: &HideStoreError) -> String {
-    lang.with_reason(
-        lang.pick("隠し方を保存できません", "Cannot save the hide set"),
-        e.describe(lang),
-    )
+    lang.with_reason(lang.t("lang-cannot-save-the-hide-set"), e.describe(lang))
 }
 
 pub(crate) fn pose_preset_save_error(lang: Lang, e: &PoseStoreError) -> String {
-    lang.with_reason(
-        lang.pick("ポーズを保存できません", "Cannot save the pose"),
-        e.describe(lang),
-    )
+    lang.with_reason(lang.t("lang-cannot-save-the-pose"), e.describe(lang))
 }
 
 #[cfg(test)]
@@ -2039,7 +1255,7 @@ mod tests {
             CoreError::SourceBudgetExceeded,
             CoreError::StrokeBudgetExceeded,
             CoreError::WorkingBudgetExceeded,
-            CoreError::Unsupported("塗りつぶしレイヤーには描けない"),
+            CoreError::Unsupported(Reason::CannotPaintFillLayer),
         ] {
             assert!(!Lang::Ja.core_error(&error).is_empty());
             assert!(Lang::En.core_error(&error).is_ascii());
@@ -2061,17 +1277,17 @@ mod tests {
         }
         // できない操作は、core の理由の文をそのまま 1 文に（「できない: 理由」のコロンでつないだ形にしない）
         assert_eq!(
-            Lang::Ja.core_error(&CoreError::Unsupported("塗りつぶしレイヤーには描けない")),
+            Lang::Ja.core_error(&CoreError::Unsupported(Reason::CannotPaintFillLayer)),
             "塗りつぶしレイヤーには描けない。"
         );
-        let error = CoreError::Unsupported("塗りつぶしレイヤーには描けない");
+        let error = CoreError::Unsupported(Reason::CannotPaintFillLayer);
         assert_eq!(Lang::En.core_error(&error), "Cannot paint a fill layer.");
         assert_eq!(
-            Lang::Ja.core_error(&CoreError::InvalidArgument("絵の具の量（0〜1）")),
+            Lang::Ja.core_error(&CoreError::InvalidArgument(Reason::PaintAmountRange)),
             "値が範囲外です（絵の具の量（0〜1））。"
         );
         assert_eq!(
-            Lang::En.core_error(&CoreError::InvalidArgument("絵の具の量（0〜1）")),
+            Lang::En.core_error(&CoreError::InvalidArgument(Reason::PaintAmountRange)),
             "Invalid value (Paint amount (0–1))."
         );
     }
@@ -2106,49 +1322,6 @@ mod tests {
             assert!(!en.chars().any(|c| c.is_ascii_digit()), "{en}");
         }
     }
-    #[test]
-    fn every_core_reason_has_an_english_text() {
-        // core が CoreError に渡す理由の文は全部、英語の文を持つ（新しい理由を足したらここで落ちる。core_reason に足す）
-        fn sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-            for entry in std::fs::read_dir(dir).unwrap() {
-                let path = entry.unwrap().path();
-                if path.is_dir() {
-                    sources(&path, out);
-                } else if path.extension().is_some_and(|e| e == "rs") {
-                    out.push(path);
-                }
-            }
-        }
-        let mut files = Vec::new();
-        sources(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../yolu-core/src"),
-            &mut files,
-        );
-        assert!(files.len() > 10);
-        let (mut found, mut missing) = (0, Vec::new());
-        for file in files {
-            let text = std::fs::read_to_string(&file).unwrap();
-            for head in ["CoreError::InvalidArgument(", "CoreError::Unsupported("] {
-                for (at, _) in text.match_indices(head) {
-                    let rest = text[at + head.len()..].trim_start();
-                    let Some(rest) = rest.strip_prefix('"') else {
-                        continue;
-                    };
-                    let reason = &rest[..rest.find('"').unwrap()];
-                    found += 1;
-                    if known_core_reason(reason).is_none() && !reason.is_ascii() {
-                        missing.push(format!(
-                            "{}: {reason}",
-                            file.file_name().unwrap().to_string_lossy()
-                        ));
-                    }
-                }
-            }
-        }
-        assert!(found > 100, "{found}");
-        assert!(missing.is_empty(), "英語の文が無い理由: {missing:#?}");
-    }
-
     #[test]
     fn view_and_surface_errors_are_translated_by_kind() {
         use yolu_core::geometry::SurfaceStrokeError;

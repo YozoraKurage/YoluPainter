@@ -83,7 +83,7 @@ pub fn creation_icon(mode: SelectionCombine) -> &'static str {
 impl AppState {
     /// 今の文書に残した選択範囲。
     pub fn saved_selections(&self) -> &[SavedSelection] {
-        self.doc.saved_selections()
+        self.session.doc.saved_selections()
     }
 
     /// 残した選択範囲を呼び出すための札（今の文書と大きさが合うときだけ。大きさを変える操作は残した選択範囲も作り直すので、
@@ -91,21 +91,14 @@ impl AppState {
     pub(super) fn saved_mask(&self, index: usize) -> Result<SelectionMask, String> {
         let lang = self.lang;
         let Some(saved) = self.saved_selections().get(index) else {
-            return Err(lang
-                .pick("覚えた選択範囲がありません。", "No such saved selection.")
-                .into());
+            return Err(lang.t("selection-no-such-saved-selection").into());
         };
         let m = &saved.mask;
-        if m.width() != self.doc.width()
-            || m.height() != self.doc.height()
-            || m.tile_size() != self.doc.tile_size()
+        if m.width() != self.session.doc.width()
+            || m.height() != self.session.doc.height()
+            || m.tile_size() != self.session.doc.tile_size()
         {
-            return Err(lang
-                .pick(
-                    "覚えたときとキャンバスの大きさが違います。",
-                    "The canvas size differs from when it was saved.",
-                )
-                .into());
+            return Err(lang.t("selection-the-canvas-size-differs-from").into());
         }
         Ok(m.clone())
     }
@@ -127,11 +120,8 @@ impl AppState {
                 if self.refuse_while_stroking() {
                     return;
                 }
-                let Some(mask) = self.doc.selection().cloned() else {
-                    self.refuse(
-                        Source::Selection,
-                        lang.pick("選択範囲がありません。", "No selection."),
-                    );
+                let Some(mask) = self.session.doc.selection().cloned() else {
+                    self.refuse(Source::Selection, lang.t("selection-no-selection"));
                     return;
                 };
                 let name = name.trim().to_owned();
@@ -144,7 +134,7 @@ impl AppState {
                 if existing.is_none() && self.saved_selections().len() >= MAX_SAVED {
                     self.refuse(
                         Source::Selection,
-                        lang.pick("覚えられる数の上限です。", "Too many saved selections."),
+                        lang.t("selection-too-many-saved-selections"),
                     );
                     return;
                 }
@@ -153,24 +143,18 @@ impl AppState {
                 {
                     self.refuse(
                         Source::Selection,
-                        lang.pick(
-                            "覚えた選択範囲が大きすぎます。",
-                            "The saved selections are too large.",
-                        ),
+                        lang.t("selection-the-saved-selections-are-too"),
                     );
                     return;
                 }
-                let revision = self.doc.revision();
-                match self.doc.save_selection(&name) {
+                let revision = self.session.doc.revision();
+                match self.session.doc.save_selection(&name) {
                     Ok(_) => {
                         self.info(
                             Source::Selection,
-                            format!(
-                                "{}: {name}",
-                                lang.pick("選択範囲を覚えました", "Remembered")
-                            ),
+                            format!("{}: {name}", lang.t("selection-remembered")),
                         );
-                        self.modified |= self.doc.revision() != revision;
+                        self.session.mark_modified_if_changed(revision);
                     }
                     Err(e) => self.notify(
                         crate::notice::Kind::of_core(&e),
@@ -190,13 +174,13 @@ impl AppState {
                 let Some(gone) = self.saved_selections().get(index).map(|s| s.name.clone()) else {
                     return;
                 };
-                match self.doc.delete_saved_selection(index) {
+                match self.session.doc.delete_saved_selection(index) {
                     Ok(()) => {
                         self.info(
                             Source::Selection,
-                            format!("{}: {gone}", lang.pick("削除", "Removed")),
+                            format!("{}: {gone}", lang.t("selection-removed")),
                         );
-                        self.modified = true;
+                        self.session.mark_modified();
                         if let Some(win) = self.sel.saved_window.as_mut() {
                             // 消した行より後ろの名前の変更は、番号が 1 つずれる
                             match win.rename {
@@ -225,13 +209,13 @@ impl AppState {
                 if name == current {
                     return;
                 }
-                match self.doc.rename_saved_selection(index, &name) {
+                match self.session.doc.rename_saved_selection(index, &name) {
                     Ok(()) => {
                         self.info(
                             Source::Selection,
-                            format!("{}: {name}", lang.pick("名前を変えました", "Renamed")),
+                            format!("{}: {name}", lang.t("selection-renamed")),
                         );
-                        self.modified = true;
+                        self.session.mark_modified();
                     }
                     Err(e) => self.notify(
                         crate::notice::Kind::of_core(&e),
@@ -257,10 +241,10 @@ impl AppState {
 
     /// 残した選択範囲のバイト数の合計（プロジェクト全体）から、今のセットの `skip` 番目（入れ替える選択範囲）を除いたもの。
     fn saved_bytes_without(&self, skip: Option<usize>) -> u64 {
-        let current = self.sets.current().uid;
-        (0..self.sets.len())
+        let current = self.session.sets.current().uid;
+        (0..self.session.sets.len())
             .flat_map(|i| {
-                let uid = self.sets.get(i).map(|s| s.uid);
+                let uid = self.session.sets.get(i).map(|s| s.uid);
                 let skip = (uid == Some(current)).then_some(skip).flatten();
                 self.set_doc(i)
                     .saved_selections()
@@ -277,7 +261,7 @@ impl AppState {
     fn default_saved_name(&self) -> String {
         let used = self.saved_selections();
         (1..)
-            .map(|n| format!("{} {n}", self.lang.pick("選択範囲", "Selection")))
+            .map(|n| format!("{} {n}", self.lang.t("selection-selection")))
             .find(|name| !used.iter().any(|s| &s.name == name))
             .expect("無限の列")
     }
@@ -300,7 +284,7 @@ pub fn last_rect(ctx: &egui::Context) -> Option<Rect> {
 
 /// ウィンドウの名前（見出し・メニュー）。
 pub fn window_title(lang: crate::lang::Lang) -> &'static str {
-    lang.pick("覚えた選択範囲", "Remembered Selections")
+    lang.t("selection-remembered-selections")
 }
 
 /// 開いていればウィンドウを描き、押されたものを `Action` として当てる。
@@ -309,7 +293,7 @@ pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
         return;
     };
     let lang = app.lang;
-    let any_selection = app.doc.selection().is_some();
+    let any_selection = app.session.doc.selection().is_some();
     let can_edit = app.can_edit();
     let rows = app.saved_selections().len();
     let shown = rows.clamp(1, VISIBLE_ROWS);
@@ -325,7 +309,7 @@ pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
         icon: Some("save"),
         size: vec2(WIDTH, height),
         modal: false,
-        close_label: lang.pick("閉じる", "Close"),
+        close_label: lang.t("selection-close"),
     };
     let id = window_id();
     let mut offset = win.offset;
@@ -334,9 +318,9 @@ pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
         .saved_selections()
         .iter()
         .map(|s| {
-            let fits = s.mask.width() == app.doc.width()
-                && s.mask.height() == app.doc.height()
-                && s.mask.tile_size() == app.doc.tile_size();
+            let fits = s.mask.width() == app.session.doc.width()
+                && s.mask.height() == app.session.doc.height()
+                && s.mask.tile_size() == app.session.doc.tile_size();
             (s.name.clone(), fits)
         })
         .collect();
@@ -354,7 +338,7 @@ pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
             field,
             id.with("name"),
             &win.name,
-            Some(lang.pick("選択範囲の名前", "Selection name")),
+            Some(lang.t("selection-selection-name-tip")),
             win.focus,
         );
         win.focus = false;
@@ -366,16 +350,13 @@ pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
             ui,
             save_rect,
             id.with("save"),
-            lang.pick("覚える", "Remember"),
+            lang.t("selection-remember"),
             true,
             any_selection && !app.is_stroking(),
             Some(if any_selection {
-                lang.pick(
-                    "今の選択範囲を、この名前で覚える",
-                    "Remember the current selection under this name",
-                )
+                lang.t("selection-remember-the-current-selection-under-tip")
             } else {
-                lang.pick("選択範囲なし", "No selection")
+                lang.t("selection-no-selection-tip")
             }),
             None,
         )
@@ -463,7 +444,7 @@ pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
             }
             x += 4.0;
             let at = Rect::from_min_size(pos2(x, row.top()), vec2(28.0, ROW));
-            let tip = format!("{}: {name}", lang.pick("名前を変える", "Rename"));
+            let tip = format!("{}: {name}", lang.t("selection-rename-tip"));
             if w::icon_button(
                 ui,
                 at,
@@ -480,7 +461,7 @@ pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
             }
             x += 28.0;
             let at = Rect::from_min_size(pos2(x, row.top()), vec2(28.0, ROW));
-            let tip = format!("{} {name}", lang.pick("消す:", "Remove:"));
+            let tip = format!("{} {name}", lang.t("selection-remove-tip"));
             if w::icon_button(
                 ui,
                 at,

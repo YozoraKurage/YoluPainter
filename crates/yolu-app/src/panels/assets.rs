@@ -21,7 +21,7 @@ use crate::m2::{DropTarget, Row};
 use crate::notice::Source as NoticeSource;
 use crate::panels::layers::ROW_HEIGHT;
 use crate::shelf::{self, ItemKind, PlaceTarget, ShelfDrag, ShelfOp};
-use crate::state::{Action, AppState, DialogRequest, OpenPopup, PopupKind};
+use crate::state::{Action, AppState, DialogRequest, OpenPopup, PopupKind, Waker};
 use crate::ui::menu::{context_anchor, Entry, PopupState};
 use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
@@ -68,7 +68,7 @@ fn pending_label(app: &AppState) -> Option<(&'static str, String)> {
     }
     app.library
         .writing_name()
-        .map(|name| (lang.pick("書き込み中", "Writing"), name.to_owned()))
+        .map(|name| (lang.t("panels-writing"), name.to_owned()))
 }
 
 pub fn show(ui: &mut Ui, app: &mut AppState) {
@@ -77,11 +77,11 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     let ctx = ui.ctx().clone();
     let lang = app.lang;
     app.shelf.use_language(lang);
-    app.library.set_context(&ctx);
+    app.library.set_waker(repaint_waker(&ctx));
     let source = app.library.source;
     // 項目の情報とサムネイルは別のスレッドで作る。できた分を受け取り、見えている項目の分は格子を描くときに頼む
     match source {
-        Source::Project => app.shelf.begin_inspection_frame(&ctx),
+        Source::Project => app.shelf.begin_inspection_frame(repaint_waker(&ctx)),
         Source::Library => {
             let folder = app.library_root();
             app.library.prepare(folder);
@@ -135,7 +135,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
             refresh,
             "shelf.library.refresh",
             "sync",
-            lang.pick("一覧を読み直す", "Reload the list"),
+            lang.t("panels-reload-the-list-tip"),
             false,
             true,
             16.0,
@@ -153,7 +153,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
             reveal,
             "shelf.library.reveal",
             "folder_open",
-            lang.pick("ライブラリのフォルダを開く", "Open the library folder"),
+            lang.t("panels-open-the-library-folder-tip"),
             false,
             app.library_root().is_some(),
             16.0,
@@ -167,7 +167,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     let row = rows.row(26.0, 4.0);
     let mut x = row.left();
     let mut filters: Vec<(Option<ItemKind>, &str, &str)> =
-        vec![(None, "grid_dots", lang.pick("すべて", "All"))];
+        vec![(None, "grid_dots", lang.t("panels-all"))];
     for kind in ItemKind::ALL {
         filters.push((Some(kind), kind.icon(), kind.name(lang)));
     }
@@ -191,7 +191,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                 import,
                 "shelf.import",
                 "import",
-                lang.pick(".ylsmart を読み込む…", "Import .ylsmart…"),
+                lang.t("panels-import-ylsmart-tip"),
                 false,
                 app.shelf.unavailable.is_none(),
                 16.0,
@@ -207,10 +207,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                 import,
                 "shelf.library.add",
                 "add",
-                lang.pick(
-                    "ライブラリへファイルを追加…（PNG・.ylsmart）",
-                    "Add files to the library… (PNG, .ylsmart)",
-                ),
+                lang.t("panels-add-files-to-the-library-tip"),
                 false,
                 app.library_root().is_some(),
                 16.0,
@@ -228,7 +225,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         row,
         "shelf.search",
         &mut app.shelf.search,
-        lang.pick("検索", "Search"),
+        lang.t("panels-search-tip"),
     ) {
         app.shelf.scroll = 0.0;
     }
@@ -252,7 +249,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                 ui,
                 cancel,
                 "shelf.save.cancel",
-                lang.pick("やめる", "Cancel"),
+                lang.t("panels-cancel"),
                 false,
                 true,
                 None,
@@ -272,7 +269,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         pos2(r.left() + t::PADDING, top),
         pos2(r.right() - t::PADDING, (r.bottom() - FOOTER_H).max(top)),
     );
-    app.library.grid_rect = (source == Source::Library).then_some(grid);
+    app.ui.library_grid_rect = (source == Source::Library).then_some(grid);
     cards(ui, app, &ctx, grid);
     footer(
         ui,
@@ -293,20 +290,18 @@ fn save_buttons(ui: &mut Ui, app: &mut AppState, row: Rect) {
     let lang = app.lang;
     let halves = w::Rows::split(row, 2, 6.0);
     let layer = app
+        .session
         .selected_layer
-        .and_then(|id| app.doc.layer(id).map(|l| (id, l.mask().is_some())));
+        .and_then(|id| app.session.doc.layer(id).map(|l| (id, l.mask().is_some())));
     let can_save = layer.is_some() && app.can_edit() && app.shelf.unavailable.is_none();
     if w::button(
         ui,
         halves[0],
         "shelf.save.material",
-        lang.pick("レイヤーを保存", "Save Layer"),
+        lang.t("panels-save-layer"),
         false,
         can_save,
-        Some(lang.pick(
-            "選んでいるレイヤー（グループなら中身ごと）をスマートマテリアルとしてアセットに入れる",
-            "Put the selected layer (with its contents, for a group) into the project's assets as a smart material",
-        )),
+        Some(lang.t("panels-put-the-selected-layer-with-tip")),
         None,
     )
     .clicked()
@@ -319,13 +314,10 @@ fn save_buttons(ui: &mut Ui, app: &mut AppState, row: Rect) {
         ui,
         halves[1],
         "shelf.save.mask",
-        lang.pick("マスクを保存", "Save Mask"),
+        lang.t("panels-save-mask"),
         false,
         can_save && layer.is_some_and(|(_, has_mask)| has_mask),
-        Some(lang.pick(
-            "選んでいるレイヤーのマスクをスマートマスクとしてアセットに入れる",
-            "Put the selected layer's mask into the project's assets as a smart mask",
-        )),
+        Some(lang.t("panels-put-the-selected-layer-s-tip")),
         None,
     )
     .clicked()
@@ -569,12 +561,12 @@ fn cards(ui: &mut Ui, app: &mut AppState, ctx: &egui::Context, grid: Rect) {
                 .shelf
                 .unavailable
                 .clone()
-                .map(|r| (lang.pick("アセットを読めません", "Assets unreadable"), r)),
+                .map(|r| (lang.t("panels-assets-unreadable"), r)),
             Source::Library => app
                 .library
                 .problem()
                 .cloned()
-                .map(|r| (lang.pick("ライブラリを読めません", "Library unreadable"), r)),
+                .map(|r| (lang.t("panels-library-unreadable"), r)),
         };
         if let Some((text, reason)) = unreadable {
             let at = Rect::from_min_size(
@@ -771,7 +763,7 @@ fn card_cell(
         t::LABEL_SMALL.with_color(if selected { Color32::WHITE } else { t::TEXT }),
         Align::Center,
     );
-    if response.clicked() || response.drag_started() {
+    if response.clicked() || response.drag_started_by(egui::PointerButton::Primary) {
         select(app, card);
     }
     if response.double_clicked() {
@@ -782,14 +774,14 @@ fn card_cell(
     if response.secondary_clicked() {
         select(app, card);
         if let Some(at) = response.interact_pointer_pos() {
-            app.popup = Some(OpenPopup {
+            app.ui.popup = Some(OpenPopup {
                 kind: PopupKind::Shelf,
                 state: PopupState::new(ui.ctx(), context_anchor(at)),
             });
         }
     }
     // 利用者のブラシは、レイヤーへ置けないので、引かない
-    if response.drag_started() && card.brush.is_none() {
+    if response.drag_started_by(egui::PointerButton::Primary) && card.brush.is_none() {
         response.dnd_set_drag_payload(ShelfDrag {
             id: card.id.clone(),
             kind: card.kind,
@@ -808,13 +800,10 @@ fn card_cell(
         tip += &format!("\n{reason}");
     }
     if card.builtin {
-        tip += &format!("\n{}", lang.pick("組み込み", "Built-in"));
+        tip += &format!("\n{}", lang.t("panels-built-in"));
     }
     if card.in_project {
-        tip += &format!(
-            "\n{}",
-            lang.pick("プロジェクトにあります", "Already in the project")
-        );
+        tip += &format!("\n{}", lang.t("panels-already-in-the-project"));
     }
     let name = card.name.clone();
     response
@@ -878,18 +867,8 @@ fn project_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let place_enabled = id.is_some() && block.is_none() && free;
     let place_tip = match (&block, mask) {
         (Some(b), _) => b.reason(lang),
-        (None, true) => lang
-            .pick(
-                "選んでいるレイヤーのマスクをこのマスクに入れ替える（1 回の取り消し）",
-                "Replace the selected layer's mask with this one (one undo step)",
-            )
-            .to_owned(),
-        (None, false) => lang
-            .pick(
-                "選んでいるレイヤーの上に新しいレイヤーとして置く（1 回の取り消し）",
-                "Put it above the selected layer as new layers (one undo step)",
-            )
-            .to_owned(),
+        (None, true) => lang.t("panels-replace-the-selected-layer-s-tip").to_owned(),
+        (None, false) => lang.t("panels-put-it-above-the-selected-tip").to_owned(),
     };
     let icons = 3.0 * 28.0;
     let main = Rect::from_min_size(
@@ -897,9 +876,9 @@ fn project_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
         vec2(buttons.width() - icons - 2.0, buttons.height()),
     );
     let label = if mask {
-        lang.pick("マスクに適用", "Apply to Mask")
+        lang.t("panels-apply-to-mask")
     } else {
-        lang.pick("置く", "Place")
+        lang.t("panels-place")
     };
     if w::button(
         ui,
@@ -929,7 +908,7 @@ fn project_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
         export,
         "shelf.export",
         "save",
-        lang.pick("書き出す…（.ylsmart）", "Export… (.ylsmart)"),
+        lang.t("panels-export-ylsmart-tip"),
         false,
         id.as_deref().is_some_and(|i| !shelf::is_builtin(i))
             && kind.is_some_and(ItemKind::is_smart),
@@ -950,7 +929,7 @@ fn project_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
         to_library,
         "shelf.to-library",
         "library",
-        lang.pick("ライブラリへ入れる", "Put into the library"),
+        lang.t("panels-put-into-the-library-tip"),
         false,
         id.as_deref().is_some_and(|i| !shelf::is_builtin(i))
             && !app.is_stroking()
@@ -972,10 +951,7 @@ fn project_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
         remove,
         "shelf.remove",
         "delete",
-        lang.pick(
-            "アセットから消す（置いたレイヤーはそのまま）",
-            "Remove from the project's assets (placed layers stay)",
-        ),
+        lang.t("panels-remove-from-the-project-s-tip"),
         false,
         id.as_deref().is_some_and(|i| !shelf::is_builtin(i))
             && !app.is_stroking()
@@ -1040,46 +1016,28 @@ fn library_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let uses = kind == Some(ItemKind::Brush);
     let (label, tip, enabled, action) = match (&rel, brush_key, kind) {
         (_, Some(key), _) if rel.is_none() => (
-            lang.pick("使う", "Use"),
-            lang.pick(
-                "このブラシを今のブラシにする",
-                "Make this the current brush",
-            )
-            .to_owned(),
+            lang.t("panels-use"),
+            lang.t("panels-make-this-the-current-brush").to_owned(),
             free,
             Some(Action::Brush(BrushAction::Select(key))),
         ),
         (Some(rel), _, _) if uses => (
-            lang.pick("使う", "Use"),
-            lang.pick(
-                "写しをプロジェクトのアセットへ入れる（まだ置けない種類）",
-                "Copy it into the project's assets (cannot be placed yet)",
-            )
-            .to_owned(),
+            lang.t("panels-use"),
+            lang.t("panels-copy-it-into-the-project").to_owned(),
             free && app.shelf.unavailable.is_none()
                 && !matches!(block, Some(shelf::Block::Unreadable(_))),
             Some(Action::Shelf(ShelfOp::UseFromLibrary(rel.clone()))),
         ),
         (Some(rel), _, _) => (
             if mask {
-                lang.pick("マスクに適用", "Apply to Mask")
+                lang.t("panels-apply-to-mask")
             } else {
-                lang.pick("置く", "Place")
+                lang.t("panels-place")
             },
             match (&block, mask) {
                 (Some(b), _) => b.reason(lang),
-                (None, true) => lang
-                    .pick(
-                        "選んでいるレイヤーのマスクをこのマスクに入れ替える（1 回の取り消し）",
-                        "Replace the selected layer's mask with this one (one undo step)",
-                    )
-                    .to_owned(),
-                (None, false) => lang
-                    .pick(
-                        "選んでいるレイヤーの上に新しいレイヤーとして置く（1 回の取り消し）",
-                        "Put it above the selected layer as new layers (one undo step)",
-                    )
-                    .to_owned(),
+                (None, true) => lang.t("panels-replace-the-selected-layer-s").to_owned(),
+                (None, false) => lang.t("panels-put-it-above-the-selected").to_owned(),
             },
             free && block.is_none() && app.can_edit() && app.library.info(rel).is_some(),
             Some(Action::Shelf(ShelfOp::Place {
@@ -1087,7 +1045,7 @@ fn library_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
                 target: PlaceTarget::Selected,
             })),
         ),
-        _ => (lang.pick("置く", "Place"), String::new(), false, None),
+        _ => (lang.t("panels-place"), String::new(), false, None),
     };
     let icons = 3.0 * 28.0;
     let main = Rect::from_min_size(
@@ -1123,10 +1081,7 @@ fn library_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
         use_icon,
         "shelf.library.use",
         "import",
-        lang.pick(
-            "プロジェクトで使う（写しを .ylp に入れる）",
-            "Use in this project (a copy goes into the .ylp)",
-        ),
+        lang.t("panels-use-in-this-project-a-tip"),
         false,
         usable,
         16.0,
@@ -1146,7 +1101,7 @@ fn library_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
         reveal,
         "shelf.library.open",
         "folder_open",
-        lang.pick("ライブラリのフォルダを開く", "Open the library folder"),
+        lang.t("panels-open-the-library-folder-tip"),
         false,
         app.library_root().is_some(),
         16.0,
@@ -1164,10 +1119,7 @@ fn library_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
         remove,
         "shelf.library.remove",
         "delete",
-        lang.pick(
-            "ライブラリから消す（プロジェクトの写しと置いたレイヤーはそのまま）",
-            "Remove from the library (project copies and placed layers stay)",
-        ),
+        lang.t("panels-remove-from-the-library-project-tip"),
         false,
         file_kind.is_some() && free,
         16.0,
@@ -1204,14 +1156,10 @@ fn list_status(app: &AppState) -> (Option<String>, Option<String>) {
     let mut tip = text.clone();
     for s in skipped.iter().take(8) {
         let why = match &s.reason {
-            yolu_io::library::SkipReason::Link => lang.pick("リンク", "Link").to_owned(),
-            yolu_io::library::SkipReason::Name => {
-                lang.pick("名前が使えません", "Name not allowed").to_owned()
-            }
-            yolu_io::library::SkipReason::Deep => lang.pick("深すぎます", "Too deep").to_owned(),
-            yolu_io::library::SkipReason::Unreadable(_) => {
-                lang.pick("読めません", "Unreadable").to_owned()
-            }
+            yolu_io::library::SkipReason::Link => lang.t("panels-link").to_owned(),
+            yolu_io::library::SkipReason::Name => lang.t("panels-name-not-allowed").to_owned(),
+            yolu_io::library::SkipReason::Deep => lang.t("panels-too-deep").to_owned(),
+            yolu_io::library::SkipReason::Unreadable(_) => lang.t("panels-unreadable").to_owned(),
         };
         tip += &format!("\n{}: {why}", s.rel);
     }
@@ -1285,7 +1233,10 @@ pub fn placement_for(doc: &Document, rows: &[Row], target: DropTarget) -> PlaceT
             },
             Some(layer) => {
                 let parent = layer.parent();
-                let siblings = doc.children_of(parent).unwrap_or_default();
+                // 位置は、その行のレイヤーのレイヤーセットの中で数える
+                let siblings = doc
+                    .children_in_set(layer.layer_set(), parent)
+                    .unwrap_or_default();
                 PlaceTarget::At {
                     parent,
                     position: siblings
@@ -1356,7 +1307,7 @@ pub fn layer_list_drop(
                     }
                 }
             }
-            Some(placement_for(&app.doc, rows, target))
+            Some(placement_for(&app.session.doc, rows, target))
         }
         // 置けない種類は印を出さず、離したときに理由を出す
         _ => Some(PlaceTarget::Selected),
@@ -1389,9 +1340,9 @@ pub fn menu_entries(app: &AppState) -> Vec<Entry<Action>> {
     let blocked = app.shelf.block_of(&id).is_some();
     let builtin = shelf::is_builtin(&id);
     let label = if kind == Some(ItemKind::SmartMask) {
-        lang.pick("マスクに適用", "Apply to Mask")
+        lang.t("panels-apply-to-mask")
     } else {
-        lang.pick("置く", "Place")
+        lang.t("panels-place")
     };
     vec![
         Entry::item(
@@ -1404,12 +1355,12 @@ pub fn menu_entries(app: &AppState) -> Vec<Entry<Action>> {
         .enabled(free && !blocked && app.can_edit()),
         Entry::Separator,
         Entry::item(
-            lang.pick("書き出す…", "Export…"),
+            lang.t("panels-export"),
             Action::Shelf(ShelfOp::ExportDialog(id.clone())),
         )
         .enabled(kind.is_some_and(ItemKind::is_smart) && !builtin),
         Entry::item(
-            lang.pick("ライブラリへ入れる", "Put into the library"),
+            lang.t("panels-put-into-the-library"),
             Action::Shelf(ShelfOp::ToLibrary(id.clone())),
         )
         .enabled(
@@ -1417,7 +1368,7 @@ pub fn menu_entries(app: &AppState) -> Vec<Entry<Action>> {
                 && !matches!(app.shelf.block_of(&id), Some(shelf::Block::Unreadable(_))),
         ),
         Entry::item(
-            lang.pick("アセットから消す…", "Remove from the project's assets…"),
+            lang.t("panels-remove-from-the-project-s"),
             Action::Shelf(ShelfOp::AskRemove(id)),
         )
         .enabled(free && app.shelf.unavailable.is_none() && !builtin),
@@ -1436,7 +1387,7 @@ fn library_menu_entries(app: &AppState) -> Vec<Entry<Action>> {
         .and_then(BrushKey::parse_token)
     {
         return vec![Entry::item(
-            lang.pick("使う", "Use"),
+            lang.t("panels-use"),
             Action::Brush(BrushAction::Select(key)),
         )
         .enabled(free)];
@@ -1458,7 +1409,7 @@ fn library_menu_entries(app: &AppState) -> Vec<Entry<Action>> {
     if uses {
         items.push(
             Entry::item(
-                lang.pick("使う", "Use"),
+                lang.t("panels-use"),
                 Action::Shelf(ShelfOp::UseFromLibrary(rel.clone())),
             )
             .enabled(free && !unreadable && app.shelf.unavailable.is_none()),
@@ -1467,9 +1418,9 @@ fn library_menu_entries(app: &AppState) -> Vec<Entry<Action>> {
         items.push(
             Entry::item(
                 if kind == ItemKind::SmartMask {
-                    lang.pick("マスクに適用", "Apply to Mask")
+                    lang.t("panels-apply-to-mask")
                 } else {
-                    lang.pick("置く", "Place")
+                    lang.t("panels-place")
                 },
                 Action::Shelf(ShelfOp::Place {
                     id: id.clone(),
@@ -1480,7 +1431,7 @@ fn library_menu_entries(app: &AppState) -> Vec<Entry<Action>> {
         );
         items.push(
             Entry::item(
-                lang.pick("プロジェクトで使う", "Use in this project"),
+                lang.t("panels-use-in-this-project"),
                 Action::Shelf(ShelfOp::UseFromLibrary(rel.clone())),
             )
             .enabled(free && !unreadable && app.shelf.unavailable.is_none()),
@@ -1488,12 +1439,12 @@ fn library_menu_entries(app: &AppState) -> Vec<Entry<Action>> {
     }
     items.push(Entry::Separator);
     items.push(Entry::item(
-        lang.pick("ライブラリのフォルダを開く", "Open the library folder"),
+        lang.t("panels-open-the-library-folder"),
         Action::Shelf(ShelfOp::LibraryReveal),
     ));
     items.push(
         Entry::item(
-            lang.pick("ライブラリから消す…", "Remove from the library…"),
+            lang.t("panels-remove-from-the-library"),
             Action::Shelf(ShelfOp::LibraryAskRemove(rel)),
         )
         .enabled(free),
@@ -1505,21 +1456,32 @@ fn library_menu_entries(app: &AppState) -> Vec<Entry<Action>> {
 /// （ライブラリの格子の上に落とした PNG と .ylsmart はライブラリへ、そうでない .ylsmart は棚へ。PNG は格子の上だけ
 /// （筆先・ステンシルの画像の箱へ落とした PNG は、そちらが取る）。.ylp は `YoluApp` が開く）。
 pub fn frame(ctx: &egui::Context, state: &mut AppState) {
-    state.shelf.context = Some(ctx.clone());
+    let waker = repaint_waker(ctx);
+    state.shelf.waker = Some(waker.clone());
     // 棚の項目の絵（アセットの欄・塗りつぶしの画像の箱が頼む）は、欄が見えていなくても受け取る
-    state.shelf.attach_repaint(ctx);
+    state.shelf.attach_repaint(waker);
     state.shelf.poll_inspections(shelf::INSPECTIONS_PER_FRAME);
     state.shelf_poll();
     state.library_poll();
     // 格子の範囲はこのフレームで描いたときだけ入る（前のフレームの分を取り、今のフレームの描画が入れ直す）
-    let grid = state.library.grid_rect.take();
+    let grid = state.ui.library_grid_rect.take();
     import_dropped(ctx, state, grid);
 }
 
+/// 別のスレッドの仕事が終わったときに、この画面を描き直させる口。
+pub(crate) fn repaint_waker(ctx: &egui::Context) -> Waker {
+    let ctx = ctx.clone();
+    Waker::new(move || ctx.request_repaint())
+}
+
 pub(crate) fn import_dropped(ctx: &egui::Context, state: &mut AppState, grid: Option<Rect>) {
+    // 落としていないフレームでは位置を取らない（ドラッグの間に、OS のカーソルの位置を毎フレーム聞かない）
+    if ctx.input(|i| i.raw.dropped_files.is_empty()) {
+        return;
+    }
     let over_grid = state.library.source == Source::Library
         && grid
-            .zip(ctx.input(|i| i.pointer.latest_pos()))
+            .zip(crate::pen::drop_point::drop_point(ctx))
             .is_some_and(|(r, p)| r.contains(p));
     let dropped: Vec<PathBuf> = ctx.input(|i| {
         i.raw
@@ -1564,16 +1526,13 @@ fn file_stem(name: &str) -> String {
     }
 }
 
-/// 棚のファイルのウィンドウ・確認のウィンドウ（ウィンドウを開かない試験では呼ばれない。頼みは `state.dialog_request` に残る）。
+/// 棚のファイルのウィンドウ・確認のウィンドウ（ウィンドウを開かない試験では呼ばれない。頼みは `state.outbox.dialog_request` に残る）。
 pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
     let lang = state.lang;
     match request {
         DialogRequest::ShelfImport => {
             if let Some(paths) = crate::dialog::file(state, Place::Assets)
-                .set_title(lang.pick(
-                    "スマート素材をアセットへ読み込む",
-                    "Import smart assets into the project",
-                ))
+                .set_title(lang.t("panels-import-smart-assets-into-the"))
                 .add_filter("YoluPainter Smart", &["ylsmart"])
                 .pick_files()
             {
@@ -1591,7 +1550,7 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
                 return;
             };
             if let Some(path) = crate::dialog::file(state, Place::Assets)
-                .set_title(lang.pick("スマート素材を書き出す", "Export the smart asset"))
+                .set_title(lang.t("panels-export-the-smart-asset"))
                 .add_filter("YoluPainter Smart", &["ylsmart"])
                 .set_file_name(format!("{}.ylsmart", file_stem(&name)))
                 .save_file()
@@ -1602,10 +1561,7 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
         }
         DialogRequest::LibraryAdd => {
             if let Some(paths) = crate::dialog::file(state, Place::Assets)
-                .set_title(lang.pick(
-                    "ライブラリへ追加するファイル",
-                    "Files to add to the library",
-                ))
+                .set_title(lang.t("panels-files-to-add-to-the"))
                 .add_filter("PNG / YoluPainter Smart", &["png", "ylsmart"])
                 .pick_files()
             {
@@ -1644,7 +1600,7 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
                     state.fail(
                         NoticeSource::Library,
                         lang.with_reason(
-                            lang.pick("フォルダを開けません", "Cannot open the folder"),
+                            lang.t("panels-cannot-open-the-folder"),
                             lang.file_error(&e),
                         ),
                     );

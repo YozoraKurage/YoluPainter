@@ -48,6 +48,10 @@ pub(super) use color::{mixed32, tally32};
 use effect::{apply_effect_range, BLUR, CLONE, SMUDGE};
 pub(super) use effect::{blur32, mix_effect32, sample32};
 
+/// 知覚的な混ぜの画素ごとの時間の見積もり（ナノ秒。しきい値の換算に使う）。1 スレッドの CPU 時間の計測（`stroke_bench` の混ぜるに混色モードの
+/// 知覚的を足した形。柔らかさ 0.8 の丸、直径 64・200、間隔 10%、全タイルが乱数の画素のレイヤーの上）で、標準の混ぜる 11 に対して 100〜110 ナノ秒 / 画素。
+const PERCEPTUAL_PIXEL_NANOS: i64 = 100;
+
 /// 行の長さの上限（これを超えるタイルの大きさは行の核を使わない。タイルの大きさは 1〜1024）。
 const MAX_ROW: usize = 1024;
 /// 行の覆い・紙の質感の値を、スタックに置く行の長さ（これより長い行はヒープ）。
@@ -190,11 +194,23 @@ unsafe fn accumulate<V: Lanes32>(previous: V::F, ceiling: V::F, flow: V::F) -> V
     }
 }
 
-/// 1 画素の [`accumulate`]。
+/// 比較暗の重ね方: このダブだけで届く値（天井 × min(1, 流量)）と前の値の、大きい方を残す（足していかない）。
 #[inline(always)]
-pub(super) fn accumulate32(previous: f32, ceiling: f32, flow: f32) -> f32 {
+unsafe fn keep_darker<V: Lanes32>(previous: V::F, ceiling: V::F, flow: V::F) -> V::F {
+    unsafe { V::max(previous, V::mul(ceiling, V::min(V::splat(1.0), flow))) }
+}
+
+/// 1 画素の [`accumulate`]（`darken` なら [`keep_darker`]）。
+#[inline(always)]
+pub(super) fn settle32(darken: bool, previous: f32, ceiling: f32, flow: f32) -> f32 {
     // SAFETY: 1 本のレーンは CPU の前提を持たない
-    unsafe { accumulate::<Scalar1>(previous, ceiling, flow) }
+    unsafe {
+        if darken {
+            keep_darker::<Scalar1>(previous, ceiling, flow)
+        } else {
+            accumulate::<Scalar1>(previous, ceiling, flow)
+        }
+    }
 }
 
 /// 下 start に描く色 color を量 amount で Normal で重ねる（`crate::blend` の Normal の N 画素の式。何も変わらなければ start）。
@@ -374,7 +390,8 @@ pub(super) fn usable(cx: &PixelContext<'_>, s: &DabShape<'_>) -> Option<Level> {
 
 /// 試験だけ: 行の核を使わず、画素ごとの式（`apply_at`）で描く（行の核と画素ごとの式が同じバイトになることを比べる）。
 #[cfg(test)]
-static PER_PIXEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub(super) static PER_PIXEL: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(test)]
 fn per_pixel_forced() -> bool {
@@ -412,6 +429,10 @@ pub(super) fn cost_per_pixel(
     no_selection: bool,
     tile_size: usize,
 ) -> i64 {
+    // 知覚的な混ぜは、画素ごとに錐体応答への変換と 8 乗根・sRGB への変換を通る（1 本のレーンで 1 画素ずつ。どの道でも同じ費用）
+    if paint.mix.is_some_and(|m| m.space == MixSpace::Perceptual) {
+        return PERCEPTUAL_PIXEL_NANOS;
+    }
     if simd::level() == Level::Scalar || !eligible(paint, s, no_selection, tile_size) {
         return SCALAR_PIXEL_NANOS;
     }
@@ -563,6 +584,8 @@ pub(super) struct Shape32<'a> {
     aa: Option<Aa32>,
     /// 画像の筆先の小さなダブの濃さ（1 は掛けない）。
     density: f32,
+    /// リボンの帯の範囲 [lo, hi) と画像の中心（線の向き、半径の単位。[`super::ribbon`]）。
+    ribbon: Option<(f32, f32, f32)>,
 }
 
 /// 丸の縁のアンチエイリアスの f32 の値（[`super::edge`] の式。ダブで 1 つ）。
@@ -667,6 +690,9 @@ impl<'a> Shape32<'a> {
             tip: s.tip,
             aa,
             density,
+            ribbon: s
+                .ribbon
+                .map(|r| (r.lo as f32, r.hi as f32, r.center as f32)),
         }
     }
 }
@@ -682,6 +708,8 @@ pub(super) struct Dab32 {
     density: Option<f32>,
     /// 指先の強さ（流量への倍率）
     strength: Option<f32>,
+    /// ダブの重なりを比較暗にする（覆いを足さず、大きい方を残す）。
+    darken: bool,
 }
 
 impl Dab32 {
@@ -697,6 +725,19 @@ impl Dab32 {
                 EffectKind::Smudge(strength) => Some(strength as f32),
                 _ => None,
             },
+            darken: p.darken,
+        }
+    }
+
+    /// ストロークの覆いを、このダブの天井と流量で更新する（普通は天井へ寄せる。比較暗なら大きい方を残す）。
+    #[inline(always)]
+    unsafe fn settle<V: Lanes32>(&self, previous: V::F, ceiling: V::F, flow: V::F) -> V::F {
+        unsafe {
+            if self.darken {
+                keep_darker::<V>(previous, ceiling, flow)
+            } else {
+                accumulate::<V>(previous, ceiling, flow)
+            }
         }
     }
 
@@ -752,6 +793,7 @@ pub(super) fn ceiling_and_flow32(
         pressure_flow: pressure.flow as f32,
         density: density.map(|v| v as f32),
         strength: smudge.map(|v| v as f32),
+        darken: false,
     };
     // SAFETY: 1 本のレーンは CPU の前提を持たない
     unsafe {
@@ -840,7 +882,12 @@ unsafe fn rows<V: Slice32>(
         }
         let with_texture = s.texture.is_some();
         if let Some(tex) = s.texture {
-            unsafe { texture_row::<V>(tex, opacity_scale, py, xs.0, cov, scale, lo, hi) };
+            let depth = super::texture_depth(tex, s.texture_density) as f32;
+            unsafe { texture_row::<V>(tex, depth, opacity_scale, py, xs.0, cov, scale, lo, hi) };
+        }
+        // はみ出し防止: 範囲の外の画素は塗らない（デュアル・質感の後に。画素ごとの式の道と同じ所）
+        if let Some(region) = cx.paint.region {
+            region.mask_row(py, xs.0, cov, lo, hi);
         }
         let scale = if with_texture {
             Scale::Row(&scale[..])
@@ -920,6 +967,15 @@ unsafe fn cover_block<V: Slice32>(c: &Shape32<'_>, dx: V::F, dy: V::F, live: Opt
             V::add(V::mul(nsin, dx), V::mul(cos, dy)),
             V::splat(c.squash),
         );
+        // リボンの帯: 範囲 [lo, hi) の外は 0、画像は帯の位置へずらす
+        let window = match c.ribbon {
+            Some((lo, hi, center)) => {
+                let out = V::or(V::lt(u, V::splat(lo)), V::ge(u, V::splat(hi)));
+                u = V::sub(u, V::splat(center));
+                Some(out)
+            }
+            None => None,
+        };
         if c.flip_x {
             u = V::neg(u);
         }
@@ -928,11 +984,15 @@ unsafe fn cover_block<V: Slice32>(c: &Shape32<'_>, dx: V::F, dy: V::F, live: Opt
         }
         let tu = V::mul(V::add(V::div(u, V::splat(c.aspect_x)), one), half);
         let tv = V::mul(V::add(V::div(v, V::splat(c.aspect_y)), one), half);
-        // [0, 1]² の外は 0
-        let outside = V::or(
-            V::or(V::lt(tu, zero), V::lt(tv, zero)),
-            V::or(V::gt(tu, one), V::gt(tv, one)),
-        );
+        // [0, 1]² の外は 0（リボンの帯は、横は範囲で決め、横の端は端の画素を延ばして読む）
+        let outside = match window {
+            None => V::or(
+                V::or(V::lt(tu, zero), V::lt(tv, zero)),
+                V::or(V::gt(tu, one), V::gt(tv, one)),
+            ),
+            Some(out) => V::or(out, V::or(V::lt(tv, zero), V::gt(tv, one))),
+        };
+        let clamp_x = window.is_some();
         let (w, h) = (tip.width() as i32, tip.height() as i32);
         let x = V::sub(V::mul(tu, V::splat(w as f32)), half);
         let y = V::sub(V::mul(tv, V::splat(h as f32)), half);
@@ -953,6 +1013,7 @@ unsafe fn cover_block<V: Slice32>(c: &Shape32<'_>, dx: V::F, dy: V::F, live: Opt
         let (mut ta, mut tb, mut tc, mut td) = ([0.0f32; 8], [0.0f32; 8], [0.0f32; 8], [0.0f32; 8]);
         let stride = w as usize;
         let texel = |x: i32, y: i32| {
+            let x = if clamp_x { x.clamp(0, w - 1) } else { x };
             if x < 0 || y < 0 || x >= w || y >= h {
                 0.0
             } else {
@@ -1148,9 +1209,16 @@ fn tip_span(s: &DabShape<'_>, dy: f64) -> Option<(f64, f64)> {
         let (p, q) = ((-reach - b) / a, (reach - b) / a);
         Some(if p < q { (p, q) } else { (q, p) })
     }
-    let reach_u = s.aspect_x * s.radius;
     let reach_v = s.aspect_y * s.radius * s.roundness;
-    let by_u = range(s.cos, s.sin * dy, reach_u);
+    // リボンの帯は、横を範囲 [lo, hi)（半径の単位）で狭める
+    let by_u = match s.ribbon {
+        Some(r) => range(
+            s.cos,
+            s.sin * dy - (r.lo + r.hi) * 0.5 * s.radius,
+            (r.hi - r.lo) * 0.5 * s.radius,
+        ),
+        None => range(s.cos, s.sin * dy, s.aspect_x * s.radius),
+    };
     let by_v = range(-s.sin, s.cos * dy, reach_v);
     let (mut lo, mut hi) = (f64::NEG_INFINITY, f64::INFINITY);
     for (a, b) in [by_u, by_v].into_iter().flatten() {
@@ -1272,6 +1340,11 @@ unsafe fn combine<V: Lanes32>(mode: DualBrushMode, main: V::F, dual: V::F) -> V:
             DualBrushMode::LinearBurn => V::sub(V::add(main, dual), one),
             DualBrushMode::HardMix => V::select(V::ge(V::add(main, dual), one), one, zero),
             DualBrushMode::Subtract => V::sub(main, dual),
+            DualBrushMode::Normal => main,
+            DualBrushMode::Add => V::add(main, dual),
+            DualBrushMode::Lighten => V::max(main, dual),
+            DualBrushMode::Screen => V::sub(one, V::mul(V::sub(one, main), V::sub(one, dual))),
+            DualBrushMode::LinearHeight => V::sub(main, V::mul(dual, V::sub(one, main))),
         };
         V::select(V::le(main, zero), zero, clamp01_32::<V>(r))
     }
@@ -1329,12 +1402,43 @@ pub(super) struct Grain<'a> {
     row1: usize,
     fy: f32,
     scale: f32,
+    /// 回した質感の読み（角度が 0 のときは None で、今までの行の読み）。
+    turn: Option<GrainTurn<'a>>,
+}
+
+/// 回した質感の 1 行の読み: キャンバスの画素の中心を角度の分だけ逆に回して、並べた画像を読む（画像は回さないので、継ぎ目は崩れない）。
+/// 1 画素ずつ f64 で測り、レーンの数によらず同じ値にする。
+struct GrainTurn<'a> {
+    image: &'a BrushTip,
+    cos: f64,
+    sin: f64,
+    scale: f64,
+    /// 行の画素の中心の y。
+    y: f64,
+}
+
+impl GrainTurn<'_> {
+    /// キャンバスの画素 px（中心 px + 0.5）の質感（0〜1）。
+    fn at(&self, px: f32) -> f32 {
+        let x = f64::from(px) + 0.5;
+        let u = (self.cos * x + self.sin * self.y) / self.scale;
+        let v = (self.cos * self.y - self.sin * x) / self.scale;
+        self.image.sample_tiled(u, v) as f32
+    }
 }
 
 impl<'a> Grain<'a> {
     pub(super) fn new(tex: &'a PaperTexture, py: i64) -> Self {
         let r = tex.image.tiled_row((py as f64 + 0.5) / tex.scale);
+        let turn = tex.turn().map(|(cos, sin)| GrainTurn {
+            image: &tex.image,
+            cos,
+            sin,
+            scale: tex.scale,
+            y: py as f64 + 0.5,
+        });
         Grain {
+            turn,
             alpha: tex.image.alpha(),
             width: tex.image.width() as i32,
             row0: r.row0,
@@ -1349,6 +1453,11 @@ impl<'a> Grain<'a> {
 #[inline(always)]
 unsafe fn grain_block<V: Slice32>(g: &Grain<'_>, px: V::F) -> V::F {
     unsafe {
+        if let Some(turn) = &g.turn {
+            let mut xs = [0.0f32; 8];
+            V::store_f32(&mut xs, px);
+            return V::from_fn(|k| turn.at(xs[k]));
+        }
         let (one, half) = (V::splat(1.0), V::splat(0.5));
         let x = V::sub(V::div(V::add(px, half), V::splat(g.scale)), half);
         let x0 = V::floor(x);
@@ -1404,6 +1513,28 @@ unsafe fn texture_scale<V: Slice32>(g: &Grain<'_>, depth: f32, base: f32, px: V:
     }
 }
 
+/// 乗算でない紙の質感: 値 c（主は天井、2 つ目は溜まりへ置く覆い）と質感の値 grain を合わせ方 mode で合わせ、深さ depth で c との間を取る。
+#[inline(always)]
+pub(super) fn paper_blend(mode: DualBrushMode, c: f32, grain: f32, depth: f32) -> f32 {
+    c + (combine32(mode, c, grain) - c) * depth
+}
+
+/// 2 つ目の溜まりへ置く覆い c に、2 つ目の紙の質感 tex（深さ depth、行の読み grain）の画素 x の値を掛ける。主の天井と同じ式・同じ関数:
+/// 乗算は c × (1 − 深さ × (1 − 質感))（[`texture_scale_one`] の倍率 1）、ほかは [`paper_blend`]。
+#[inline]
+pub(super) fn dual_textured(
+    tex: &PaperTexture,
+    grain: &Grain<'_>,
+    depth: f32,
+    c: f32,
+    x: i64,
+) -> f32 {
+    match tex.mode.as_blend() {
+        None => c * texture_scale_one(grain, depth, 1.0, x),
+        Some(mode) => paper_blend(mode, c, grain_one(grain, x), depth),
+    }
+}
+
 /// 画素ごとの式の、乗算の紙の質感の係数（[`texture_row`] の 1 画素と同じ値）。
 pub(super) fn texture_scale_one(g: &Grain<'_>, depth: f32, base: f32, px: i64) -> f32 {
     // SAFETY: 1 本のレーンは CPU の前提を持たない
@@ -1415,6 +1546,7 @@ pub(super) fn texture_scale_one(g: &Grain<'_>, depth: f32, base: f32, px: i64) -
 #[allow(clippy::too_many_arguments)]
 pub(super) unsafe fn texture_row<V: Slice32>(
     tex: &PaperTexture,
+    depth: f32,
     opacity_scale: f32,
     py: i64,
     x_first: i64,
@@ -1424,7 +1556,6 @@ pub(super) unsafe fn texture_row<V: Slice32>(
     hi: usize,
 ) {
     let g = Grain::new(tex, py);
-    let depth = tex.depth as f32;
     let mut i = lo;
     // 1 本のレーンの道もこのループ（余りの 1 画素ずつの式は SIMD の道の短い行だけ）
     {
@@ -1640,7 +1771,7 @@ unsafe fn paint_blocks<V: Slice32>(
                 *held = Some(new_stroke_tile(cx, live, true)?);
             }
             let st = held.as_mut().expect("直前に作った");
-            let accumulated = accumulate::<V>(previous, ceiling, flow);
+            let accumulated = dab.settle::<V>(previous, ceiling, flow);
             V::store_f32(
                 &mut st.wash[local..],
                 V::select(active, accumulated, previous),
@@ -1769,11 +1900,13 @@ pub(super) fn dual_cover_shape<'a>(shape: &DualShape<'a>) -> DabShape<'a> {
         flow_scale: 1.0,
         tip: shape.tip,
         plain: false,
-        flip_x: false,
-        flip_y: false,
+        flip_x: shape.flip_x,
+        flip_y: shape.flip_y,
         texture: None,
+        texture_density: 1.0,
         dual: None,
         edge: shape.edge,
+        ribbon: None,
     }
 }
 
@@ -1802,6 +1935,16 @@ unsafe fn dual_rows<V: Slice32>(
         let (lo, hi) = unsafe { cover_row::<V>(&cover, &c, py, xs, cov) };
         if lo >= hi {
             continue;
+        }
+        if shape.flow != 1.0 {
+            let flow = shape.flow as f32;
+            cov[lo..hi].iter_mut().for_each(|v| *v *= flow);
+        }
+        if let Some(tex) = shape.texture {
+            let (grain, depth) = (Grain::new(tex, py), tex.depth as f32);
+            for (i, v) in cov[lo..hi].iter_mut().enumerate() {
+                *v = dual_textured(tex, &grain, depth, *v, xs.0 + (lo + i) as i64);
+            }
         }
         if cells.is_none() {
             if !cov[lo..hi].iter().any(|&c| c > 0.0) {

@@ -1,5 +1,5 @@
 //! M2 のレイヤー（グループ・マスク・塗りつぶし・調整・クリッピング・チャンネルごとの有効と合成・Normal の設定）の正本と core の行き来。
-//! 正解は C# の実際の書き手（`tools/io-fixtures/M2Fixture.cs`）が作った正本と、同じ文書の全チャンネルの合成。
+//! 正解は C# の実際の書き手が作った正本と、同じ文書の全チャンネルの合成。
 use yolu_core::{
     AdjustmentSettings, BlendMode, Channel, ChannelBlend, ChannelInfo, ChannelKind, ColorSpace,
     Document, HeightEdgeMode, LayerId, LayerKind, NormalSettings, NormalYDirection, Rect, Rgba8,
@@ -362,7 +362,7 @@ fn csharp_native_versions_with_m2_layers_convert_and_save_as_the_current_version
     }
 }
 
-/// C# の旧版の基礎配置（`tools/io-fixtures/Generate.cs` の `Baseline`）が持つ既知の値が、core に落ちずに届く。上の試験は core を通した
+/// C# の旧版の基礎配置が持つ既知の値が、core に落ちずに届く。上の試験は core を通した
 /// 書き戻しとの自己照合なので、読みが値を落としても両側が同じに落として通る。ここでは正解の値そのものを core の側で確かめる。
 #[test]
 fn csharp_native_versions_carry_their_known_values_into_core() {
@@ -445,7 +445,7 @@ fn user_channels_are_written_as_version_22_and_round_trip() {
     );
     let restored = native.to_core().unwrap();
     assert_eq!(restored.undo_count(), 0);
-    assert_same_document(&doc, &restored, "版 22");
+    assert_same_document(&doc, &restored, "バージョン 22");
     assert_eq!(
         NativeDocument::from_core(&restored).unwrap().to_bytes(),
         native.to_bytes(),
@@ -492,7 +492,7 @@ fn only_documents_with_user_channels_leave_version_21() {
     assert_eq!(
         native.version(),
         21,
-        "ユーザーチャンネルが無ければ Unity 0.2.0 が読める版"
+        "ユーザーチャンネルが無ければ Unity 0.2.0 が読めるバージョン"
     );
     // 全部消せば版 21 へ戻る（版 22 の 0 個の一覧は書かない）
     let mut doc = user_channel_document();
@@ -714,7 +714,10 @@ fn version_22_reader_rules() {
     for version in [23i32, 24, 1000, 0, -1] {
         let mut bytes = read("m2-tiny.utpaint");
         bytes[8..12].copy_from_slice(&version.to_le_bytes());
-        assert!(NativeDocument::read(&bytes).is_err(), "版 {version}");
+        assert!(
+            NativeDocument::read(&bytes).is_err(),
+            "バージョン {version}"
+        );
     }
 }
 
@@ -787,8 +790,8 @@ fn user_channel_references_must_be_in_the_documents_list() {
 }
 
 /// 版 22 の正解の正本（Rust が書いたもの）。固定の ID で作り、ファイルと同じバイト列になる。
-/// 作り直すときは `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp m2_bridge::`、続けて
-/// `python3 tools/io-fixtures/generate.py --source <Unity 版> --user-channels` で Unity 版の読み手の記録を取り直す。
+/// 作り直すときは `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp m2_bridge::`。
+/// Unity 版の読み手の記録（`*.unity.txt`）は Unity 0.2.0 で取った物で、取り直す道は無い。
 #[test]
 fn version_22_fixture_is_what_this_writer_produces() {
     let bytes = NativeDocument::from_core(&user_channel_document())
@@ -806,7 +809,7 @@ fn version_22_fixture_is_what_this_writer_produces() {
 
 #[test]
 fn unity_0_2_0_reader_refuses_version_22_before_touching_the_file() {
-    // Unity 0.2.0 の DocumentBinary・YlpFormat に Rust が書いた版 22 を読ませた記録（tools/io-fixtures --user-channels）
+    // Unity 0.2.0 の DocumentBinary・YlpFormat に Rust が書いた版 22 を読ませた記録
     let record = String::from_utf8(read("user-channels-v22.unity.txt")).unwrap();
     let lines: Vec<&str> = record.lines().collect();
     assert_eq!(lines[0], "DocumentBinary.CurrentVersion: 21");
@@ -838,12 +841,12 @@ fn unity_0_2_0_reader_refuses_version_22_before_touching_the_file() {
     assert_eq!(yolu_io::USER_CHANNELS_VERSION, 22);
     // 版 23（Rust 版だけの Generator の種類）は procedural_bridge、版 24（色調補正の 6 種）は adjust_bridge の試験で固定する
     assert_eq!(yolu_io::EFFECTS_VERSION, 28);
-    assert_eq!(yolu_io::MAX_NATIVE_VERSION, yolu_io::RULERS_VERSION);
+    assert_eq!(yolu_io::MAX_NATIVE_VERSION, yolu_io::LAYER_SETS_VERSION);
 }
 
 /// Rust が書いた版 21 の正解の正本。m2-groups を編集して、塗りつぶし・調整・マスク・複製したグループを足したもの（固定の ID で作り、
-/// ファイルと同じバイト列になる）。作り直すときは `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp m2_bridge::version_21`、続けて
-/// `python3 tools/io-fixtures/generate.py --source <Unity 版> --rust-written` で Unity 版の読み手の記録を取り直す。
+/// ファイルと同じバイト列になる）。作り直すときは `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp m2_bridge::version_21`。
+/// Unity 版の読み手の記録（`*.unity.txt`）は Unity 0.2.0 で取った物で、取り直す道は無い。
 #[test]
 fn version_21_fixture_is_what_this_writer_produces() {
     let bytes = NativeDocument::from_core(&edited_groups_document())
@@ -889,7 +892,7 @@ fn unity_0_2_0_reads_and_resaves_the_version_21_this_writer_produces() {
 
 fn writer() -> WriterInfo {
     WriterInfo {
-        app: "試験の書き手".into(),
+        app: "テストの書き手".into(),
         version: "0.0.1".into(),
         unity: "standalone".into(),
     }
@@ -904,10 +907,10 @@ fn a_project_keeps_user_channel_sets_in_format_7_and_other_sets_readable_by_unit
     let spec = |id: &str, name: &str, doc: &Document| SetSpec {
         id: id.into(),
         name: name.into(),
-        material: yolu_io::MaterialRef::Material {
+        materials: vec![yolu_io::MaterialRef::Material {
             name: name.into(),
             asset: None,
-        },
+        }],
         document: Some(NativeDocument::from_core(doc).unwrap().into()),
         composites: yolu_io::composite_pngs(doc).unwrap(),
     };
@@ -934,7 +937,7 @@ fn a_project_keeps_user_channel_sets_in_format_7_and_other_sets_readable_by_unit
     assert_eq!(
         versions,
         [22, 21],
-        "版 22 になるのはユーザーチャンネルのあるセットだけ"
+        "バージョン 22 になるのはユーザーチャンネルのあるセットだけ"
     );
     for set in reopened.sets() {
         assert!(set.document.core_issues().is_empty());
@@ -1292,7 +1295,7 @@ fn edits_to_a_loaded_m2_document_undo_back_to_the_original_bytes_and_save() {
             &[SetSpec {
                 id: "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0".into(),
                 name: "M2".into(),
-                material: yolu_io::MaterialRef::Unassigned,
+                materials: vec![yolu_io::MaterialRef::Unassigned],
                 document: Some(edited.clone().into()),
                 composites: yolu_io::composite_pngs(&core).unwrap(),
             }],
@@ -1358,7 +1361,7 @@ fn a_saved_set_carries_a_composite_png_for_every_channel_in_use() {
     let spec = |doc: &Document, composites| SetSpec {
         id: A.into(),
         name: "合成".into(),
-        material: yolu_io::MaterialRef::Unassigned,
+        materials: vec![yolu_io::MaterialRef::Unassigned],
         document: Some(NativeDocument::from_core(doc).unwrap().into()),
         composites,
     };

@@ -8,18 +8,32 @@ use super::*;
 /// 描点 1 つの、ダブの組（数）で共通の値。
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct StampControls {
-    /// フェード・傾き・速さの、大きさ・不透明度・流量への係数（使わなければ 1）。
+    /// フェードと、影響元の傾き・速度・ランダムの、大きさ・不透明度・流量への係数（使わなければ 1）。
     pub size: f64,
     pub opacity: f64,
     pub flow: f64,
     /// ペンの倒れた向き（角度に足す。使わなければ 0）。
     pub tilt_turn: f64,
-    /// 筆圧の応えを通した大きさの係数（切っていれば 1）。
+    /// 筆圧の応えを通した大きさの係数（筆圧を使っていなければ 1）。
     pub size_pressure: f64,
-    /// 筆圧の応えを通した不透明度・流量などの係数。
+    /// 筆圧の応えを通した不透明度・流量の係数と、絵の具の量・濃さの係数（筆圧でない入力も掛けたもの）。
     pub pressure: PressureScale,
-    /// 硬さ（筆圧で変えるなら × 応え）。
+    /// 硬さ（影響元を使うなら × 係数）。
     pub hardness: f64,
+    /// 硬さの影響元の係数（3D の丸い筆先が自分の精度の硬さに掛ける。使わなければ None）。
+    pub hardness_factor: Option<f64>,
+    /// 真円率の影響元の係数（使わなければ None）。
+    pub roundness: Option<f64>,
+    /// 質感の濃さの影響元の係数（使わなければ 1）。
+    pub texture_density: f64,
+    /// 絵の具の量・濃さの、筆圧でない入力の係数（使わなければ 1。3D の面のダブが画素の筆圧の係数に掛ける）。
+    pub mix_others: (f64, f64),
+    /// 色の変化の 4 項目（[`ColorItem::ALL`] の並び）の、筆圧・傾き・速度の係数の積（ランダムを除く。使わなければ 1）。ランダムの分は
+    /// ダブごとに色の変化の乱数の列から引く（[`StrokeState::next_dab_color`]）。
+    pub color: [f64; 4],
+    /// 散布の 2 項目（[`SprayItem::ALL`] の並び）の、筆圧・傾き・速度の係数の積（ランダムを除く。使わなければ 1）。ランダムの分は
+    /// 散布の乱数の列から引く（[`SprayRun`]）。
+    pub spray: [f64; 2],
 }
 
 /// ダブ 1 つの置き方。
@@ -36,75 +50,297 @@ pub(crate) struct DabPlan<'a> {
     pub opacity_scale: f64,
     pub flow_scale: f64,
     pub tip: Option<&'a BrushTip>,
+    /// 筆先の画像の左右・上下の反転（[`FlipRule`] をこのダブで決めたもの）。
+    pub flip_x: bool,
+    pub flip_y: bool,
+    /// リボンの帯（[`super::ribbon`]。リボンでなければ None）。
+    pub ribbon: Option<super::ribbon::RibbonCut>,
+}
+
+/// ランダムな反転の乱数の列と、並べ替えの乱数の列の種へ混ぜる値（ゆらぎ・色・影響元・デュアルの列と重ならない）。
+pub(crate) const FLIP_STREAM: i32 = 0x27D4_EB2F;
+pub(crate) const SHUFFLE_STREAM: i32 = 0x1656_67B1;
+
+/// 筆先の反転のしかた（左右・上下ごと）。主の筆先（[`TipShape`]）と 2 つ目の筆先（[`DualBrush`]）が同じ形で渡す。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FlipRules {
+    pub x: FlipRule,
+    pub y: FlipRule,
+}
+
+impl FlipRules {
+    /// どちらかの軸がランダムか（ランダムな反転の乱数の列が要るか）。
+    fn random(&self) -> bool {
+        self.x == FlipRule::Random || self.y == FlipRule::Random
+    }
+}
+
+impl TipShape {
+    pub(crate) fn flip_rules(&self) -> FlipRules {
+        FlipRules {
+            x: self.flip_x,
+            y: self.flip_y,
+        }
+    }
+}
+
+/// 筆先の選びと反転と散布の、ストロークごとの進み（2D のストロークと 3D の面のストロークが 1 つずつ持つ）。
+/// 今までの乱数の列（ゆらぎ・色・影響元・デュアル・筆先の乱数選び）は引かない。ランダムな反転と並べ替えは、自分の列だけを引く。
+#[derive(Clone, Debug)]
+pub(crate) struct TipRun {
+    /// 順に選ぶ方法で筆先を選んだダブの数（次のダブが並びの何番目か）。
+    k: u64,
+    seed: i32,
+    /// ランダムな反転の列（左右か上下がランダムのブラシだけ）。
+    flips: Option<NetRandom>,
+    /// 並べ替えた筆先の並び（`Shuffle` で最初に要るとき作る）。
+    order: Option<Vec<usize>>,
+    /// 散布効果の粒子の進み（散布の乱数の列）。
+    pub spray: SprayRun,
+    /// リボンの進み（リボンが効く主の筆先だけ。[`super::ribbon`]）。
+    pub ribbon: Option<super::ribbon::RibbonRun>,
+}
+
+impl TipRun {
+    pub(crate) fn new(brush: &Brush) -> TipRun {
+        let mut run = TipRun::seeded(brush.seed, brush.tip.flip_rules(), SprayRun::new(brush));
+        if brush.ribbon_active() {
+            run.ribbon = Some(super::ribbon::RibbonRun::new(brush.seed));
+        }
+        run
+    }
+
+    /// 種 seed（反転と並べ替えの列はこの種に混ぜる）・反転のしかた・散布の進みから（2 つ目の筆先は自分の種で作る）。
+    pub(crate) fn seeded(seed: i32, rules: FlipRules, spray: SprayRun) -> TipRun {
+        TipRun {
+            k: 0,
+            seed,
+            flips: rules.random().then(|| NetRandom::new(seed ^ FLIP_STREAM)),
+            order: None,
+            spray,
+            ribbon: None,
+        }
+    }
+
+    /// ダブ 1 つの筆先と反転（左右・上下）: 並び `list` が空なら `image`、空でなければ `selection` で選ぶ（`Random` は `random` から 1 つ
+    /// 引く）。並びを使い切った（一巡のみ・ランダムに一巡）ら None（置かない）。反転は選んだ後に決める。
+    pub(crate) fn pick<'a>(
+        &mut self,
+        image: Option<&'a BrushTip>,
+        list: &'a [Arc<BrushTip>],
+        selection: TipSelection,
+        rules: FlipRules,
+        random: &mut NetRandom,
+    ) -> Option<(Option<&'a BrushTip>, bool, bool)> {
+        let (index, flip_x, flip_y) = self.pick_index(list.len(), selection, rules, random)?;
+        let tip = match index {
+            None => image,
+            Some(i) => Some(list[i].as_ref()),
+        };
+        Some((tip, flip_x, flip_y))
+    }
+
+    /// [`TipRun::pick`] の、筆先を並びの番号で返す形（長さ `n` の並び。空なら None の番号で `image`）。
+    pub(crate) fn pick_index(
+        &mut self,
+        n: usize,
+        selection: TipSelection,
+        rules: FlipRules,
+        random: &mut NetRandom,
+    ) -> Option<(Option<usize>, bool, bool)> {
+        let mut reversed = false;
+        let index = if n == 0 {
+            None
+        } else {
+            Some(match selection {
+                TipSelection::Random => random.next_below(n as i32) as usize,
+                selection => {
+                    let (i, back) = self.next_index(selection, n)?;
+                    reversed = back;
+                    i
+                }
+            })
+        };
+        let (flip_x, flip_y) = self.flips(rules, reversed);
+        Some((index, flip_x, flip_y))
+    }
+
+    /// 並びの長さ n の筆先から、次のダブの番号と、折り返しで戻る向きか（`PingPong` だけ）。置く筆先が無ければ None
+    /// （`Once`・`Shuffle` で並びを使い切った）。`Random` はここを通らない（乱数の列から引く）。
+    fn next_index(&mut self, selection: TipSelection, n: usize) -> Option<(usize, bool)> {
+        let k = self.k;
+        let len = n as u64;
+        let picked = match selection {
+            TipSelection::Random | TipSelection::Sequential => (k % len) as usize,
+            TipSelection::PingPong => {
+                if n == 1 {
+                    0
+                } else {
+                    let period = 2 * (len - 1);
+                    let pos = k % period;
+                    let index = if pos < len { pos } else { period - pos };
+                    let reversed = k > 0 && (pos == 0 || pos >= len);
+                    self.k = k.saturating_add(1);
+                    return Some((index as usize, reversed));
+                }
+            }
+            TipSelection::Hold => k.min(len - 1) as usize,
+            TipSelection::Once => {
+                if k >= len {
+                    return None;
+                }
+                k as usize
+            }
+            TipSelection::Shuffle => {
+                if k >= len {
+                    return None;
+                }
+                let seed = self.seed;
+                let order = self.order.get_or_insert_with(|| {
+                    let mut random = NetRandom::new(seed ^ SHUFFLE_STREAM);
+                    let mut order: Vec<usize> = (0..n).collect();
+                    for i in (1..n).rev() {
+                        let j = random.next_below(i as i32 + 1) as usize;
+                        order.swap(i, j);
+                    }
+                    order
+                });
+                order[k as usize]
+            }
+        };
+        self.k = k.saturating_add(1);
+        Some((picked, false))
+    }
+
+    /// ダブ 1 つの反転（左右・上下）。`reversed` は折り返しで戻る向きか。ランダムは、軸ごとに列から 1 つ引く（左右、上下の順）。
+    fn flips(&mut self, rules: FlipRules, reversed: bool) -> (bool, bool) {
+        let mut one = |rule: FlipRule| match rule {
+            FlipRule::Off => false,
+            FlipRule::On => true,
+            FlipRule::OnFold => reversed,
+            FlipRule::Random => self.flips.as_mut().is_some_and(|r| r.next_double() < 0.5),
+        };
+        let x = one(rules.x);
+        let y = one(rules.y);
+        (x, y)
+    }
 }
 
 impl Brush {
-    /// 描点 1 つ（ストロークの index 番目）の係数（C# の Stamp の前半）。フェード（何番目の描点か）と傾きは、筆圧と掛け合わせる。
-    pub(crate) fn stamp_controls(&self, dab: &PendingDab, index: u64) -> StampControls {
+    /// 描点 1 つ（ストロークの index 番目）の係数（C# の Stamp の前半）。フェード（何番目の描点か）と影響元（[`Influences`]）を
+    /// 項目ごとに掛け合わせる。`taper` は入り抜きの係数（0〜1。[`StrokeAssist::taper`]。範囲の外は 1）で、大きさ以外の掛ける項目
+    /// （[`StrokeAssist::taper_item`]）には、影響元の係数の後ろへ掛ける（大きさへは呼び手が半径に掛ける）。`random` は影響元の乱数の列（どの項目もランダムを使わなければ None。使う項目ごとに、項目の並びの順に 1 つ引く）。
+    pub(crate) fn stamp_controls(
+        &self,
+        dab: &PendingDab,
+        index: u64,
+        taper: f64,
+        random: Option<&mut NetRandom>,
+    ) -> StampControls {
         let c = &self.controls;
-        let tilt = if c.tilt_size || c.tilt_opacity || c.tilt_flow || c.tilt_angle {
+        let inf = &self.influences;
+        let tilt = if inf.uses(Input::Tilt) || c.tilt_angle {
             pen_tilt::amount(dab.tilt_x, dab.tilt_y)
         } else {
             0.0
         };
-        let mut size_control =
-            dynamics::fade(c.fade_size, index) * (if c.tilt_size { 1.0 - tilt } else { 1.0 });
-        let mut opacity_control =
-            dynamics::fade(c.fade_opacity, index) * (if c.tilt_opacity { 1.0 - tilt } else { 1.0 });
-        let mut flow_control =
-            dynamics::fade(c.fade_flow, index) * (if c.tilt_flow { 1.0 - tilt } else { 1.0 });
-        // 拡張: 速いほど小さく・薄く（速さの上限で 0）。切っていれば掛けない（C# と同じ値のまま）
-        if c.speed_size || c.speed_opacity || c.speed_flow {
-            let slow = 1.0 - clamp01(dab.speed / c.speed_max);
-            if c.speed_size {
-                size_control *= slow;
-            }
-            if c.speed_opacity {
-                opacity_control *= slow;
-            }
-            if c.speed_flow {
-                flow_control *= slow;
-            }
-        }
+        // 速いほど小さく・薄く（速さの上限で 0）。使っていなければ求めない
+        let slow = if inf.uses(Input::Speed) {
+            1.0 - clamp01(dab.speed / inf.speed_max)
+        } else {
+            1.0
+        };
+        let x = InputValues {
+            pressure: dab.pressure,
+            upright: 1.0 - tilt,
+            slow,
+        };
+        let tapered = |item| self.assist.taper_item(item, taper);
+        let [r_size, r_opacity, r_flow, r_hardness, r_roundness, r_texture, r_paint, r_density] =
+            inf.draw_random(random);
+        // フェードの後に、傾き・速度・ランダムをこの順で掛ける（使っていない入力は掛けない）
+        let size_control = inf
+            .size
+            .times_others(dynamics::fade(c.fade_size, index), &x, r_size);
+        let opacity_control = taper_times(
+            inf.opacity
+                .times_others(dynamics::fade(c.fade_opacity, index), &x, r_opacity),
+            tapered(Item::Opacity),
+        );
+        let flow_control = taper_times(
+            inf.flow
+                .times_others(dynamics::fade(c.fade_flow, index), &x, r_flow),
+            tapered(Item::Flow),
+        );
         let tilt_turn = if c.tilt_angle && tilt > 0.0 {
             pen_tilt::azimuth(dab.tilt_x, dab.tilt_y)
         } else {
             0.0
         };
         let s = &self.base;
-        // 筆圧は項目ごとの応え（最小値と曲線）を通す。既定の応えは筆圧をそのまま返し、切っている項目は掛けない
-        let size_pressure = if s.pressure_size {
-            self.pressure.size.apply(dab.pressure)
-        } else {
-            1.0
+        // 筆圧は項目ごとの応え（最小値と曲線）を通す。既定の応えは筆圧をそのまま返し、使っていない項目は掛けない
+        let size_pressure = inf.size.pressure_factor(dab.pressure).unwrap_or(1.0);
+        let hardness_factor =
+            taper_factor(inf.hardness.factor(&x, r_hardness), tapered(Item::Hardness));
+        let hardness = match hardness_factor {
+            Some(f) => s.hardness * f,
+            None => s.hardness,
         };
-        let hardness = if c.pressure_hardness {
-            s.hardness * self.pressure.hardness.apply(dab.pressure)
-        } else {
-            s.hardness
-        };
+        let mut pressure = self.pressure_scale(dab.pressure);
+        let mix_others = (
+            taper_times(
+                inf.mix_paint.times_others(1.0, &x, r_paint),
+                tapered(Item::MixPaint),
+            ),
+            taper_times(
+                inf.mix_density.times_others(1.0, &x, r_density),
+                tapered(Item::MixDensity),
+            ),
+        );
+        if mix_others.0 != 1.0 {
+            pressure.mix_paint *= mix_others.0;
+        }
+        if mix_others.1 != 1.0 {
+            pressure.mix_density *= mix_others.1;
+        }
         StampControls {
             size: size_control,
             opacity: opacity_control,
             flow: flow_control,
             tilt_turn,
             size_pressure,
-            pressure: self.pressure_scale(dab.pressure),
+            pressure,
             hardness,
+            hardness_factor,
+            roundness: taper_factor(
+                inf.roundness.factor(&x, r_roundness),
+                tapered(Item::Roundness),
+            ),
+            texture_density: taper_times(
+                inf.texture_density.factor(&x, r_texture).unwrap_or(1.0),
+                tapered(Item::TextureDensity),
+            ),
+            mix_others,
+            color: inf.color_others(&x),
+            spray: inf.spray_others(&x),
         }
     }
 
     /// 描点の数の分の 1 つのダブ（C# の Stamp のループの中）。`radius` は呼び手の大きさ（2D は半径 × 筆圧 × 入り抜き）、`scatter_radius`
     /// は散布の届く長さの元の半径（公称の半径）。乱数はいつも同じ順に引く: 大きさ → 散布（x・y）→ 角度 → 真円率 → 不透明度 → 流量 →
     /// 筆先（乱数で選ぶとき）。大きさが 0 以下のダブは、大きさのゆらぎを引いた所で None（後の乱数は引かない）。
+    /// `min_radius` は呼び手の単位での大きさの下限（最低 1 ピクセル。0 は下限なし）: フェード・傾き・速さの係数とゆらぎで細くなった後に
+    /// 下から押さえるので、大きさ 0 のダブも残る（下限なしのときは今までと同じ）。
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn next_dab<'a>(
         &'a self,
         c: &StampControls,
         dab: &PendingDab,
         radius: f64,
+        min_radius: f64,
         scatter_radius: f64,
         random: &mut NetRandom,
-        tip_index: &mut u64,
+        tips: &mut TipRun,
     ) -> Option<DabPlan<'a>> {
         let j = &self.jitter;
         let mut radius = radius;
@@ -114,11 +350,14 @@ impl Brush {
         if j.size > 0.0 {
             radius *= 1.0 - j.size * random.next_double();
         }
+        if min_radius > 0.0 {
+            radius = f64_max(radius, min_radius);
+        }
         if radius <= 0.0 {
             return None;
         }
         let (mut x, mut y) = (dab.x, dab.y);
-        if j.scatter > 0.0 {
+        if j.scatter > 0.0 && self.spray.is_none() {
             let reach = scatter_radius * 2.0 * j.scatter;
             x += (random.next_double() * 2.0 - 1.0) * reach;
             y += (random.next_double() * 2.0 - 1.0) * reach;
@@ -138,7 +377,11 @@ impl Brush {
         if j.angle > 0.0 {
             angle += (random.next_double() * 2.0 - 1.0) * std::f64::consts::PI * j.angle;
         }
-        let mut roundness = self.tip.roundness;
+        // 真円率の影響元は、ゆらぎの前に掛ける（下限はゆらぎと同じ 0.01）
+        let mut roundness = match c.roundness {
+            Some(f) => f64_max(0.01, self.tip.roundness * f),
+            None => self.tip.roundness,
+        };
         if j.roundness > 0.0 {
             roundness = f64_max(0.01, roundness * (1.0 - j.roundness * random.next_double()));
         }
@@ -158,20 +401,30 @@ impl Brush {
         if c.flow != 1.0 {
             flow_scale *= c.flow;
         }
-        let tip: Option<&BrushTip> = match self.tip_list() {
-            None => self.tip.image.as_deref(),
-            Some(list) => {
-                let i = match self.tip.selection {
-                    TipSelection::Sequential => {
-                        let i = (*tip_index % list.len() as u64) as usize;
-                        *tip_index += 1;
-                        i
-                    }
-                    TipSelection::Random => random.next_below(list.len() as i32) as usize,
-                };
-                Some(list[i].as_ref())
-            }
-        };
+        // リボン: 筆先と反転は帯ごとに決め（[`super::ribbon`]）、向きは線の向きだけ（呼び手が帯の置き方にする）
+        if tips.ribbon.is_some() {
+            return Some(DabPlan {
+                x,
+                y,
+                radius,
+                angle: dab.direction,
+                roundness,
+                opacity_scale,
+                flow_scale,
+                tip: None,
+                flip_x: false,
+                flip_y: false,
+                ribbon: None,
+            });
+        }
+        // 並びを使い切った（一巡のみ・ランダムに一巡）あとは、何も置かない
+        let (tip, flip_x, flip_y) = tips.pick(
+            self.tip.image.as_deref(),
+            self.tip_list().unwrap_or(&[]),
+            self.tip.selection,
+            self.tip.flip_rules(),
+            random,
+        )?;
         Some(DabPlan {
             x,
             y,
@@ -181,6 +434,9 @@ impl Brush {
             opacity_scale,
             flow_scale,
             tip,
+            flip_x,
+            flip_y,
+            ribbon: None,
         })
     }
 
@@ -201,14 +457,35 @@ impl Brush {
             opacity_scale: plan.opacity_scale,
             flow_scale: plan.flow_scale,
             tip: plan.tip,
-            plain: plan.angle == 0.0 && plan.roundness == 1.0,
-            flip_x: self.tip.flip_x,
-            flip_y: self.tip.flip_y,
+            plain: plan.angle == 0.0 && plan.roundness == 1.0 && plan.ribbon.is_none(),
+            flip_x: plan.flip_x,
+            flip_y: plan.flip_y,
             texture: self.texture.as_ref().filter(|t| t.depth > 0.0),
+            texture_density: c.texture_density,
             dual: self.dual.as_ref().map(|d| d.mode),
             edge: Edge::OFF,
+            ribbon: plan.ribbon,
         }
         .with_aspect()
+    }
+}
+
+/// v に入り抜きの係数 f を掛ける（掛けない項目は v のまま）。
+#[inline]
+fn taper_times(v: f64, f: Option<f64>) -> f64 {
+    match f {
+        Some(f) => v * f,
+        None => v,
+    }
+}
+
+/// 影響元の係数（使わなければ None）に入り抜きの係数 f を掛ける（掛けない項目は変えない。影響元を使わない項目は f だけ）。
+#[inline]
+fn taper_factor(factor: Option<f64>, f: Option<f64>) -> Option<f64> {
+    match (factor, f) {
+        (Some(a), Some(b)) => Some(a * b),
+        (None, Some(b)) => Some(b),
+        (a, None) => a,
     }
 }
 
@@ -216,8 +493,18 @@ impl StrokeAssist {
     /// 長さ end のストロークの、線の長さ arc の所のダブの大きさの係数: 入りで 0 から育ち、抜きで 0 へ細る（C# の Taper）。end が
     /// 有限でない（まだ終わりが分からない）間は抜きを掛けない。長さの単位は呼び手のもの（2D は文書の画素、3D は画面の点）。
     pub(crate) fn taper(&self, arc: f64, end: f64) -> f64 {
+        self.taper_ends(arc, end, true)
+    }
+
+    /// 入り・抜きのどちらかがあるか（無ければ、ストロークの始まりの見極め [`TaperStart`] も、ダブを待たせることもしない）。
+    pub(crate) fn tapers(&self) -> bool {
+        self.taper_in > 0.0 || self.taper_out > 0.0
+    }
+
+    /// [`StrokeAssist::taper`] の、入りを掛けるかを選べる形（with_in が偽なら抜きだけ）。
+    fn taper_ends(&self, arc: f64, end: f64, with_in: bool) -> f64 {
         let mut f = 1.0;
-        if self.taper_in > 0.0 {
+        if with_in && self.taper_in > 0.0 {
             f = f64_min(f, arc / self.taper_in);
         }
         if self.taper_out > 0.0 && end.is_finite() {
@@ -226,37 +513,202 @@ impl StrokeAssist {
         f64_max(0.0, f64_min(1.0, f))
     }
 
-    /// 手ぶれ補正の糸: 筆 pen が入力 to に引かれて動いた先（糸の長さより近ければ、たるんでいて動かないので None）。
-    pub(crate) fn pull(&self, pen: (f64, f64), to: (f64, f64)) -> Option<(f64, f64)> {
+    /// 項目 item に掛ける入り抜きの係数（[`StrokeAssist::taper`] の t から。`最小値 + (1 − 最小値) × t`）。掛けない項目と、入り抜きの
+    /// 範囲の外（t が 1）は None。最小値 0 の項目は t そのもの（既定の大きさだけの入り抜きは、浮動小数の演算を足さない）。
+    pub(crate) fn taper_item(&self, item: Item, t: f64) -> Option<f64> {
+        let min = self.taper_targets.min(item)?;
+        if t >= 1.0 {
+            return None;
+        }
+        Some(if min == 0.0 { t } else { min + (1.0 - min) * t })
+    }
+
+    /// 手ぶれ補正の糸: 筆 pen が入力 to に、長さ `length` の糸（[`StrokeAssist::stabilizer_length`]）で引かれて動いた先（糸の長さより近ければ、
+    /// たるんでいて動かないので None）。
+    pub(crate) fn pull(&self, length: f64, pen: (f64, f64), to: (f64, f64)) -> Option<(f64, f64)> {
         let (dx, dy) = (to.0 - pen.0, to.1 - pen.1);
         let d = (dx * dx + dy * dy).sqrt();
-        if d <= self.stabilizer {
+        if d <= length {
             return None; // 糸がたるんでいる間は筆は動かない
         }
-        let k = (d - self.stabilizer) / d;
+        let k = (d - length) / d;
         Some((pen.0 + dx * k, pen.1 + dy * k))
     }
 }
 
-impl DualBrush {
-    /// 2 つ目の筆先のダブの形（中心 x・y、半径 radius は呼び手の単位。2D の溜まりと同じく、丸も回転の式で測る）。
-    pub(crate) fn dab_shape(&self, x: f64, y: f64, radius: f64) -> DabShape<'_> {
-        rows::dual_cover_shape(&dual_shape(self, x, y, radius, AntiAlias::None))
+/// 入り抜きから見たストロークの形。入り抜きは道に沿って細らせるもので、沿って細らせる道の無い入力には掛けない: クリック（押した点から
+/// ほとんど離れずに離したストローク。ペンのタップの揺れを含む）は入り抜きの無いときと同じ点、Shift の直線（最初の 2 つの入力の直後に
+/// [`TaperStart::end_line`] で閉じた線）は、線全体に入りを掛けず、その線の終わりのそばで離せば抜きも掛けない。手で描いた線だけが、入りで
+/// 0 から育ち抜きで 0 へ細る。
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+enum TaperShape {
+    /// まだ分からない（入りのあるブラシは、ここでダブを待たせる）。
+    #[default]
+    Undecided,
+    /// 手で描いた線。
+    Drawn,
+    /// Shift の直線で始まった線。
+    Straight,
+    /// クリックの点。
+    Dot,
+}
+
+/// 入り抜きのあるブラシのストロークの始まりの見極め（2D の [`super::StrokeState`] と 3D の `geometry::SurfaceStroke` で共通）。
+/// 入りのあるブラシは、形が決まるまでダブを置かずに待たせる（[`TaperStart::holds`]）。決まったら、待たせたダブを並んだ順に置く
+/// （置く順と数は変えないので、手で描いた線のダブは待たせない時と同じ）。形の決め方: 3 つ目からの入力で、ダブが 2 つ以上あり、押した点からの
+/// 最大の離れが境（[`TaperStart::new`]）を超えていれば手で描いた線。2 つの入力の後で直線を閉じれば Shift の直線。離したときに離れが境の内
+/// なら、ダブの数によらずクリック。入力の位置と境の単位は呼び手のもの（2D は文書の画素、3D は画面の点）。
+/// 入り抜きの無いブラシでは形を決める関数（`input`・`end_line`・`finish`）を呼ばず、形は Undecided のままで、[`TaperStart::factor`] は
+/// [`StrokeAssist::taper`] と同じ（入り抜きが無いので 1）。
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct TaperStart {
+    shape: TaperShape,
+    /// ここまでの入力の数。
+    inputs: u32,
+    /// クリックとみなす、押した点からの最大の離れ（半径と、入り（無ければ抜き）の長さの小さい方）。
+    reach: f64,
+    /// 押した点と、そこからの最大の離れ。
+    origin: Option<(f64, f64)>,
+    spread: f64,
+    /// Shift の直線の終点と、直線を閉じた後の、そこからの最大の離れ。
+    line_end: Option<(f64, f64)>,
+    after_line: f64,
+    /// 離したとき、直線の終点のそばだった（直線の終わりに抜きを掛けない）。
+    line_kept: bool,
+}
+
+/// 2 点の距離。
+fn distance(a: (f64, f64), b: (f64, f64)) -> f64 {
+    ((a.0 - b.0) * (a.0 - b.0) + (a.1 - b.1) * (a.1 - b.1)).sqrt()
+}
+
+impl TaperStart {
+    /// radius はブラシの半径（筆圧の前。入力の位置と同じ単位）。クリックの境は min(半径, 入りの長さ)（入りが無ければ抜きの長さ）。
+    pub(crate) fn new(assist: &StrokeAssist, radius: f64) -> TaperStart {
+        let length = if assist.taper_in > 0.0 {
+            assist.taper_in
+        } else {
+            assist.taper_out
+        };
+        TaperStart {
+            reach: f64_max(0.0, f64_min(radius, length)),
+            ..TaperStart::default()
+        }
+    }
+
+    /// 今ダブを置かずに待たせるか（入りがあって、形がまだ分からない）。
+    pub(crate) fn holds(&self, assist: &StrokeAssist) -> bool {
+        assist.taper_in > 0.0 && self.shape == TaperShape::Undecided
+    }
+
+    /// 入力の点 at を 1 つ受ける前に呼ぶ（dabs はここまでに並べたダブの数）。3 つ目からの入力で、ダブが 2 つ以上あり、押した点からの離れが
+    /// 境を超えていれば、手で描いた線に決める。今決まったら true（呼び手は待たせたダブを置く）。
+    pub(crate) fn input(&mut self, at: (f64, f64), dabs: u64) -> bool {
+        self.inputs = self.inputs.saturating_add(1);
+        match self.origin {
+            None => self.origin = Some(at),
+            Some(o) => self.spread = f64_max(self.spread, distance(o, at)),
+        }
+        if let Some(e) = self.line_end {
+            self.after_line = f64_max(self.after_line, distance(e, at));
+        }
+        if self.shape == TaperShape::Undecided
+            && self.inputs >= 3
+            && dabs > 1
+            && self.spread > self.reach
+        {
+            self.shape = TaperShape::Drawn;
+            return true;
+        }
+        false
+    }
+
+    /// 直線を閉じる前に呼ぶ（Shift の直線）。最初の 2 つの入力のままなら、Shift の直線に決める。今決まったら true（呼び手は待たせたダブを
+    /// 置き、直線を描き切った後で [`TaperStart::line_closed`] を呼ぶ）。
+    pub(crate) fn end_line(&mut self) -> bool {
+        if self.shape == TaperShape::Undecided && self.inputs == 2 {
+            self.shape = TaperShape::Straight;
+            return true;
+        }
+        false
+    }
+
+    /// Shift の直線を描き切ったときの、直線の終点。
+    pub(crate) fn line_closed(&mut self, at: (f64, f64)) {
+        self.line_end = Some(at);
+        self.after_line = 0.0;
+    }
+
+    /// 離したとき（最後の区間を並べた後）。まだ形が分からなければ、押した点からの離れが境の内ならクリック、超えていれば手で描いた線に決める。
+    /// Shift の直線は、閉じた後の終点からの離れが境の内なら、直線の終わりに抜きを掛けない。
+    pub(crate) fn finish(&mut self) {
+        match self.shape {
+            TaperShape::Undecided => {
+                self.shape = if self.spread <= self.reach {
+                    TaperShape::Dot
+                } else {
+                    TaperShape::Drawn
+                };
+            }
+            TaperShape::Straight => {
+                self.line_kept = self.line_end.is_some() && self.after_line <= self.reach;
+            }
+            _ => {}
+        }
+    }
+
+    /// 長さ end のストロークの、線の長さ arc の所の入り抜きの係数（[`StrokeAssist::taper`] を、形に合わせて）。
+    pub(crate) fn factor(&self, assist: &StrokeAssist, arc: f64, end: f64) -> f64 {
+        match self.shape {
+            TaperShape::Dot => 1.0,
+            TaperShape::Straight => {
+                let end = if self.line_kept { f64::INFINITY } else { end };
+                assist.taper_ends(arc, end, false)
+            }
+            TaperShape::Undecided | TaperShape::Drawn => assist.taper(arc, end),
+        }
     }
 }
 
-/// 2 つ目の筆先のダブの形（C# の DualDabAt の式）。level はアンチエイリアスの段（2D。ダブの座標は描く先の画素）。
-pub(super) fn dual_shape(
-    dual: &DualBrush,
-    x: f64,
-    y: f64,
-    radius: f64,
+impl DualBrush {
+    /// 2 つ目の筆先のダブの形（中心 x・y、半径 radius は呼び手の単位。2D の溜まりと同じく、丸も回転の式で測る）に、そのダブの見え方
+    /// （向きの足し・真円率の係数）を当てたもの（3D の面の 2 つ目のダブ）。
+    pub(crate) fn dab_shape_look<'a>(
+        &'a self,
+        place: &DualPlace<'a>,
+        look: &DualLook,
+    ) -> DabShape<'a> {
+        rows::dual_cover_shape(&dual_shape(self, place, AntiAlias::None, look))
+    }
+}
+
+/// 2 つ目の筆先のダブの形（C# の DualDabAt の式）。place はダブの置き方（中心・半径・筆先・反転・散布の粒子の向き）、level はアンチエイリアス
+/// の段（2D。ダブの座標は描く先の画素）、look はそのダブの見え方（向きの足し・真円率と濃度の係数）。
+pub(super) fn dual_shape<'a>(
+    dual: &'a DualBrush,
+    place: &DualPlace<'a>,
     level: AntiAlias,
-) -> DualShape<'_> {
-    let angle = dual.angle * std::f64::consts::PI / 180.0;
+    look: &DualLook,
+) -> DualShape<'a> {
+    let angle = match place.angle {
+        // 散布の粒子は、粒子の向きで置く（主の粒子と同じ）
+        Some(angle) => angle,
+        None => {
+            let mut angle = dual.angle * std::f64::consts::PI / 180.0;
+            if look.turn != 0.0 {
+                angle += look.turn;
+            }
+            angle
+        }
+    };
+    let roundness = if look.roundness != 1.0 {
+        f64_max(0.01, dual.roundness * look.roundness)
+    } else {
+        dual.roundness
+    };
     let (cos, sin) = cos_sin(angle);
     let (mut aspect_x, mut aspect_y) = (1.0, 1.0);
-    if let Some(t) = &dual.tip {
+    if let Some(t) = place.tip {
         if t.width() >= t.height() {
             aspect_y = t.height() as f64 / t.width() as f64;
         } else {
@@ -264,17 +716,25 @@ pub(super) fn dual_shape(
         }
     }
     let mut shape = DualShape {
-        x,
-        y,
-        radius,
+        x: place.x,
+        y: place.y,
+        radius: place.radius,
         cos,
         sin,
-        roundness: dual.roundness,
+        roundness,
         hardness: dual.hardness,
         aspect_x,
         aspect_y,
-        tip: dual.tip.as_deref(),
+        tip: place.tip,
+        flip_x: place.flip_x,
+        flip_y: place.flip_y,
+        texture: dual.paper(),
         edge: Edge::OFF,
+        flow: if look.flow != 1.0 {
+            dual.flow * look.flow
+        } else {
+            dual.flow
+        },
     };
     if level != AntiAlias::None {
         // 縁と小さなダブの広げは主の筆先と同じ式（画像の筆先は半径・真円率を広げる）
@@ -284,4 +744,100 @@ pub(super) fn dual_shape(
         shape.edge = cover.edge;
     }
     shape
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn speed_flow_multiplies_the_flow_control() {
+        let mut brush = Brush::default();
+        brush.influences.flow.speed.on = true;
+        brush.influences.speed_max = 3000.0;
+        let dab = PendingDab {
+            x: 0.0,
+            y: 0.0,
+            pressure: 1.0,
+            arc: 0.0,
+            direction: 0.0,
+            tilt_x: 0.0,
+            tilt_y: 0.0,
+            rotation: 0.0,
+            speed: 1500.0,
+        };
+        let c = brush.stamp_controls(&dab, 0, 1.0, None);
+        // 速さ 1500 / 上限 3000 → 1 − clamp01(0.5) = 0.5 を流量の係数に掛ける（足さない）
+        assert!((c.flow - 0.5).abs() < 1e-12, "{}", c.flow);
+    }
+
+    fn still_dab() -> PendingDab {
+        PendingDab {
+            x: 0.0,
+            y: 0.0,
+            pressure: 1.0,
+            arc: 0.0,
+            direction: 0.0,
+            tilt_x: 0.0,
+            tilt_y: 0.0,
+            rotation: 0.0,
+            speed: 0.0,
+        }
+    }
+
+    /// ブラシの最初の描点の計画（大きさ 4）。
+    fn first_plan<'a>(brush: &'a Brush, dab: &PendingDab) -> (StampControls, DabPlan<'a>) {
+        let c = brush.stamp_controls(dab, 0, 1.0, None);
+        let mut random = NetRandom::new(0);
+        let mut tips = TipRun::new(brush);
+        let plan = brush
+            .next_dab(&c, dab, 4.0, 0.0, 4.0, &mut random, &mut tips)
+            .expect("大きさは正");
+        (c, plan)
+    }
+
+    #[test]
+    fn the_pen_rotation_turns_the_dab_the_same_way() {
+        // ペンの軸の回転は筆先の角度に足す（回した向きに回る）
+        let mut brush = Brush::default();
+        brush.controls.rotation_angle = true;
+        let dab = PendingDab {
+            rotation: 0.25,
+            ..still_dab()
+        };
+        let (_, plan) = first_plan(&brush, &dab);
+        assert!((plan.angle - 0.25).abs() < 1e-15, "{}", plan.angle);
+    }
+
+    #[test]
+    fn a_texture_with_no_depth_is_not_applied() {
+        // 深さ 0 の質感は「無し」と同じで当てない。深さがあれば当てる
+        let applied = |depth: f64| {
+            let brush = Brush {
+                texture: Some(PaperTexture::new(builtin_tip("grain").unwrap(), depth)),
+                ..Brush::default()
+            };
+            let (c, plan) = first_plan(&brush, &still_dab());
+            brush.dab_shape(&plan, &c).texture.is_some()
+        };
+        assert!(!applied(0.0));
+        assert!(applied(0.5));
+    }
+
+    #[test]
+    fn the_tilt_turns_the_dab_only_when_the_angle_follows_the_tilt() {
+        // 傾きで大きさだけを変えるブラシは、ペンを倒した向きへ筆先を回さない
+        let dab = PendingDab {
+            tilt_x: 0.3,
+            tilt_y: 0.4,
+            ..still_dab()
+        };
+        let mut brush = Brush::default();
+        brush.influences.size.tilt.on = true;
+        assert_eq!(brush.stamp_controls(&dab, 0, 1.0, None).tilt_turn, 0.0);
+        // 角度を傾きに沿わせると、倒した向きだけ回す
+        brush.controls.tilt_angle = true;
+        let turn = brush.stamp_controls(&dab, 0, 1.0, None).tilt_turn;
+        assert!((turn - pen_tilt::azimuth(0.3, 0.4)).abs() < 1e-15, "{turn}");
+    }
 }

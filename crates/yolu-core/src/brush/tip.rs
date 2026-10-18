@@ -3,6 +3,7 @@
 //! 筆先は 1 画素 1 バイトの覆い（0〜255）で、行優先・一番下の行が先（キャンバスと同じ左下原点）。上の行から並ぶ形式（PNG・GIMP・ABR・
 //! CLIP STUDIO）を読む側は行を反転して渡す。組み込みの筆先は決まった雑音から作るので、第三者の絵もライセンスも入らない。
 
+use crate::Reason;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
@@ -36,11 +37,11 @@ impl BrushTip {
     /// 幅・高さ（1〜2048）と覆い（幅 × 高さ バイト、行は下から）。
     pub fn new(name: &str, width: u32, height: u32, alpha: Vec<u8>) -> Result<BrushTip, CoreError> {
         if width < 1 || height < 1 || width > Self::MAX_SIZE || height > Self::MAX_SIZE {
-            return Err(CoreError::InvalidArgument("筆先の大きさ（1〜2048）"));
+            return Err(CoreError::InvalidArgument(Reason::BrushTipSizeRange));
         }
         if alpha.len() != width as usize * height as usize {
             return Err(CoreError::InvalidArgument(
-                "筆先の覆いの長さが幅 × 高さでない",
+                Reason::BrushTipCoverageSizeMismatch,
             ));
         }
         Ok(BrushTip {
@@ -79,6 +80,30 @@ impl BrushTip {
             v * self.height as f64 - 0.5,
             false,
         )
+    }
+
+    /// リボンの帯の読み: [`BrushTip::sample`] の、横（線の向き）の端は端の画素を延ばして読む形（縦の [0,1] の外は 0）。
+    #[inline]
+    pub(crate) fn sample_ribbon(&self, u: f64, v: f64) -> f64 {
+        if v < 0.0 || v > 1.0 {
+            return 0.0;
+        }
+        let x = u * self.width as f64 - 0.5;
+        let y = v * self.height as f64 - 0.5;
+        let (x0, y0) = (x.floor() as i32, y.floor() as i32);
+        let (fx, fy) = (x - x0 as f64, y - y0 as f64);
+        let w = self.width as i32;
+        let at = |x: i32, y: i32| -> f64 {
+            let x = x.clamp(0, w - 1);
+            if y < 0 || y >= self.height as i32 {
+                0.0
+            } else {
+                f64::from(self.alpha[(y * w + x) as usize])
+            }
+        };
+        let top = at(x0, y0) * (1.0 - fx) + at(x0 + 1, y0) * fx;
+        let bottom = at(x0, y0 + 1) * (1.0 - fx) + at(x0 + 1, y0 + 1) * fx;
+        (top * (1.0 - fy) + bottom * fy) / 255.0
     }
 
     /// 無限に並べた筆先の、画素の座標での覆い（0〜1、双線形。紙の質感）。

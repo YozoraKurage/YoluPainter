@@ -571,7 +571,7 @@ pub fn read_request(bytes: &[u8]) -> Result<Request, Refusal> {
         return Err(Refusal::new(
             Reason::FormatUnknown,
             format!(
-                "形式の版が違います（{}）",
+                "形式のバージョンが違います（{}）",
                 value.get("format").map_or("無し".into(), |v| v.to_string())
             ),
         ));

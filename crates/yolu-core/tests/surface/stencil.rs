@@ -67,17 +67,17 @@ fn identity() -> Option<StencilMapping> {
 fn covering(opacity: f64, flow: f64, color: Rgba8) -> Brush {
     Brush {
         seed: 1,
-        ..Brush::from(BrushSettings {
-            radius: 200.0,
-            hardness: 1.0,
-            opacity,
-            flow,
-            pressure_opacity: false,
-            pressure_flow: false,
-            pressure_size: false,
-            color,
-            ..BrushSettings::default()
-        })
+        ..Brush::simple(
+            BrushSettings {
+                radius: 200.0,
+                hardness: 1.0,
+                opacity,
+                flow,
+                color,
+                ..BrushSettings::default()
+            },
+            yolu_core::PressureSwitches::NONE,
+        )
     }
 }
 fn dab(d: &mut Document, l: LayerId, b: &Brush) {

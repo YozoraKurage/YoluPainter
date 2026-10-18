@@ -13,7 +13,7 @@ pub(super) fn checkpoint(cancel: Option<&AtomicBool>) {
             schedule.set(Some((calls, trip)));
             if calls == trip {
                 cancel
-                    .expect("試験用の取消旗")
+                    .expect("テスト用の取消旗")
                     .store(true, Ordering::Relaxed);
             }
         }
@@ -91,7 +91,16 @@ fn cancellation_during_geometry_bake_stops_early_without_maps() {
         SurfaceGeometry::new(vec![triangle(), triangle()], 1, DEFAULT_WELD_TOLERANCE).unwrap();
     // 入口・出口 + 2三角形 × (三角形の入口 + 8行)。
     check(20, &[4, 12], |flag| {
-        ModelMaps::from_geometry(&geometry, 8, 8, 0, u64::MAX, u64::MAX, Some(flag)).map(|_| ())
+        ModelMaps::from_geometry(
+            &geometry,
+            8,
+            8,
+            &crate::geometry::MaterialSet::one(0),
+            u64::MAX,
+            u64::MAX,
+            Some(flag),
+        )
+        .map(|_| ())
     });
 }
 

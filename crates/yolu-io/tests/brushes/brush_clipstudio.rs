@@ -86,7 +86,7 @@ fn the_default_celsys_folders_follow_the_published_locations() {
             PathBuf::from("/u/Documents/CELSYS"),
             PathBuf::from("/u/OneDrive/Documents/CELSYS"),
         ],
-        "新しい版の場所（V1.10.13 以降）から、古い版の書類の下、OneDrive の書類の下の順"
+        "新しいバージョンの場所（V1.10.13 以降）から、古いバージョンの書類の下、OneDrive の書類の下の順"
     );
     assert_eq!(Places::default().celsys_folders(), Vec::<PathBuf>::new());
     // 同じ場所は 1 度だけ
@@ -356,7 +356,7 @@ fn spilled_uncommitted_writer(path: &Path) -> (rusqlite::Connection, Vec<u8>) {
     );
     assert_ne!(
         main, committed,
-        "確定前のページが本体に書き出された（この試験の前提）"
+        "確定前のページが本体に書き出された（このテストの前提）"
     );
     (writer, committed)
 }

@@ -8,6 +8,7 @@ use super::{
     surface::{interpolate, Frames, Surface},
     *,
 };
+use crate::Reason;
 use rayon::prelude::*;
 use std::{
     collections::HashMap,
@@ -317,16 +318,10 @@ pub(crate) fn prepare<'a>(
     }
     // 焼かないアイランドを外し、重なったテクセルを先に取る順に並べる（既定は番号の昇順のまま）。0〜1 の外の UV の拒否もここ
     let receivers = super::priority::arrange(input, &s.overlap, receivers)?;
-    check(
-        !receivers.is_empty(),
-        "対象スロットに焼き込めるUVのある三角形がありません",
-    )?;
+    check(!receivers.is_empty(), Reason::BakeTargetSlotHasNoUv)?;
     let estimate = estimate_bytes(input, s, budget, reference)?;
     report.estimated_bytes = estimate;
-    check(
-        estimate <= budget.max_bytes,
-        "ベイクの見積もりがメモリ予算を超えます",
-    )?;
+    check(estimate <= budget.max_bytes, Reason::BakeEstimateOverBudget)?;
     let remaining = budget.max_bytes - estimate;
     report.receiving_triangles = receivers.len();
     macro_rules! checkpoint {
@@ -924,7 +919,7 @@ pub fn bake(
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(prep.threads)
         .build()
-        .map_err(|e| MeshMapError(e.to_string()))?;
+        .map_err(|e| MeshMapError::Threads(e.to_string()))?;
     let raw = match cpu_rows(&mut prep, &control, &pool, &mut progress) {
         Ok(raw) => raw,
         Err(stopped) => return Ok(stopped),

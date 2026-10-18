@@ -38,7 +38,7 @@ impl ModelMaps {
         geometry: &SurfaceGeometry,
         width: u32,
         height: u32,
-        material: i32,
+        material: &crate::geometry::MaterialSet,
         memory_budget: u64,
         work_budget: u64,
         cancel: Option<&AtomicBool>,
@@ -63,7 +63,7 @@ impl ModelMaps {
         for t in geometry
             .triangles()
             .iter()
-            .filter(|t| t.material == material)
+            .filter(|t| material.contains(t.material))
         {
             canceled(cancel)?;
             let us = [t.uv_a, t.uv_b, t.uv_c];

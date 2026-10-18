@@ -36,7 +36,7 @@ pub(super) fn checkpoint(cancel: Option<&AtomicBool>, site: Site) {
             s.calls.push(site);
             if s.calls.len() == s.trip {
                 cancel
-                    .expect("試験用の取消旗")
+                    .expect("テスト用の取消旗")
                     .store(true, Ordering::Relaxed);
             }
         }
@@ -132,11 +132,14 @@ fn canvas_path_cancellation_stops_at_every_check_site() {
         style: Default::default(),
         id: 0,
         channel: Channel::Color,
-        brush: PathBrush(BrushSettings {
-            radius: 4.0,
-            spacing: 0.5,
-            ..Default::default()
-        }),
+        brush: PathBrush(
+            BrushSettings {
+                radius: 4.0,
+                spacing: 0.5,
+                ..Default::default()
+            },
+            crate::PressureSwitches::default(),
+        ),
         points: [(6.0, 10.0), (30.0, 52.0), (50.0, 12.0), (58.0, 50.0)]
             .map(|(x, y)| CanvasPoint::new(x, y, 1.0).unwrap())
             .to_vec(),
@@ -185,12 +188,17 @@ fn surface_path_cancellation_stops_at_every_check_site() {
         style: Default::default(),
         id: 0,
         channel: Channel::Color,
-        brush: PathBrush(BrushSettings {
-            radius: 0.05,
-            spacing: 0.17,
-            pressure_size: false,
-            ..Default::default()
-        }),
+        brush: PathBrush(
+            BrushSettings {
+                radius: 0.05,
+                spacing: 0.17,
+                ..Default::default()
+            },
+            crate::PressureSwitches {
+                size: false,
+                ..crate::PressureSwitches::default()
+            },
+        ),
         points: [(1, 0.2, 0.3), (0, 0.5, 0.3), (1, 0.5, 0.3), (0, 0.1, 0.6)]
             .map(|(t, u, v)| PathPoint::new(t, u, v, 1.0).unwrap())
             .to_vec(),
@@ -237,12 +245,17 @@ fn square(kind: PathKind) -> CanvasPath {
         },
         id: 0,
         channel: Channel::Color,
-        brush: PathBrush(BrushSettings {
-            radius: 3.0,
-            spacing: 0.5,
-            pressure_size: false,
-            ..Default::default()
-        }),
+        brush: PathBrush(
+            BrushSettings {
+                radius: 3.0,
+                spacing: 0.5,
+                ..Default::default()
+            },
+            crate::PressureSwitches {
+                size: false,
+                ..crate::PressureSwitches::default()
+            },
+        ),
         points: [(10.0, 10.0), (52.0, 12.0), (50.0, 50.0), (12.0, 46.0)]
             .map(|(x, y)| CanvasPoint::new(x, y, 1.0).unwrap())
             .to_vec(),
@@ -271,12 +284,17 @@ fn plane_path(g: &SurfaceGeometry, kind: PathKind) -> SurfacePath {
         },
         id: 0,
         channel: Channel::Color,
-        brush: PathBrush(BrushSettings {
-            radius: 0.05,
-            spacing: 0.17,
-            pressure_size: false,
-            ..Default::default()
-        }),
+        brush: PathBrush(
+            BrushSettings {
+                radius: 0.05,
+                spacing: 0.17,
+                ..Default::default()
+            },
+            crate::PressureSwitches {
+                size: false,
+                ..crate::PressureSwitches::default()
+            },
+        ),
         points: [(1, 0.2, 0.3), (0, 0.5, 0.3), (1, 0.5, 0.3), (0, 0.1, 0.6)]
             .map(|(t, u, v)| PathPoint::new(t, u, v, 1.0).unwrap())
             .to_vec(),

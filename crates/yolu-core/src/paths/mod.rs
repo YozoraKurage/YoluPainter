@@ -1,4 +1,5 @@
 //! 編集できる 2D/3D の筆跡。評価は独立した面を返し、文書・選択・履歴を変更しない。
+use crate::Reason;
 pub mod bezier;
 #[cfg(test)]
 mod cancellation_tests;
@@ -9,7 +10,7 @@ mod render;
 mod ribbon;
 mod surface;
 use crate::geometry::DabRefusal;
-use crate::{BrushSettings, Channel, CoreError, Rgba8};
+use crate::{BrushSettings, Channel, CoreError, PressureSwitches, Rgba8};
 pub use list::{
     list_channels, list_images, render_list, validate_list, LayerPathEntry, MAX_LAYER_PATHS,
     MAX_PATH_NAME,
@@ -27,7 +28,7 @@ pub const MAX_CANVAS_SAMPLES: usize = 4_000_000;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Error {
-    Invalid(&'static str),
+    Invalid(crate::Reason),
     ModelMismatch,
     MissingTriangle,
     TooManySamples,
@@ -47,7 +48,7 @@ impl From<CoreError> for Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Invalid(s) => f.write_str(s),
+            Self::Invalid(s) => f.write_str(s.ja()),
             Self::ModelMismatch => {
                 f.write_str("モデルの三角形・UV・スロットの指紋が、パスを作ったときと違います")
             }
@@ -116,16 +117,14 @@ impl CanvasPoint {
             || self.y.abs() > 1e6
             || !(0.0..=1.0).contains(&self.pressure)
         {
-            return Err(Error::Invalid(
-                "2D の点は有限の ±1000000 画素、筆圧は 0..1 です",
-            ));
+            return Err(Error::Invalid(Reason::CanvasPathPointRange));
         }
         if let Tangent::Handles { incoming, outgoing } = self.tangent {
             if [incoming, outgoing]
                 .iter()
                 .any(|h| !h.is_finite() || h.x.abs() > MAX_HANDLE || h.y.abs() > MAX_HANDLE)
             {
-                return Err(Error::Invalid("取っ手は有限の ±1000000 です"));
+                return Err(Error::Invalid(Reason::PathHandleRange));
             }
         }
         Ok(())
@@ -150,7 +149,7 @@ impl PathPoint {
             || u + v > 1.0 + 1e-9
             || !(0.0..=1.0).contains(&pressure)
         {
-            return Err(Error::Invalid("3D の点は三角形の内側、筆圧は 0..1 です"));
+            return Err(Error::Invalid(Reason::SurfacePathPointRange));
         }
         Ok(Self {
             triangle,
@@ -214,15 +213,19 @@ impl SurfacePath {
         }
     }
 }
-/// 半径は 2D では画素、3D ではモデルの空間。ほかの欄は通常の丸いブラシと共通。
+/// 半径は 2D では画素、3D ではモデルの空間。ほかの欄は通常の丸いブラシと共通。2 つ目は筆圧で大きさ・不透明度・流量を変えるか
+/// （応えは直線）。
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PathBrush(pub BrushSettings);
+pub struct PathBrush(pub BrushSettings, pub PressureSwitches);
 impl Default for PathBrush {
     fn default() -> Self {
-        Self(BrushSettings {
-            radius: 0.01,
-            ..Default::default()
-        })
+        Self(
+            BrushSettings {
+                radius: 0.01,
+                ..Default::default()
+            },
+            PressureSwitches::default(),
+        )
     }
 }
 impl PathBrush {
@@ -230,7 +233,7 @@ impl PathBrush {
         let b = self.0;
         if !b.radius.is_finite() || b.radius <= 0.0 || b.radius > if canvas { 4096.0 } else { 1e6 }
         {
-            return Err(Error::Invalid("パスのブラシの半径が範囲外です"));
+            return Err(Error::Invalid(Reason::PathBrushRadiusRange));
         }
         BrushSettings { radius: 1.0, ..b }.validate()?;
         Ok(())
@@ -335,19 +338,19 @@ impl PathStyle {
     }
     fn validate(&self) -> Result<(), Error> {
         if !self.angle.is_finite() || !TIP_ANGLE.contains(&self.angle) {
-            return Err(Error::Invalid("筆先の角度は -360〜360 度です"));
+            return Err(Error::Invalid(Reason::PathTipAngleRange));
         }
         if self
             .depth
             .is_some_and(|d| !d.is_finite() || !DEPTH.contains(&d))
         {
-            return Err(Error::Invalid("投影の深さは半径の 0.05〜64 倍です"));
+            return Err(Error::Invalid(Reason::PathProjectionDepthRange));
         }
         match self.symmetry {
             PathSymmetry::None => {}
             PathSymmetry::Canvas(c) => {
                 if !c.enabled() || c.validate().is_err() {
-                    return Err(Error::Invalid("パスの対称の種類・中心・数が範囲外です"));
+                    return Err(Error::Invalid(Reason::PathSymmetryRange));
                 }
             }
             PathSymmetry::Mirror { point, normal } => {
@@ -356,7 +359,7 @@ impl PathStyle {
                     || normal.length_squared() < 1e-12
                     || point.abs().max_element() > 1e6
                 {
-                    return Err(Error::Invalid("パスの鏡の面が有限でないか、法線が 0 です"));
+                    return Err(Error::Invalid(Reason::PathMirrorPlaneInvalid));
                 }
             }
         }
@@ -364,14 +367,12 @@ impl PathStyle {
             PathKind::Ribbon(r) => {
                 if r.image.0 == 0 || !r.spacing.is_finite() || !RIBBON_SPACING.contains(&r.spacing)
                 {
-                    return Err(Error::Invalid(
-                        "リボンの画像と間隔（0.1〜4）を確かめてください",
-                    ));
+                    return Err(Error::Invalid(Reason::PathRibbonInvalid));
                 }
             }
             PathKind::Smudge { strength } => {
                 if !(0.0..=1.0).contains(&strength) {
-                    return Err(Error::Invalid("指先の強さは 0..1 です"));
+                    return Err(Error::Invalid(Reason::PathSmudgeStrengthRange));
                 }
             }
             PathKind::Stroke | PathKind::Fill | PathKind::Erase => {}
@@ -405,7 +406,7 @@ fn paints(
     material: &Option<Vec<ChannelPaint>>,
 ) -> Result<Vec<ChannelPaint>, Error> {
     if !channel.is_standard() {
-        return Err(Error::Invalid("パスは標準の 6 チャンネルを使います"));
+        return Err(Error::Invalid(Reason::PathNeedsStandardChannels));
     }
     let fallback = [ChannelPaint {
         channel,
@@ -413,12 +414,12 @@ fn paints(
     }];
     let p = material.as_deref().unwrap_or(&fallback);
     if p.is_empty() || p.len() > 6 {
-        return Err(Error::Invalid("パスの組は 1..6 チャンネルです"));
+        return Err(Error::Invalid(Reason::PathChannelCountRange));
     }
     let mut seen = 0u64;
     for m in p {
         if !m.channel.is_standard() || seen & (1 << m.channel.index()) != 0 {
-            return Err(Error::Invalid("パスのチャンネルが不正か重複しています"));
+            return Err(Error::Invalid(Reason::PathChannelsInvalid));
         }
         seen |= 1 << m.channel.index();
     }
@@ -429,11 +430,11 @@ impl CanvasPath {
         self.brush.validate(true)?;
         self.style.validate()?;
         if matches!(self.style.symmetry, PathSymmetry::Mirror { .. }) {
-            return Err(Error::Invalid("2D のパスの対称はキャンバスの対称です"));
+            return Err(Error::Invalid(Reason::CanvasPathNeedsCanvasSymmetry));
         }
         paints(self.channel, self.brush, &self.material)?;
         if self.points.len() > MAX_POINTS {
-            return Err(Error::Invalid("パスの点は 4096 個までです"));
+            return Err(Error::Invalid(Reason::TooManyPathPoints));
         }
         for p in &self.points {
             p.validate()?;
@@ -446,29 +447,27 @@ impl SurfacePath {
         self.brush.validate(false)?;
         self.style.validate()?;
         if matches!(self.style.symmetry, PathSymmetry::Canvas(_)) {
-            return Err(Error::Invalid("3D のパスの対称はモデルの鏡の面です"));
+            return Err(Error::Invalid(Reason::SurfacePathNeedsMirrorSymmetry));
         }
         paints(self.channel, self.brush, &self.material)?;
         if self.points.len() > MAX_POINTS {
-            return Err(Error::Invalid("パスの点は 4096 個までです"));
+            return Err(Error::Invalid(Reason::TooManyPathPoints));
         }
         if self.model_fingerprint.is_empty() || self.model_fingerprint.encode_utf16().count() > 128
         {
-            return Err(Error::Invalid("モデルの指紋は 1..128 文字です"));
+            return Err(Error::Invalid(Reason::PathModelFingerprintLength));
         }
         for p in &self.points {
             let normalized = PathPoint::new(p.triangle, p.u, p.v, p.pressure)?;
             if normalized.with_tangent(p.tangent) != *p {
-                return Err(Error::Invalid(
-                    "重心座標が未正規化です（-1e-9 以上 0 未満は 0 に丸める）",
-                ));
+                return Err(Error::Invalid(Reason::PathBarycentricNotNormalized));
             }
             if let Tangent::Handles { incoming, outgoing } = p.tangent {
                 if [incoming, outgoing]
                     .iter()
                     .any(|h| !h.is_finite() || h.abs().max_element() as f64 > MAX_HANDLE)
                 {
-                    return Err(Error::Invalid("取っ手は有限の ±1000000 です"));
+                    return Err(Error::Invalid(Reason::PathHandleRange));
                 }
             }
         }

@@ -5,6 +5,7 @@ use egui::{pos2, vec2, Id, Key, Order, Rect, Sense, UiBuilder, Vec2};
 
 use crate::bake;
 use crate::export::{self, ExportAction};
+use crate::jobs::CloseJob;
 use crate::lang::Lang;
 use crate::psd::PsdAction;
 use crate::state::{Action, AppState};
@@ -247,6 +248,8 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     }
     bake::window::show(ctx, app);
     crate::panels::brush_detail::show(ctx, app);
+    // 影響元設定のウィンドウは、詳細のウィンドウの行からも、ツールプロパティの行からも開く
+    crate::panels::brush_rows::dynamics_window(ctx, app);
     crate::panels::brush_catalog::show(ctx, app);
     crate::panels::brush_clipstudio::show(ctx, app);
     crate::newproject::window::show(ctx, app);
@@ -255,6 +258,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     export_report(ctx, app);
     psd_confirm(ctx, app);
     crate::psd_import::show_check(ctx, app);
+    crate::dropin::window::show(ctx, app);
     crate::psd_export::show_options(ctx, app);
     crate::psd_export::show_confirm(ctx, app);
     crate::distribute::window::show(ctx, app);
@@ -268,9 +272,15 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     app.release_idle_bake_input();
 }
 
-/// 確認のウィンドウや結果のウィンドウが開いている（キーの割り当てを止める。仕事の表 `jobs::JOBS` の `modal`）。
+/// 確認のウィンドウや結果のウィンドウが開いている（キーの割り当てを止める。仕事の表 `jobs::JOBS` の `modal` と、保存していない変更の問い）。
 pub fn modal_open(app: &AppState) -> bool {
-    crate::jobs::modal_open(app)
+    app.ui.discard_ask.is_some() || crate::jobs::modal_open(app)
+}
+
+/// キャンバスと 3D ビューの押し始め・ホイール・Esc を止めるか: ポップアップ（このフレームに閉じた物も）・選択範囲のダイアログ・確認のウィンドウ
+/// （[`modal_open`]）が開いている間。別ウィンドウの入力は覆いの下を通らずに直に読むので、覆いではなくこの判定で止める。
+pub fn pointer_blocked(app: &AppState) -> bool {
+    app.ui.popup.is_some() || app.ui.popup_was_open || app.sel.dialog.is_some() || modal_open(app)
 }
 
 /// 終わる頼みを、保存が終わるまで待たせている（保存を捨てて閉じない）。
@@ -291,59 +301,48 @@ fn export_confirm(ctx: &egui::Context, app: &mut AppState) {
         .collect();
     if confirm.existing.len() > 8 {
         rows.push(Row::text(
-            lang.pick(
-                format!("ほか {} 件", confirm.existing.len() - 8),
-                format!("and {} more", confirm.existing.len() - 8),
+            lang.f(
+                "windows-and-more",
+                &[("existing", &(confirm.existing.len() - 8))],
             ),
             false,
         ));
     }
     let spec = ListSpec {
         id: "export-confirm",
-        title: lang.pick("置き換えるファイル", "Files to Replace").into(),
+        title: lang.t("windows-files-to-replace").into(),
         icon: "warning",
         modal: true,
         width: 460.0,
         summary: Some((
-            lang.pick(
-                format!(
-                    "書く {} 枚のうち、もうあるファイル {} 個",
-                    confirm.total,
-                    confirm.existing.len()
-                ),
-                format!(
-                    "{} of {} images already exist",
-                    confirm.existing.len(),
-                    confirm.total
-                ),
+            lang.f(
+                "windows-of-images-already-exist",
+                &[
+                    ("total", &confirm.total),
+                    ("existing", &confirm.existing.len()),
+                ],
             ),
             true,
         )),
         rows,
         buttons: vec![
             Button {
-                label: lang.pick("やめる", "Cancel").into(),
+                label: lang.t("windows-cancel").into(),
                 primary: false,
                 tooltip: None,
             },
             Button {
-                label: lang.pick("置き換える", "Replace").into(),
+                label: lang.t("windows-replace").into(),
                 primary: true,
-                tooltip: Some(
-                    lang.pick(
-                        "同じ名前のファイルを新しい画像に置き換えます",
-                        "Replaces the files with the same names",
-                    )
-                    .into(),
-                ),
+                tooltip: Some(lang.t("windows-replaces-the-files-with-the-tip").into()),
             },
         ],
-        close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
+        close_label: lang.t("windows-close-window").into(),
     };
-    let mut offset = app.export.confirm_offset;
+    let mut offset = app.ui.export_confirm_offset;
     let mut scroll = 0.0;
     let reply = show_list(ctx, &spec, &mut offset, &mut scroll);
-    app.export.confirm_offset = offset;
+    app.ui.export_confirm_offset = offset;
     match reply {
         Some(Reply::Button(1)) => app.apply(Action::Export(ExportAction::ConfirmReplace)),
         Some(_) => app.apply(Action::Export(ExportAction::CancelConfirm)),
@@ -366,17 +365,17 @@ fn export_report(ctx: &egui::Context, app: &mut AppState) {
                 i.width,
                 i.height,
                 if i.normal_map {
-                    lang.pick("法線", "Normal")
+                    lang.t("windows-normal")
                 } else if i.srgb {
                     "sRGB"
                 } else {
-                    lang.pick("リニア", "Linear")
+                    lang.t("windows-linear")
                 }
             ),
             right: if i.replaced {
-                lang.pick("置き換え", "Replaced").into()
+                lang.t("windows-replaced").into()
             } else {
-                lang.pick("新規", "New").into()
+                lang.t("windows-new").into()
             },
             warning: false,
         })
@@ -386,7 +385,7 @@ fn export_report(ctx: &egui::Context, app: &mut AppState) {
     }
     let spec = ListSpec {
         id: "export-report",
-        title: lang.pick("書き出した画像", "Exported Images").into(),
+        title: lang.t("windows-exported-images").into(),
         icon: "folder_open",
         modal: false,
         width: 560.0,
@@ -396,16 +395,16 @@ fn export_report(ctx: &egui::Context, app: &mut AppState) {
         )),
         rows,
         buttons: vec![Button {
-            label: lang.pick("閉じる", "Close").into(),
+            label: lang.t("windows-close").into(),
             primary: false,
             tooltip: None,
         }],
-        close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
+        close_label: lang.t("windows-close-window").into(),
     };
-    let mut offset = app.export.report_offset;
+    let mut offset = app.ui.export_report_offset;
     let mut scroll = 0.0;
     let reply = show_list(ctx, &spec, &mut offset, &mut scroll);
-    app.export.report_offset = offset;
+    app.ui.export_report_offset = offset;
     if reply.is_some() {
         app.apply(Action::Export(ExportAction::DismissReport));
     }
@@ -421,17 +420,14 @@ fn psd_confirm(ctx: &egui::Context, app: &mut AppState) {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default(),
-        many => lang.pick(
-            format!("{} 個のファイル", many.len()),
-            format!("{} files", many.len()),
-        ),
+        many => lang.f("windows-files", &[("many", &many.len())]),
     };
     let spec = ListSpec {
         id: "psd-confirm",
         title: if replace.imported {
-            lang.pick("取り込んだ PSD を置き換える", "Replace the Imported PSD")
+            lang.t("windows-replace-the-imported-psd")
         } else {
-            lang.pick("置き換えるファイル", "Files to Replace")
+            lang.t("windows-files-to-replace")
         }
         .into(),
         icon: "warning",
@@ -445,35 +441,29 @@ fn psd_confirm(ctx: &egui::Context, app: &mut AppState) {
             .collect(),
         buttons: vec![
             Button {
-                label: lang.pick("やめる", "Cancel").into(),
+                label: lang.t("windows-cancel").into(),
                 primary: false,
                 tooltip: None,
             },
             Button {
-                label: lang.pick("置き換える", "Replace").into(),
+                label: lang.t("windows-replace").into(),
                 primary: true,
                 tooltip: Some(
                     if replace.imported {
-                        lang.pick(
-                            "このプロジェクトを取り込んだ PSD です。書き出した PSD に置き換えます",
-                            "This project was imported from this PSD. It is replaced by the exported PSD",
-                        )
+                        lang.t("windows-this-project-was-imported-from-tip")
                     } else {
-                        lang.pick(
-                            "同じ名前のファイルを書き出した PSD に置き換えます",
-                            "Replaces the files with the same names with the exported PSDs",
-                        )
+                        lang.t("windows-replaces-the-files-with-the-2-tip")
                     }
                     .into(),
                 ),
             },
         ],
-        close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
+        close_label: lang.t("windows-close-window").into(),
     };
-    let mut offset = app.psd.confirm_offset;
+    let mut offset = app.ui.psd_confirm_offset;
     let mut scroll = 0.0;
     let reply = show_list(ctx, &spec, &mut offset, &mut scroll);
-    app.psd.confirm_offset = offset;
+    app.ui.psd_confirm_offset = offset;
     match reply {
         Some(Reply::Button(1)) => app.apply(Action::Psd(PsdAction::ConfirmReplace)),
         Some(_) => app.apply(Action::Psd(PsdAction::CancelConfirm)),
@@ -491,47 +481,38 @@ fn merge_confirm(ctx: &egui::Context, app: &mut AppState) {
         .channels
         .iter()
         .map(|(channel, pixels)| Row {
-            left: crate::m2::channel_name(lang, &app.doc, *channel),
+            left: crate::m2::channel_name(lang, &app.session.doc, *channel),
             middle: String::new(),
-            right: lang.pick(format!("{pixels} 画素"), format!("{pixels} px")),
+            right: lang.f("windows-px", &[("pixels", &pixels)]),
             warning: false,
         })
         .collect();
     let spec = ListSpec {
         id: "merge-confirm",
-        title: lang.pick("レイヤーの結合", "Merge Layers").into(),
+        title: lang.t("windows-merge-layers").into(),
         icon: "warning",
         modal: true,
         width: 420.0,
-        summary: Some((
-            lang.pick("見た目が変わります", "The look changes").into(),
-            true,
-        )),
+        summary: Some((lang.t("windows-the-look-changes").into(), true)),
         rows,
         buttons: vec![
             Button {
-                label: lang.pick("やめる", "Cancel").into(),
+                label: lang.t("windows-cancel").into(),
                 primary: false,
                 tooltip: None,
             },
             Button {
-                label: lang.pick("結合する", "Merge").into(),
+                label: lang.t("windows-merge").into(),
                 primary: true,
-                tooltip: Some(
-                    lang.pick(
-                        "見た目が変わっても結合します（取り消しでレイヤーが戻ります）",
-                        "Merges even though the look changes (Undo brings the layers back)",
-                    )
-                    .into(),
-                ),
+                tooltip: Some(lang.t("windows-merges-even-though-the-look-tip").into()),
             },
         ],
-        close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
+        close_label: lang.t("windows-close-window").into(),
     };
-    let mut offset = app.layer_ops.confirm_offset;
+    let mut offset = app.ui.layer_ops_confirm_offset;
     let mut scroll = 0.0;
     let reply = show_list(ctx, &spec, &mut offset, &mut scroll);
-    app.layer_ops.confirm_offset = offset;
+    app.ui.layer_ops_confirm_offset = offset;
     match reply {
         Some(Reply::Button(1)) => app.apply(Action::M2(crate::m2::Edit::ConfirmMerge)),
         Some(_) => app.apply(Action::M2(crate::m2::Edit::CancelMerge)),
@@ -547,9 +528,9 @@ fn psd_report(ctx: &egui::Context, app: &mut AppState) {
     let spec = ListSpec {
         id: "psd-report",
         title: if report.importing {
-            lang.pick("PSD の読み込み", "PSD Import")
+            lang.t("windows-psd-import")
         } else {
-            lang.pick("PSD の書き出し", "PSD Export")
+            lang.t("windows-psd-export")
         }
         .into(),
         icon: if report.ok { "info" } else { "warning" },
@@ -562,17 +543,17 @@ fn psd_report(ctx: &egui::Context, app: &mut AppState) {
             .map(|l| Row::text(l.text.clone(), l.warning))
             .collect(),
         buttons: vec![Button {
-            label: lang.pick("閉じる", "Close").into(),
+            label: lang.t("windows-close").into(),
             primary: false,
             tooltip: None,
         }],
-        close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
+        close_label: lang.t("windows-close-window").into(),
     };
     let tips: Vec<Option<String>> = report.lines.iter().map(|l| l.tooltip.clone()).collect();
-    let mut offset = app.psd.report_offset;
+    let mut offset = app.ui.psd_report_offset;
     let mut scroll = 0.0;
     let reply = show_list_with(ctx, &spec, &tips, &mut offset, &mut scroll);
-    app.psd.report_offset = offset;
+    app.ui.psd_report_offset = offset;
     if reply.is_some() {
         app.apply(Action::Psd(PsdAction::DismissReport));
     }
@@ -640,7 +621,7 @@ fn job_card(ctx: &egui::Context, app: &mut AppState) {
                     "close",
                     &format!(
                         "{}: {}",
-                        lang.pick("取消", "Cancel"),
+                        lang.t("windows-cancel-tip"),
                         e.text.split(" — ").next().unwrap_or_default()
                     ),
                     false,
@@ -694,7 +675,7 @@ fn saving_before_close(ctx: &egui::Context, app: &AppState) {
             w::rounded(&p, rect, t::PANEL_BG, 6.0);
             w::outline(&p, rect, t::SEPARATOR, 1.0, 6.0);
             let inner = rect.shrink2(vec2(16.0, 12.0));
-            let title = lang.pick("保存しています", "Saving");
+            let title = lang.t("windows-saving");
             let head = Rect::from_min_size(inner.min, vec2(inner.width(), 22.0));
             w::text(&p, head, title, t::HEADER, Align::Left);
             let name =
@@ -735,50 +716,6 @@ pub fn park_until_canceled(cancel: &std::sync::atomic::AtomicBool) {
     }
 }
 
-/// 閉じる前に知らせる仕事（走っていて、利用者が結果を待っている物）。閉じると取り消される。
-/// 保存は含まない（保存は閉じる流れが終わるまで待つ。`YoluApp::close_flow`）。画面に出ない裏の仕事（サムネイル・一覧の読み込み・
-/// 更新の確かめ）は、結果を待っていないので含まない。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CloseJob {
-    Bake,
-    Export,
-    PsdImport,
-    PsdExport,
-    Distribute,
-    UpdateDownload,
-    BrushImport,
-    /// ライブラリのフォルダへの書き込み（ライブラリへ入れる・ファイルを足す）。
-    LibraryWrite,
-    /// レイヤーの素材（スマートマテリアル・マスク）の保存。
-    ShelfSave,
-    /// 個人のライブラリのファイルのプロジェクトへの取り込み。
-    ShelfImport,
-}
-
-impl CloseJob {
-    /// 確かめの文に出す名前（仕事の札・メニューの名前と同じ言い方）。
-    pub fn label(self, lang: Lang) -> &'static str {
-        match self {
-            CloseJob::Bake => lang.pick("ベイク", "Bake"),
-            CloseJob::Export => lang.pick("書き出し", "Export"),
-            CloseJob::PsdImport => lang.pick("PSD の取り込み", "PSD import"),
-            CloseJob::PsdExport => lang.pick("PSD の書き出し", "PSD export"),
-            CloseJob::Distribute => lang.pick("配布用に保存", "Save for distribution"),
-            CloseJob::UpdateDownload => lang.pick("更新のダウンロード", "Update download"),
-            CloseJob::BrushImport => lang.pick("ブラシの取り込み", "Brush import"),
-            CloseJob::LibraryWrite => lang.pick("ライブラリへの書き込み", "Writing to the library"),
-            CloseJob::ShelfSave => lang.pick("素材の保存", "Saving a material"),
-            CloseJob::ShelfImport => lang.pick("素材の取り込み", "Importing a material"),
-        }
-    }
-}
-
-/// 閉じると取り消される、走っている仕事（仕事の表 `jobs::JOBS` の順）。保存は含まない。更新のために終わるとき（更新のダウンロードは
-/// 済んでいる）も、走っている物は挙げる（呼び手が、更新の流れでは聞かない）。
-pub fn close_jobs(app: &AppState) -> Vec<CloseJob> {
-    crate::jobs::close_jobs(app)
-}
-
 /// 閉じる前の確かめの文。保存していない変更（`modified`）と、閉じると取り消される仕事（`jobs`）を、1 つの問いにまとめる。
 /// 変更も仕事も無ければ空（問わない）。
 pub fn close_question(lang: Lang, modified: bool, jobs: &[CloseJob]) -> String {
@@ -786,22 +723,17 @@ pub fn close_question(lang: Lang, modified: bool, jobs: &[CloseJob]) -> String {
         .iter()
         .map(|job| job.label(lang))
         .collect::<Vec<_>>()
-        .join(lang.pick("・", ", "));
+        .join(lang.t("windows-text"));
     match (modified, jobs.is_empty()) {
         (false, true) => String::new(),
-        (true, true) => lang
-            .pick(
-                "保存していない変更があります。変更を捨てて終わりますか？",
-                "There are unsaved changes. Discard them and quit?",
-            )
-            .to_owned(),
-        (false, false) => lang.pick(
-            format!("走っている仕事（{names}）は取り消されます。終わりますか？"),
-            format!("Running jobs ({names}) will be cancelled. Quit?"),
+        (true, true) => lang.t("windows-there-are-unsaved-changes").to_owned(),
+        (false, false) => lang.f(
+            "windows-running-jobs-will-be-cancelled",
+            &[("names", &names)],
         ),
-        (true, false) => lang.pick(
-            format!("保存していない変更があります。走っている仕事（{names}）も取り消されます。変更を捨てて終わりますか？"),
-            format!("There are unsaved changes, and running jobs ({names}) will be cancelled. Discard and quit?"),
+        (true, false) => lang.f(
+            "windows-there-are-unsaved-changes-and",
+            &[("names", &names)],
         ),
     }
 }

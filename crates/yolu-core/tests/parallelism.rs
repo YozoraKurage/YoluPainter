@@ -191,12 +191,17 @@ fn big_brushes() -> Vec<(&'static str, Brush)> {
         ("round", Brush::from(base(70.0, 0.6, 0.1))),
         (
             "soft",
-            Brush::from(BrushSettings {
-                flow: 0.3,
-                opacity: 0.8,
-                pressure_flow: true,
-                ..base(90.0, 0.0, 0.05)
-            }),
+            Brush::simple(
+                BrushSettings {
+                    flow: 0.3,
+                    opacity: 0.8,
+                    ..base(90.0, 0.0, 0.05)
+                },
+                yolu_core::PressureSwitches {
+                    flow: true,
+                    ..yolu_core::PressureSwitches::default()
+                },
+            ),
         ),
     ];
     let mut tip = Brush::from(base(75.0, 0.8, 0.1));
@@ -238,6 +243,21 @@ fn big_brushes() -> Vec<(&'static str, Brush)> {
             ..base(80.0, 0.5, 0.1)
         }),
     ));
+    // リボン（複数の筆先を線の長さに沿って写す）と連続吹き付け（時刻のダブ。入力は 1/100 秒ごとで、遅い所に足される）
+    let mut ribbon = Brush::from(base(60.0, 1.0, 0.1));
+    ribbon.tip.ribbon = true;
+    ribbon.tip.images = vec![
+        builtin_tip("charcoal").unwrap(),
+        builtin_tip("grain").unwrap(),
+    ];
+    ribbon.tip.selection = yolu_core::TipSelection::Sequential;
+    out.push(("ribbon", ribbon));
+    let mut continuous = Brush::from(BrushSettings {
+        flow: 0.3,
+        ..base(70.0, 0.5, 0.4)
+    });
+    continuous.tip.continuous = true;
+    out.push(("continuous", continuous));
     out
 }
 
@@ -272,6 +292,48 @@ fn large_dabs_of_every_kind_give_the_same_stroke_with_any_number_of_threads() {
             };
             same_for_every_degree(&format!("{name} {selection}"), run);
         }
+    }
+}
+
+/// 補正の拡張（後補正の描き直し・はらい・手ぶれ補正の速度による調整）の大きなダブのストロークも、選択範囲の有無にかかわらず、どのスレッド数でも
+/// 同じバイトで、Undo は描く前のバイト。
+#[test]
+fn corrected_large_dab_strokes_are_the_same_with_any_number_of_threads() {
+    let mut brush = Brush::simple(
+        BrushSettings {
+            radius: 60.0,
+            hardness: 0.6,
+            spacing: 0.1,
+            color: Rgba8::new(200, 60, 30, 255),
+            ..BrushSettings::default()
+        },
+        yolu_core::PressureSwitches::default(),
+    );
+    brush.assist.post = yolu_core::PostCorrection {
+        on: true,
+        strength: 40.0,
+        ..yolu_core::PostCorrection::default()
+    };
+    brush.assist.sweep = 0.5;
+    brush.assist.stabilizer = 8.0;
+    brush.assist.stabilizer_speed = Some(yolu_core::StabilizerSpeed::WeakenWhenFast);
+    for selection in [false, true] {
+        let run = || {
+            let (mut d, l) = canvas(selection);
+            let before = color_hash(&d, l);
+            let mut s = d.begin_brush_stroke(l, &brush).unwrap();
+            for p in path(40.0, 170.0, 520.0, 60) {
+                s.add_sample(&mut d, p).unwrap();
+            }
+            let live = color_hash(&d, l);
+            assert!(d.end_stroke(s).unwrap().changed);
+            let after = color_hash(&d, l);
+            assert_ne!(after, live, "描き直している");
+            assert!(d.undo().unwrap());
+            assert_eq!(color_hash(&d, l), before, "Undo は描く前のバイト");
+            (live, after, d.history_bytes())
+        };
+        same_for_every_degree(&format!("補正 {selection}"), run);
     }
 }
 
@@ -1004,14 +1066,15 @@ fn surface_strokes_are_the_same_whether_the_projection_gathers_on_workers_or_not
         let hash = with_degree(degree, || {
             let mut doc = Document::new(256, 256).unwrap();
             let layer = doc.add_layer("a").unwrap();
-            let mut brush = Brush::from(BrushSettings {
-                radius: 14.0,
-                hardness: 0.8,
-                color: Rgba8::new(200, 60, 30, 255),
-                pressure_size: false,
-                pressure_opacity: false,
-                ..BrushSettings::default()
-            });
+            let mut brush = Brush::simple(
+                BrushSettings {
+                    radius: 14.0,
+                    hardness: 0.8,
+                    color: Rgba8::new(200, 60, 30, 255),
+                    ..BrushSettings::default()
+                },
+                yolu_core::PressureSwitches::NONE,
+            );
             brush.seed = 7;
             let mut stroke = doc.begin_brush_stroke(layer, &brush).unwrap();
             let c = Vec2::new(320.0, 240.0);
@@ -1021,7 +1084,7 @@ fn surface_strokes_are_the_same_whether_the_projection_gathers_on_workers_or_not
                 geometry.clone(),
                 view,
                 &brush.base,
-                Some(0),
+                Some(&yolu_core::geometry::MaterialSet::one(0)),
                 c + Vec2::new(-150.0, -30.0),
                 1.0,
                 SurfaceStrokeOptions::default(),

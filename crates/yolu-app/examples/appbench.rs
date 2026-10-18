@@ -87,9 +87,6 @@ fn brush(rng: &mut Rng, radius: f64, opacity: f64) -> BrushSettings {
         opacity,
         flow: 1.0,
         color: Rgba8::new(r as u8, (r >> 8) as u8, (r >> 16) as u8, 255),
-        pressure_size: false,
-        pressure_opacity: false,
-        pressure_flow: false,
         erase: false,
         anti_alias: yolu_core::AntiAlias::None,
     }

@@ -157,15 +157,21 @@ fn preview_brush(brush: &Brush, spec: SampleSpec) -> Brush {
         stabilizer: 0.0,
         taper_in: (assist.taper_in * f).min(10_000.0),
         taper_out: (assist.taper_out * f).min(10_000.0),
+        taper_targets: assist.taper_targets,
         curve: assist.curve,
+        // 見本の線は縮めて描くので、長さで決まる補正（速度による調整・はらい・後補正）は当てない
+        ..crate::engine::StrokeAssist::default()
     };
     if let Some(t) = &mut b.texture {
         t.scale = (t.scale * f).clamp(0.05, 64.0);
     }
     if let Some(d) = &mut b.dual {
         d.radius = (d.radius * f).clamp(0.5, 65536.0);
+        if let Some(t) = &mut d.texture {
+            t.scale = (t.scale * f).clamp(0.05, 64.0);
+        }
     }
-    b.controls.speed_max = (b.controls.speed_max * f).max(1.0);
+    b.influences.speed_max = (b.influences.speed_max * f).max(1.0);
     b.effect = match b.effect {
         BrushEffect::Blur { radius } => BrushEffect::Blur {
             radius: ((radius as f64 * f).round() as u32).clamp(1, 64),
@@ -227,7 +233,13 @@ fn key_with(brush: &Brush, spec: SampleSpec, print: &mut dyn FnMut(&Arc<BrushTip
         .iter()
         .chain(&preview.tip.images)
         .chain(preview.texture.iter().map(|t| &t.image))
-        .chain(preview.dual.iter().filter_map(|d| d.tip.as_ref()));
+        .chain(preview.dual.iter().filter_map(|d| d.tip.as_ref()))
+        .chain(
+            preview
+                .dual
+                .iter()
+                .flat_map(|d| d.tips.iter().chain(d.texture.iter().map(|t| &t.image))),
+        );
     for tip in tips {
         print(tip).hash(&mut hasher);
     }
@@ -293,8 +305,6 @@ pub fn render(brush: &Brush, spec: SampleSpec) -> Result<SampleImage, CoreError>
             radius: (h * 0.07).max(2.0),
             hardness: 1.0,
             spacing: 0.1,
-            pressure_size: false,
-            pressure_opacity: false,
             ..BrushSettings::default()
         };
         for (i, color) in [
@@ -307,7 +317,10 @@ pub fn render(brush: &Brush, spec: SampleSpec) -> Result<SampleImage, CoreError>
         .enumerate()
         {
             let x = w * (0.18 + 0.215 * i as f64);
-            let line = Brush::from(BrushSettings { color, ..bar });
+            let line = Brush::simple(
+                BrushSettings { color, ..bar },
+                crate::engine::PressureSwitches::NONE,
+            );
             stroke_line(
                 &mut doc,
                 layer,
@@ -335,7 +348,7 @@ pub fn render(brush: &Brush, spec: SampleSpec) -> Result<SampleImage, CoreError>
         })
         .collect();
     // 速さは効きの上限の 35% ほどで進める（筆の速さの設定が見本でも見える）
-    let speed = 0.35 * b.controls.speed_max;
+    let speed = 0.35 * b.influences.speed_max;
     stroke_line(&mut doc, layer, &b, &points, h, speed)?;
     let mut rgba = vec![0u8; spec.width as usize * spec.height as usize * 4];
     doc.composite_into(Channel::Color, doc.bounds(), &mut rgba, RowOrder::TopDown)?;
@@ -398,6 +411,16 @@ pub struct SampleCache {
     /// 見本を出す所ごとの、最後に出した札。
     shown: HashMap<egui::Id, u64>,
     pub stats: SampleStats,
+}
+
+impl std::fmt::Debug for SampleCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SampleCache")
+            .field("len", &self.slots.len())
+            .field("bytes", &self.bytes)
+            .field("stats", &self.stats)
+            .finish_non_exhaustive()
+    }
 }
 
 impl SampleCache {
@@ -660,7 +683,7 @@ mod tests {
         // 筆圧で直径が変わるブラシは、両端が細く真ん中が太い
         let mut b = Brush::default();
         b.base.radius = 10.0;
-        b.base.pressure_size = true;
+        b.influences.size.pressure.on = true;
         let image = render(&b, SampleSpec::row(false)).unwrap();
         let column = |x: usize| {
             (0..60usize)
@@ -670,8 +693,8 @@ mod tests {
         let (left, middle, right) = (column(40), column(170), column(300));
         assert!(middle > left && middle > right, "{left} {middle} {right}");
         // 筆圧に従わなければ同じ太さ
-        b.base.pressure_size = false;
-        b.base.pressure_opacity = false;
+        b.influences.size.pressure.on = false;
+        b.influences.opacity.pressure.on = false;
         let flat = render(&b, SampleSpec::row(false)).unwrap();
         let flat_column = |x: usize| {
             (0..60usize)
@@ -690,6 +713,50 @@ mod tests {
         huge.base.radius = 128.0;
         let image = render(&huge, SampleSpec::row(false)).unwrap();
         assert!(ink(&image) > 0 && ink(&image) < 340 * 60);
+    }
+
+    #[test]
+    fn the_second_tips_paper_scale_shrinks_with_the_main_one() {
+        use crate::engine::{DualBrush, PaperTexture};
+        let paper = || PaperTexture::new(yolu_core::builtin_tip("grain").unwrap(), 1.0);
+        let mut brush = Brush::default();
+        brush.base.radius = 128.0;
+        brush.texture = Some(paper());
+        brush.dual = Some(DualBrush {
+            texture: Some(paper()),
+            ..Default::default()
+        });
+        let spec = SampleSpec::row(false);
+        let f = fit_scale(256.0, spec.height as f64);
+        assert!(f < 1.0);
+        let shrunk = preview_brush(&brush, spec);
+        let main = shrunk.texture.as_ref().unwrap().scale;
+        let second = shrunk
+            .dual
+            .as_ref()
+            .unwrap()
+            .texture
+            .as_ref()
+            .unwrap()
+            .scale;
+        assert!((main - f).abs() < 1e-9, "{main} {f}");
+        assert_eq!(second, main, "2 つ目の紙質も主と同じ割合で縮む");
+        // 範囲も主と同じ
+        brush.texture.as_mut().unwrap().scale = 0.06;
+        brush.dual.as_mut().unwrap().texture.as_mut().unwrap().scale = 0.06;
+        let clamped = preview_brush(&brush, spec);
+        assert_eq!(clamped.texture.as_ref().unwrap().scale, 0.05);
+        assert_eq!(
+            clamped
+                .dual
+                .as_ref()
+                .unwrap()
+                .texture
+                .as_ref()
+                .unwrap()
+                .scale,
+            0.05
+        );
     }
 
     #[test]
@@ -716,7 +783,10 @@ mod tests {
             ("spacing", Box::new(|b| b.base.spacing = 0.5)),
             ("opacity", Box::new(|b| b.base.opacity = 0.5)),
             ("flow", Box::new(|b| b.base.flow = 0.2)),
-            ("pressure", Box::new(|b| b.base.pressure_size = false)),
+            (
+                "pressure",
+                Box::new(|b| b.influences.size.pressure.on = false),
+            ),
             ("tip angle", Box::new(|b| b.tip.angle = 30.0)),
             (
                 "tip image",
@@ -825,6 +895,42 @@ mod tests {
             assert_eq!(k, key_of(&br, spec), "{i}");
         }
         assert!(cache.tip_prints.0.len() <= MAX_TIP_PRINTS);
+    }
+
+    #[test]
+    fn second_tips_and_second_textures_with_other_pixels_get_other_keys() {
+        use crate::engine::{DualBrush, PaperTexture};
+        let tip =
+            |pixels: [u8; 4]| Arc::new(BrushTip::new("取り込み", 2, 2, pixels.to_vec()).unwrap());
+        let (a, b) = (tip([0, 255, 255, 0]), tip([255, 0, 0, 255]));
+        let spec = SampleSpec::row(false);
+        type Put = fn(&mut DualBrush, Arc<BrushTip>);
+        let places: [(&str, Put); 2] = [
+            ("dual tips", |d, t| d.tips = vec![t]),
+            ("dual texture", |d, t| {
+                d.texture = Some(PaperTexture::new(t, 0.5))
+            }),
+        ];
+        for (place, put) in places {
+            let make = |t: &Arc<BrushTip>| {
+                let mut d = DualBrush::default();
+                put(&mut d, t.clone());
+                Brush {
+                    dual: Some(d),
+                    ..Brush::default()
+                }
+            };
+            assert_ne!(
+                key_of(&make(&a), spec),
+                key_of(&make(&b), spec),
+                "{place}: 画素だけが違う"
+            );
+            assert_eq!(
+                key_of(&make(&a), spec),
+                key_of(&make(&tip([0, 255, 255, 0])), spec),
+                "{place}: 中身が同じなら同じ鍵"
+            );
+        }
     }
 
     #[test]

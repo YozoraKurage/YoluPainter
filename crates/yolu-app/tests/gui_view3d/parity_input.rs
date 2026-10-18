@@ -1,7 +1,8 @@
 //! 2D のキャンバスと 3D ビューの入力を揃える: 3D の Shift + 押しの直線（マウスもペンも。前の終点から、前が無ければ 45° 刻みの固定）・Ctrl（ペンは描かず、
-//! マウスは描く）・タッチの力が筆圧になること・バケツの近い色・クローンの設定（揃える・全レイヤーから）が 2D と 3D で一つであること。
+//! マウスは描く）・タッチの力が筆圧になること・バケツの近い色・クローンの設定（揃える・全レイヤーを読む）が 2D と 3D で一つであること。
 //! 実際の入力（マウスのイベント・ペンの点・Touch）を流して確かめる。
 use crate::common;
+use crate::common::drive::Drive;
 use crate::view3d_brush::{cube_view, press_with, release_with, screen_of};
 
 use common::*;
@@ -21,7 +22,7 @@ type H = Harness<'static, YoluApp>;
 const SIZE: u32 = 256;
 
 fn painted_count(h: &H) -> usize {
-    let doc = &h.state().state.doc;
+    let doc = h.doc();
     let mut n = 0;
     for y in 0..SIZE {
         for x in 0..SIZE {
@@ -34,7 +35,7 @@ fn painted_count(h: &H) -> usize {
 }
 
 fn alpha_sum(h: &H) -> u64 {
-    let doc = &h.state().state.doc;
+    let doc = h.doc();
     let mut n = 0;
     for y in 0..SIZE {
         for x in 0..SIZE {
@@ -45,16 +46,16 @@ fn alpha_sum(h: &H) -> u64 {
 }
 
 /// 画面の点の下の面の UV が指す画素（今のテクスチャセットの面だけ）。
-fn texel_at(h: &H, rect: Rect, at: Pos2) -> Option<(u32, u32)> {
-    let s = &h.state().state;
-    let model = s.view3d.model.as_ref()?;
-    let view = s.view3d.camera.view(rect.width(), rect.height());
+pub(crate) fn texel_at(h: &H, rect: Rect, at: Pos2) -> Option<(u32, u32)> {
+    let s = h.app();
+    let model = s.view3d().model.as_ref()?;
+    let view = s.view3d().view.camera.view(rect.width(), rect.height());
     let hit = pick(
         &model.geometry,
         &view,
         Vec2::new(at.x - rect.left(), at.y - rect.top()),
     )?;
-    (hit.material == s.view3d.material).then_some((
+    s.view3d().material.contains(hit.material).then_some((
         ((hit.uv.x * SIZE as f32) as u32).min(SIZE - 1),
         ((hit.uv.y * SIZE as f32) as u32).min(SIZE - 1),
     ))
@@ -65,7 +66,7 @@ fn ink_near(h: &H, rect: Rect, at: Pos2, r: u32) -> bool {
     let Some((x, y)) = texel_at(h, rect, at) else {
         return false;
     };
-    let doc = &h.state().state.doc;
+    let doc = h.doc();
     for yy in y.saturating_sub(r)..=(y + r).min(SIZE - 1) {
         for xx in x.saturating_sub(r)..=(x + r).min(SIZE - 1) {
             if composite_pixel(doc, xx, yy)[3] > 0 {
@@ -76,36 +77,35 @@ fn ink_near(h: &H, rect: Rect, at: Pos2, r: u32) -> bool {
     false
 }
 
-fn hold(h: &mut H, m: Modifiers) {
+pub(crate) fn hold(h: &mut H, m: Modifiers) {
     h.event(Event::ModifiersChanged(m));
     h.step();
 }
 
 fn strokes(h: &H) -> usize {
-    h.state().state.doc.undo_count()
+    h.doc().undo_count()
 }
 
 fn last_point(h: &H) -> Pos2 {
-    h.state()
-        .state
-        .view3d
+    h.view3d()
+        .view
         .input
         .last_point
         .expect("描いているストロークの終点")
 }
 
 fn has_previous_end(h: &H) -> bool {
-    h.state().state.view3d.input.previous_end.is_some()
+    h.view3d().view.input.previous_end.is_some()
 }
 
 /// 細い線で見分けやすくする（文書は 256 角）。
-fn thin_brush(h: &mut H) {
-    h.state_mut().state.brush.radius = 2.0;
-    h.state_mut().state.brush.hardness = 1.0;
-    h.state_mut().state.m2.random_seed = false;
+pub(crate) fn thin_brush(h: &mut H) {
+    h.brush_mut().radius = 2.0;
+    h.brush_mut().hardness = 1.0;
+    h.m2_mut().random_seed = false;
 }
 
-fn sample(at: Pos2, contact: bool, time_ms: u32) -> PenSample {
+pub(crate) fn sample(at: Pos2, contact: bool, time_ms: u32) -> PenSample {
     PenSample {
         pos: [at.x, at.y],
         pressure: if contact { 1.0 } else { 0.0 },
@@ -160,7 +160,7 @@ fn drag_with(h: &mut H, device: Device, points: &[Pos2], m: Modifiers) {
     hold(h, Modifiers::NONE);
 }
 
-fn world(h: &H, rect: Rect, x: f32, y: f32) -> Pos2 {
+pub(crate) fn world(h: &H, rect: Rect, x: f32, y: f32) -> Pos2 {
     screen_of(h, rect, Vec3::new(x, y, -0.5))
 }
 
@@ -197,7 +197,7 @@ fn shift_press_draws_a_line_from_the_previous_end_for_the_mouse_and_the_pen() {
         assert!(!ink_near(&plain, rect, mid, 2), "{device:?}: 間は塗らない");
         assert!(painted_count(&h) > painted_count(&plain) * 3, "{device:?}");
         // 1 回の Undo で線が消える（最初のストロークは残る）
-        h.state_mut().state.doc.undo().unwrap();
+        h.doc_mut().undo().unwrap();
         h.run();
         assert!(!ink_near(&h, rect, mid, 2));
         assert!(ink_near(&h, rect, a, 2));
@@ -328,7 +328,7 @@ fn a_previous_end_from_another_model_is_not_used() {
     );
     assert!(has_previous_end(&h));
     // モデルを読み直す（世代が変わる）: 前の終点は今のモデルの面ではない
-    h.state_mut().state.view3d.load_demo();
+    h.view3d_mut().load_demo();
     h.run();
     drag_with(&mut h, Device::Mouse, &[b], Modifiers::SHIFT);
     assert!(!ink_near(&h, rect, mid, 2), "間は塗らない");
@@ -373,12 +373,12 @@ fn touch(h: &mut H, at: Pos2, phase: egui::TouchPhase, force: Option<f32>) {
 fn touched(force: Option<f32>, adjust: PressureAdjust) -> H {
     let (mut h, rect) = cube_view();
     {
-        let s = &mut h.state_mut().state;
-        s.prefs.settings.pressure = adjust;
-        s.brush.pressure_size = false;
-        s.brush.pressure_opacity = true;
-        s.brush.pressure_flow = false;
-        s.m2.random_seed = false;
+        let s = h.app_mut();
+        s.prefs_mut().settings.pressure = adjust;
+        s.brush_mut().pressure.size = false;
+        s.brush_mut().pressure.opacity = true;
+        s.brush_mut().pressure.flow = false;
+        s.m2_mut().random_seed = false;
     }
     let (from, to) = (world(&h, rect, -0.2, 0.0), world(&h, rect, 0.2, 0.0));
     if force.is_some() {
@@ -423,7 +423,7 @@ fn a_touch_force_becomes_the_pressure_of_the_3d_mouse_path() {
     touch(&mut h, from, egui::TouchPhase::Start, Some(0.3));
     touch(&mut h, from, egui::TouchPhase::End, None);
     h.step();
-    assert_eq!(h.state().state.canvas.touch_pressure, None);
+    assert_eq!(h.canvas().touch_pressure, None);
     drag(&mut h, &[from, to]);
     assert!(painted_count(&h) > 0);
 }
@@ -445,26 +445,26 @@ fn a_touch_force_goes_through_the_global_adjustment_in_3d_like_a_pen_point() {
 // ───────── バケツの近い色 ─────────
 
 fn snapshot(h: &H) -> Vec<u8> {
-    let doc = &h.state().state.doc;
+    let doc = h.doc();
     doc.composite(doc.bounds()).unwrap()
 }
 
 /// 文書の全面に縦の仕切り（画素の列 `x - 3` と `x + 3`）を立て、緑で近い色のバケツ。
 fn wall_columns(h: &mut H, x: u32) {
-    let s = &mut h.state_mut().state;
-    s.tool = Tool::Fill;
-    s.color.set_main([0.0, 1.0, 0.0, 1.0]);
-    s.region.by_color = true;
-    s.region.tolerance = 0;
-    let layer = s.selected_layer.expect("レイヤー");
+    let s = h.app_mut();
+    s.set_tool(Tool::Fill);
+    s.color_mut().set_main([0.0, 1.0, 0.0, 1.0]);
+    s.region_mut().by_color = true;
+    s.region_mut().tolerance = 0;
+    let layer = s.selected_layer().expect("レイヤー");
     for column in [x - 3, x + 3] {
         for y in 0..SIZE {
-            s.doc
+            s.doc_mut()
                 .set_pixel(layer, column, y, Rgba8::new(0, 0, 0, 255))
                 .unwrap();
         }
     }
-    s.doc.clear_history().unwrap();
+    s.doc_mut().clear_history().unwrap();
 }
 
 #[test]
@@ -481,22 +481,22 @@ fn the_similar_color_bucket_fills_the_same_area_in_3d_as_a_2d_click_on_that_pixe
     click(&mut h3, at);
     // 2D: 同じ画素を押す
     let screen = {
-        let s = &h2.state().state;
-        s.view
+        let s = h2.app();
+        s.view()
             .view(canvas_rect(&h2), SIZE, SIZE)
             .to_screen(x as f64 + 0.5, y as f64 + 0.5)
     };
     click(&mut h2, screen);
-    assert_eq!(h3.state().state.doc.undo_count(), 1, "1 回の Undo");
+    assert_eq!(h3.doc().undo_count(), 1, "1 回の Undo");
     assert_eq!(snapshot(&h3), snapshot(&h2), "2D と同じ範囲");
     assert_ne!(snapshot(&h3), before);
     let green = [0, 255, 0, 255];
     for column in [x - 2, x, x + 2] {
-        assert_eq!(composite_pixel(&h3.state().state.doc, column, 0), green);
+        assert_eq!(composite_pixel(h3.doc(), column, 0), green);
     }
-    assert_ne!(composite_pixel(&h3.state().state.doc, x + 4, 0), green);
+    assert_ne!(composite_pixel(h3.doc(), x + 4, 0), green);
     // 1 回の Undo で戻る
-    h3.state_mut().state.doc.undo().unwrap();
+    h3.doc_mut().undo().unwrap();
     assert_eq!(snapshot(&h3), before);
 }
 
@@ -506,16 +506,16 @@ fn the_leftover_drag_of_the_similar_color_bucket_works_in_3d() {
     let at = world(&h, rect, 0.0, 0.0);
     let (x, y) = texel_at(&h, rect, at).expect("面の上");
     {
-        let s = &mut h.state_mut().state;
-        s.tool = Tool::Fill;
-        s.color.set_main([0.0, 1.0, 0.0, 1.0]);
-        s.region.by_color = true;
-        s.region.tolerance = 0;
-        s.region.color.leftovers = true;
-        s.region.color.reference = yolu_app::region::color::Reference::Visible;
-        s.brush.radius = 2.0;
+        let s = h.app_mut();
+        s.set_tool(Tool::Fill);
+        s.color_mut().set_main([0.0, 1.0, 0.0, 1.0]);
+        s.region_mut().by_color = true;
+        s.region_mut().tolerance = 0;
+        s.region_mut().color.leftovers = true;
+        s.region_mut().color.reference = yolu_app::region::color::Reference::Visible;
+        s.brush_mut().radius = 2.0;
         // 押した画素を囲む部屋（四辺が壁）を、線のレイヤーに作る
-        let lines = s.doc.add_layer("線").unwrap();
+        let lines = s.doc_mut().add_layer("線").unwrap();
         for i in 0..=14 {
             for (px, py) in [
                 (x - 7 + i, y - 7),
@@ -523,18 +523,16 @@ fn the_leftover_drag_of_the_similar_color_bucket_works_in_3d() {
                 (x - 7, y - 7 + i),
                 (x + 7, y - 7 + i),
             ] {
-                s.doc
+                s.doc_mut()
                     .set_pixel(lines, px, py, Rgba8::new(0, 0, 0, 255))
                     .unwrap();
             }
         }
-        s.doc.clear_history().unwrap();
+        s.doc_mut().clear_history().unwrap();
     }
-    let layer = h.state().state.selected_layer.expect("レイヤー");
+    let layer = h.selected_layer().expect("レイヤー");
     let alpha = |h: &H, px: u32, py: u32| {
-        h.state()
-            .state
-            .doc
+        h.doc()
             .layer(layer)
             .unwrap()
             .pixel(yolu_app::engine::Channel::Color, px, py)
@@ -544,7 +542,7 @@ fn the_leftover_drag_of_the_similar_color_bucket_works_in_3d() {
     // 押して、少しなぞって離す: 触れた部屋の塗り残しを塗る
     drag(&mut h, &[at, at + vec2(4.0, 2.0), at + vec2(8.0, 3.0)]);
     h.run();
-    assert!(h.state().state.region.leftover_drag.is_none());
+    assert!(h.region().leftover_drag.is_none());
     assert!(alpha(&h, x, y) > 0, "触れた部屋");
     assert!(
         alpha(&h, x - 5, y - 5) > 0 && alpha(&h, x + 5, y + 5) > 0,
@@ -552,31 +550,29 @@ fn the_leftover_drag_of_the_similar_color_bucket_works_in_3d() {
     );
     assert_eq!(alpha(&h, x - 7, y), 0, "壁は塗らない");
     assert_eq!(alpha(&h, 0, 0), 0, "部屋の外は塗らない");
-    assert_eq!(h.state().state.doc.undo_count(), 1, "1 回の Undo");
+    assert_eq!(h.doc().undo_count(), 1, "1 回の Undo");
 }
 
 // ───────── クローンの設定を 2D と 3D で共有する ─────────
 
 fn select_clone(h: &mut H) {
     use yolu_app::brushes::{BrushAction, BrushKey};
-    h.state_mut()
-        .state
-        .apply(yolu_app::state::Action::Brush(BrushAction::Select(
-            BrushKey::Builtin("clone"),
-        )));
+    h.act(yolu_app::state::Action::Brush(BrushAction::Select(
+        BrushKey::Builtin("clone"),
+    )));
     h.run();
 }
 
 fn open_effect_detail(h: &mut H) {
-    let ui = &mut h.state_mut().state.brushes.ui;
+    let ui = &mut h.brushes_mut().ui;
     ui.detail.open = true;
-    ui.detail.category = yolu_app::brushes::Category::Effect;
+    ui.detail.category = yolu_app::brushes::Category::Ink;
     ui.detail.scroll = 0.0;
     h.run();
 }
 
 fn close_detail(h: &mut H) {
-    h.state_mut().state.brushes.ui.detail.open = false;
+    h.brushes_mut().ui.detail.open = false;
     h.run();
 }
 
@@ -597,12 +593,12 @@ fn alt_click_3d(h: &mut H, at: Pos2) {
 
 /// 手前の面（UV の左下のアイランド）に、場所で色の違う模様を置く（写した画素で、どこから写したかが分かる）。
 fn front_pattern(h: &mut H) {
-    let s = &mut h.state_mut().state;
-    s.m2.random_seed = false;
-    let layer = s.selected_layer.expect("レイヤー");
+    let s = h.app_mut();
+    s.m2_mut().random_seed = false;
+    let layer = s.selected_layer().expect("レイヤー");
     for y in 10..118 {
         for x in 10..75 {
-            s.doc
+            s.doc_mut()
                 .set_pixel(
                     layer,
                     x,
@@ -612,11 +608,11 @@ fn front_pattern(h: &mut H) {
                 .unwrap();
         }
     }
-    s.doc.clear_history().unwrap();
+    s.doc_mut().clear_history().unwrap();
 }
 
 fn composite(h: &H) -> Vec<u8> {
-    let doc = &h.state().state.doc;
+    let doc = h.doc();
     doc.composite(doc.bounds()).unwrap()
 }
 
@@ -647,12 +643,12 @@ fn clone_twice_in_3d(toggle_in: Option<Tab>, between: fn(&mut H)) -> (Vec<u8>, b
     alt_click_3d(&mut h, center);
     if let Some(tab) = toggle_in {
         toggle_aligned_in(&mut h, tab);
-        assert!(!h.state().state.clone.aligned, "{tab:?} で切った");
+        assert!(!h.clone().aligned, "{tab:?} で切った");
     }
     surface_stroke(&mut h, -0.2, 0.15);
     between(&mut h);
     surface_stroke(&mut h, 0.15, -0.2);
-    let aligned = h.state().state.clone.aligned;
+    let aligned = h.clone().aligned;
     (composite(&h), aligned)
 }
 
@@ -665,9 +661,9 @@ fn clone_twice_in_2d(toggle_in: Option<Tab>) -> Vec<u8> {
     h.run();
     let r = canvas_rect(&h);
     let at = |h: &H, x: f64, y: f64| {
-        let s = &h.state().state;
-        s.view
-            .view(r, s.doc.width(), s.doc.height())
+        let s = h.app();
+        s.view()
+            .view(r, s.doc().width(), s.doc().height())
             .to_screen(x, y)
     };
     hold(&mut h, Modifiers::ALT);
@@ -677,12 +673,7 @@ fn clone_twice_in_2d(toggle_in: Option<Tab>) -> Vec<u8> {
     release_with(&h, source, Modifiers::ALT);
     h.run();
     hold(&mut h, Modifiers::NONE);
-    assert!(h
-        .state()
-        .state
-        .clone
-        .canvas_source_for(h.state().state.doc.id())
-        .is_some());
+    assert!(h.clone().canvas_source_for(h.doc().id()).is_some());
     if let Some(tab) = toggle_in {
         click_tab(&mut h, tab);
         h.run();
@@ -691,7 +682,7 @@ fn clone_twice_in_2d(toggle_in: Option<Tab>) -> Vec<u8> {
         close_detail(&mut h);
         click_tab(&mut h, Tab::Canvas);
         h.run();
-        assert!(!h.state().state.clone.aligned);
+        assert!(!h.clone().aligned);
     }
     // 揃える: 2 本目は 1 本目と同じずれ（(170, 230) − (110, 140) = 模様の (60, 90)）。揃えない: 2 本目も元 (40, 60) から
     for (x, y) in [(150.0, 200.0), (170.0, 230.0)] {
@@ -734,17 +725,13 @@ fn toggling_aligned_in_either_view_changes_the_second_stroke_in_the_other_view()
 fn the_3d_aligned_destination_survives_reloading_the_brush_like_the_2d_offset() {
     let (plain, _) = clone_twice_in_3d(None, |_| {});
     let eraser_round_trip = |h: &mut H| {
-        let d = h.state().state.clone.destination;
+        let d = h.clone().destination;
         assert!(d.is_some(), "1 本目で先の基準が決まる");
-        h.state_mut()
-            .state
-            .apply(yolu_app::state::Action::SelectTool(Tool::Eraser));
+        h.act(yolu_app::state::Action::SelectTool(Tool::Eraser));
         h.run();
-        h.state_mut()
-            .state
-            .apply(yolu_app::state::Action::SelectTool(Tool::Brush));
+        h.act(yolu_app::state::Action::SelectTool(Tool::Brush));
         h.run();
-        assert_eq!(h.state().state.clone.destination, d);
+        assert_eq!(h.clone().destination, d);
     };
     let reselect = |h: &mut H| select_clone(h);
     for between in [eraser_round_trip as fn(&mut H), reselect] {
@@ -760,13 +747,11 @@ fn the_3d_aligned_destination_survives_reloading_the_brush_like_the_2d_offset() 
 fn the_offset_fields_are_disabled_with_the_reason_while_only_the_3d_view_can_be_painted() {
     for lang in yolu_app::lang::Lang::ALL {
         let (mut h, rect) = cube_view();
-        h.state_mut()
-            .state
-            .apply(yolu_app::state::Action::M2Ui(yolu_app::m2::UiOp::Language(
-                lang,
-            )));
+        h.act(yolu_app::state::Action::M2Ui(yolu_app::m2::UiOp::Language(
+            lang,
+        )));
         select_clone(&mut h);
-        assert!(h.state().state.paints_only_in_3d());
+        assert!(h.app().paints_only_in_3d());
         open_effect_detail(&mut h);
         let (x_label, reason) = (
             lang.pick("ずれ X", "Offset X"),
@@ -798,7 +783,7 @@ fn the_offset_fields_are_disabled_with_the_reason_while_only_the_3d_view_can_be_
         // キャンバスのタブへ戻せば（2D に描ける）、欄で決められる
         click_tab(&mut h, Tab::Canvas);
         h.run();
-        assert!(!h.state().state.paints_only_in_3d());
+        assert!(!h.app().paints_only_in_3d());
         assert!(
             !slider(&h, x_label).accesskit_node().is_disabled(),
             "{lang:?}"
@@ -819,9 +804,8 @@ fn a_stroke_that_ends_off_the_model_keeps_its_last_point_on_the_surface_for_the_
     drag_with(&mut h, Device::Mouse, &path, Modifiers::NONE);
     assert_eq!(strokes(&h), 1);
     let end = h
-        .state()
-        .state
-        .view3d
+        .view3d()
+        .view
         .input
         .previous_end
         .expect("面の上の最後の点を覚える");
@@ -845,21 +829,21 @@ fn a_texture_set_switch_forgets_the_3d_clone_source_and_a_focus_loss_the_touch_f
     select_clone(&mut h);
     let center = world(&h, rect, 0.0, 0.0);
     alt_click_3d(&mut h, center);
-    assert!(h.state().state.clone.source.is_some());
+    assert!(h.clone().source.is_some());
     // テクスチャセットを替えた: 元は前のテクスチャセットの面なので忘れる（「揃える」などの設定は残る）
-    h.state_mut().state.clone.all_layers = true;
-    h.state_mut().state.add_texture_set().unwrap();
+    h.clone_mut().all_layers = true;
+    h.app_mut().add_texture_set().unwrap();
     h.run();
-    assert!(h.state().state.clone.source.is_none());
-    assert!(h.state().state.clone.destination.is_none());
-    assert!(h.state().state.clone.all_layers);
+    assert!(h.clone().source.is_none());
+    assert!(h.clone().destination.is_none());
+    assert!(h.clone().all_layers);
     // タッチの終わりを受け取れないままフォーカスを失ったら、力を忘れる（次のマウスの押しは 1）
     touch(&mut h, center, egui::TouchPhase::Start, Some(0.3));
     h.step();
-    assert!(h.state().state.canvas.touch_pressure.is_some());
+    assert!(h.canvas().touch_pressure.is_some());
     h.event(Event::WindowFocused(false));
     h.step();
-    assert_eq!(h.state().state.canvas.touch_pressure, None);
+    assert_eq!(h.canvas().touch_pressure, None);
 }
 
 #[test]
@@ -873,10 +857,10 @@ fn a_previous_end_outside_the_view_still_starts_the_shift_line_on_the_screen() {
         &[a, a + vec2(3.0, 0.0)],
         Modifiers::NONE,
     );
-    let end = h.state().state.view3d.input.previous_end.expect("前の終点");
+    let end = h.view3d().view.input.previous_end.expect("前の終点");
     // 寄って右へずらす: 前の終点はカメラの前にあるが、表示域の外
     {
-        let camera = &mut h.state_mut().state.view3d.camera;
+        let camera = &mut h.view3d_mut().view.camera;
         camera.target = Vec3::new(0.3, 0.0, -0.5);
         camera.distance = 0.9;
     }
@@ -890,9 +874,9 @@ fn a_previous_end_outside_the_view_still_starts_the_shift_line_on_the_screen() {
     let b = world(&h, rect, 0.35, 0.0);
     let between = world(&h, rect, 0.1, 0.0);
     assert!(rect.contains(between) && !ink_near(&h, rect, between, 2));
-    h.state_mut().state.message.clear();
+    h.message_mut().clear();
     drag_with(&mut h, Device::Mouse, &[b], Modifiers::SHIFT);
-    assert_eq!(strokes(&h), 2, "{}", h.state().state.message);
+    assert_eq!(strokes(&h), 2, "{}", h.message());
     assert!(ink_near(&h, rect, between, 2), "前の終点の向きから来る線");
     assert!(ink_near(&h, rect, b, 2));
 }
@@ -903,15 +887,15 @@ fn the_end_of_a_touch_is_read_even_without_a_model() {
     let mut h = app(1100.0, 760.0, SIZE);
     click_tab(&mut h, Tab::View3d);
     h.run();
-    assert!(h.state().state.view3d.model.is_none());
-    assert!(!h.state().state.ui.canvas_visible);
-    h.state_mut().state.canvas.touch_pressure = Some(0.3);
+    assert!(h.view3d().model.is_none());
+    assert!(!h.ui().canvas_visible);
+    h.canvas_mut().touch_pressure = Some(0.3);
     touch(&mut h, pos2(400.0, 300.0), egui::TouchPhase::End, None);
     h.step();
-    assert_eq!(h.state().state.canvas.touch_pressure, None);
+    assert_eq!(h.canvas().touch_pressure, None);
     // フォーカスを失ったときも
-    h.state_mut().state.canvas.touch_pressure = Some(0.3);
+    h.canvas_mut().touch_pressure = Some(0.3);
     h.event(Event::WindowFocused(false));
     h.step();
-    assert_eq!(h.state().state.canvas.touch_pressure, None);
+    assert_eq!(h.canvas().touch_pressure, None);
 }

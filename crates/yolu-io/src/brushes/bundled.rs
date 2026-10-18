@@ -79,7 +79,7 @@ fn load(tip: &Tip) -> Result<BundledBrush, BrushImportError> {
     let imported = set.brushes.remove(0);
     let mut brush = imported.brush;
     brush.base.radius = brush.base.radius.clamp(4.0, 40.0);
-    brush.base.pressure_opacity = false;
+    brush.influences.opacity.pressure.on = false;
     // 名前が無い筆（Krita は "Layer" と付けることがある）はファイル名から
     let name = if imported.name == "Layer" || imported.name.is_empty() {
         fallback

@@ -7,6 +7,7 @@
 //! - 保存の間は復旧の書き置きの新しい頼みを出さない。進み具合は戻らずに進む。
 //!
 //! 大きな文書の時間は `#[ignore]` の `timing_of_a_big_document`（`-- --ignored --nocapture`。試験の通常の回しには入れない）。
+use crate::common::drive::Drive;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
@@ -126,20 +127,20 @@ fn fill_like_art(doc: &mut yolu_app::engine::Document, layers: usize, seed: u64)
 }
 fn painted_state(size: u32, layers: usize, seed: u64) -> AppState {
     let mut s = AppState::new_in(size, size, Lang::Ja);
-    fill_layers(&mut s.doc, layers, seed);
-    s.modified = true;
+    fill_layers(s.doc_mut(), layers, seed);
+    s.set_modified(true);
     s
 }
 /// 1 本のストロークを描いて終える（文書が変わり、保存していない印が付く）。
 fn paint(s: &mut AppState, x: f64) {
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let brush = s.stroke_settings(false);
-    let mut stroke = s.doc.begin_stroke(layer, &brush).unwrap();
+    let mut stroke = s.doc_mut().begin_stroke(layer, &brush).unwrap();
     stroke
-        .add_point(&mut s.doc, x, 20.0, 1.0, DVec2::ZERO)
+        .add_point(s.doc_mut(), x, 20.0, 1.0, DVec2::ZERO)
         .unwrap();
-    s.doc.end_stroke(stroke).unwrap();
-    s.modified = true;
+    s.doc_mut().end_stroke(stroke).unwrap();
+    s.set_modified(true);
 }
 fn bytes_of(doc: &yolu_app::engine::Document) -> Vec<u8> {
     NativeDocument::from_core(doc).unwrap().to_bytes()
@@ -180,13 +181,13 @@ fn assert_same_entries(label: &str, left: &[(String, Vec<u8>)], right: &[(String
 }
 fn opened(path: &Path) -> AppState {
     let mut s = AppState::new_in(64, 64, Lang::Ja);
-    s.apply(Action::OpenProject(path.to_path_buf()));
-    assert!(s.message.starts_with("開きました"), "{}", s.message);
+    s.act(Action::OpenProject(path.to_path_buf()));
+    assert!(s.message().starts_with("開きました"), "{}", s.message());
     s
 }
 /// 保存の頼みを出して、終わるまで待つ（裏のスレッドの状態でも、結果が出てから返る）。
 fn save_and_settle(s: &mut AppState, action: Action) {
-    s.apply(action);
+    s.act(action);
     s.wait_save();
 }
 /// 保存先に残ってはいけないもの（保存の一時ファイル・ロック）。
@@ -205,7 +206,7 @@ fn save_leftovers(dir: &Path) -> Vec<String> {
 fn reference_entries(s: &AppState, path: &Path) -> Vec<(String, Vec<u8>)> {
     use std::sync::Arc;
     let specs: Vec<yolu_io::SetSpec> = s
-        .sets
+        .sets()
         .iter()
         .enumerate()
         .map(|(i, set)| {
@@ -214,13 +215,13 @@ fn reference_entries(s: &AppState, path: &Path) -> Vec<(String, Vec<u8>)> {
             yolu_io::SetSpec {
                 id: set.id.clone(),
                 name: set.name.clone(),
-                material: set.material.clone(),
+                materials: vec![set.materials[0].clone()],
                 document: Some(yolu_io::DocumentSource::from_core(snapshot).unwrap()),
                 composites: yolu_io::composite_pngs(doc).unwrap(),
             }
         })
         .collect();
-    let current = s.sets.current().id.clone();
+    let current = s.sets().current().id.clone();
     let writer = yolu_app::project::writer();
     let (project, mut target) = if path.exists() {
         let (base, target) =
@@ -239,14 +240,14 @@ fn reference_entries(s: &AppState, path: &Path) -> Vec<(String, Vec<u8>)> {
     // 見た目の設定（look.json）は、保存を移す前も後も同じ関数が書く。その関数の結果は物差しにも入れる（比べたいのは、正本・合成の PNG・
     // 並び・ファイルの形）
     let looks: Vec<_> = s
-        .sets
+        .sets()
         .iter()
         .enumerate()
         .map(|(i, set)| (set.id.as_str(), s.set_doc(i).look()))
         .collect();
     let (project, _) = yolu_app::look::io::write_into(project, &looks, Lang::Ja).unwrap();
     target
-        .save_with(&project, s.prefs.settings.backups)
+        .save_with(&project, s.prefs().settings.backups)
         .unwrap();
     entries_of(path)
 }
@@ -262,28 +263,28 @@ fn a_background_save_writes_the_same_bytes_as_the_inline_save() {
             let dir = TempDir::new("same");
             let mut s = painted_state(256, 5, 5);
             // 新しいファイル: 同じ文書を、書き直させて（保存済みの印を外す）画面のスレッドと裏のスレッドで書く
-            s.apply(Action::SaveProjectAs(dir.file("first.ylp")));
+            s.act(Action::SaveProjectAs(dir.file("first.ylp")));
             assert!(
-                s.message.starts_with("保存しました"),
+                s.message().starts_with("保存しました"),
                 "{label}: {}",
-                s.message
+                s.message()
             );
-            s.sets.get_mut(0).unwrap().saved = None;
-            s.apply(Action::SaveProjectAs(dir.file("inline.ylp")));
+            s.sets_mut().get_mut(0).unwrap().saved = None;
+            s.act(Action::SaveProjectAs(dir.file("inline.ylp")));
             assert!(
-                s.message.starts_with("保存しました"),
+                s.message().starts_with("保存しました"),
                 "{label}: {}",
-                s.message
+                s.message()
             );
-            s.sets.get_mut(0).unwrap().saved = None;
-            s.save.background = true;
-            s.apply(Action::SaveProjectAs(dir.file("background.ylp")));
+            s.sets_mut().get_mut(0).unwrap().saved = None;
+            s.save_mut().background = true;
+            s.act(Action::SaveProjectAs(dir.file("background.ylp")));
             assert!(s.is_saving(), "{label}: 保存の頼みは裏の仕事を残して返る");
             s.wait_save();
             assert!(
-                s.message.starts_with("保存しました"),
+                s.message().starts_with("保存しました"),
                 "{label}: {}",
-                s.message
+                s.message()
             );
             assert!(!s.is_saving());
             let (inline, background) = (dir.file("inline.ylp"), dir.file("background.ylp"));
@@ -320,31 +321,34 @@ fn a_background_save_writes_the_same_bytes_as_the_inline_save() {
             std::fs::copy(&background, &pb).unwrap();
             let (mut a, mut b) = (opened(&pa), opened(&pb));
             for state in [&mut a, &mut b] {
-                let layer = state.doc.layers()[0].id();
-                state.doc.set_layer_opacity(layer, 0.5, false).unwrap();
-                state.modified = true;
+                let layer = state.doc().layers()[0].id();
+                state
+                    .doc_mut()
+                    .set_layer_opacity(layer, 0.5, false)
+                    .unwrap();
+                state.set_modified(true);
             }
-            a.apply(Action::SaveProject);
-            b.save.background = true;
-            b.apply(Action::SaveProject);
+            a.act(Action::SaveProject);
+            b.save_mut().background = true;
+            b.act(Action::SaveProject);
             assert!(b.is_saving());
             b.wait_save();
             assert!(
-                a.message.starts_with("保存しました"),
+                a.message().starts_with("保存しました"),
                 "{label}: {}",
-                a.message
+                a.message()
             );
             assert!(
-                b.message.starts_with("保存しました"),
+                b.message().starts_with("保存しました"),
                 "{label}: {}",
-                b.message
+                b.message()
             );
             assert_eq!(
                 entries_of(&pa),
                 entries_of(&pb),
                 "{label}: 上書きのエントリ"
             );
-            assert_eq!(bytes_of(&a.doc), bytes_of(&b.doc));
+            assert_eq!(bytes_of(a.doc()), bytes_of(b.doc()));
             // 上書きも、yolu-io を直に呼んだ物差し（同じ元のファイルの写しに、変えたセットを重ねる）と同じ
             let pr = dir.file("r.ylp");
             std::fs::copy(&background, &pr).unwrap();
@@ -354,13 +358,14 @@ fn a_background_save_writes_the_same_bytes_as_the_inline_save() {
                 &reference_entries(&b, &pr),
             );
             assert!(
-                a.message.contains("前の版は") && b.message.contains("前の版は"),
+                a.message().contains("前のバージョンは")
+                    && b.message().contains("前のバージョンは"),
                 "{label}: 退避は同じく残る: {}",
-                b.message
+                b.message()
             );
             assert_eq!(
-                a.message.replace("a.ylp", "x"),
-                b.message.replace("b.ylp", "x"),
+                a.message().replace("a.ylp", "x"),
+                b.message().replace("b.ylp", "x"),
                 "{label}: 知らせの文も同じ"
             );
         });
@@ -373,10 +378,10 @@ fn what_is_drawn_during_a_background_save_is_not_in_the_file_and_stays_modified(
     let dir = TempDir::new("draw");
     let path = dir.file("作品.ylp");
     let mut s = painted_state(256, 3, 2);
-    s.save.background = true;
-    let before = bytes_of(&s.doc);
-    let hold = s.save.hold_next();
-    s.apply(Action::SaveProjectAs(path.clone()));
+    s.save_mut().background = true;
+    let before = bytes_of(s.doc());
+    let hold = s.save_mut().hold_next();
+    s.act(Action::SaveProjectAs(path.clone()));
     assert!(s.is_saving());
     assert!(!path.exists(), "止めている間は何も書かない");
     assert!(
@@ -385,27 +390,31 @@ fn what_is_drawn_during_a_background_save_is_not_in_the_file_and_stays_modified(
     );
     // 保存の間に描く（描ける・見られる）
     paint(&mut s, 30.0);
-    let during = bytes_of(&s.doc);
+    let during = bytes_of(s.doc());
     assert_ne!(during, before);
     hold.release();
     s.wait_save();
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
-    assert!(s.modified, "保存の間に描いた分は「変更あり」のまま");
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
+    assert!(s.modified(), "保存の間に描いた分は「変更あり」のまま");
     assert!(s.shows_modified());
     // ファイルは、頼んだ時点の中身
     let saved = opened(&path);
-    assert_eq!(bytes_of(&saved.doc), before, "保存の間に描いた分は入らない");
+    assert_eq!(
+        bytes_of(saved.doc()),
+        before,
+        "保存の間に描いた分は入らない"
+    );
     // 次の保存は、そのセットを書き直して、描いた分が入る
-    s.apply(Action::SaveProject);
+    s.act(Action::SaveProject);
     s.wait_save();
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
-    assert_eq!(s.rewritten_sets, 1, "描いた分があるセットを書き直す");
-    assert!(!s.modified);
-    assert_eq!(bytes_of(&opened(&path).doc), during);
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
+    assert_eq!(s.rewritten_sets(), 1, "描いた分があるセットを書き直す");
+    assert!(!s.modified());
+    assert_eq!(bytes_of(opened(&path).doc()), during);
     // 何も描かなければ、書き直さない
-    s.apply(Action::SaveProject);
+    s.act(Action::SaveProject);
     s.wait_save();
-    assert_eq!(s.rewritten_sets, 0);
+    assert_eq!(s.rewritten_sets(), 0);
 }
 
 /// 保存の間の 2 回目の保存・別名の保存・開く・新規・配布用に保存は、理由つきで断られ、状態を変えない。終わったあとはできる。
@@ -416,50 +425,50 @@ fn a_second_save_open_new_and_distribution_are_refused_while_saving() {
     let other = dir.file("別.ylp");
     // 開く先の別の作品
     let mut theirs = painted_state(128, 1, 9);
-    theirs.apply(Action::SaveProjectAs(dir.file("開く先.ylp")));
+    theirs.act(Action::SaveProjectAs(dir.file("開く先.ylp")));
     let mut s = painted_state(256, 2, 4);
-    s.save.background = true;
-    let hold = s.save.hold_next();
-    s.apply(Action::SaveProjectAs(path.clone()));
+    s.save_mut().background = true;
+    let hold = s.save_mut().hold_next();
+    s.act(Action::SaveProjectAs(path.clone()));
     assert!(s.is_saving());
-    let name = s.project_name.clone();
-    let layers = s.doc.layers().len();
+    let name = s.project_name().clone();
+    let layers = s.doc().layers().len();
     let busy = "保存の途中です";
-    s.apply(Action::SaveProject);
+    s.act(Action::SaveProject);
     assert!(
-        s.message.contains("保存できません") && s.message.contains(busy),
+        s.message().contains("保存できません") && s.message().contains(busy),
         "{}",
-        s.message
+        s.message()
     );
-    s.apply(Action::SaveProjectAs(other.clone()));
+    s.act(Action::SaveProjectAs(other.clone()));
     assert!(
-        s.message.contains("保存できません") && s.message.contains(busy),
+        s.message().contains("保存できません") && s.message().contains(busy),
         "{}",
-        s.message
+        s.message()
     );
-    s.apply(Action::OpenProject(dir.file("開く先.ylp")));
+    s.act(Action::OpenProject(dir.file("開く先.ylp")));
     assert!(
-        s.message.contains("開けません") && s.message.contains(busy),
+        s.message().contains("開けません") && s.message().contains(busy),
         "{}",
-        s.message
+        s.message()
     );
     assert_eq!(
-        (s.doc.layers().len(), s.project_name.as_str()),
+        (s.doc().layers().len(), s.project_name().as_str()),
         (layers, name.as_str()),
         "開けなかったので何も替わらない"
     );
-    s.apply(Action::NewProject);
-    assert!(s.message.contains(busy), "{}", s.message);
+    s.act(Action::NewProject);
+    assert!(s.message().contains(busy), "{}", s.message());
     assert_eq!(
-        s.doc.layers().len(),
+        s.doc().layers().len(),
         layers,
         "新規は断られて、文書は替わらない"
     );
-    s.apply(Action::Distribute(
+    s.act(Action::Distribute(
         yolu_app::distribute::DistributeAction::Start,
     ));
-    assert!(s.message.contains(busy), "{}", s.message);
-    assert!(!s.distribute.is_open() && !s.distribute.is_busy());
+    assert!(s.message().contains(busy), "{}", s.message());
+    assert!(!s.distribute().is_open() && !s.distribute().is_busy());
     assert!(s.is_saving(), "断られても、動いている保存はそのまま");
     // メニューの項目も保存の間は無効で、理由をツールチップに出す（描く・見るは止めない）
     let menu = yolu_app::shell::menu_entries(&s, 0);
@@ -483,15 +492,15 @@ fn a_second_save_open_new_and_distribution_are_refused_while_saving() {
     }
     hold.release();
     s.wait_save();
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
     assert!(!other.exists(), "断った別名の保存は何も書かない");
     // 終わったあとはできる
-    s.apply(Action::SaveProjectAs(other.clone()));
+    s.act(Action::SaveProjectAs(other.clone()));
     s.wait_save();
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
     assert!(other.exists());
-    s.apply(Action::OpenProject(dir.file("開く先.ylp")));
-    assert!(s.message.starts_with("開きました"), "{}", s.message);
+    s.act(Action::OpenProject(dir.file("開く先.ylp")));
+    assert!(s.message().starts_with("開きました"), "{}", s.message());
     assert!(
         save_leftovers(&dir.0).is_empty(),
         "{:?}",
@@ -514,53 +523,53 @@ fn a_failed_background_save_changes_nothing_and_says_the_same_as_the_inline_save
             let dir = TempDir::new("fail");
             let path = dir.file("original.ylp");
             let mut s = painted_state(256, 4, 3);
-            s.apply(Action::SaveProjectAs(path.clone()));
+            s.act(Action::SaveProjectAs(path.clone()));
             let original = std::fs::read(&path).unwrap();
             let mut messages = Vec::new();
             for background in [false, true] {
                 std::fs::write(&path, &original).unwrap();
                 let mut o = AppState::new_in(64, 64, lang);
-                o.apply(Action::OpenProject(path.clone()));
-                o.save.background = background;
+                o.act(Action::OpenProject(path.clone()));
+                o.save_mut().background = background;
                 // 別のファイルに置き換えられた後は、外の変更として断る（外のファイルを潰さない）
                 let theirs = dir.file("theirs.ylp");
                 let mut other = painted_state(128, 2, 8);
-                other.apply(Action::SaveProjectAs(theirs.clone()));
+                other.act(Action::SaveProjectAs(theirs.clone()));
                 std::fs::rename(&theirs, &path).unwrap();
                 let outside = std::fs::read(&path).unwrap();
-                o.modified = true;
-                let doc_before = bytes_of(&o.doc);
+                o.set_modified(true);
+                let doc_before = bytes_of(o.doc());
                 save_and_settle(&mut o, Action::SaveProject);
                 assert!(
-                    o.message.contains(changed),
+                    o.message().contains(changed),
                     "{lang:?} {background}: {}",
-                    o.message
+                    o.message()
                 );
-                assert!(o.modified, "保存していない印のまま");
+                assert!(o.modified(), "保存していない印のまま");
                 assert!(!o.is_saving());
                 assert_eq!(
                     std::fs::read(&path).unwrap(),
                     outside,
                     "外のファイルは潰さない"
                 );
-                assert_eq!(bytes_of(&o.doc), doc_before);
-                let replaced_message = o.message.clone();
+                assert_eq!(bytes_of(o.doc()), doc_before);
+                let replaced_message = o.message().to_owned();
                 // 消された後は、保存先が外で消されたと断る（新しく作らない）
                 std::fs::remove_file(&path).unwrap();
                 save_and_settle(&mut o, Action::SaveProject);
                 assert!(
-                    o.message.contains(deleted) && !o.message.contains(changed),
+                    o.message().contains(deleted) && !o.message().contains(changed),
                     "{lang:?} {background}: {}",
-                    o.message
+                    o.message()
                 );
                 assert!(!path.exists());
-                assert!(o.modified);
+                assert!(o.modified());
                 assert!(
                     save_leftovers(&dir.0).is_empty(),
                     "{:?}",
                     save_leftovers(&dir.0)
                 );
-                messages.push((replaced_message, o.message.clone()));
+                messages.push((replaced_message, o.message().to_owned()));
             }
             assert_eq!(
                 messages[0], messages[1],
@@ -581,17 +590,17 @@ fn a_failed_save_restores_the_modified_mark_it_found() {
     for background in [false, true] {
         for modified in [false, true] {
             let mut s = painted_state(128, 2, 1);
-            s.save.background = background;
-            s.modified = modified;
-            s.shelf.changed = modified;
+            s.save_mut().background = background;
+            s.set_modified(modified);
+            s.shelf_mut().changed = modified;
             save_and_settle(&mut s, Action::SaveProjectAs(target.clone()));
-            assert!(s.message.contains("保存できません"), "{}", s.message);
+            assert!(s.message().contains("保存できません"), "{}", s.message());
             assert_eq!(
-                (s.modified, s.shelf.changed),
+                (s.modified(), s.shelf().changed),
                 (modified, modified),
                 "background {background}"
             );
-            assert!(s.project.is_none(), "失敗したら開いたファイルにしない");
+            assert!(s.project().is_none(), "失敗したら開いたファイルにしない");
         }
     }
 }
@@ -608,46 +617,45 @@ fn recovery_does_not_start_a_write_while_saving() {
         })
     });
     let mut s = AppState::new_in(128, 128, Lang::Ja);
-    s.recovery.set_space_probe(Some(probe));
-    s.recovery
-        .enable(
-            dir.file("recovery"),
-            RecoverySettings {
-                interval_seconds: 15,
-                strokes_between: 0,
-                generations_to_keep: 3,
-                directory: None,
-                ..RecoverySettings::default()
-            },
-        )
-        .unwrap();
-    s.apply(Action::SaveProjectAs(path.clone()));
+    s.recovery_mut().set_space_probe(Some(probe));
+    s.recovery_enable(
+        dir.file("recovery"),
+        RecoverySettings {
+            interval_seconds: 15,
+            strokes_between: 0,
+            generations_to_keep: 3,
+            directory: None,
+            ..RecoverySettings::default()
+        },
+    )
+    .unwrap();
+    s.act(Action::SaveProjectAs(path.clone()));
     s.wait_save();
-    s.save.background = true;
+    s.save_mut().background = true;
     paint(&mut s, 10.0);
     let t0 = Instant::now();
     s.recovery_tick_at(t0);
-    let hold = s.save.hold_next();
-    s.apply(Action::SaveProject);
+    let hold = s.save_mut().hold_next();
+    s.act(Action::SaveProject);
     assert!(s.is_saving());
     // 保存の間は、間隔が過ぎても書き置きを頼まない
     s.recovery_tick_at(t0 + Duration::from_secs(60));
     s.recovery_tick_at(t0 + Duration::from_secs(120));
-    assert!(s.recovery.is_idle());
-    assert_eq!(s.recovery.checkpoints(), 0);
+    assert!(s.recovery().is_idle());
+    assert_eq!(s.recovery().checkpoints(), 0);
     hold.release();
     s.wait_save();
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
     // 保存で「変更なし」に戻ったので、書く物が無い
     s.recovery_tick_at(t0 + Duration::from_secs(200));
     s.recovery_wait();
-    assert_eq!(s.recovery.checkpoints(), 0);
+    assert_eq!(s.recovery().checkpoints(), 0);
     // 保存のあとに描いた分は、間隔が経てば書く
     paint(&mut s, 40.0);
     s.recovery_tick_at(t0 + Duration::from_secs(201));
     s.recovery_tick_at(t0 + Duration::from_secs(230));
     s.recovery_wait();
-    assert_eq!(s.recovery.checkpoints(), 1);
+    assert_eq!(s.recovery().checkpoints(), 1);
 }
 
 /// 進み具合は、保存を頼んでいる間だけあり、0 から 1 の間で、戻らずに進む。終われば消える。
@@ -656,9 +664,9 @@ fn the_progress_is_only_there_while_saving_and_never_goes_back() {
     let dir = TempDir::new("progress");
     let mut s = painted_state(256, 3, 6);
     assert!(s.save_progress().is_none());
-    s.save.background = true;
-    let hold = s.save.hold_next();
-    s.apply(Action::SaveProjectAs(dir.file("作品.ylp")));
+    s.save_mut().background = true;
+    let hold = s.save_mut().hold_next();
+    s.act(Action::SaveProjectAs(dir.file("作品.ylp")));
     let first = s.save_progress().expect("保存の間は進み具合がある");
     assert_eq!(first.file, "作品.ylp");
     assert!((0.0..=1.0).contains(&first.fraction), "{first:?}");
@@ -679,7 +687,7 @@ fn the_progress_is_only_there_while_saving_and_never_goes_back() {
         std::thread::sleep(Duration::from_millis(1));
     }
     assert!(s.save_progress().is_none());
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
 }
 
 /// 複数のセットの合成の PNG を並べて作っても、結果は 1 つずつ作るのと同じ（セットの並び・内容）。
@@ -688,10 +696,10 @@ fn several_sets_are_composited_side_by_side_and_come_out_the_same_as_one_at_a_ti
     let dir = TempDir::new("sets");
     let mut s = painted_state(128, 2, 7);
     for _ in 0..4 {
-        s.apply(Action::Project(yolu_app::newproject::NpAction::AddSet));
+        s.act(Action::Project(yolu_app::newproject::NpAction::AddSet));
     }
-    assert!(s.sets.len() >= 3, "{}", s.message);
-    for i in 0..s.sets.len() {
+    assert!(s.sets().len() >= 3, "{}", s.message());
+    for i in 0..s.sets().len() {
         let layer = s.set_doc_mut(i).add_layer("絵").unwrap();
         let ts = s.set_doc(i).tile_size();
         let bytes = noise((ts * ts * 4) as usize, 100 + i as u64);
@@ -699,17 +707,17 @@ fn several_sets_are_composited_side_by_side_and_come_out_the_same_as_one_at_a_ti
             .import_tile(layer, Channel::Color, TileCoord::new(0, 0), &bytes)
             .unwrap();
     }
-    s.modified = true;
-    s.apply(Action::SaveProjectAs(dir.file("inline.ylp")));
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
-    assert_eq!(s.rewritten_sets, s.sets.len());
-    for i in 0..s.sets.len() {
-        s.sets.get_mut(i).unwrap().saved = None;
+    s.set_modified(true);
+    s.act(Action::SaveProjectAs(dir.file("inline.ylp")));
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
+    assert_eq!(s.rewritten_sets(), s.sets().len());
+    for i in 0..s.sets().len() {
+        s.sets_mut().get_mut(i).unwrap().saved = None;
     }
-    s.save.background = true;
-    s.apply(Action::SaveProjectAs(dir.file("background.ylp")));
+    s.save_mut().background = true;
+    s.act(Action::SaveProjectAs(dir.file("background.ylp")));
     s.wait_save();
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
     assert_eq!(
         entries_of(&dir.file("inline.ylp")),
         entries_of(&dir.file("background.ylp"))
@@ -718,7 +726,7 @@ fn several_sets_are_composited_side_by_side_and_come_out_the_same_as_one_at_a_ti
         .iter()
         .filter(|(n, _)| n.ends_with("composite/Color.png"))
         .count();
-    assert_eq!(count, s.sets.len(), "セットごとの合成の PNG");
+    assert_eq!(count, s.sets().len(), "セットごとの合成の PNG");
     // 並べて作った結果は、yolu-io を直に呼んで 1 つずつ作った物差しと同じ（並びも内容も）
     assert_same_entries(
         "物差し",
@@ -735,10 +743,10 @@ fn several_sets_build_their_source_under_the_thresholds_of_the_save_request() {
         let dir = TempDir::new("setsthreshold");
         let mut s = painted_state(256, 5, 8);
         for _ in 0..2 {
-            s.apply(Action::Project(yolu_app::newproject::NpAction::AddSet));
+            s.act(Action::Project(yolu_app::newproject::NpAction::AddSet));
         }
-        assert!(s.sets.len() >= 3, "{}", s.message);
-        for i in 0..s.sets.len() {
+        assert!(s.sets().len() >= 3, "{}", s.message());
+        for i in 0..s.sets().len() {
             // どのセットの正本も、分ける閾値（256 KiB）を超える大きさにする
             let mut round = 0;
             while bytes_of(s.set_doc(i)).len() <= 300 << 10 {
@@ -746,15 +754,15 @@ fn several_sets_build_their_source_under_the_thresholds_of_the_save_request() {
                 round += 1;
             }
         }
-        s.modified = true;
-        s.save.background = true;
-        s.apply(Action::SaveProjectAs(dir.file("作品.ylp")));
+        s.set_modified(true);
+        s.save_mut().background = true;
+        s.act(Action::SaveProjectAs(dir.file("作品.ylp")));
         assert!(s.is_saving());
         s.wait_save();
-        assert!(s.message.starts_with("保存しました"), "{}", s.message);
-        assert_eq!(s.rewritten_sets, s.sets.len());
+        assert!(s.message().starts_with("保存しました"), "{}", s.message());
+        assert_eq!(s.rewritten_sets(), s.sets().len());
         let entries = entries_of(&dir.file("作品.ylp"));
-        for set in s.sets.iter() {
+        for set in s.sets().iter() {
             let part = format!("sets/{}/document.utpaint.1", set.id);
             assert!(
                 entries.iter().any(|(n, _)| *n == part),
@@ -777,12 +785,12 @@ fn an_unreadable_shelf_is_left_as_it_was_by_a_save() {
     let dir = TempDir::new("shelf");
     let path = dir.file("作品.ylp");
     let mut s = painted_state(64, 1, 3);
-    s.shelf
+    s.shelf_mut()
         .add_image(Lang::Ja, "画像", &[200, 100, 50, 255].repeat(16), 4, 4)
         .unwrap();
-    assert!(s.shelf.changed);
-    s.apply(Action::SaveProjectAs(path.clone()));
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    assert!(s.shelf().changed);
+    s.act(Action::SaveProjectAs(path.clone()));
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
     let resources = |entries: &[(String, Vec<u8>)]| -> Vec<(String, Vec<u8>)> {
         entries
             .iter()
@@ -793,17 +801,20 @@ fn an_unreadable_shelf_is_left_as_it_was_by_a_save() {
     let before = resources(&entries_of(&path));
     assert!(!before.is_empty(), "棚の画像は resources に書かれる");
     let mut reopened = opened(&path);
-    reopened.shelf = yolu_app::shelf::ShelfState::unreadable("読めない棚");
-    reopened.shelf.changed = true;
-    let layer = reopened.doc.layers()[0].id();
-    reopened.doc.set_layer_opacity(layer, 0.5, false).unwrap();
-    reopened.modified = true;
-    reopened.save.background = true;
+    *reopened.shelf_mut() = yolu_app::shelf::ShelfState::unreadable("読めない棚");
+    reopened.shelf_mut().changed = true;
+    let layer = reopened.doc().layers()[0].id();
+    reopened
+        .doc_mut()
+        .set_layer_opacity(layer, 0.5, false)
+        .unwrap();
+    reopened.set_modified(true);
+    reopened.save_mut().background = true;
     save_and_settle(&mut reopened, Action::SaveProject);
     assert!(
-        reopened.message.starts_with("保存しました"),
+        reopened.message().starts_with("保存しました"),
         "{}",
-        reopened.message
+        reopened.message()
     );
     assert_eq!(
         resources(&entries_of(&path)),
@@ -828,15 +839,15 @@ fn timing_of_a_big_document() {
         .unwrap_or(64);
     let dir = TempDir::new("timing");
     let mut s = AppState::new_in(size, size, Lang::Ja);
-    s.doc.set_source_budget_bytes(16 << 30).unwrap();
-    fill_like_art(&mut s.doc, layers, 7);
-    s.modified = true;
+    s.doc_mut().set_source_budget_bytes(16 << 30).unwrap();
+    fill_like_art(s.doc_mut(), layers, 7);
+    s.set_modified(true);
     println!(
         "{size}²・{layers} レイヤー、レイヤーの画素 {} MiB",
-        s.doc.allocated_bytes() >> 20
+        s.doc().allocated_bytes() >> 20
     );
     // 段ごと（yolu-io を直に呼んで測る）
-    let snapshot = Arc::new(s.doc.capture_snapshot().unwrap());
+    let snapshot = Arc::new(s.doc().capture_snapshot().unwrap());
     let t = Instant::now();
     let pngs = yolu_io::composite_pngs(&snapshot).unwrap();
     println!("composite_pngs: {:?} ({} PNG)", t.elapsed(), pngs.len());
@@ -844,7 +855,7 @@ fn timing_of_a_big_document() {
     let spec = yolu_io::SetSpec {
         id: yolu_app::sets::guid_string(snapshot.id()),
         name: "セット".into(),
-        material: yolu_io::MaterialRef::Unassigned,
+        materials: vec![yolu_io::MaterialRef::Unassigned],
         document: Some(source),
         composites: pngs,
     };
@@ -885,27 +896,27 @@ fn timing_of_a_big_document() {
     drop((project, spec, target));
     // 画面のスレッドでの保存（同期。今の `Action::SaveProjectAs` の全体）
     let t = Instant::now();
-    s.apply(Action::SaveProjectAs(dir.file("inline.ylp")));
+    s.act(Action::SaveProjectAs(dir.file("inline.ylp")));
     println!(
         "画面のスレッドで保存（新規）: 画面が止まる {:?} {}",
         t.elapsed(),
-        s.message
+        s.message()
     );
-    fill_like_art(&mut s.doc, 1, 99);
-    s.modified = true;
+    fill_like_art(s.doc_mut(), 1, 99);
+    s.set_modified(true);
     let t = Instant::now();
-    s.apply(Action::SaveProject);
+    s.act(Action::SaveProject);
     println!(
         "画面のスレッドで保存（上書き・退避つき）: 画面が止まる {:?} {}",
         t.elapsed(),
-        s.message
+        s.message()
     );
     // 裏のスレッド: 画面が止まるのは保存の頼みを出すまで
-    s.save.background = true;
-    fill_like_art(&mut s.doc, 1, 98);
-    s.modified = true;
+    s.save_mut().background = true;
+    fill_like_art(s.doc_mut(), 1, 98);
+    s.set_modified(true);
     let t = Instant::now();
-    s.apply(Action::SaveProject);
+    s.act(Action::SaveProject);
     let stall = t.elapsed();
     let mut polls = 0u32;
     let mut slowest = Duration::ZERO;
@@ -919,6 +930,6 @@ fn timing_of_a_big_document() {
     println!(
         "裏のスレッドで保存（上書き）: 画面が止まる {stall:?}（頼みを出すまで）、結果を受ける 1 回の最長 {slowest:?}（{polls} 回見た） 全体 {:?} {}",
         t.elapsed(),
-        s.message
+        s.message()
     );
 }

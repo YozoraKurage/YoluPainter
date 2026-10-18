@@ -41,7 +41,7 @@ The adjustment is stored in the settings file (not in documents or brushes) and 
 
 ## Keyboard Shortcuts
 
-View and change the keyboard and mouse combinations and the pie menus. Press Keyboard Shortcuts on the left, and its sections (Everywhere & View / Paint / Edit / Pose / During an Operation / Pie Menus) appear below it, with the table (each action's name, keys and mouse combination) on the right. Above the table are a field to search by name and Find by Key (these two narrow only the table), and below it are Reset to Default, Export… and Import…. How to use it is in "Change shortcuts" in [GUIDE_KEYS.md](GUIDE_KEYS.md).
+View and change the keyboard and mouse combinations and the pie menus. Press Keyboard Shortcuts on the left, and its sections (Everywhere & View / Paint / Edit / Pose / Hide / During an Operation / Pie Menus) appear below it, with the table (each action's name, keys and mouse combination) on the right. Above the table are a field to search by name and Find by Key (these two narrow only the table), and below it are Reset to Default, Export… and Import…. How to use it is in "Change shortcuts" in [GUIDE_KEYS.md](GUIDE_KEYS.md).
 
 ## Display
 
@@ -93,7 +93,7 @@ Open Details at the right of the row to see two more items.
 |---|---|
 | Orbit center | The pivot when orbiting the 3D view: View center, Surface (auto depth), Model center or Texture set center |
 | Zoom center | The center when zooming the 3D view: Toward view center or Toward pointer |
-| Orthographic on axis views | Switches to orthographic when you pick an axis view or snap-orbit onto an axis, and back to perspective when you orbit off the axis. On by default ("Axis views and orthographic" in [GUIDE_3D.md](GUIDE_3D.md)) |
+| Orthographic on axis views | Switches to orthographic when you pick an axis view or switch to one with the snap orbit, and back to perspective when you orbit off the axis. On by default ("Axis views and orthographic" in [GUIDE_3D.md](GUIDE_3D.md)) |
 | UV Wireframe | Two color swatches: the UV wireframe color and the Overlapping UV color. Pressing one opens the color window, where you set the color and opacity |
 
 The orbit and zoom centers are the same values as Navigation in the 3D view's display settings; changing either changes the same setting ([GUIDE_3D.md](GUIDE_3D.md)).

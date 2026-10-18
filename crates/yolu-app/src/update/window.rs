@@ -7,13 +7,13 @@ use crate::windows::{show_list, Button, ListSpec, Reply, Row};
 
 /// 毎フレーム、開いている更新のウィンドウを描き、押された操作を当てる。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
-    if !app.update.enabled() {
+    if !app.services.update.enabled() {
         return;
     }
-    if app.update.is_asking() {
+    if app.services.update.is_asking() {
         ask(ctx, app);
     }
-    if app.update.is_ready_open() {
+    if app.services.update.is_ready_open() {
         ready(ctx, app);
     }
 }
@@ -26,48 +26,29 @@ fn ask(ctx: &egui::Context, app: &mut AppState) {
     let lang = app.lang;
     let spec = ListSpec {
         id: ASK,
-        title: lang.pick("更新の確認", "Update Check").into(),
+        title: lang.t("update-update-check").into(),
         icon: "info",
         modal: true,
         width: 400.0,
-        summary: Some((
-            lang.pick(
-                "起動時に更新を確かめますか？",
-                "Check for updates at startup?",
-            )
-            .into(),
-            false,
-        )),
+        summary: Some((lang.t("update-check-for-updates-at-startup").into(), false)),
         rows: Vec::new(),
         buttons: vec![
             Button {
-                label: lang.pick("いいえ", "No").into(),
+                label: lang.t("update-no").into(),
                 primary: false,
-                tooltip: Some(
-                    lang.pick(
-                        "自動では確かめません。ヘルプのメニューから手で確かめられます",
-                        "No automatic check. You can check from the Help menu",
-                    )
-                    .into(),
-                ),
+                tooltip: Some(lang.t("update-no-automatic-check-you-can-tip").into()),
             },
             Button {
-                label: lang.pick("はい", "Yes").into(),
+                label: lang.t("update-yes").into(),
                 primary: true,
-                tooltip: Some(
-                    lang.pick(
-                        "起動のたびに GitHub へ最新の版を問い合わせます。ほかの情報は送りません",
-                        "Asks GitHub for the latest version at each startup. Nothing else is sent",
-                    )
-                    .into(),
-                ),
+                tooltip: Some(lang.t("update-asks-github-for-the-latest-tip").into()),
             },
         ],
-        close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
+        close_label: lang.t("update-close-window").into(),
     };
-    let mut offset = app.update.ask_offset;
+    let mut offset = app.ui.update_ask_offset;
     let reply = show_list(ctx, &spec, &mut offset, &mut 0.0);
-    app.update.ask_offset = offset;
+    app.ui.update_ask_offset = offset;
     // 閉じる・Esc は「いいえ」（選ばずに通信はしない。ヘルプのメニューでいつでも変えられる）
     match reply {
         Some(Reply::Button(1)) => app.apply(Action::Update(UpdateAction::Answer(true))),
@@ -78,66 +59,54 @@ fn ask(ctx: &egui::Context, app: &mut AppState) {
 
 fn ready(ctx: &egui::Context, app: &mut AppState) {
     let lang = app.lang;
-    let Some(ready) = app.update.ready() else {
+    let Some(ready) = app.services.update.ready() else {
         return;
     };
     let version = ready.version.clone();
     // 保存の途中は、保存の頼みが下ろした「変更あり」の印ではなく、頼む前の印で見せる（保存が失敗すれば変更は残る）
     let modified = app.shows_modified();
-    let blocked = app.update.ready_blocked;
+    let blocked = app.services.update.ready_blocked;
     let button = |label: &str, primary: bool, tooltip: Option<&str>| Button {
         label: label.into(),
         primary,
         tooltip: tooltip.map(Into::into),
     };
-    let mut buttons = vec![button(lang.pick("あとで", "Later"), false, None)];
+    let mut buttons = vec![button(lang.t("update-later-tip"), false, None)];
     if modified {
         buttons.push(button(
-            lang.pick("保存せずに更新", "Update without saving"),
+            lang.t("update-update-without-saving-tip"),
             false,
-            Some(lang.pick(
-                "保存せずにインストーラーを実行し、終わったらアプリを起こし直します",
-                "Runs the installer without saving, then restarts the app",
-            )),
+            Some(lang.t("update-runs-the-installer-without-saving-tip")),
         ));
         buttons.push(button(
-            lang.pick("保存して更新", "Save and update"),
+            lang.t("update-save-and-update-tip"),
             true,
-            Some(lang.pick(
-                "保存してからインストーラーを実行し、終わったらアプリを起こし直します",
-                "Saves, runs the installer, then restarts the app",
-            )),
+            Some(lang.t("update-saves-runs-the-installer-then-tip")),
         ));
     } else {
         buttons.push(button(
-            lang.pick("更新して再起動", "Update and restart"),
+            lang.t("update-update-and-restart-tip"),
             true,
-            Some(lang.pick(
-                "インストーラーを実行し、終わったらアプリを起こし直します",
-                "Runs the installer, then restarts the app",
-            )),
+            Some(lang.t("update-runs-the-installer-then-restarts-tip")),
         ));
     }
     let spec = ListSpec {
         id: READY,
-        title: lang.pick("更新", "Update").into(),
+        title: lang.t("update-update-tip").into(),
         icon: "info",
         modal: true,
         width: 420.0,
         summary: Some((
             format!(
                 "YoluPainter {version} — {}",
-                lang.pick("ダウンロード済み", "Downloaded")
+                lang.t("update-downloaded-tip")
             ),
             false,
         )),
         rows: {
             let mut rows = Vec::new();
             if modified {
-                rows.push(Row::text(
-                    lang.pick("保存していない変更があります", "Unsaved changes"),
-                    true,
-                ));
+                rows.push(Row::text(lang.t("update-unsaved-changes-tip"), true));
             }
             if blocked {
                 rows.push(Row::text(super::blocked_text(lang), true));
@@ -145,11 +114,11 @@ fn ready(ctx: &egui::Context, app: &mut AppState) {
             rows
         },
         buttons,
-        close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
+        close_label: lang.t("update-close-window-tip").into(),
     };
-    let mut offset = app.update.ready_offset;
+    let mut offset = app.ui.update_ready_offset;
     let reply = show_list(ctx, &spec, &mut offset, &mut 0.0);
-    app.update.ready_offset = offset;
+    app.ui.update_ready_offset = offset;
     let run = |save| Action::Update(UpdateAction::Run { save });
     match (reply, modified) {
         (Some(Reply::Button(1)), _) => app.apply(run(false)),

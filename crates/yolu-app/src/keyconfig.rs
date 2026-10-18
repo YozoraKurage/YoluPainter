@@ -14,7 +14,6 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use egui::{Key, Modifiers, PointerButton};
 use serde_json::{json, Map, Value};
 
 use crate::commands;
@@ -22,6 +21,7 @@ use crate::keymap::{self, Gesture, KeyBinding, Keymap, Operation, Scope, Trigger
 use crate::lang::Lang;
 use crate::notice::Source;
 use crate::pie::{self, PieItem, PieMenu, PieName};
+use crate::state::key::{Key, Modifiers, PointerButton};
 use crate::state::AppState;
 use crate::toolkeys::ToolKeyMode;
 use crate::ui::pie::SLOTS;
@@ -325,14 +325,18 @@ impl KeyConfig {
                 });
             }
         }
-        let gestures: Vec<Gesture> = GESTURES
+        // 利用者が変えた行を、既定のままの行より前に並べる（`Keymap::with_gestures` の並べ替えは安定なので、条件の多さが同じなら、
+        // 利用者の行が先に当たる。既定のままの行が、利用者の割り当てを黙って隠さない）
+        let changed = GESTURES
             .iter()
             .filter_map(|g| match self.mouse.get(&g.index) {
-                None => Some(*g),
                 Some(Some(c)) => Some(c.apply(g)),
-                Some(None) => None,
-            })
-            .collect();
+                _ => None,
+            });
+        let kept = GESTURES
+            .iter()
+            .filter(|g| !self.mouse.contains_key(&g.index));
+        let gestures: Vec<Gesture> = changed.chain(kept.copied()).collect();
         let modes = self.tool_modes.iter().map(|(id, m)| (*id, *m)).collect();
         self.map = Arc::new(Keymap::with_gestures(rows, gestures).with_tool_modes(modes));
         keymap::install(self.map.clone());
@@ -593,9 +597,9 @@ fn free_name(path: &Path) -> PathBuf {
 }
 
 fn broken_message(lang: Lang, why: &str) -> String {
-    lang.pick(
-        format!("キーの設定（{FILE_NAME}）を読めないので、既定のキーで始めました（{why}）。ファイルは消さずに残してあります。"),
-        format!("Cannot read the key settings ({FILE_NAME}), so the default keys are used ({why}). The file is kept."),
+    lang.f(
+        "keyconfig-cannot-read-the-key-settings",
+        &[("file_name", &FILE_NAME), ("why", &why)],
     )
 }
 
@@ -647,9 +651,9 @@ fn hides(a: &Gesture, b: &Gesture) -> bool {
 }
 
 pub fn skipped_message(lang: Lang, skipped: usize) -> String {
-    lang.pick(
-        format!("キーの設定の、読めない・知らない項目（操作・入力・組み合わせ・パイの項目）{skipped} 個を飛ばしました。"),
-        format!("Skipped {skipped} unreadable or unknown item(s) (actions, keys, combinations or pie items) in the key settings."),
+    lang.f(
+        "keyconfig-skipped-unreadable-or-unknown-item",
+        &[("skipped", &skipped)],
     )
 }
 
@@ -828,7 +832,7 @@ fn slot_of(v: &Value, skipped: &mut usize) -> Option<PieItem> {
 
 /// `keymap.json` の中身を読む。形が違えば理由。知らない操作・範囲・組み合わせは飛ばして数える。
 pub fn parse(text: &str, lang: Lang) -> Result<Parsed, String> {
-    let bad = |why: &str| lang.pick(format!("形が違います: {why}"), format!("bad format: {why}"));
+    let bad = |why: &str| lang.f("keyconfig-bad-format", &[("why", &why)]);
     let v: Value = serde_json::from_str(text).map_err(|e| bad(&e.to_string()))?;
     let o = v.as_object().ok_or_else(|| bad("not an object"))?;
     if o.get("format").and_then(Value::as_str) != Some(FORMAT) {
@@ -836,10 +840,7 @@ pub fn parse(text: &str, lang: Lang) -> Result<Parsed, String> {
     }
     let version = o.get("version").and_then(Value::as_u64).unwrap_or(0);
     if version == 0 || version > VERSION {
-        return Err(lang.pick(
-            format!("この版では読めない版です（{version}）"),
-            format!("unsupported version ({version})"),
-        ));
+        return Err(lang.f("keyconfig-unsupported-version", &[("version", &version)]));
     }
     let mut parsed = Parsed::default();
     // パイ（キーの `pie.<ID>` を知るため、先に読む）
@@ -1012,7 +1013,72 @@ pub fn merged_pies(read: &[PieMenu]) -> Vec<PieMenu> {
     out
 }
 
+/// キーの設定とパイメニューの変更（ショートカットの設定の区分・キーの設定の読み込み。`Action::Keys`）。どれも効かせてから、ぶつかりが
+/// 無ければファイルへ書く（`keys_changed`）。
+#[derive(Clone, Debug, PartialEq)]
+pub enum KeyEdit {
+    /// 操作と範囲の入力の並びを置き換える（既定と同じなら変えた所から外す）。
+    Set(GroupKey, Vec<Trigger>),
+    /// マウスの組み合わせ（既定の表の番号。None で外す）。
+    Combo(u8, Option<Combo>),
+    /// 操作と範囲の入力を既定に戻す。
+    Reset(GroupKey),
+    /// マウスの組み合わせを既定に戻す。
+    ResetCombo(u8),
+    /// 全部を既定に戻す（キー・マウス・パイ）。
+    ResetAll,
+    /// ファイルから読み込む。
+    Import(PathBuf),
+    /// 利用者のパイを加える。
+    PieAdd,
+    /// パイを消す（パイの ID。開く操作のキーも外す）。
+    PieRemove(String),
+    /// パイの名前（並びの番号と、利用者の付けた名前）。
+    PieName(usize, String),
+    /// パイの項目（並びの番号・何か所目・項目。None で空にする）。
+    PieSlot(usize, usize, Option<PieItem>),
+}
+
 impl AppState {
+    /// キーの設定とパイメニューを変える（`Action::Keys`）。
+    pub(crate) fn keys_apply(&mut self, edit: KeyEdit) {
+        match edit {
+            KeyEdit::Set(group, triggers) => self.keys.set(group, triggers),
+            KeyEdit::Combo(index, combo) => self.keys.set_combo(index, combo),
+            KeyEdit::Reset(group) => self.keys.reset(group),
+            KeyEdit::ResetCombo(index) => self.keys.reset_combo(index),
+            KeyEdit::ResetAll => return self.keys_reset_all(),
+            KeyEdit::Import(path) => return self.keys_import(&path),
+            KeyEdit::PieAdd => {
+                self.pie.add_user(self.lang);
+            }
+            KeyEdit::PieRemove(id) => {
+                if let Some(command) = self.pie.menu(&id).and_then(|m| m.command) {
+                    self.keys.forget_command(command);
+                }
+                self.pie.remove_user(&id);
+            }
+            KeyEdit::PieName(index, name) => match self.pie.menus.get_mut(index) {
+                Some(menu) => menu.name = PieName::User(name),
+                None => return,
+            },
+            KeyEdit::PieSlot(index, slot, item) => {
+                let menu = self.pie.menus.get_mut(index);
+                match menu.and_then(|m| m.slots.get_mut(slot)) {
+                    Some(place) => *place = item,
+                    None => return,
+                }
+            }
+        }
+        self.keys_changed();
+    }
+
+    /// ツールのキーの動き方を替える（`Action::ToolKeyMode`）。
+    pub(crate) fn keys_tool_mode(&mut self, command: &'static str, mode: ToolKeyMode) {
+        self.keys.set_tool_mode(command, mode);
+        self.keys_changed();
+    }
+
     /// キーの設定を変えたあと: 効かせて、ぶつかりが無ければファイルへ書く。
     pub fn keys_changed(&mut self) {
         keymap::install(self.keys.map());
@@ -1020,10 +1086,7 @@ impl AppState {
             let lang = self.lang;
             self.fail(
                 Source::Settings,
-                lang.pick(
-                    format!("キーの設定を保存できません（{e}）"),
-                    format!("Cannot save the key settings ({e})"),
-                ),
+                lang.f("keyconfig-cannot-save-the-key-settings", &[("e", &e)]),
             );
         }
     }
@@ -1041,16 +1104,10 @@ impl AppState {
         let text =
             serde_json::to_string_pretty(&self.keys.to_json(&self.pie.menus)).unwrap_or_default();
         match yolu_io::atomic::replace_bytes(path, text.as_bytes()) {
-            Ok(()) => self.info(
-                Source::Settings,
-                lang.pick("キーの設定を書き出しました。", "Key settings exported."),
-            ),
+            Ok(()) => self.info(Source::Settings, lang.t("keyconfig-key-settings-exported")),
             Err(e) => self.fail(
                 Source::Settings,
-                lang.pick(
-                    format!("キーの設定を書き出せません（{e}）"),
-                    format!("Cannot export the key settings ({e})"),
-                ),
+                lang.f("keyconfig-cannot-export-the-key-settings", &[("e", &e)]),
             ),
         }
     }
@@ -1066,9 +1123,7 @@ impl AppState {
                 self.pie.menus = merged_pies(&parsed.pies);
                 self.keys.apply(&parsed);
                 self.keys_changed();
-                let mut text = lang
-                    .pick("キーの設定を読み込みました。", "Key settings imported.")
-                    .to_owned();
+                let mut text = lang.t("keyconfig-key-settings-imported").to_owned();
                 if parsed.skipped > 0 {
                     text.push(' ');
                     text.push_str(&skipped_message(lang, parsed.skipped));
@@ -1079,10 +1134,7 @@ impl AppState {
             }
             Err(why) => self.fail(
                 Source::Settings,
-                lang.pick(
-                    format!("キーの設定を読み込めません（{why}）"),
-                    format!("Cannot import the key settings ({why})"),
-                ),
+                lang.f("keyconfig-cannot-import-the-key-settings", &[("why", &why)]),
             ),
         }
     }

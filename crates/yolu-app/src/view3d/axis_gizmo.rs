@@ -135,9 +135,9 @@ pub fn name(part: Part, lang: Lang) -> &'static str {
 }
 
 /// 3D ビューの右上に印を描き、押し・ドラッグを当てる。`below` は隅のアイコンの列の下の端。設定のパネルが開いている・モデルが無いときは
-/// 何もしない。
-pub fn show(ui: &mut Ui, app: &mut AppState, view: Rect, below: f32) {
-    if app.view3d.display.settings_open || app.view3d.model.is_none() {
+/// 何もしない。`live` でなければ（今のビューでないビュー）描くだけで押しを受けない。
+pub fn show(ui: &mut Ui, app: &mut AppState, view: Rect, below: f32, live: bool) {
+    if app.view3d.view.display.settings_open || app.view3d.model.is_none() {
         return;
     }
     let r = rect(view, below);
@@ -145,14 +145,16 @@ pub fn show(ui: &mut Ui, app: &mut AppState, view: Rect, below: f32) {
         return;
     }
     let lang = app.lang;
-    let movable = navigation::can_move_view(app);
-    egui::Area::new(Id::new("yolu.view3d.axis_gizmo"))
+    let movable = live && navigation::can_move_view(app);
+    // ビューごとに別の部品（同じウィンドウに 2 つのビューを並べたとき）
+    let salt = app.view3d.active_view().0;
+    egui::Area::new(Id::new(("yolu.view3d.axis_gizmo", salt)))
         .order(egui::Order::Middle)
         .fixed_pos(r.min)
         .constrain(false)
         .show(ui.ctx(), |ui| {
             ui.allocate_exact_size(r.size(), Sense::hover());
-            let id = Id::new("yolu.view3d.axis_gizmo.area");
+            let id = Id::new(("yolu.view3d.axis_gizmo.area", salt));
             let response = ui.interact(
                 r,
                 id,
@@ -162,7 +164,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, view: Rect, below: f32) {
                     Sense::hover()
                 },
             );
-            let camera = app.view3d.camera;
+            let camera = app.view3d.view.camera;
             let hovered = response
                 .hover_pos()
                 .filter(|_| !response.dragged())
@@ -175,11 +177,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, view: Rect, below: f32) {
                 response.hovered() || response.dragged(),
             );
             response.widget_info(|| {
-                WidgetInfo::labeled(
-                    WidgetType::Other,
-                    movable,
-                    lang.pick("視点の軸", "View axes"),
-                )
+                WidgetInfo::labeled(WidgetType::Other, movable, lang.t("view3d-view-axes"))
             });
             if response.dragged() && movable {
                 let d = response.drag_delta();
@@ -187,7 +185,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, view: Rect, below: f32) {
                     orbit(app, d);
                 }
             }
-            if response.clicked() {
+            if response.clicked() && live {
                 if let Some(part) = response
                     .interact_pointer_pos()
                     .and_then(|p| hit(&camera, r, p))
@@ -213,12 +211,12 @@ pub fn show(ui: &mut Ui, app: &mut AppState, view: Rect, below: f32) {
 fn orbit(app: &mut AppState, d: egui::Vec2) {
     let pivot = navigation::pivot_without_press(app);
     if app.prefs.settings.navigation.orbit == OrbitCenter::View {
-        app.view3d.camera.orbit(d.x, d.y);
+        app.view3d.view.camera.orbit(d.x, d.y);
     } else {
-        app.view3d.camera.orbit_about(pivot, d.x, d.y);
+        app.view3d.view.camera.orbit_about(pivot, d.x, d.y);
     }
     navigation::after_orbit(&mut app.view3d, pivot);
-    app.view3d.input.eyedrop = None;
+    app.view3d.view.input.eyedrop = None;
 }
 
 fn paint(

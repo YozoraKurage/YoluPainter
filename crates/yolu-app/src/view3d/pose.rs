@@ -97,8 +97,6 @@ pub struct PoseSession {
     pub warnings: Vec<String>,
     /// インスペクターが見せるオイラー角（数値で入れた値を、同じ回転の別の表し方へ読み替えて見せない）。
     pub euler_hint: Option<edit::EulerHint>,
-    /// ボーンの影響で隠す面の組み立て（手で足した項目と、入れているプリセット）。
-    pub hide: hide::HideState,
     /// 最後にポーズのプリセットを当てたとき（開いたときにファイルのポーズを戻したときも）、このモデルの骨へ対応させられず飛ばした項目。
     pub preset_notes: Vec<presets::Skipped>,
     /// ポーズを変えた回数（取り消し・やり直し・戻すも数える。欄で選ぶテイクとフレームを変えたのも数える。このセッションが始まってから）。
@@ -260,8 +258,14 @@ fn install(view3d: &mut View3dState, loaded: Loaded) {
         rig.materials().iter().cloned().map(Some).collect(),
         rest.clone(),
     );
-    if view3d.material < 0 || view3d.material as usize >= model.materials.len().max(1) {
-        view3d.material = 0;
+    if view3d.material.is_empty()
+        || view3d
+            .material
+            .as_slice()
+            .iter()
+            .any(|m| *m as usize >= model.materials.len().max(1))
+    {
+        view3d.material = yolu_core::geometry::MaterialSet::one(0);
     }
     let mut expanded = HashSet::new();
     // 根と、その下の 1 段を開いておく
@@ -284,21 +288,20 @@ fn install(view3d: &mut View3dState, loaded: Loaded) {
         timings: PoseTimings::default(),
         warnings: loaded.warnings,
         euler_hint: None,
-        hide: hide::HideState::default(),
         preset_notes: Vec::new(),
         edits: 0,
         takes: takes::TakeState::new(loaded.takes),
     });
     view3d.pose.seen_edits = 0;
     view3d.pose.drag = None;
-    // 前のモデルの隠す面は引き継がない（三角形の番号が別のモデルのもの）
-    view3d.set_face_mask(None);
+    // 前のモデルの隠し方とビューのポーズは引き継がない（三角形とボーンの番号が別のモデルのもの）
+    super::hide::reset_views(view3d);
     view3d.set_model(model);
 }
 
 /// スキンをそのまま読む（試しの人形・試験。UI のスレッドで組む）。
 pub fn load_rig(view3d: &mut View3dState, rig: Rig) -> Result<(), ViewError> {
-    if view3d.input.stroke.is_some() {
+    if view3d.view.input.stroke.is_some() {
         return Err(ViewError::Stroking);
     }
     let revision = view3d.next_revision();
@@ -597,10 +600,7 @@ pub fn open_fbx_with(view3d: &mut View3dState, path: &Path, limits: ModelLimits)
 fn cannot_load(lang: Lang, name: &str, error: &ViewError) -> String {
     let name = lang.quote(name);
     lang.with_reason(
-        lang.pick(
-            format!("{name}を読み込めません"),
-            format!("Cannot load {name}"),
-        ),
+        lang.f("view3d-cannot-load", &[("name", &name)]),
         lang.view_error(error),
     )
 }
@@ -644,16 +644,13 @@ pub fn poll_in(view3d: &mut View3dState, lang: Lang) -> (Option<(Kind, String)>,
                     message = Some(if warnings > 0 {
                         (
                             Kind::Warning,
-                            lang.pick(
-                                format!("{name}を読み込みました（知らせ {warnings} 件）"),
-                                format!("Loaded {name} ({warnings} notices)"),
+                            lang.f(
+                                "view3d-loaded-notices",
+                                &[("name", &name), ("warnings", &warnings)],
                             ),
                         )
                     } else {
-                        (
-                            Kind::Info,
-                            lang.pick(format!("{name}を読み込みました"), format!("Loaded {name}")),
-                        )
+                        (Kind::Info, lang.f("view3d-loaded", &[("name", &name)]))
                     });
                 }
             }
@@ -662,10 +659,7 @@ pub fn poll_in(view3d: &mut View3dState, lang: Lang) -> (Option<(Kind, String)>,
                 message = Some(if matches!(e, ViewError::Cancelled) {
                     (
                         Kind::Info,
-                        lang.pick(
-                            format!("{name}の読み込みを取り消しました。"),
-                            format!("Loading {name} was canceled."),
-                        ),
+                        lang.f("view3d-loading-was-canceled", &[("name", &name)]),
                     )
                 } else {
                     (Kind::Error, cannot_load(lang, &loading.name, &e))
@@ -688,7 +682,7 @@ pub fn poll_in(view3d: &mut View3dState, lang: Lang) -> (Option<(Kind, String)>,
         if latest != Some(s.model_revision) {
             view3d.pose.session = None;
             view3d.pose.drag = None;
-            view3d.set_face_mask(None);
+            super::hide::reset_views(view3d);
         }
     }
     (message, installed)
@@ -724,6 +718,23 @@ fn apply(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
     Ok(())
 }
 
+/// このポーズの形（スキニング → 三角形の写し → 休みの形の refit。セッションのポーズは変えない。ビューごとのポーズのプリセットの形）。
+pub fn posed_model(view3d: &mut View3dState, pose: &Pose) -> Result<ViewModel, ViewError> {
+    let revision = view3d.next_revision();
+    let s = view3d.pose.session.as_ref().ok_or(ViewError::NoPoseModel)?;
+    s.rig.check_pose(pose)?;
+    let meshes = s.rig.deform(pose)?;
+    let triangles = model_triangles(&meshes).ok_or(ViewError::BadMeshIndex)?;
+    let geometry = s.rest.reposition(triangles, revision, BvhUpdate::Refit)?;
+    Ok(ViewModel::with_geometry(
+        s.rig.name(),
+        meshes,
+        s.rig.materials().iter().cloned().map(Some).collect(),
+        Arc::new(geometry),
+    )
+    .with_rest(s.rest.clone()))
+}
+
 fn push_undo(s: &mut PoseSession, before: Pose) {
     s.undo.push(before);
     if s.undo.len() > MAX_POSE_HISTORY {
@@ -734,7 +745,7 @@ fn push_undo(s: &mut PoseSession, before: Pose) {
 
 /// 1 回で終わる変更（取り消しに 1 つ積む）。
 pub fn set_pose(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
-    if view3d.input.stroke.is_some() {
+    if view3d.view.input.stroke.is_some() {
         return Err(ViewError::Stroking);
     }
     let s = view3d.pose.session.as_mut().ok_or(ViewError::NoPoseModel)?;
@@ -766,7 +777,7 @@ pub fn restore_pose(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewErro
 
 /// 続けて変える操作を始める（ギズモ・スライダーのドラッグ）。
 pub fn begin_edit(view3d: &mut View3dState) -> Result<(), ViewError> {
-    if view3d.input.stroke.is_some() {
+    if view3d.view.input.stroke.is_some() {
         return Err(ViewError::Stroking);
     }
     let s = view3d.pose.session.as_mut().ok_or(ViewError::NoPoseModel)?;
@@ -816,7 +827,7 @@ pub fn redo(view3d: &mut View3dState) -> Result<bool, ViewError> {
 }
 
 fn step(view3d: &mut View3dState, back: bool) -> Result<bool, ViewError> {
-    if view3d.input.stroke.is_some() {
+    if view3d.view.input.stroke.is_some() {
         return Err(ViewError::Stroking);
     }
     let Some(s) = view3d.pose.session.as_mut() else {
@@ -876,10 +887,7 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
             app.view3d.pose.cancel_loading();
             app.info(
                 Source::Pose,
-                app.lang.pick(
-                    format!("{name}の読み込みを取り消しました。"),
-                    format!("Cancelled loading {name}."),
-                ),
+                app.lang.f("view3d-cancelled-loading", &[("name", &name)]),
             );
         }
         return;
@@ -891,7 +899,7 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
     let result = match action {
         PoseAction::OpenFbx => {
             // ウィンドウは YoluApp が開く（選ばれたら `open_file`）
-            app.dialog_request = Some(DialogRequest::OpenModel);
+            app.outbox.dialog_request = Some(DialogRequest::OpenModel);
             Ok(())
         }
         PoseAction::CancelLoad => Ok(()),
@@ -901,10 +909,7 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
             app.np.model_file = None;
             let note = app.bind_rig_model();
             if let Some(s) = &app.view3d.pose.session {
-                let mut text = app.lang.pick(
-                    format!("{}を読み込みました", s.rig.name()),
-                    format!("Loaded {}", s.rig.name()),
-                );
+                let mut text = app.lang.f("view3d-loaded", &[("name", &s.rig.name())]);
                 let mut kind = Kind::Info;
                 if let Some((note_kind, note)) = note {
                     text += &format!(" {note}");
@@ -927,18 +932,12 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
         PoseAction::Reset => reset(&mut app.view3d),
         PoseAction::Undo => undo(&mut app.view3d).map(|done| {
             if done {
-                app.info(
-                    Source::Pose,
-                    app.lang.pick("ポーズを取り消しました。", "Pose undone."),
-                );
+                app.info(Source::Pose, app.lang.t("view3d-pose-undone"));
             }
         }),
         PoseAction::Redo => redo(&mut app.view3d).map(|done| {
             if done {
-                app.info(
-                    Source::Pose,
-                    app.lang.pick("ポーズをやり直しました。", "Pose redone."),
-                );
+                app.info(Source::Pose, app.lang.t("view3d-pose-redone"));
             }
         }),
         PoseAction::ChooseTake(source, take) => {
@@ -967,8 +966,8 @@ pub fn sync_modified(app: &mut AppState) {
     };
     if edits != app.view3d.pose.seen_edits {
         app.view3d.pose.seen_edits = edits;
-        if app.np.model_file.is_some() || app.link_target.is_some() {
-            app.modified = true;
+        if app.np.model_file.is_some() || app.services.link_target.is_some() {
+            app.session.mark_modified();
         }
     }
 }
@@ -1166,11 +1165,11 @@ mod tests {
     #[test]
     fn pose_changes_are_refused_while_stroking() {
         let mut app = app();
-        let layer = app.selected_layer.unwrap();
+        let layer = app.session.selected_layer.unwrap();
         let settings = app.stroke_settings(false);
-        let stroke = app.doc.begin_stroke(layer, &settings).unwrap();
-        app.stroke = Some(stroke);
-        app.view3d.input.stroke = Some(crate::state::StrokeSource::Mouse);
+        let stroke = app.session.doc.begin_stroke(layer, &settings).unwrap();
+        app.session.stroke = Some(stroke);
+        app.view3d.view.input.stroke = Some(crate::state::StrokeSource::Mouse);
         let before = app.view3d.model.clone().unwrap().revision();
         assert!({
             let p = bent(&app, -1.0);
@@ -1184,14 +1183,14 @@ mod tests {
         assert_eq!(app.message, ViewError::Stroking.to_string());
         app.apply(Action::Pose(PoseAction::OpenFbx));
         assert_eq!(
-            app.dialog_request, None,
+            app.outbox.dialog_request, None,
             "描いている間はファイルのウィンドウを頼まない"
         );
         open_file(&mut app, Path::new("読まれない.fbx"));
         assert!(!app.view3d.pose.is_loading(), "描いている間は読み始めない");
         assert_eq!(app.view3d.model.clone().unwrap().revision(), before);
-        let stroke = app.stroke.take().unwrap();
-        app.doc.cancel_stroke(stroke);
+        let stroke = app.session.stroke.take().unwrap();
+        app.session.doc.cancel_stroke(stroke);
         app.view3d.stroke_ended();
         assert!({
             let p = bent(&app, -1.0);
@@ -1204,19 +1203,25 @@ mod tests {
     fn undo_goes_to_the_pose_only_in_pose_mode() {
         let mut app = app();
         // 画素を 1 つ変える（文書の取り消しに 1 つ）
-        let layer = app.selected_layer.unwrap();
+        let layer = app.session.selected_layer.unwrap();
         let settings = app.stroke_settings(false);
-        let mut stroke = app.doc.begin_stroke(layer, &settings).unwrap();
+        let mut stroke = app.session.doc.begin_stroke(layer, &settings).unwrap();
         stroke
-            .add_point(&mut app.doc, 10.0, 10.0, 1.0, yolu_core::glam::DVec2::ZERO)
+            .add_point(
+                &mut app.session.doc,
+                10.0,
+                10.0,
+                1.0,
+                yolu_core::glam::DVec2::ZERO,
+            )
             .unwrap();
-        app.doc.end_stroke(stroke).unwrap();
+        app.session.doc.end_stroke(stroke).unwrap();
         {
             let p = bent(&app, -1.0);
             set_pose(&mut app.view3d, p)
         }
         .unwrap();
-        assert!(app.doc.can_undo());
+        assert!(app.session.doc.can_undo());
         // ポーズのモード: Ctrl+Z はポーズ（3D ビューが見えているあいだ）
         app.apply(Action::Pose(PoseAction::ToggleMode));
         assert_eq!(app.mode, EditorMode::Pose);
@@ -1229,14 +1234,14 @@ mod tests {
         assert!(app.can_undo());
         app.apply(Action::Undo);
         assert!(!app.view3d.pose.session.as_ref().unwrap().is_posed());
-        assert!(app.doc.can_undo(), "画素はそのまま");
+        assert!(app.session.doc.can_undo(), "画素はそのまま");
         assert!(!app.can_undo(), "ポーズの取り消しはもう無い");
         app.apply(Action::Redo);
         assert!(app.view3d.pose.session.as_ref().unwrap().is_posed());
         // モードを切ると画素
         app.apply(Action::Pose(PoseAction::ToggleMode));
         app.apply(Action::Undo);
-        assert!(!app.doc.can_undo());
+        assert!(!app.session.doc.can_undo());
         assert!(
             app.view3d.pose.session.as_ref().unwrap().is_posed(),
             "ポーズはそのまま"
@@ -1329,7 +1334,7 @@ mod tests {
         let mut app = AppState::new(64, 64);
         // 状態のレイヤーは OS のウィンドウを開かない: 頼みを残すだけ
         app.apply(Action::Pose(PoseAction::OpenFbx));
-        assert_eq!(app.dialog_request, Some(DialogRequest::OpenModel));
+        assert_eq!(app.outbox.dialog_request, Some(DialogRequest::OpenModel));
         assert!(!app.view3d.pose.is_loading());
         // 選ばれたパス（ウィンドウに落としたものも）は、何も触っていないプロジェクトなら新規プロジェクトのウィンドウで読む（3D ビューには、
         // 決めるまで入れない）

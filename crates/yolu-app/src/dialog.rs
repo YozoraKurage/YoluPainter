@@ -61,7 +61,7 @@ pub fn start_folder_with(
     places::start_folder(
         rule,
         &Sources {
-            preferred: state.save_folder.as_deref(),
+            preferred: state.session.save_folder.as_deref(),
             document: document.as_deref(),
             remembered: state.places.get(place),
             documents,
@@ -74,6 +74,7 @@ impl AppState {
     /// 今の文書の .ylp のあるフォルダ（保存していない文書・ファイルの無いプロジェクトでは None）。
     pub fn document_folder(&self) -> Option<PathBuf> {
         let parent = self
+            .session
             .project
             .as_ref()
             .filter(|p| p.is_file())

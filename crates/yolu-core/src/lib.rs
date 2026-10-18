@@ -1,7 +1,7 @@
 //! 文書（タイル・レイヤー・チャンネル）と CPU の合成・ブラシ・フィルター・Generator、3D の面の計算（`geometry`）、スキンとポーズ（`skin`）。GPU にも OS にも頼らない純粋な計算で、cargo test で速く確かめる。
 //!
 //! 式・丸め・straight RGBA8 は、もと Unity 版の C# の Core（YoluPainter の `Runtime/Core`）を仕様にし、C# の Core に同じ入力を
-//! 通した出力（`tests/golden/`、`tools/csharp-golden/` で作る）とのバイト一致で確かめてきた。レイヤーの合成の式（[`blend`]）は、
+//! 通した出力（`tests/golden/`。前の Unity 版の C# の出力を引き継いだ物で、作り直すときは Rust の出力から作る）とのバイト一致で確かめてきた。レイヤーの合成の式（[`blend`]）は、
 //! この crate の f32 の式が正本で、合成を通る正解はこの crate で撮り直した（`YOLU_GOLDEN_UPDATE=1`）。Normal のチャンネルの
 //! 合成（[`normal`]）とブラシの画素（[`brush`]）も同じ f32 のレーンの式。フィルター・Generator の値など、f64 のままの式は今も C# の
 //! 正解と同じ値。
@@ -60,10 +60,12 @@ pub mod material;
 pub mod material_triangles;
 mod math;
 pub mod mesh_maps;
+pub mod near_color;
 pub mod normal;
 pub mod padding;
 pub mod paths;
 mod ranges;
+mod reason;
 pub mod rulers;
 pub mod selection;
 pub mod skin;
@@ -80,21 +82,30 @@ pub use adjust::{
     luminance, AdjustmentSettings, AdjustmentType, BalanceRange, BrightnessContrast, ColorAdjust,
     ColorBalance, GradientMap, Posterize, Threshold, ToneChannel, ToneCurves,
 };
+pub use brush::DualItem;
+pub use brush::WaterEdge;
 pub use brush::{
     builtin_presets, builtin_tip, AntiAlias, Brush, BrushEffect, BrushMappedPixel, BrushPixel,
     BrushPreset, BrushSample, BrushSettings, BrushSourceTap, BrushStencil, BrushTip, ColorDynamics,
-    ColorMix, Controls, DualBrush, DualBrushMode, ImageColorSpace, Jitter, MixGround, MixMode,
-    PaperTexture, PressureResponse, PressureResponses, StencilImage, StencilMapping, StencilMode,
-    StencilPoint, StencilTiling, StrokeAssist, TextureMode, TipSelection, TipShape,
+    ColorItem, ColorMix, ColorTarget, Controls, DualBrush, DualBrushMode, FlipRule,
+    ImageColorSpace, Influence, Influences, InputResponse, InputUse, Jitter, MixBlur, MixGround,
+    MixMode, MixSpace, PaperTexture, PostCorrection, PressureSwitches, StabilizerSpeed,
+    StencilImage, StencilMapping, StencilMode, StencilPoint, StencilTiling, StrokeAssist,
+    StrokeColorChange, TaperTargets, TextureMode, TipColorChange, TipSelection, TipShape,
 };
+pub use brush::{ExpandMode, ReferenceLines, MAX_REFERENCE_EXPAND, MAX_REFERENCE_MARGIN};
+pub use brush::{Spray, SprayDirection, SprayItem, DENSITY_PER_STAMP, MAX_SPRAY_SIZE};
+pub use brush::{CONTINUOUS_INTERVAL, MAX_CONTINUOUS_PER_INPUT};
+pub use brush::{MAX_MIX_BLUR, MAX_MIX_CORRECTION};
 pub use document::{
     clean_saved_name, Affine2D, CanvasResampling, ClipboardRefusal, ClipboardSource,
-    CompositedTile, Document, EffectCounters, Homography, LayerLocks, LayerMergeReport, LiquifyDab,
-    LiquifyMode, MergeMethod, MergeRefusal, PasteResult, PixelClipboard, PreparedResize,
-    Resampling, ResizeReport, SavedSelection, SeamFallback, Stroke, StrokeResult, StrokeStats,
-    TriangleFill, Warp, WarpMesh, WarpPoint, DEFAULT_SOURCE_BUDGET_BYTES, MAX_GROUP_DEPTH,
-    MAX_SAVED_NAME_CHARS, MAX_SAVED_SELECTIONS,
+    CompositedTile, Document, EffectCounters, Homography, LayerLocks, LayerMergeReport,
+    LayerSetInfo, LiquifyDab, LiquifyMode, MergeMethod, MergeRefusal, PasteResult, PixelClipboard,
+    PreparedResize, Resampling, ResizeReport, SavedSelection, SeamFallback, Stroke, StrokeResult,
+    StrokeStats, TriangleFill, Warp, WarpMesh, WarpPoint, DEFAULT_SOURCE_BUDGET_BYTES,
+    MAX_GROUP_DEPTH, MAX_LAYER_SETS, MAX_SAVED_NAME_CHARS, MAX_SAVED_SELECTIONS,
 };
+pub use document::{MaskCopy, MaskPasteResult};
 pub use effects::{
     Anchor, AnchorId, AnchorInfo, AnchorIssue, AnchorIssueKind, AnchorPlacement, EffectInputs,
     EffectSettings, FallbackEffect, FilterEffect, FilterId, FilterSpec, FilterTarget, ImageId,
@@ -102,9 +113,10 @@ pub use effects::{
 };
 pub use error::CoreError;
 pub use glam;
-pub use layer::{ChannelBlend, Layer, LayerId, RasterMask};
+pub use layer::{ChannelBlend, Layer, LayerId, LayerSetId, RasterMask};
 pub use normal::{HeightEdgeMode, NormalSettings, NormalYDirection};
 pub use paths::LayerPathEntry;
+pub use reason::Reason;
 pub use rulers::{
     Ruler, RulerId, RulerKind, RulerPlace, RulerRef, RulerScope, RulerSpace, SpecialRulers,
     MAX_RULERS_PER_LAYER,
@@ -113,8 +125,8 @@ pub use selection::{SelectionCombine, SelectionMask};
 pub use surface::Surface;
 pub use symmetry::{CanvasSymmetry, SymmetryMode, SymmetryTransform};
 pub use types::{
-    BlendMode, Channel, ChannelInfo, ChannelKind, ColorSpace, LayerKind, Rect, Rgba8, RowOrder,
-    TileCoord,
+    unit_f32_to_byte, BlendMode, Channel, ChannelInfo, ChannelKind, ColorSpace, LayerKind, Rect,
+    Rgba8, RowOrder, TileCoord,
 };
 
 pub use composite::MemoStats;

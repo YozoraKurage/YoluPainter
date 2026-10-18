@@ -8,7 +8,8 @@ use std::sync::OnceLock;
 
 use super::{canonical, Group};
 use crate::engine::{
-    AntiAlias, Brush, BrushEffect, BrushSettings, ColorMix, DVec2, MixMode, PressureResponse,
+    AntiAlias, Brush, BrushEffect, BrushSettings, ColorMix, DVec2, InputResponse, InputUse,
+    MixMode, PressureSwitches,
 };
 use crate::lang::Lang;
 use crate::m2;
@@ -46,6 +47,47 @@ fn preset_group(id: &str) -> Group {
     }
 }
 
+/// 厚塗りの筆（色の混ぜ。筆のグループ）。paint・density は絵の具の量・濃さの筆圧の最小値（None は筆圧を使わない）。
+fn thick(
+    radius: f64,
+    hardness: f64,
+    spacing: f64,
+    flow: f64,
+    mix: ColorMix,
+    paint: Option<f64>,
+    density: Option<f64>,
+) -> Brush {
+    let mut b = Brush {
+        mix,
+        ..Brush::simple(
+            BrushSettings {
+                radius,
+                hardness,
+                spacing,
+                flow,
+                ..BrushSettings::default()
+            },
+            // 置いた絵の具は筆圧で薄くならない（量・濃さのほうを筆圧に従わせる）
+            PressureSwitches {
+                opacity: false,
+                ..PressureSwitches::default()
+            },
+        )
+    };
+    for (min, i) in [
+        (paint, &mut b.influences.mix_paint),
+        (density, &mut b.influences.mix_density),
+    ] {
+        if let Some(min) = min {
+            i.pressure = InputUse {
+                on: true,
+                response: InputResponse::new(min, Vec::new()).expect("最小値だけの筆圧の応え"),
+            };
+        }
+    }
+    canonical(&b)
+}
+
 /// 組み込みの全部（グループごとに画面の並びで）。初めて呼んだときに 1 回だけ作る。
 pub fn all() -> &'static [Builtin] {
     static ALL: OnceLock<Vec<Builtin>> = OnceLock::new();
@@ -71,21 +113,6 @@ pub fn all() -> &'static [Builtin] {
                 })
             })
         };
-        // 厚塗りの筆（色の混ぜ。筆のグループ）
-        let thick = |radius: f64, hardness: f64, spacing: f64, flow: f64, mix: ColorMix| {
-            canonical(&Brush {
-                mix,
-                ..Brush::from(BrushSettings {
-                    radius,
-                    hardness,
-                    spacing,
-                    flow,
-                    // 置いた絵の具は筆圧で薄くならない（量・濃さのほうを筆圧に従わせる）
-                    pressure_opacity: false,
-                    ..BrushSettings::default()
-                })
-            })
-        };
         let mut oil = thick(
             20.0,
             0.7,
@@ -96,11 +123,10 @@ pub fn all() -> &'static [Builtin] {
                 paint: 0.65,
                 density: 1.0,
                 stretch: 0.6,
-                pressure_paint: true,
-                response_paint: PressureResponse::new(0.3, Vec::new())
-                    .expect("最小値だけの筆圧の応え"),
                 ..ColorMix::default()
             },
+            Some(0.3),
+            None,
         );
         oil.tip.image = yolu_core::builtin_tip("bristles");
         oil.tip.follow_direction = true;
@@ -117,6 +143,8 @@ pub fn all() -> &'static [Builtin] {
                 stretch: 0.25,
                 ..ColorMix::default()
             },
+            None,
+            None,
         );
         let mixer = thick(
             26.0,
@@ -128,11 +156,10 @@ pub fn all() -> &'static [Builtin] {
                 paint: 0.2,
                 density: 0.85,
                 stretch: 0.7,
-                pressure_density: true,
-                response_density: PressureResponse::new(0.25, Vec::new())
-                    .expect("最小値だけの筆圧の応え"),
                 ..ColorMix::default()
             },
+            None,
+            Some(0.25),
         );
         let mut v = Vec::new();
         let mut add = |id: &'static str, group: Group, mut brush: Brush| {
@@ -193,13 +220,13 @@ pub fn find(id: &str) -> Option<&'static Builtin> {
 /// 組み込みの表示名。
 pub fn name(lang: Lang, id: &str) -> String {
     let own = match id {
-        STANDARD | STANDARD_ERASER => Some(lang.pick("標準", "Standard")),
-        "blur" => Some(lang.pick("ぼかし", "Blur")),
-        "smudge" => Some(lang.pick("指先", "Smudge")),
-        "clone" => Some(lang.pick("クローン", "Clone")),
-        "oil" => Some(lang.pick("油彩", "Oil paint")),
-        "gouache" => Some(lang.pick("ガッシュ", "Gouache")),
-        "mixer" => Some(lang.pick("混色", "Mixer")),
+        STANDARD | STANDARD_ERASER => Some(lang.t("brushes-standard")),
+        "blur" => Some(lang.t("brushes-blur")),
+        "smudge" => Some(lang.t("brushes-smudge")),
+        "clone" => Some(lang.t("brushes-clone")),
+        "oil" => Some(lang.t("brushes-oil-paint")),
+        "gouache" => Some(lang.t("brushes-gouache")),
+        "mixer" => Some(lang.t("brushes-mixer")),
         _ => None,
     };
     match own {

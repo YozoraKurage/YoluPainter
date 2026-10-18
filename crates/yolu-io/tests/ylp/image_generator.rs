@@ -205,7 +205,7 @@ fn older_readers_refuse_the_image_generator_by_the_version() {
 #[test]
 fn versions_nobody_assigned_are_refused() {
     // 25 より上で割り振られた番号。ほかの機能の版を取り込んだら、末尾に自分の行だけ足す（読む版の判定 `is_known_version` と揃える）
-    const ASSIGNED_ABOVE_25: [i32; 9] = [
+    const ASSIGNED_ABOVE_25: [i32; 10] = [
         SPLIT_VERSION,
         yolu_io::PATHS_VERSION,
         EFFECTS_VERSION,
@@ -215,6 +215,7 @@ fn versions_nobody_assigned_are_refused() {
         yolu_io::TEXT_VERSION,
         yolu_io::ANTI_ALIAS_VERSION,
         yolu_io::RULERS_VERSION,
+        yolu_io::LAYER_SETS_VERSION,
     ];
     let bytes = NativeDocument::from_core(&document_with(&odd()))
         .unwrap()

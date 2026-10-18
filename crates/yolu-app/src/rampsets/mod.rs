@@ -39,24 +39,21 @@ pub enum SetsError {
 impl SetsError {
     pub fn describe(&self, lang: Lang) -> String {
         match self {
-            SetsError::TooMany => lang.pick(
-                format!("自分のグラデーションは {MAX_USER} 個までです"),
-                format!("At most {MAX_USER} gradients of your own"),
+            SetsError::TooMany => lang.f(
+                "rampsets-at-most-gradients-of-your",
+                &[("max_user", &MAX_USER)],
             ),
-            SetsError::Name => lang.pick("名前が空です".to_owned(), "The name is empty".to_owned()),
-            SetsError::Index => lang.pick(
-                "組み込みのものは変えられません".to_owned(),
-                "Built-in gradients cannot be changed".to_owned(),
-            ),
-            SetsError::Unreadable(ja, en) => lang.pick(
-                format!("ファイルが読めないままなので、グラデーションを保存できません（{ja}）。"),
-                format!("Cannot save the gradients because the file is still unreadable ({en})."),
-            ),
+            SetsError::Name => lang.t("rampsets-the-name-is-empty").to_owned(),
+            SetsError::Index => lang.t("rampsets-built-in-gradients-cannot-be").to_owned(),
+            SetsError::Unreadable(ja, en) => {
+                let why = lang.pick(ja, en);
+                lang.f(
+                    "rampsets-cannot-save-the-gradients-because",
+                    &[("why", why)],
+                )
+            }
             SetsError::Store(e) => lang.with_reason(
-                lang.pick(
-                    "グラデーションを保存できません",
-                    "Cannot save the gradients",
-                ),
+                lang.t("rampsets-cannot-save-the-gradients"),
                 e.describe(lang),
             ),
         }
@@ -125,7 +122,7 @@ impl RampSets {
         let builtins = builtin::groups([0.0; 4], [0.0; 4]);
         match builtins.get(group) {
             Some(g) => lang.pick(g.ja, g.en).to_owned(),
-            None => lang.pick("自分", "Mine").to_owned(),
+            None => lang.t("rampsets-mine").to_owned(),
         }
     }
 
@@ -179,7 +176,7 @@ impl RampSets {
         }
         let name = clean_name(name).unwrap_or_else(|| {
             let n = self.user.len() + 1;
-            lang.pick(format!("グラデーション {n}"), format!("Gradient {n}"))
+            lang.f("rampsets-gradient", &[("n", &n)])
         });
         // 分岐点の並び・混合率曲線・値のカーブは入れ、混色モードと輝度の補正は外す（セットの外の設定）
         let ramp = ramp.with_mixing(MixMode::Standard, LuminanceCorrection::default());

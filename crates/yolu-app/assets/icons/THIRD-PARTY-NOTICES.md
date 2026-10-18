@@ -1,13 +1,13 @@
 # アイコンの第三者表記
 
-白・48 px の PNG。Unity 版からコピーしたものと、同じ方法で SVG を白くして描画したものを含む。
+白・48 px の PNG。0.4.x までの Unity ブリッジからコピーしたものと、同じ方法で SVG を白くして描画したものを含む。
 Fluent は [Microsoft Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons)、
 Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT 許諾。原文は後段に保持する。
-元 SVG の取得コミットは記録されていないため、版を推定しない。確認済み PNG の SHA-256 は `tools/licenses-reviewed.json` に固定する。
+元 SVG の取得コミットは記録されていないため、バージョンを推定しない。確認済み PNG の SHA-256 は `tools/licenses-reviewed.json` に固定する。
 
-`tools/` の通常版は regular、`_selected` は Fluent の filled・Phosphor の fill（長方形と楕円の選択は bold、多角形は通常版と同じ regular）。
+`tools/` の通常のアイコンは regular、`_selected` は Fluent の filled・Phosphor の fill（長方形と楕円の選択は bold、多角形は通常のアイコンと同じ regular）。
 その他は regular（`lock_filled` のみ filled）。`arrow_maximize`・`arrow_minimize`・`copy_add` はスタンドアロン側の追加。`snap_ruler`・`snap_special` は regular のアイコンに bold の磁石を重ねた物。
-多角形選択の通常・選択中の 2 枚は Unity 版の `uv_wireframe.png`（Phosphor polygon regular）とバイト一致する。
+多角形選択の通常・選択中の 2 枚は 0.4.x までの Unity ブリッジの `uv_wireframe.png`（Phosphor polygon regular）とバイト一致する。
 
 | 同梱 PNG（拡張子省略） | セット | 元の名前 | 太さ |
 |---|---|---|---|
@@ -23,6 +23,7 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `blur_on` | fluent | `blur` | regular |
 | `check` | fluent | `checkmark` | regular |
 | `chevron_right` | fluent | `chevron_right` | regular |
+| `clip_below` | phosphor | `selection-foreground` | regular |
 | `close` | fluent | `dismiss` | regular |
 | `color_square` | fluent | `square` | regular |
 | `content_copy` | fluent | `copy` | regular |
@@ -42,6 +43,7 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `folder` | fluent | `folder` | regular |
 | `folder_open` | fluent | `folder_open` | regular |
 | `format_color_fill` | fluent | `paint_bucket` | regular |
+| `generator` | phosphor | `wave-sine` | regular |
 | `grid_dots` | fluent | `grid_dots` | regular |
 | `import` | fluent | `arrow_import` | regular |
 | `info` | fluent | `info` | regular |
@@ -125,6 +127,7 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `visibility` | fluent | `eye` | regular |
 | `visibility_off` | fluent | `eye_off` | regular |
 | `warning` | fluent | `warning` | regular |
+| `warning_circle` | phosphor | `warning-circle` | regular |
 | `window_maximize` | fluent | `maximize` | regular |
 | `window_minimize` | fluent | `subtract` | regular |
 | `window_restore` | fluent | `square_multiple` | regular |

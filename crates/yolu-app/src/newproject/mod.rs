@@ -1,6 +1,8 @@
 //! 新規プロジェクトのウィンドウ（Ctrl+N）と、プロジェクトの構成（ファイル ▸ プロジェクト設定）。Unity 版の `NewProjectWindow` と同じ 1 つのウィンドウで、
-//! 新規では「テンプレート・モデル・どのマテリアルをテクスチャセットにするか・解像度・法線の形式・作った後のメッシュマップのベイク」を、
-//! 構成では今のプロジェクトを直す（セットの追加・削除・名前・マテリアル・大きさ、モデルの差し替えと読み直し、法線の形式）。
+//! 新規では「テンプレート・モデル・テクスチャセットの並び（名前・大きさ・マテリアル）・法線の形式・作った後のメッシュマップのベイク」を、
+//! 構成では今のプロジェクトを直す（セットの追加・削除・名前・マテリアル・大きさ、モデルの差し替えと読み直し、法線の形式）。どちらも
+//! セットの行は同じ形で、1 つのセットに複数のマテリアルを選べる（ほかのセットのマテリアルを選ぶと、そのセットから移る）。新規で
+//! マテリアルの無くなった行は作るときに捨て、構成では行のまま残す（消すのはごみ箱だけ）。
 //!
 //! - モデル（FBX）は別のスレッドで読む（取消と「もう一度」つき）。読み終えたモデルはウィンドウが持ち、決めたとき 3D ビューにそのまま入れる
 //!   （2 回読まない）。ウィンドウを閉じれば捨てる。元のファイルは読むだけで、書き換えない。
@@ -26,6 +28,7 @@ use egui::Vec2;
 pub use reopen::{is_network_path, relative_model_path, resolve_model_path, Reopen};
 
 use crate::engine::{CanvasResampling, Channel, Document, NormalSettings, NormalYDirection};
+use crate::features::{Feature, PollStage};
 use crate::jobs::{JobCard, JobSpec};
 use crate::lang::Lang;
 use crate::model::SceneModel;
@@ -74,12 +77,9 @@ impl Template {
 
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            Template::Pbr => lang.pick("PBR（すべてのチャンネル）", "PBR (all channels)"),
-            Template::LilToon => lang.pick(
-                "lilToon（カラー・ノーマル・エミッション）",
-                "lilToon (Color, Normal, Emission)",
-            ),
-            Template::ColorOnly => lang.pick("カラーのみ", "Color only"),
+            Template::Pbr => lang.t("newproject-pbr-all-channels"),
+            Template::LilToon => lang.t("newproject-liltoon-color-normal-emission"),
+            Template::ColorOnly => lang.t("newproject-color-only"),
         }
     }
 
@@ -92,7 +92,7 @@ impl Template {
             .collect();
         format!(
             "{}: {}",
-            lang.pick("チャンネル", "Channels"),
+            lang.t("newproject-channels-tip"),
             names.join(" · ")
         )
     }
@@ -136,8 +136,8 @@ pub fn groups_of(model: &SceneModel) -> Vec<Group> {
         .collect()
 }
 
-/// マテリアルの組から付けるセットの既定の名前（制御文字を除き、256 文字まで。空なら Material）。
-fn set_name_for(key: &LinkKey) -> String {
+/// マテリアルの組から付けるセットの既定の名前（制御文字を除き、256 文字まで。空なら Material）。画面のマテリアルの名前にも使う。
+pub(crate) fn set_name_for(key: &LinkKey) -> String {
     let clean: String = name_for(key).chars().filter(|c| !c.is_control()).collect();
     let clean = clean.trim();
     if clean.is_empty() {
@@ -155,20 +155,16 @@ fn set_name_for(key: &LinkKey) -> String {
 
 /// 鍵の並びを、モデルのマテリアルの組に照合する（`sets::match_materials` と同じ順。1 つの組は 1 つの鍵だけ）。返すのは鍵ごとの組の番号。
 pub fn match_keys(keys: &[&MaterialRef], groups: &[Group], slots: &[u32]) -> Vec<Option<usize>> {
+    let lists: Vec<&[MaterialRef]> = keys.iter().map(|k| std::slice::from_ref(*k)).collect();
     let materials: Vec<LinkKey> = groups.iter().map(|g| g.link_key.clone()).collect();
-    let by_material = match_materials(keys, &materials, slots);
+    let by_material = match_materials(&lists, &materials, slots);
     let mut out = vec![None; keys.len()];
-    for (group, set) in by_material.iter().enumerate() {
-        if let Some(set) = set {
+    for (group, at) in by_material.iter().enumerate() {
+        if let Some((set, _)) = at {
             out[*set] = Some(group);
         }
     }
     out
-}
-
-/// 選び直していないときにテクスチャセットにするマテリアルの組（先頭から上限まで）。
-fn default_chosen(count: usize) -> Vec<usize> {
-    (0..count.min(MAX_SETS)).collect()
 }
 
 /// ウィンドウで編むテクスチャセット 1 つ（`uid` が None なら足すセット）。
@@ -176,10 +172,9 @@ fn default_chosen(count: usize) -> Vec<usize> {
 pub struct SetDraft {
     pub uid: Option<u32>,
     pub name: String,
-    /// 描くマテリアル: ウィンドウが見せるマテリアルの組の番号。None は今のモデルに無い（鍵のまま）。
-    pub material: Option<usize>,
-    /// セットのマテリアルの鍵（足すセットは選んだ組の鍵）。モデルを替えたとき、これで新しいモデルへ付け直す。
-    pub key: MaterialRef,
+    /// セットのマテリアルの鍵と、ウィンドウが見せるマテリアルの組の番号（その鍵が今のモデルに無ければ None。鍵のまま残し、モデルを
+    /// 替えたとき、鍵で新しいモデルへ付け直す）。空はマテリアルなし。
+    pub keys: Vec<(MaterialRef, Option<usize>)>,
     /// 欲しい大きさ（画素）。
     pub size: (u32, u32),
     /// 開いたときの大きさ（足すセットは (0, 0)）。
@@ -191,6 +186,25 @@ impl SetDraft {
     /// 大きさを変えるか（もうあるセットで、今と違う）。
     pub fn resizes(&self) -> bool {
         self.uid.is_some() && self.size != self.current
+    }
+
+    /// 描くマテリアルの組の番号（昇順）。
+    pub fn materials(&self) -> Vec<usize> {
+        let mut out: Vec<usize> = self.keys.iter().filter_map(|(_, g)| *g).collect();
+        out.sort_unstable();
+        out
+    }
+
+    /// マテリアルの組 `group` を描くか。
+    pub fn paints(&self, group: usize) -> bool {
+        self.keys.iter().any(|(_, g)| *g == Some(group))
+    }
+
+    /// 今のモデルに無いマテリアルの鍵（名前・アセット・Unassigned）を持つか（仮のスロットの番号の鍵は、どのマテリアルにも付けない印）。
+    pub fn has_missing_key(&self) -> bool {
+        self.keys
+            .iter()
+            .any(|(k, g)| g.is_none() && !matches!(k, MaterialRef::PendingSlot(_)))
     }
 }
 
@@ -222,7 +236,6 @@ pub enum Prep {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Dropdown {
     Template,
-    Resolution,
     Normal,
     Resampling,
     /// セットの下書きの大きさ・マテリアル（下書きの番号）。
@@ -237,8 +250,6 @@ pub struct NpWindow {
     // 新規
     pub template: Template,
     pub bake: bool,
-    /// テクスチャセットにするマテリアルの組の番号（None は全部）。
-    pub materials: Option<Vec<usize>>,
     // 共通
     pub resolution: u32,
     pub normal: NormalYDirection,
@@ -249,7 +260,7 @@ pub struct NpWindow {
     pub prep: Prep,
     /// 構成: 同じモデルを読み直す。
     pub reload: bool,
-    // 構成
+    /// テクスチャセットの行（新規は作るセット、構成は今のセットと足すセット）。
     pub drafts: Vec<SetDraft>,
     /// ウィンドウを開いたときのセットの並び（uid）。ウィンドウの外でセットが増減したら（Live Link のモデルが来たなど）、下書きが古いのでウィンドウを閉じる。
     pub sets_seen: Vec<u32>,
@@ -261,7 +272,6 @@ pub struct NpWindow {
     // 画面
     pub offset: Vec2,
     pub list_scroll: f32,
-    pub dropdown: Option<(Dropdown, crate::ui::menu::PopupState)>,
     pub confirm_offset: Vec2,
 }
 
@@ -271,7 +281,6 @@ impl NpWindow {
             configure,
             template: Template::default(),
             bake: false,
-            materials: None,
             resolution: DEFAULT_RESOLUTION,
             normal: NormalYDirection::OpenGL,
             normal_opened: NormalYDirection::OpenGL,
@@ -285,7 +294,6 @@ impl NpWindow {
             error: None,
             offset: Vec2::ZERO,
             list_scroll: 0.0,
-            dropdown: None,
             confirm_offset: Vec2::ZERO,
         }
     }
@@ -294,9 +302,9 @@ impl NpWindow {
     /// いないときの Live Link のモデル（Unity のシーンのもの。ここでは替えないが、そのマテリアルにセットを作れる）。
     fn app_model<'a>(&self, app: &'a AppState) -> Option<&'a SceneModel> {
         if self.configure {
-            app.model.as_ref()
+            app.session.model.as_ref()
         } else if self.model.is_none() {
-            app.model.as_ref().filter(|m| m.is_link())
+            app.session.model.as_ref().filter(|m| m.is_link())
         } else {
             None
         }
@@ -321,24 +329,56 @@ impl NpWindow {
         }
     }
 
-    /// 新規: テクスチャセットにするマテリアルの組の番号（番号の順）。選び直していなければ、先頭から上限（`MAX_SETS`）まで。
+    /// 新規: どれかの行が描くマテリアルの組の番号（番号の順）。
     pub fn chosen(&self, count: usize) -> Vec<usize> {
-        let mut chosen: Vec<usize> = match &self.materials {
-            Some(m) => m.iter().copied().filter(|g| *g < count).collect(),
-            None => default_chosen(count),
-        };
+        let mut chosen: Vec<usize> = self
+            .drafts
+            .iter()
+            .flat_map(SetDraft::materials)
+            .filter(|g| *g < count)
+            .collect();
         chosen.sort_unstable();
         chosen.dedup();
-        chosen.truncate(MAX_SETS);
         chosen
     }
 
-    /// 上限のため、テクスチャセットにならないマテリアルの組の数（上限を超えるマテリアルを持つモデルだけ）。
+    /// 上限のため、テクスチャセットにならないマテリアルの組の数（上限を超えるマテリアルを持つモデルで、どの行にも入っていないもの）。
     pub fn over_limit(&self, count: usize) -> usize {
-        if count > MAX_SETS && self.chosen(count).len() == MAX_SETS {
-            count - MAX_SETS
+        if count > MAX_SETS {
+            count - self.chosen(count).len()
         } else {
             0
+        }
+    }
+
+    /// 新規: 行を、マテリアルの組ごとに 1 つずつ（上限まで）作り直す。組が無ければ、マテリアルの無い行 1 つ。大きさは今の解像度。
+    fn reset_new_drafts(&mut self, app: &AppState) {
+        let lang = app.lang;
+        let groups = self.groups(app);
+        self.drafts.clear();
+        self.list_scroll = 0.0;
+        self.error = None;
+        if groups.is_empty() {
+            self.drafts.push(SetDraft {
+                uid: None,
+                name: crate::sets::first_set_name(lang).into(),
+                keys: Vec::new(),
+                size: (self.resolution, self.resolution),
+                current: (0, 0),
+                read_only: false,
+            });
+            return;
+        }
+        for g in groups.iter().take(MAX_SETS) {
+            let name = unique(&g.name, self.drafts.iter().map(|d| d.name.as_str()));
+            self.drafts.push(SetDraft {
+                uid: None,
+                name,
+                keys: vec![(g.key.clone(), Some(g.index))],
+                size: (self.resolution, self.resolution),
+                current: (0, 0),
+                read_only: false,
+            });
         }
     }
 
@@ -371,19 +411,33 @@ impl NpWindow {
         self.model.is_none() || matches!(self.prep, Prep::Ready { .. })
     }
 
-    /// 構成: セットの下書きのマテリアルを、ウィンドウが見せるマテリアルの組に鍵で照合し直す（モデルを替えた・戻したとき）。
+    /// 構成: セットの下書きのマテリアルを、ウィンドウが見せるマテリアルの組に鍵で照合し直す（開いた・モデルを替えた・戻したとき）。
+    /// 照合は `sets::match_materials`（セットに結び付けるときと同じ順）。
     fn rematch_drafts(&mut self, app: &AppState) {
         let groups = self.groups(app);
         let slots = self.slots(app);
-        let keys: Vec<&MaterialRef> = self.drafts.iter().map(|d| &d.key).collect();
-        let matched = match_keys(&keys, &groups, &slots);
-        for (draft, group) in self.drafts.iter_mut().zip(matched) {
-            draft.material = group;
+        let materials: Vec<LinkKey> = groups.iter().map(|g| g.link_key.clone()).collect();
+        let lists: Vec<Vec<MaterialRef>> = self
+            .drafts
+            .iter()
+            .map(|d| d.keys.iter().map(|(k, _)| k.clone()).collect())
+            .collect();
+        let refs: Vec<&[MaterialRef]> = lists.iter().map(Vec::as_slice).collect();
+        let matched = match_materials(&refs, &materials, &slots);
+        for d in &mut self.drafts {
+            for (_, g) in &mut d.keys {
+                *g = None;
+            }
+        }
+        for (group, at) in matched.iter().enumerate() {
+            if let Some((di, ki)) = at {
+                self.drafts[*di].keys[*ki].1 = Some(group);
+            }
         }
         self.error = None;
     }
 
-    /// ウィンドウに落とした・選んだモデルを読み始める（前の読み込みは取り消す）。
+    /// ウィンドウに落とした・選んだモデルを読み始める（前の読み込みは取り消す。新規の行は読み終えたモデルで作り直す）。
     fn start_loading(&mut self, app: &mut AppState, path: PathBuf) {
         if let Prep::Loading { job, .. } = &self.prep {
             job.cancel();
@@ -395,6 +449,8 @@ impl NpWindow {
         // 読み終えるまで、下書きは今のモデルのマテリアルに付けておく（前に読んだ別のモデルの番号のまま残さない）
         if self.configure {
             self.rematch_drafts(app);
+        } else {
+            self.reset_new_drafts(app);
         }
     }
 
@@ -425,7 +481,6 @@ pub struct NpState {
     pub generation: u64,
     /// テクスチャセットのパネルの「消す」の確かめを待っているセット（uid）。
     pub remove_confirm: Option<Vec<u32>>,
-    pub remove_offset: Vec2,
 }
 
 impl std::fmt::Debug for NpState {
@@ -442,7 +497,8 @@ impl std::fmt::Debug for NpState {
 #[derive(Clone, Debug, PartialEq)]
 pub enum DraftOp {
     Name(String),
-    Material(Option<usize>),
+    /// マテリアルの組を、この行に入れる（ほかの行にあれば、そこから移す）・外す。
+    Material(usize, bool),
     Size(u32, u32),
     Remove,
 }
@@ -470,7 +526,8 @@ pub enum NpAction {
     Resolution(u32),
     Normal(NormalYDirection),
     BakeAfter(bool),
-    /// 新規: マテリアルの組をテクスチャセットにするか。
+    /// 新規: マテリアルの組をテクスチャセットにするか（入れるなら、その組だけの行を足す。外すなら行から外し、空になった行は消す。最後に
+    /// 残ったマテリアルは外せない）。行の上のマテリアルの選びは `Draft(_, DraftOp::Material)`。
     Material(usize, bool),
     Draft(usize, DraftOp),
     /// 構成: 空のセットを下書きに足す。
@@ -503,7 +560,7 @@ pub(crate) const JOB: JobSpec = JobSpec {
         Some(JobCard {
             text: format!(
                 "{} — {}",
-                lang.pick("モデルを読み込み中", "Loading the model"),
+                lang.t("newproject-loading-the-model"),
                 r.file_name()
             ),
             fraction: r.fraction(),
@@ -543,16 +600,12 @@ impl AppState {
                 self.np_open_model(path);
             }
             NpAction::Close => self.np.window = None,
-            NpAction::ChooseDialog => self.dialog_request = Some(DialogRequest::ProjectModel),
+            NpAction::ChooseDialog => {
+                self.outbox.dialog_request = Some(DialogRequest::ProjectModel)
+            }
             NpAction::CancelReopen => {
                 if self.np.reopening.take().is_some() {
-                    self.info(
-                        Source::Project,
-                        lang.pick(
-                            "モデルの読み込みを取り消しました。",
-                            "Model loading canceled.",
-                        ),
-                    );
+                    self.info(Source::Project, lang.t("newproject-model-loading-canceled"));
                 }
             }
             NpAction::AddSet => {
@@ -566,9 +619,9 @@ impl AppState {
                     match self.remove_sets(&uids) {
                         Ok(names) => self.info(
                             Source::Project,
-                            lang.pick(
-                                format!("テクスチャセットを消しました: {}。", names.join("・")),
-                                format!("Removed texture sets: {}.", names.join(", ")),
+                            lang.f(
+                                "newproject-removed-texture-sets",
+                                &[("names", &names.join(lang.t("newproject-name-separator")))],
                             ),
                         ),
                         Err(e) => self.refuse(Source::Project, e),
@@ -595,15 +648,14 @@ impl AppState {
     fn np_window_step(&mut self, win: &mut NpWindow, action: NpAction) -> bool {
         match action {
             NpAction::ChooseModel(path) => {
-                if win.configure && self.model.as_ref().is_some_and(|m| m.is_link()) {
+                if win.configure && self.session.model.as_ref().is_some_and(|m| m.is_link()) {
                     // Live Link のモデルは Unity のシーンのもの（ここでは替えない）
                 } else {
                     // モデルが替わると、見せた確かめの一覧（計画）は古い。落としたファイルは確かめが出ている間にも届く
                     win.confirm = None;
                     win.reload = false;
-                    win.materials = None;
                     win.start_loading(self, path);
-                    win.dropdown = None;
+                    self.ui.np_dropdown = None;
                 }
             }
             NpAction::ClearModel => {
@@ -612,9 +664,10 @@ impl AppState {
                 win.model = None;
                 win.reload = false;
                 win.prep = Prep::Idle;
-                win.materials = None;
                 if win.configure {
                     win.rematch_drafts(self);
+                } else {
+                    win.reset_new_drafts(self);
                 }
             }
             NpAction::Reload => {
@@ -624,7 +677,6 @@ impl AppState {
                 }
                 if let Some(path) = self.np.model_file.clone() {
                     win.confirm = None;
-                    win.materials = None;
                     win.start_loading(self, path);
                     win.reload = true;
                 }
@@ -644,29 +696,22 @@ impl AppState {
             }
             NpAction::Template(t) => win.template = t,
             NpAction::Resolution(r) => {
+                // 新しい行の大きさ。新規では全部の行の大きさもそろえる（行ごとの大きさは `DraftOp::Size`）
                 if RESOLUTIONS.contains(&r) {
                     win.resolution = r;
+                    if !win.configure {
+                        for d in &mut win.drafts {
+                            d.size = (r, r);
+                        }
+                    }
                 }
             }
             NpAction::Normal(n) => win.normal = n,
             NpAction::BakeAfter(on) => win.bake = on,
             NpAction::Material(group, on) => {
-                let count = win.groups(self).len();
-                let mut chosen = win.chosen(count);
-                win.error = None;
-                if on {
-                    if !chosen.contains(&group) && group < count {
-                        if chosen.len() >= MAX_SETS {
-                            win.error = Some(crate::lang::refusals::set_limit(self.lang));
-                            return true;
-                        }
-                        chosen.push(group);
-                    }
-                } else if chosen.len() > 1 {
-                    chosen.retain(|g| *g != group);
+                if !win.configure {
+                    configure::choose_new_material(self, win, group, on);
                 }
-                chosen.sort_unstable();
-                win.materials = (chosen != default_chosen(count)).then_some(chosen);
             }
             NpAction::Draft(i, op) => configure::draft_op(self, win, i, op),
             NpAction::AddDraft => configure::add_draft(self, win),
@@ -744,37 +789,40 @@ impl AppState {
     /// 新規プロジェクトのウィンドウを開く。`model` があれば初めのモデルとして読み始める。
     fn np_open_new_with(&mut self, model: Option<PathBuf>) {
         let mut win = NpWindow::blank(false);
-        if let Some(path) = model {
-            win.start_loading(self, path);
+        match model {
+            Some(path) => win.start_loading(self, path),
+            None => win.reset_new_drafts(self),
         }
         self.np.window = Some(win);
+        self.ui.np_dropdown = None;
     }
 
     /// 構成のウィンドウを開く。`model` があればそのモデルに替える下書きで開く。
     fn np_open_configure(&mut self, model: Option<PathBuf>) {
         let mut win = NpWindow::blank(true);
-        win.normal = self.doc.normal_settings().file_direction();
+        win.normal = self.session.doc.normal_settings().file_direction();
         win.normal_opened = win.normal;
-        win.resolution = nearest_resolution(self.doc.width());
-        win.sets_seen = self.sets.iter().map(|s| s.uid).collect();
-        let groups = self.model.as_ref().map(groups_of).unwrap_or_default();
-        for i in 0..self.sets.len() {
-            let set = self.sets.get(i).expect("範囲内");
+        win.resolution = nearest_resolution(self.session.doc.width());
+        win.sets_seen = self.session.sets.iter().map(|s| s.uid).collect();
+        for i in 0..self.session.sets.len() {
+            let set = self.session.sets.get(i).expect("範囲内");
             let doc = self.set_doc(i);
             win.drafts.push(SetDraft {
                 uid: Some(set.uid),
                 name: set.name.clone(),
-                material: set.bound.map(|m| m as usize).filter(|m| *m < groups.len()),
-                key: set.material.clone(),
+                keys: set.materials.iter().map(|k| (k.clone(), None)).collect(),
                 size: (doc.width(), doc.height()),
                 current: (doc.width(), doc.height()),
                 read_only: set.read_only.is_some(),
             });
         }
+        // 今のモデルのマテリアルの組へ、セットに結び付けたときと同じ照合で付ける
+        win.rematch_drafts(self);
         if let Some(path) = model {
             win.start_loading(self, path);
         }
         self.np.window = Some(win);
+        self.ui.np_dropdown = None;
     }
 
     /// FBX を開く。何も触っていないプロジェクトなら、その FBX で新規プロジェクトを作るウィンドウ。作業のあるプロジェクトなら、構成のウィンドウで
@@ -785,21 +833,23 @@ impl AppState {
             self.np_window_action(NpAction::ChooseModel(path));
             return;
         }
-        if self.is_pristine() || self.model.as_ref().is_some_and(|m| m.is_link()) {
+        if self.is_pristine() || self.session.model.as_ref().is_some_and(|m| m.is_link()) {
             self.np_open_new_with(Some(path));
         } else {
             self.np_open_configure(Some(path));
         }
     }
 
-    /// 開いた・保存したファイルが無く、描いていない・変えていない（最初のままの）プロジェクトか。
+    /// 開いた・保存したファイルが無く、描いていない・変えていない（最初のままの）プロジェクトか。Undo した後の Redo の段が残る文書も、触った文書。
     pub fn is_pristine(&self) -> bool {
-        self.project.is_none()
-            && !self.modified
-            && self.sets.len() == 1
-            && !self.doc.can_undo()
-            && self.sets.current().read_only.is_none()
+        self.session.project.is_none()
+            && !self.session.is_modified()
+            && self.session.sets.len() == 1
+            && !self.session.doc.can_undo()
+            && !self.session.doc.can_redo()
+            && self.session.sets.current().read_only.is_none()
             && !self
+                .session
                 .doc
                 .layers()
                 .iter()
@@ -815,15 +865,13 @@ impl AppState {
                     .sets_seen
                     .iter()
                     .copied()
-                    .eq(self.sets.iter().map(|s| s.uid))
+                    .eq(self.session.sets.iter().map(|s| s.uid))
         }) {
             self.np.window = None;
             self.warn(
                 Source::Project,
-                self.lang.pick(
-                    "プロジェクトが変わったので、プロジェクト設定を閉じました。",
-                    "The project changed; Project Configuration was closed.",
-                ),
+                self.lang
+                    .t("newproject-the-project-changed-project-configuration"),
             );
         }
         if let Some(mut win) = self.np.window.take() {
@@ -843,6 +891,8 @@ impl AppState {
                     };
                     if win.configure {
                         win.rematch_drafts(self);
+                    } else {
+                        win.reset_new_drafts(self);
                     }
                 }
             }
@@ -861,18 +911,15 @@ impl AppState {
         let lang = self.lang;
         let uids: Vec<u32> = uids
             .into_iter()
-            .filter(|u| self.sets.index_of(*u).is_some())
+            .filter(|u| self.session.sets.index_of(*u).is_some())
             .collect();
         if uids.is_empty() {
             return;
         }
-        if uids.len() >= self.sets.len() {
+        if uids.len() >= self.session.sets.len() {
             self.refuse(
                 Source::Project,
-                lang.pick(
-                    "プロジェクトには少なくとも 1 つのテクスチャセットが要ります。",
-                    "A project keeps at least one texture set.",
-                ),
+                lang.t("newproject-a-project-keeps-at-least-2"),
             );
             return;
         }
@@ -886,7 +933,7 @@ impl AppState {
     /// 今のプロジェクトを替えるとき（新規・開く・作る）: 前のプロジェクトのモデルの読み込みを止め、世代を進める。Live Link の裏の仕事は、
     /// `project_epoch` の違いで見分けて止める（`LiveLink::poll`）。
     pub fn np_project_replaced(&mut self) {
-        self.project_epoch += 1;
+        self.session.bump_project_epoch();
         self.np.generation += 1;
         self.np.reopening = None;
         self.np.window = None;
@@ -898,11 +945,12 @@ impl AppState {
     pub fn drop_project_model(&mut self) {
         self.np.model_file = None;
         let rig_model = self
+            .session
             .model
             .as_ref()
             .is_some_and(|m| matches!(m.source, crate::model::ModelSource::Rig { .. }));
         if rig_model || self.view3d.pose.session.is_some() {
-            self.model = None;
+            self.session.model = None;
             self.view3d.load_demo();
             self.view3d.pose.session = None;
             self.view3d.pose.drag = None;
@@ -928,7 +976,8 @@ pub fn size_text(size: (u32, u32)) -> String {
     }
 }
 
-/// 新しい空のセットの文書: 大きさ・使うチャンネル・Normal の設定を指定した、空のレイヤー 1 枚（履歴なし）。
+/// 新しい空のセットの文書: 大きさ・使うチャンネル・Normal の設定を指定した、空のレイヤー 1 枚（履歴なし）。Live Link の元の絵を入れる
+/// セットの作り直し（`livelink::originals`）が、白の単色の無い形で使う。
 pub fn new_set_document(
     width: u32,
     height: u32,
@@ -937,10 +986,37 @@ pub fn new_set_document(
     channels: &[Channel],
     normal: NormalSettings,
 ) -> Result<Document, String> {
+    set_document(width, height, tile_size, lang, channels, normal, false)
+}
+
+/// `new_set_document` の、初めの形（一番下に白の単色、その上に空のレイヤー）。使うチャンネルに Color が無いときは白の単色を作らない。
+pub fn new_starter_set_document(
+    width: u32,
+    height: u32,
+    tile_size: u32,
+    lang: Lang,
+    channels: &[Channel],
+    normal: NormalSettings,
+) -> Result<Document, String> {
+    set_document(width, height, tile_size, lang, channels, normal, true)
+}
+
+fn set_document(
+    width: u32,
+    height: u32,
+    tile_size: u32,
+    lang: Lang,
+    channels: &[Channel],
+    normal: NormalSettings,
+    white: bool,
+) -> Result<Document, String> {
     let core = |e: crate::engine::CoreError| lang.core_error(&e);
     let mut doc = Document::with_tile_size(width, height, tile_size).map_err(core)?;
+    if white && channels.contains(&Channel::Color) {
+        crate::state::add_starter_white(&mut doc, lang, None).map_err(core)?;
+    }
     let layer = doc
-        .add_layer(&format!("{} 1", lang.pick("レイヤー", "Layer")))
+        .add_layer(&format!("{} 1", lang.t("newproject-layer")))
         .map_err(core)?;
     for channel in channels {
         doc.set_channel_enabled(layer, *channel, true)
@@ -979,6 +1055,12 @@ pub(crate) fn unique<'a>(base: &str, taken: impl Iterator<Item = &'a str> + Clon
 pub fn is_open(app: &AppState) -> bool {
     app.np.window.is_some()
 }
+
+/// 機能の表の行（毎フレーム、新規プロジェクトの準備の仕事の終わりを受ける）。
+pub(crate) const FEATURE: Feature = Feature {
+    poll: Some((PollStage::BeforeTextColor, AppState::poll_newproject)),
+    ..Feature::new("newproject")
+};
 
 #[cfg(test)]
 mod tests {
@@ -1115,6 +1197,31 @@ mod tests {
         // 何も使っていない文書は Color
         let empty = Document::new(8, 8).unwrap();
         assert_eq!(used_channels(&empty), [Channel::Color]);
+    }
+
+    #[test]
+    fn a_starter_set_document_puts_a_white_fill_under_the_empty_layer_only_with_color() {
+        let normal = NormalSettings::DEFAULT;
+        let doc =
+            new_starter_set_document(64, 32, 16, Lang::En, Template::LilToon.channels(), normal)
+                .unwrap();
+        assert!(crate::state::is_starter_shape(&doc));
+        assert_eq!(doc.layers()[0].name(), "Fill 1");
+        assert_eq!(doc.layers()[1].name(), "Layer 1");
+        assert_eq!(
+            used_channels(&doc),
+            [Channel::Color, Channel::Normal, Channel::Emission]
+        );
+        // Color を使わないセットは、白の単色を作らず空のレイヤーだけ（1 枚の形と同じ）
+        let normal_only =
+            new_starter_set_document(64, 32, 16, Lang::En, &[Channel::Normal], normal).unwrap();
+        assert_eq!(normal_only.layers().len(), 1);
+        assert_eq!(normal_only.layers()[0].name(), "Layer 1");
+        assert!(!normal_only.can_undo());
+        // 1 枚の形の口は白を作らない
+        let plain =
+            new_set_document(64, 32, 16, Lang::En, Template::LilToon.channels(), normal).unwrap();
+        assert_eq!(plain.layers().len(), 1);
     }
 
     #[test]

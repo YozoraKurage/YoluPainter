@@ -59,7 +59,7 @@ pub fn paint_channels_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) 
         app,
         rows,
         "paint-channels",
-        lang.pick("塗るチャンネル", "Paint Channels"),
+        lang.t("panels-paint-channels"),
         "layers",
         None,
         false,
@@ -75,10 +75,7 @@ pub fn paint_channels_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) 
         ui,
         row,
         "mat.toggle",
-        lang.pick(
-            "複数のチャンネルを一度に塗る",
-            "Paint several channels at once",
-        ),
+        lang.t("panels-paint-several-channels-at-once"),
         on,
         None,
         free,
@@ -113,7 +110,7 @@ fn chips(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang, free: boo
         let cells = Rows::split(row, COLUMNS, 4.0);
         for (cell, channel) in cells.iter().zip(line) {
             let included = app.mat.includes(*channel);
-            let name = channel_name(lang, &app.doc, *channel);
+            let name = channel_name(lang, &app.session.doc, *channel);
             let tip = name.clone();
             let current = *channel == app.m2.paint_channel;
             if chip(ui, *cell, *channel, &name, included, current, free, &tip) {
@@ -212,7 +209,7 @@ fn value_rows(
     lang: Lang,
     free: bool,
 ) {
-    let name = channel_name(lang, &app.doc, channel);
+    let name = channel_name(lang, &app.session.doc, channel);
     match channel {
         Channel::Color => {
             let row = rows.row(t::ROW_HEIGHT, 2.0);
@@ -222,10 +219,7 @@ fn value_rows(
                 &name,
                 "mat.color",
                 app.color.main,
-                lang.pick(
-                    "描画色（カラーのパネルと同じ）",
-                    "The paint color (also in the Color panel)",
-                ),
+                lang.t("panels-the-paint-color-also-in-tip"),
             );
         }
         Channel::Emission => {
@@ -246,10 +240,7 @@ fn value_rows(
                 egui::Id::new("mat.emission"),
                 &name,
                 current,
-                lang.pick(
-                    "ストロークが塗るエミッションの色",
-                    "The emission color the stroke paints",
-                ),
+                lang.t("panels-the-emission-color-the-stroke-tip"),
                 free,
             ) {
                 if u.pick != current {
@@ -267,7 +258,7 @@ fn value_rows(
                     hex_rect,
                     "mat.emission.hex",
                     &current,
-                    Some(lang.pick("16 進（#RRGGBB）", "Hex (#RRGGBB)")),
+                    Some(lang.t("panels-hex-rrggbb-tip")),
                     false,
                 );
                 if let Some(text) = out.committed {
@@ -295,10 +286,7 @@ fn value_rows(
                 reset,
                 "mat.normal.flat",
                 "restart_alt",
-                lang.pick(
-                    "平らな法線（128, 128, 255）にする",
-                    "Flat normal (128, 128, 255)",
-                ),
+                lang.t("panels-flat-normal-128-128-255-tip"),
                 false,
                 free,
                 16.0,
@@ -312,28 +300,22 @@ fn value_rows(
                 ui,
                 rows,
                 "mat.normal.x",
-                lang.pick("傾き X", "Tilt X"),
+                lang.t("panels-tilt-x"),
                 x,
                 (-1.0, 1.0),
                 two_decimals(),
-                Some(lang.pick(
-                    "法線の向き: +1 で右に傾く",
-                    "The normal as a direction: +1 leans right",
-                )),
+                Some(lang.t("panels-the-normal-as-a-direction-tip")),
                 free,
             );
             let ny = slider_row(
                 ui,
                 rows,
                 "mat.normal.y",
-                lang.pick("傾き Y", "Tilt Y"),
+                lang.t("panels-tilt-y"),
                 y,
                 (-1.0, 1.0),
                 two_decimals(),
-                Some(lang.pick(
-                    "+1 で上に傾く（OpenGL・Unity）",
-                    "+1 leans up (OpenGL / Unity)",
-                )),
+                Some(lang.t("panels-1-leans-up-opengl-unity-tip")),
                 free,
             );
             if nx.is_some() || ny.is_some() {
@@ -342,10 +324,7 @@ fn value_rows(
         }
         other => {
             let value = app.mat.scalar(other).unwrap_or(0.0);
-            let tip = lang.pick(
-                format!("ストロークが塗る{name}の値"),
-                format!("The {name} value the stroke paints"),
-            );
+            let tip = lang.f("panels-the-value-the-stroke-paints-tip", &[("name", &name)]);
             let id = format!("mat.value.{}", other.index());
             if let Some(v) = slider_row(
                 ui,

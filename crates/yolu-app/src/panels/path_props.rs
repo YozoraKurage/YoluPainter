@@ -95,11 +95,8 @@ fn apply_width(app: &mut AppState, percent: f32) {
 }
 
 fn width_spec(lang: Lang, enabled: bool) -> SliderSpec<'static> {
-    SliderSpec::new(lang.pick("太さ", "Width"), 0.0, 100.0, NumberFormat::int("%"))
-        .tooltip(lang.pick(
-            "選んでいる点の太さ（筆圧の代わり）。点ごとに変えると、パスの太さが滑らかに変わります。ブラシの「太さで直径・不透明度・流量を変える」が効いているとき、描く大きさに効きます",
-            "Width at the selected point (stands in for pen pressure). Different widths along the path change its thickness smoothly, as far as the brush options for width are on",
-        ))
+    SliderSpec::new(lang.t("panels-width-2"), 0.0, 100.0, NumberFormat::int("%"))
+        .tooltip(lang.t("panels-width-at-the-selected-point-tip"))
         .enabled(enabled)
 }
 
@@ -194,7 +191,7 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
     {
         app.apply(Action::Path(PathAction::DeleteSelected));
     }
-    let label = lang.pick("ラスタライズ", "Rasterize");
+    let label = lang.t("panels-rasterize");
     let bw = w::text_width(ui.painter(), label, t::LABEL) + 24.0;
     let at = next(bw);
     if w::button(
@@ -225,14 +222,14 @@ fn tangent_buttons(
     [
         (
             "path.corner",
-            lang.pick("角", "Corner"),
+            lang.t("panels-corner"),
             corner_tip(lang),
             corner,
             Action::Path(PathAction::SetCorner(!corner)),
         ),
         (
             "path.handles",
-            lang.pick("取っ手", "Handles"),
+            lang.t("panels-handles"),
             handles_tip(lang),
             handles,
             Action::Path(PathAction::SetHandles(!handles)),
@@ -241,51 +238,36 @@ fn tangent_buttons(
 }
 
 fn corner_tip(lang: Lang) -> &'static str {
-    lang.pick(
-        "選んでいる点で曲線を折ります（点をダブルクリックでも切り替え）",
-        "Break the curve at the selected point (double-click the point to toggle)",
-    )
+    lang.t("panels-break-the-curve-at-the-tip")
 }
 
 fn handles_tip(lang: Lang) -> &'static str {
-    lang.pick(
-        "選んでいる点の曲がりを取っ手で決めます。取っ手をドラッグ（始めたあとに Alt を押すと片側だけ、Ctrl で両側を同じ割合で伸ばす）",
-        "Shape the curve at the selected point with handles. Drag a handle (Alt pressed after you start: one side only; Ctrl: scale both)",
-    )
+    lang.t("panels-shape-the-curve-at-the-tip")
 }
 
 /// 閉じる/開くの名前とツールチップ（今閉じているかで替わる）。
 fn close_label_and_tip(lang: Lang, closed: bool) -> (&'static str, &'static str) {
     if closed {
         (
-            lang.pick("開く", "Open"),
-            lang.pick(
-                "終わりの点（始めの点と同じ場所）を外して、輪を開きます",
-                "Remove the end point (at the start point) to open the loop",
-            ),
+            lang.t("panels-open-tip"),
+            lang.t("panels-remove-the-end-point-at-tip"),
         )
     } else {
         (
-            lang.pick("閉じる", "Close"),
-            lang.pick(
-                "終わりに始めの点を追加して、輪にします（3 点以上）",
-                "Add the start point at the end to make a loop (3 points or more)",
-            ),
+            lang.t("panels-close-tip"),
+            lang.t("panels-add-the-start-point-at-tip"),
         )
     }
 }
 
 fn delete_label(lang: Lang) -> &'static str {
-    lang.pick("点を消す", "Delete Point")
+    lang.t("panels-delete-point")
 }
 
 fn delete_tip(lang: Lang) -> String {
     crate::shortcuts::named_with_keys(
         lang,
-        lang.pick(
-            "選んでいる点（無ければ最後の点）を消します",
-            "Delete the selected point (the last one if none is selected)",
-        ),
+        lang.t("panels-delete-the-selected-point-the-tip"),
         &[crate::shortcuts::key_in(
             "path.delete_point",
             crate::mode::EditorMode::Paint,
@@ -295,17 +277,11 @@ fn delete_tip(lang: Lang) -> String {
 
 /// 3D のパスの「描き直す」: 描くのは休みの形（`path_surface_ctx` の `render`）で、今のポーズは使わない。
 fn redraw_tip(lang: Lang) -> &'static str {
-    lang.pick(
-        "ポーズを付けない形（休みの形）のモデルの面に描き直します",
-        "Redraw on the model's surface in its rest shape (the pose is not applied)",
-    )
+    lang.t("panels-redraw-on-the-model-s-tip")
 }
 
 fn rasterize_tip(lang: Lang) -> &'static str {
-    lang.pick(
-        "今の画素を残してパスを外します。そのあとは普通に塗れます",
-        "Keep the pixels and remove the path, so the layer can be painted on",
-    )
+    lang.t("panels-keep-the-pixels-and-remove-tip")
 }
 
 // ───────── プロパティの欄 ─────────
@@ -362,7 +338,7 @@ pub fn fill_layer_rows(
     layer: yolu_core::LayerId,
 ) {
     let lang = app.lang;
-    if app.selected_layer != Some(layer) {
+    if app.session.selected_layer != Some(layer) {
         return;
     }
     let (open, _) = section(
@@ -370,7 +346,7 @@ pub fn fill_layer_rows(
         app,
         rows,
         "fill-paths",
-        lang.pick("パス", "Paths"),
+        lang.t("panels-paths"),
         "conversion_path",
         None,
     );
@@ -385,13 +361,10 @@ pub fn fill_layer_rows(
         ui,
         r,
         "fill.add-path",
-        lang.pick("パスを追加", "Add Path"),
+        lang.t("panels-add-path"),
         false,
         app.can_edit(),
-        Some(lang.pick(
-            "パスツールにして、この塗りつぶしレイヤーに新しいパスを始めます（パスは塗りつぶしと効果の上に重なります）",
-            "Switch to the Path tool and start a new path on this fill layer (paths lie over the fill and its effects)",
-        )),
+        Some(lang.t("panels-switch-to-the-path-tool-tip")),
         Some("add"),
     )
     .clicked()
@@ -421,50 +394,49 @@ pub fn context_entries(app: &AppState, id: u128) -> Vec<Entry<Action>> {
     let pasteable = app.path.clipboard.is_some();
     vec![
         Entry::item(
-            lang.pick("名前を変更", "Rename"),
+            lang.t("panels-rename"),
             Action::Path(PathAction::BeginRename(id)),
         )
         .enabled(free),
         Entry::item(
-            lang.pick("表示", "Visible"),
+            lang.t("panels-visible"),
             list_action(ListOp::Visible(id, !e.visible)),
         )
         .checked(e.visible)
         .enabled(free),
         Entry::Separator,
-        Entry::item(lang.pick("コピー", "Copy"), list_action(ListOp::Copy(id))),
-        Entry::item(lang.pick("貼り付け", "Paste"), list_action(ListOp::Paste))
-            .enabled(free && pasteable),
+        Entry::item(lang.t("panels-copy"), list_action(ListOp::Copy(id))),
+        Entry::item(lang.t("panels-paste"), list_action(ListOp::Paste)).enabled(free && pasteable),
         Entry::item(
-            lang.pick("複製", "Duplicate"),
+            lang.t("panels-duplicate"),
             list_action(ListOp::Duplicate(id)),
         )
         .enabled(free),
         Entry::Separator,
         Entry::item(
-            lang.pick("設定を貼り付け", "Paste Settings"),
+            lang.t("panels-paste-settings"),
             list_action(ListOp::PasteSettings(id)),
         )
         .enabled(free && pasteable),
         Entry::item(
-            lang.pick("位置を貼り付け", "Paste Positions"),
+            lang.t("panels-paste-positions"),
             list_action(ListOp::PastePositions(id)),
         )
         .enabled(free && pasteable),
         Entry::Separator,
         Entry::item(
-            lang.pick("上へ移動", "Move Up"),
+            lang.t("panels-move-up"),
             list_action(ListOp::Move(id, Toward::Up)),
         )
         .enabled(free && index + 1 < entries.len()),
         Entry::item(
-            lang.pick("下へ移動", "Move Down"),
+            lang.t("panels-move-down"),
             list_action(ListOp::Move(id, Toward::Down)),
         )
         .enabled(free && index > 0),
         Entry::Separator,
         Entry::item(
-            lang.pick("パスを削除", "Delete Path"),
+            lang.t("panels-delete-path"),
             list_action(ListOp::Delete(id)),
         )
         .enabled(free),
@@ -474,7 +446,7 @@ pub fn context_entries(app: &AppState, id: u128) -> Vec<Entry<Action>> {
 /// 一覧の行（上が後に描くパス）と、その下の操作のアイコン。
 fn list_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let lang = app.lang;
-    let Some(layer) = app.selected_layer else {
+    let Some(layer) = app.session.selected_layer else {
         return;
     };
     let entries = app.path_entries().to_vec();
@@ -510,7 +482,7 @@ fn list_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             } else {
                 "visibility_off"
             },
-            lang.pick("表示", "Visible"),
+            lang.t("panels-visible-tip"),
             false,
             free,
             14.0,
@@ -581,7 +553,7 @@ fn list_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             app.apply(Action::Path(PathAction::SelectPath(Some(id))));
             if let Some(at) = response.interact_pointer_pos() {
                 let ctx = ui.ctx().clone();
-                app.popup = Some(OpenPopup {
+                app.ui.popup = Some(OpenPopup {
                     kind: PopupKind::M2(Popup::PathContext(id)),
                     state: PopupState::new(&ctx, context_anchor(at)),
                 });
@@ -603,28 +575,28 @@ fn list_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         (
             "path.list.duplicate",
             "copy_add",
-            lang.pick("パスを複製", "Duplicate Path"),
+            lang.t("panels-duplicate-path"),
             free && index.is_some(),
             active.map(|id| list_action(ListOp::Duplicate(id))),
         ),
         (
             "path.list.up",
             "expand_less",
-            lang.pick("上へ移動", "Move Up"),
+            lang.t("panels-move-up"),
             free && index.is_some_and(|i| i + 1 < entries.len()),
             active.map(|id| list_action(ListOp::Move(id, Toward::Up))),
         ),
         (
             "path.list.down",
             "expand_more",
-            lang.pick("下へ移動", "Move Down"),
+            lang.t("panels-move-down"),
             free && index.is_some_and(|i| i > 0),
             active.map(|id| list_action(ListOp::Move(id, Toward::Down))),
         ),
         (
             "path.list.delete",
             "delete",
-            lang.pick("パスを削除", "Delete Path"),
+            lang.t("panels-delete-path"),
             free && index.is_some(),
             active.map(|id| list_action(ListOp::Delete(id))),
         ),
@@ -653,7 +625,7 @@ fn path_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         app,
         rows,
         "path",
-        lang.pick("パス", "Path"),
+        lang.t("panels-path"),
         "conversion_path",
         None,
     );
@@ -676,7 +648,7 @@ fn path_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     };
     if other_model {
         let r = rows.row(t::ROW_HEIGHT, 2.0);
-        let text = lang.pick("別のモデルで描かれています", "Drawn on another model");
+        let text = lang.t("panels-drawn-on-another-model");
         let shown = w::fit(ui.painter(), text, r.width(), t::LABEL_DIM);
         w::text(
             ui.painter(),
@@ -771,19 +743,16 @@ fn path_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         vec![
             Btn {
                 id: "path.symmetry",
-                label: lang.pick("対称", "Symmetry"),
-                tip: lang.pick("対称", "Symmetry"),
+                label: lang.t("panels-symmetry"),
+                tip: lang.t("panels-symmetry-tip"),
                 enabled: editable,
                 action: Action::Path(PathAction::Symmetry(!symmetric)),
                 on: symmetric,
             },
             Btn {
                 id: "path.reverse",
-                label: lang.pick("向きを反転", "Reverse"),
-                tip: lang.pick(
-                    "パスの向き（点の並び）を逆にします。筆先やリボンの並びの向きが変わります",
-                    "Reverse the path direction (point order). Tips and ribbons follow the new direction",
-                ),
+                label: lang.t("panels-reverse-2"),
+                tip: lang.t("panels-reverse-the-path-direction-point-tip"),
                 enabled: editable && count >= 2,
                 action: Action::Path(PathAction::Reverse),
                 on: false,
@@ -794,8 +763,8 @@ fn path_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     // ブラシを使う・描き直す（3D）・ラスタライズ
     let mut buttons = vec![Btn {
         id: "path.use-brush",
-        label: lang.pick("ブラシを使う", "Use Brush"),
-        tip: lang.pick("ブラシを使う", "Use Brush"),
+        label: lang.t("panels-use-brush"),
+        tip: lang.t("panels-use-brush-tip"),
         enabled: editable,
         action: Action::Path(PathAction::UseBrush),
         on: false,
@@ -803,7 +772,7 @@ fn path_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     if !path.is_canvas() {
         buttons.push(Btn {
             id: "path.redraw",
-            label: lang.pick("描き直す", "Redraw"),
+            label: lang.t("panels-redraw"),
             tip: redraw_tip(lang),
             enabled: editable,
             action: Action::Path(PathAction::Redraw),
@@ -813,7 +782,7 @@ fn path_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     // 塗りつぶしレイヤーのパスは画素にしない（塗りつぶしレイヤーは画素を持たない）
     buttons.push(Btn {
         id: "path.rasterize.panel",
-        label: lang.pick("ラスタライズ", "Rasterize"),
+        label: lang.t("panels-rasterize"),
         tip: rasterize_tip(lang),
         enabled: free && app.path_can_rasterize(id),
         action: Action::Path(PathAction::Rasterize(id)),
@@ -843,15 +812,12 @@ pub fn preset_entries(app: &AppState) -> Vec<Entry<Action>> {
         v.push(Entry::Separator);
     }
     v.push(Entry::item(
-        lang.pick(
-            "今の設定をプリセットに保存",
-            "Save Current Settings as Preset",
-        ),
+        lang.t("panels-save-current-settings-as-preset"),
         Action::Path(PathAction::Preset(PresetOp::Save)),
     ));
     if !list.is_empty() {
         v.push(Entry::submenu(
-            lang.pick("プリセットの名前を変更", "Rename Preset"),
+            lang.t("panels-rename-preset"),
             list.iter()
                 .map(|p| {
                     Entry::item(
@@ -862,7 +828,7 @@ pub fn preset_entries(app: &AppState) -> Vec<Entry<Action>> {
                 .collect(),
         ));
         v.push(Entry::submenu(
-            lang.pick("プリセットを削除", "Delete Preset"),
+            lang.t("panels-delete-preset"),
             list.iter()
                 .map(|p| {
                     Entry::item(
@@ -896,7 +862,7 @@ fn preset_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, v: &BrushView) {
             r,
             ("path.preset.rename", id),
             &name,
-            Some(lang.pick("プリセットの名前", "Preset name")),
+            Some(lang.t("panels-preset-name-tip")),
             first,
         );
         if first || out.focused {
@@ -914,13 +880,10 @@ fn preset_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, v: &BrushView) {
         ui,
         r,
         "path.presets",
-        lang.pick("プリセット", "Presets"),
+        lang.t("panels-presets"),
         false,
         v.editable || !app.path.presets.list().is_empty(),
-        Some(lang.pick(
-            "保存したパスの設定（種類・ブラシ・組・筆先・深さ・対称）を当てる・今の設定を保存する",
-            "Apply saved path settings (type, brush, material, tip, depth, symmetry) or save the current ones",
-        )),
+        Some(lang.t("panels-apply-saved-path-settings-type-tip")),
         Some("library"),
     )
     .clicked()
@@ -933,18 +896,18 @@ fn preset_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, v: &BrushView) {
 /// 種類の名前。
 pub fn kind_name(lang: Lang, kind: PathKind) -> &'static str {
     match kind {
-        PathKind::Stroke => lang.pick("ストローク", "Stroke"),
-        PathKind::Ribbon(_) => lang.pick("リボン", "Ribbon"),
-        PathKind::Fill => lang.pick("塗り", "Fill"),
-        PathKind::Smudge { .. } => lang.pick("指先", "Smudge"),
-        PathKind::Erase => lang.pick("消しゴム", "Erase"),
+        PathKind::Stroke => lang.t("panels-stroke"),
+        PathKind::Ribbon(_) => lang.t("panels-ribbon"),
+        PathKind::Fill => lang.t("panels-fill-2"),
+        PathKind::Smudge { .. } => lang.t("panels-smudge"),
+        PathKind::Erase => lang.t("panels-erase"),
     }
 }
 
 fn ribbon_mode_name(lang: Lang, mode: RibbonMode) -> &'static str {
     match mode {
-        RibbonMode::Tile => lang.pick("並べる", "Tile"),
-        RibbonMode::Stretch => lang.pick("伸ばす", "Stretch"),
+        RibbonMode::Tile => lang.t("panels-tile"),
+        RibbonMode::Stretch => lang.t("panels-stretch"),
     }
 }
 
@@ -990,11 +953,11 @@ pub fn kind_entries(app: &AppState) -> Vec<Entry<Action>> {
             // アセットに画像が無ければ、リボンは選べない（理由はツールチップ）
             None => v.push(
                 Entry::item(
-                    lang.pick("リボン", "Ribbon"),
+                    lang.t("panels-ribbon"),
                     Action::Path(PathAction::Kind(PathKind::Stroke)),
                 )
                 .enabled(false)
-                .tooltip(lang.pick("アセットに画像がありません", "No image in the assets")),
+                .tooltip(lang.t("panels-no-image-in-the-assets-tip")),
             ),
         }
     }
@@ -1044,12 +1007,9 @@ fn anti_alias_row(
     level: yolu_core::AntiAlias,
     editable: bool,
 ) -> Option<Rect> {
-    let label = lang.pick("アンチエイリアス", "Anti-aliasing");
+    let label = lang.t("panels-anti-aliasing");
     let value = crate::m2::anti_alias_label(lang, level);
-    let tip = lang.pick(
-        "縁のギザギザをならす強さ",
-        "How much the jagged edge is smoothed",
-    );
+    let tip = lang.t("panels-how-much-the-jagged-edge-tip");
     let p = ui.painter();
     let needed =
         w::text_width(p, label, t::LABEL) + 10.0 + w::text_width(p, value, t::LABEL) + 30.0;
@@ -1111,12 +1071,9 @@ fn kind_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, v: &BrushView) {
         ui,
         rows,
         "path.kind",
-        lang.pick("種類", "Type"),
+        lang.t("panels-type"),
         kind_name(lang, v.kind),
-        Some(lang.pick(
-            "パスに沿って描くもの（ストローク・画像のリボン・内側の塗り・指先・消しゴム）",
-            "What the path draws (stroke, image ribbon, inside fill, smudge, erase)",
-        )),
+        Some(lang.t("panels-what-the-path-draws-stroke-tip")),
         v.editable,
     ) {
         open_popup(app, &ctx, Popup::PathKind, r, r.width());
@@ -1127,17 +1084,14 @@ fn kind_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, v: &BrushView) {
                 .into_iter()
                 .find(|(id, _)| *id == ribbon.image)
                 .map(|(_, n)| n)
-                .unwrap_or_else(|| lang.pick("見つからない画像", "Missing image").into());
+                .unwrap_or_else(|| lang.t("panels-missing-image").into());
             if let Some(r) = choice_row(
                 ui,
                 rows,
                 "path.ribbon.image",
-                lang.pick("画像", "Image"),
+                lang.t("panels-image"),
                 &name,
-                Some(lang.pick(
-                    "パスに沿って並べるアセットの画像",
-                    "The asset image laid along the path",
-                )),
+                Some(lang.t("panels-the-asset-image-laid-along-tip")),
                 v.editable,
             ) {
                 open_popup(app, &ctx, Popup::PathRibbonImage, r, r.width());
@@ -1146,12 +1100,9 @@ fn kind_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, v: &BrushView) {
                 ui,
                 rows,
                 "path.ribbon.mode",
-                lang.pick("並べ方", "Layout"),
+                lang.t("panels-layout"),
                 ribbon_mode_name(lang, ribbon.mode),
-                Some(lang.pick(
-                    "並べる: ダブごとに画像の全部。伸ばす: パス全体に 1 枚",
-                    "Tile: the whole image per dab. Stretch: one image along the whole path",
-                )),
+                Some(lang.t("panels-tile-the-whole-image-per-tip")),
                 v.editable,
             ) {
                 open_popup(app, &ctx, Popup::PathRibbonMode, r, r.width());
@@ -1159,15 +1110,12 @@ fn kind_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, v: &BrushView) {
             if ribbon.mode == RibbonMode::Tile {
                 let at = rows.slider_row();
                 let spec = SliderSpec::new(
-                    lang.pick("並べる間隔", "Tile Spacing"),
+                    lang.t("panels-tile-spacing"),
                     10.0,
                     400.0,
                     NumberFormat::int("%"),
                 )
-                .tooltip(lang.pick(
-                    "画像の中心の間隔（画像の長さに対する割合。100% で隙間なく並ぶ）",
-                    "Distance between images (of an image's length; 100% makes them touch)",
-                ))
+                .tooltip(lang.t("panels-distance-between-images-of-an-tip"))
                 .enabled(v.editable);
                 if let Some(x) = slider(
                     ui,
@@ -1189,7 +1137,7 @@ fn kind_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, v: &BrushView) {
         PathKind::Smudge { strength } => {
             let at = rows.slider_row();
             let spec = SliderSpec::new(
-                lang.pick("強さ", "Strength"),
+                lang.t("panels-strength"),
                 0.0,
                 100.0,
                 NumberFormat::int("%"),
@@ -1220,7 +1168,7 @@ fn style_action(edit: StyleEdit) -> Action {
 /// 筆先の名前（丸・組み込みの名前・取り込んだ画像の名前）。
 fn tip_name(lang: Lang, tip: Option<&yolu_core::BrushTip>) -> String {
     match tip {
-        None => lang.pick("丸", "Round").into(),
+        None => lang.t("panels-round-tip").into(),
         Some(t) => crate::m2::tip_display(lang, t),
     }
 }
@@ -1239,7 +1187,7 @@ pub fn tip_entries(app: &AppState) -> Vec<Entry<Action>> {
             Entry::item(
                 format!(
                     "{}（{}）",
-                    lang.pick("今のブラシの筆先", "Current brush tip"),
+                    lang.t("panels-current-brush-tip-tip"),
                     crate::m2::tip_display(lang, t)
                 ),
                 style_action(StyleEdit::Tip(Some(t.clone()))),
@@ -1270,12 +1218,9 @@ fn tip_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, v: &BrushView) {
         ui,
         rows,
         "path.tip",
-        lang.pick("筆先", "Tip"),
+        lang.t("panels-tip-tip"),
         &tip_name(lang, v.style.tip.as_deref()),
-        Some(lang.pick(
-            "パスのダブの形（丸か画像の筆先）",
-            "The shape of each dab (round or an image tip)",
-        )),
+        Some(lang.t("panels-the-shape-of-each-dab-tip")),
         v.editable,
     ) {
         open_popup(app, &ctx, Popup::PathTip, r, r.width());
@@ -1285,15 +1230,12 @@ fn tip_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, v: &BrushView) {
     }
     let at = rows.slider_row();
     let spec = SliderSpec::new(
-        lang.pick("角度", "Angle"),
+        lang.t("panels-angle-tip"),
         -180.0,
         180.0,
         NumberFormat::int("°"),
     )
-    .tooltip(lang.pick(
-        "筆先の向き（パスに沿うときはパスの進む向きから、そうでなければ 2D はキャンバス、3D はモデルの上から）",
-        "Tip direction (from the path direction when following it; otherwise from the canvas in 2D and model up in 3D)",
-    ))
+    .tooltip(lang.t("panels-tip-direction-from-the-path-tip"))
     .enabled(v.editable);
     if let Some(a) = slider(
         ui,
@@ -1310,12 +1252,9 @@ fn tip_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, v: &BrushView) {
         ui,
         rows,
         "path.follow",
-        lang.pick("パスに沿う", "Follow Path"),
+        lang.t("panels-follow-path-tip"),
         v.style.follow,
-        Some(lang.pick(
-            "筆先をパスの進む向きに回します",
-            "Turn the tip with the path direction",
-        )),
+        Some(lang.t("panels-turn-the-tip-with-the-tip")),
         v.editable,
     ) {
         app.apply(style_action(StyleEdit::Follow(on)));
@@ -1330,12 +1269,9 @@ fn depth_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, v: &BrushView) {
         ui,
         rows,
         "path.depth-auto",
-        lang.pick("投影の深さを自動にする", "Automatic projection depth"),
+        lang.t("panels-automatic-projection-depth"),
         auto,
-        Some(lang.pick(
-            "曲線から面を探す深さを、点の間の長さとブラシの大きさから決めます",
-            "Find the surface as deep as the point spacing and brush size need",
-        )),
+        Some(lang.t("panels-find-the-surface-as-deep-tip")),
         v.editable,
     ) {
         app.apply(style_action(StyleEdit::Depth(if on {
@@ -1349,15 +1285,12 @@ fn depth_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, v: &BrushView) {
     }
     let at = rows.slider_row();
     let spec = SliderSpec::new(
-        lang.pick("投影の深さ", "Projection Depth"),
+        lang.t("panels-projection-depth"),
         5.0,
         1600.0,
         NumberFormat::int("%"),
     )
-    .tooltip(lang.pick(
-        "曲線から法線の向きに面を探す深さ（ブラシの半径に対する割合）。浅いと、面から離れた所は描きません",
-        "How far along the normal the surface is searched (of the brush radius). Shallow depths skip parts away from the surface",
-    ))
+    .tooltip(lang.t("panels-how-far-along-the-normal-tip"))
     .power(2.0)
     .enabled(v.editable);
     let value = (v.style.depth.unwrap_or(4.0) * 100.0) as f32;
@@ -1393,11 +1326,11 @@ fn brush_view(app: &AppState) -> BrushView {
     let free = app.can_edit();
     match app.path_layer() {
         Some((_, path)) => {
-            let PathBrush(b) = path_brush(path);
+            let PathBrush(b, p) = path_brush(path);
             let diameter = match path {
                 LayerPath::Canvas(_) => Some((b.radius * 2.0) as f32),
                 LayerPath::Surface(_) => app.view3d.full_model().map(|m| {
-                    let unit = world_radius(m.rest_geometry(), 1.0, app.doc.width())
+                    let unit = world_radius(m.rest_geometry(), 1.0, app.session.doc.width())
                         .max(f32::MIN_POSITIVE);
                     (b.radius as f32 / unit) * 2.0
                 }),
@@ -1416,7 +1349,7 @@ fn brush_view(app: &AppState) -> BrushView {
                 spacing: b.spacing as f32,
                 opacity: b.opacity as f32,
                 flow: b.flow as f32,
-                pressure: [b.pressure_size, b.pressure_opacity, b.pressure_flow],
+                pressure: [p.size, p.opacity, p.flow],
                 kind: path.style().kind,
                 style: path.style().clone(),
                 surface: !path.is_canvas(),
@@ -1433,7 +1366,7 @@ fn brush_view(app: &AppState) -> BrushView {
                 spacing: b.spacing,
                 opacity: b.opacity,
                 flow: b.flow,
-                pressure: [b.pressure_size, b.pressure_opacity, b.pressure_flow],
+                pressure: [b.pressure.size, b.pressure.opacity, b.pressure.flow],
                 kind: app.path.next_style.kind,
                 style: app.path.next_style.clone(),
                 surface: false,
@@ -1452,7 +1385,7 @@ fn brush_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         app,
         rows,
         "path-brush",
-        lang.pick("パスのブラシ", "Path Brush"),
+        lang.t("panels-path-brush"),
         "paint_brush",
         None,
     );
@@ -1479,9 +1412,9 @@ fn brush_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         let at = rows.slider_row();
         let spec = SliderSpec::new(
             if matches!(v.kind, PathKind::Ribbon(_)) {
-                lang.pick("幅", "Width")
+                lang.t("panels-width")
             } else {
-                lang.pick("直径", "Size")
+                lang.t("panels-size")
             },
             1.0,
             256.0,
@@ -1523,7 +1456,7 @@ fn brush_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             app,
             rows,
             HARDNESS,
-            lang.pick("硬さ", "Hardness"),
+            lang.t("panels-hardness-tip"),
             v.hardness,
             0.0,
             None,
@@ -1542,13 +1475,10 @@ fn brush_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             app,
             rows,
             SPACING,
-            lang.pick("間隔", "Spacing"),
+            lang.t("panels-spacing-tip"),
             v.spacing,
             1.0,
-            Some(lang.pick(
-                "ダブの間隔（直径に対する割合）",
-                "Distance between dabs (of the diameter)",
-            )),
+            Some(lang.t("panels-distance-between-dabs-of-the-tip")),
         ) {
             edit_brush(app, BrushEdit::Spacing(x));
         }
@@ -1558,7 +1488,7 @@ fn brush_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         app,
         rows,
         OPACITY,
-        lang.pick("不透明度", "Opacity"),
+        lang.t("panels-opacity-tip"),
         v.opacity,
         0.0,
         None,
@@ -1571,7 +1501,7 @@ fn brush_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             app,
             rows,
             FLOW,
-            lang.pick("流量", "Flow"),
+            lang.t("panels-flow-tip"),
             v.flow,
             0.0,
             None,
@@ -1582,29 +1512,20 @@ fn brush_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let toggles = [
         (
             "path.pressure-size",
-            lang.pick("太さで直径を変える", "Width changes the size"),
-            lang.pick(
-                "点の太さを、描く直径に反映します",
-                "The width of each point sets the drawn size",
-            ),
+            lang.t("panels-width-changes-the-size-tip"),
+            lang.t("panels-the-width-of-each-point-tip"),
             BrushEdit::PressureSize as fn(bool) -> BrushEdit,
         ),
         (
             "path.pressure-opacity",
-            lang.pick("太さで不透明度を変える", "Width changes the opacity"),
-            lang.pick(
-                "点の太さを、不透明度に反映します",
-                "The width of each point sets the opacity",
-            ),
+            lang.t("panels-width-changes-the-opacity-tip"),
+            lang.t("panels-the-width-of-each-point-2-tip"),
             BrushEdit::PressureOpacity as fn(bool) -> BrushEdit,
         ),
         (
             "path.pressure-flow",
-            lang.pick("太さで流量を変える", "Width changes the flow"),
-            lang.pick(
-                "点の太さを、流量に反映します",
-                "The width of each point sets the flow",
-            ),
+            lang.t("panels-width-changes-the-flow-tip"),
+            lang.t("panels-the-width-of-each-point-3-tip"),
             BrushEdit::PressureFlow as fn(bool) -> BrushEdit,
         ),
     ];
@@ -1629,7 +1550,7 @@ fn brush_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
 pub fn new_path_tip(lang: Lang) -> String {
     crate::shortcuts::named_with_keys(
         lang,
-        lang.pick("新しいパス", "New Path"),
+        lang.t("panels-new-path-tip"),
         &[crate::shortcuts::key_in(
             "path.finish",
             crate::mode::EditorMode::Paint,

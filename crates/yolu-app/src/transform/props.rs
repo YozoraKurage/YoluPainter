@@ -20,22 +20,22 @@ fn buttons(app: &AppState) -> [(&'static str, &'static str, Xform); 4] {
     [
         (
             "flip",
-            l.pick("左右反転", "Flip Horizontal"),
+            l.t("transform-flip-horizontal"),
             Xform::Flip { horizontal: true },
         ),
         (
             "flip_vertical",
-            l.pick("上下反転", "Flip Vertical"),
+            l.t("transform-flip-vertical"),
             Xform::Flip { horizontal: false },
         ),
         (
             "rotate_90_degrees_ccw",
-            l.pick("反時計回りに 90° 回転", "Rotate 90° Counter-clockwise"),
+            l.t("transform-rotate-90-counter-clockwise"),
             Xform::Rotate90 { clockwise: false },
         ),
         (
             "rotate_90_degrees_cw",
-            l.pick("時計回りに 90° 回転", "Rotate 90° Clockwise"),
+            l.t("transform-rotate-90-clockwise"),
             Xform::Rotate90 { clockwise: true },
         ),
     ]
@@ -47,7 +47,7 @@ fn usable(app: &AppState) -> bool {
 }
 
 fn open_resampling(app: &mut AppState, ctx: &egui::Context, anchor: Rect) {
-    app.popup = Some(OpenPopup {
+    app.ui.popup = Some(OpenPopup {
         kind: PopupKind::M2(Popup::Resampling),
         state: PopupState::new(ctx, anchor).with_min_width(anchor.width()),
     });
@@ -93,12 +93,9 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, mut x: f32) {
             ui,
             at,
             "options.transform.resampling",
-            Some(lang.pick("補間", "Resampling")),
+            Some(lang.t("transform-resampling")),
             resampling_name(lang, app.transform.resampling),
-            Some(lang.pick(
-                "バイリニアはなめらか、ニアレストネイバーは画素の硬さを保つ。整数画素の移動・90° 回転・反転はどちらでも画素をそのまま写す",
-                "Bilinear smooths, Nearest keeps hard pixels. Whole-pixel moves, 90° turns and flips copy pixels exactly either way",
-            )),
+            Some(lang.t("transform-bilinear-smooths-nearest-keeps-hard-tip")),
             true,
             0.0,
         );
@@ -136,16 +133,16 @@ pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Contex
             }
         }
         if app.transform.advanced.kind == super::advanced::Kind::Mesh {
-            group_label(ui, rows, lang.pick("メッシュ", "Mesh"));
+            group_label(ui, rows, lang.t("transform-mesh"));
             for (id, label, value) in [
                 (
                     "transform.columns",
-                    lang.pick("列", "Columns"),
+                    lang.t("transform-columns"),
                     app.transform.advanced.columns,
                 ),
                 (
                     "transform.rows",
-                    lang.pick("行", "Rows"),
+                    lang.t("transform-rows"),
                     app.transform.advanced.rows,
                 ),
             ] {
@@ -169,9 +166,12 @@ pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Contex
                 }
             }
         }
-        group_label(ui, rows, lang.pick("数値", "Numeric"));
+        group_label(ui, rows, lang.t("transform-numeric"));
         let n = app.transform.numeric;
-        let (w_px, h_px) = (app.doc.width() as f32, app.doc.height() as f32);
+        let (w_px, h_px) = (
+            app.session.doc.width() as f32,
+            app.session.doc.height() as f32,
+        );
         let px = |suffix: &'static str| NumberFormat {
             decimals: 1,
             trim: true,
@@ -185,7 +185,7 @@ pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Contex
             n.dx as f32,
             (-w_px, w_px),
             px(" px"),
-            Some(lang.pick("横にずらす量（+ は右）", "Horizontal offset (+ is right)")),
+            Some(lang.t("transform-horizontal-offset-is-right-tip")),
             enabled,
         ) {
             app.transform.numeric.dx = v as f64;
@@ -198,7 +198,7 @@ pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Contex
             n.dy as f32,
             (-h_px, h_px),
             px(" px"),
-            Some(lang.pick("縦にずらす量（+ は上）", "Vertical offset (+ is up)")),
+            Some(lang.t("transform-vertical-offset-is-up-tip")),
             enabled,
         ) {
             app.transform.numeric.dy = v as f64;
@@ -207,14 +207,11 @@ pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Contex
             ui,
             rows,
             "transform.sx",
-            lang.pick("幅", "Width"),
+            lang.t("transform-width"),
             n.scale_x as f32,
             (-400.0, 400.0),
             px("%"),
-            Some(lang.pick(
-                "横の拡大率（負は左右反転）",
-                "Horizontal scale (a negative value flips)",
-            )),
+            Some(lang.t("transform-horizontal-scale-a-negative-value-tip")),
             enabled,
         ) {
             app.transform.numeric.scale_x = v as f64;
@@ -223,14 +220,11 @@ pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Contex
             ui,
             rows,
             "transform.sy",
-            lang.pick("高さ", "Height"),
+            lang.t("transform-height"),
             n.scale_y as f32,
             (-400.0, 400.0),
             px("%"),
-            Some(lang.pick(
-                "縦の拡大率（負は上下反転）",
-                "Vertical scale (a negative value flips)",
-            )),
+            Some(lang.t("transform-vertical-scale-a-negative-value-tip")),
             enabled,
         ) {
             app.transform.numeric.scale_y = v as f64;
@@ -239,14 +233,11 @@ pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Contex
             ui,
             rows,
             "transform.angle",
-            lang.pick("角度", "Angle"),
+            lang.t("transform-angle"),
             n.degrees as f32,
             (-180.0, 180.0),
             px("°"),
-            Some(lang.pick(
-                "反時計回り。動かすものの中心を軸にする",
-                "Counter-clockwise, about the centre of what moves",
-            )),
+            Some(lang.t("transform-counter-clockwise-about-the-centre-tip")),
             enabled,
         ) {
             app.transform.numeric.degrees = v as f64;
@@ -255,12 +246,9 @@ pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Contex
             ui,
             rows,
             "transform.resampling",
-            lang.pick("補間", "Resampling"),
+            lang.t("transform-resampling"),
             resampling_name(lang, app.transform.resampling),
-            Some(lang.pick(
-                "バイリニアはなめらか、ニアレストネイバーは画素の硬さを保つ",
-                "Bilinear smooths, Nearest keeps hard pixels",
-            )),
+            Some(lang.t("transform-bilinear-smooths-nearest-keeps-hard-2-tip")),
             true,
         ) {
             open_popup(app, ctx, Popup::Resampling, b, b.width());
@@ -277,13 +265,10 @@ pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Contex
             ui,
             apply,
             "transform.apply",
-            lang.pick("適用", "Apply"),
+            lang.t("transform-apply"),
             true,
             enabled && changed,
-            Some(lang.pick(
-                "この数値で変形する（1 回の取り消し）",
-                "Transform by these numbers (one undo step)",
-            )),
+            Some(lang.t("transform-transform-by-these-numbers-one-tip")),
             None,
         )
         .clicked()
@@ -302,10 +287,10 @@ pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Contex
             ui,
             reset,
             "transform.reset",
-            lang.pick("戻す", "Reset"),
+            lang.t("transform-reset"),
             false,
             changed,
-            Some(lang.pick("数値を初めに戻す", "Back to no change")),
+            Some(lang.t("transform-back-to-no-change-tip")),
             None,
         )
         .clicked()
@@ -346,7 +331,7 @@ pub fn liquify_options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
 
 fn liquify_diameter_spec(lang: crate::lang::Lang) -> SliderSpec<'static> {
     SliderSpec::new(
-        lang.pick("直径", "Diameter"),
+        lang.t("transform-diameter"),
         1.0,
         2048.0,
         NumberFormat::int(" px"),
@@ -355,7 +340,7 @@ fn liquify_diameter_spec(lang: crate::lang::Lang) -> SliderSpec<'static> {
 
 fn liquify_strength_spec(lang: crate::lang::Lang) -> SliderSpec<'static> {
     SliderSpec::new(
-        lang.pick("強さ", "Strength"),
+        lang.t("transform-strength"),
         0.0,
         100.0,
         NumberFormat::int("%"),
@@ -381,10 +366,8 @@ pub fn liquify_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egu
         rows.slider_row(),
         "props.liquify.strength",
         state.strength as f32 * 100.0,
-        &liquify_strength_spec(lang).tooltip(lang.pick(
-            "戻す: このゆがみを始めた時の画素へ戻す強さ",
-            "Restore: how strongly pixels go back to the start of this liquify session",
-        )),
+        &liquify_strength_spec(lang)
+            .tooltip(lang.t("transform-restore-how-strongly-pixels-go-tip")),
     );
     if out.changed {
         state.strength = (out.value / 100.0) as f64;

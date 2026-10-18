@@ -1,0 +1,42 @@
+# Screen text (region). Keys are "region-" plus a short name from the English text; tooltip keys end in -tip.
+
+region-filled = Filled.
+region-nothing-to-fill-there = Nothing to fill there.
+region-filling = Filling
+region-no-reference-layers = No reference layers
+region-cannot-start-the-fill = Cannot start the fill.
+region-fill-cancelled = Fill cancelled.
+region-fill-failed = Fill failed
+region-stroke-is-too-long = Stroke is too long
+region-no-model = No model
+region-no-id-map = No ID map
+region-checking-the-id-map = Checking the ID map
+region-the-id-map-is-stale = The ID map is stale (bake again)
+region-the-id-map-cannot-be = The ID map cannot be checked
+region-no-such-part = No such part
+region-these-manual-id-colors-belong = These manual ID colors belong to another model
+region-cannot-change-the-id-color = Cannot change the ID color
+region-manual-id-colors-changed = Manual ID colors changed.
+region-nothing-selected = Nothing selected.
+region-id-color = ID color
+region-triangle = Triangle
+region-mesh-part = Mesh Part
+region-uv-island = UV Island
+region-material = Material
+region-texture-set-is-not-in = Texture set “{ $name }” is not in this model.
+region-no-triangle-of-this-texture = No triangle of this texture set under the pointer
+region-this-surface-s-uv-is = This surface's UV is outside the texture
+region-erased = {" "}erased.
+region-filled-2 = {" "}filled.
+region-stroke-cancelled = Stroke cancelled.
+region-erased-2 = erased.
+region-filled-3 = filled.
+region-no-triangle-of-this-texture-2 = No triangle of this texture set under the pointer.
+region-nothing-of-the-model-under = Nothing of the model under the pointer
+region-no-id-color-at-that = No ID color at that face
+region-outside-the-canvas = Outside the canvas
+region-no-part-there = No part there
+region-n-manual-colors = { $count } manual { $count ->
+        [one] color
+       *[other] colors
+    }

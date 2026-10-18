@@ -47,6 +47,11 @@ impl DualBrushMode {
                 }
             }
             DualBrushMode::Subtract => main - dual,
+            DualBrushMode::Normal => main,
+            DualBrushMode::Add => main + dual,
+            DualBrushMode::Lighten => f64_max(main, dual),
+            DualBrushMode::Screen => 1.0 - (1.0 - main) * (1.0 - dual),
+            DualBrushMode::LinearHeight => main - dual * (1.0 - main),
         };
         clamp01(r)
     }
@@ -148,7 +153,7 @@ impl ColorDynamics {
 }
 
 #[inline]
-fn mix(a: u8, b: u8, t: f64) -> u8 {
+pub(super) fn mix(a: u8, b: u8, t: f64) -> u8 {
     to_byte((a as f64 + (b as i32 - a as i32) as f64 * t) / 255.0)
 }
 

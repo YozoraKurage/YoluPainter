@@ -55,14 +55,17 @@ fn hard(erase: bool) -> BrushSettings {
         radius: 1.0,
         hardness: 1.0,
         color: Rgba8::new(255, 0, 255, 255),
-        pressure_size: false,
-        pressure_opacity: false,
         erase,
         ..BrushSettings::default()
     }
 }
 fn mask_pixel(d: &mut Document, layer: LayerId, x: i64, y: i64, erase: bool) {
-    let mut s = d.begin_mask_stroke(layer, &hard(erase)).unwrap();
+    let mut s = d
+        .begin_brush_mask_stroke(
+            layer,
+            &yolu_core::Brush::simple(hard(erase), yolu_core::PressureSwitches::NONE),
+        )
+        .unwrap();
     s.apply_pixel(d, x, y, 1.0, 1.0).unwrap();
     d.end_stroke(s).unwrap();
 }
@@ -468,7 +471,12 @@ fn mask_strokes_change_only_the_mask_and_undo_exactly() {
     assert_eq!(at(&d, 5, 5).a, 0);
     mask_pixel(&mut d, l, 5, 5, true);
     assert_eq!(at(&d, 5, 5).a, 255, "マスクを消すと見せる");
-    let mut s = d.begin_mask_stroke(l, &hard(false)).unwrap();
+    let mut s = d
+        .begin_brush_mask_stroke(
+            l,
+            &yolu_core::Brush::simple(hard(false), yolu_core::PressureSwitches::NONE),
+        )
+        .unwrap();
     s.apply_pixel(&mut d, 9, 9, 1.0, 1.0).unwrap();
     d.cancel_stroke(s);
     assert_eq!(at(&d, 9, 9).a, 255, "取り消したストロークは何も残さない");
@@ -503,7 +511,12 @@ fn mask_pixels_count_against_the_source_budget() {
     mask_pixel(&mut d, l, 1, 1, false);
     assert_eq!(d.allocated_bytes(), before + 8 * 8 * 4);
     d.set_source_budget_bytes(d.allocated_bytes()).unwrap(); // もう 1 タイルも増やせない
-    let mut s = d.begin_mask_stroke(l, &hard(false)).unwrap();
+    let mut s = d
+        .begin_brush_mask_stroke(
+            l,
+            &yolu_core::Brush::simple(hard(false), yolu_core::PressureSwitches::NONE),
+        )
+        .unwrap();
     assert_eq!(
         s.apply_pixel(&mut d, 12, 12, 1.0, 1.0),
         Err(CoreError::SourceBudgetExceeded)
@@ -664,11 +677,14 @@ fn opacity_mask_and_blend_mode_mix_the_adjustment_back() {
     let brush = BrushSettings {
         radius: 1.0,
         hardness: 1.0,
-        pressure_size: false,
-        pressure_opacity: false,
         ..BrushSettings::default()
     };
-    let mut s = d.begin_mask_stroke(adj, &brush).unwrap();
+    let mut s = d
+        .begin_brush_mask_stroke(
+            adj,
+            &yolu_core::Brush::simple(brush, yolu_core::PressureSwitches::NONE),
+        )
+        .unwrap();
     s.apply_pixel(&mut d, 2, 2, 1.0, 1.0).unwrap();
     d.end_stroke(s).unwrap();
     assert_eq!(

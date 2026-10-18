@@ -4,7 +4,22 @@
 //! 色の混ぜ（厚塗り）を使うブラシだけ `yolupainter-brush 3`（筆圧の応えも使えば、その項目も同じファイルに書く）。
 //! 入り抜き・手ぶれ補正を持つブラシ（取り込んだブラシが持つ分）だけ `yolupainter-brush 4`（`assist.*`。ほかの版の項目も同じファイルに書く）。
 //! 縁のアンチエイリアスが なし でないブラシだけ `yolupainter-brush 5`（`anti_alias`。ほかの版の項目も同じファイルに書く）。
-//! 版 2〜5 を知らない古いアプリは、そのファイルを「新しい形式」として触らずに読み飛ばす）、あとは `key=value` の行（UTF-8、64 KiB まで）。数は Rust の表記のまま書き（読み戻しても
+//! 最低 1 ピクセルを使うブラシだけ `yolupainter-brush 6`（`controls.min_one_pixel`。ほかの版の項目も同じファイルに書く）。
+//! 版 1〜6 の項目で書けない影響元（ランダム、傾き・速度の最小値か曲線、真円率・質感の濃さの影響元、硬さ・絵の具の量と濃さへの傾き・速度・ランダム）を
+//! 使うブラシだけ `yolupainter-brush 7`。版 7 は影響元を `influence.<項目>.<入力>.on`・`.min`・`.curve` だけで書き、版 1〜3 の影響元の鍵
+//! （`pressure_size` などの切り替え・`controls.tilt_*`・`controls.speed_size` など・`controls.pressure_hardness`・`pressure.*`・
+//! `mix.<項目>.pressure`・`.min`・`.curve`）は書かない（読むときも、版 7 にあれば知らない項目として断る）。ほかの版 2〜6 の項目は、その鍵のまま書く。
+//! 版 1〜6 で書けるブラシは、今までと同じ鍵・同じバイトで書く。
+//! バージョン 7 までの項目で書けない設定（筆先の繰り返し方法の折り返し・繰り返さない・一巡のみ・ランダムに一巡、筆先の反転のランダム・折り返し時、先端同士の比較暗、
+//! 質感の回転、色の変化、色の混ぜの拡張、水彩境界、はみ出し防止）を使うブラシだけ `yolupainter-brush 8`（`tip.selection` の新しい値と `tip.flip_x_rule`・`tip.flip_y_rule`・`tip.darken`・`texture.angle`、
+//! 色の変化の `color.tip.*`・`color.sub_mix`・`color.stroke.*`・`color.target` と `influence.color_*`、色の混ぜの `mix.mode=layer`・`mix.space`・`mix.correction`・`mix.blur`・`mix.load`、水彩境界の `water_edge.*`、
+//! はみ出し防止の `refer.on`・`refer.margin`・`refer.expand`・`refer.amount`・`refer.mode`。
+//! 影響元はバージョン 7 と同じ鍵で書く）。使わないブラシはバージョン 1〜7 のままで、今までと同じバイト。バージョン 7 までのファイルにバージョン 8 の鍵や値があれば、知らない項目として断る。
+//! バージョン 8 までの項目で書けない設定（ツールプロパティに出す行の目の印が初めの形でない・画面上のサイズで指定・傾きの最大値が 100% でない・手ぶれ補正の速度による調整・はらい・後補正・
+//! 連続吹き付け・リボン）を使うブラシだけ
+//! `yolupainter-brush 9`（`rows.shown`・`controls.size_by_screen`・`influence.<項目>.tilt.max`・`assist.stabilizer_speed`・`assist.sweep`・`assist.post` と `assist.post.*`・`tip.continuous`・`tip.ribbon`。そのほかはバージョン 8 と同じ書き方）。使わないブラシはバージョン 1〜8 のままで、
+//! 今までと同じバイト。バージョン 8 までのファイルにバージョン 9 の鍵があれば、知らない項目として断る。
+//! バージョン 2〜9 を知らない古いアプリは、そのファイルを「新しい形式」として触らずに読み飛ばす）、あとは `key=value` の行（UTF-8、64 KiB まで）。数は Rust の表記のまま書き（読み戻しても
 //! 同じ値）、筆先・質感の画像は札（トークン）で指す: 組み込みの名前（`grain`）、同梱の Krita の筆先の ID（`bundled:krita4/<ファイル>`）、
 //! 取り込んだ画像（`img:<SHA-256>`。画像は `images/<SHA-256>.png` に 1 枚ずつ置く。`images.rs`）。取り込んだブラシには、出どころと
 //! 表せなかった項目の印（`import.*`）が付く。知らない項目・重なった項目・範囲を外れた値は
@@ -22,13 +37,18 @@ use super::gaps::Gap;
 use super::images;
 use super::{canonical, carried_assist, Group, ImportMeta, UserBrush, MAX_NAME_CHARS};
 use crate::engine::{
-    AntiAlias, Brush, BrushEffect, ColorMix, CoreError, DVec2, DualBrush, DualBrushMode, MixGround,
-    MixMode, PaperTexture, PressureResponse, StrokeAssist, TextureMode,
+    AntiAlias, Brush, BrushEffect, ColorItem, ColorMix, ColorTarget, CoreError, DVec2, DualBrush,
+    DualBrushMode, ExpandMode, Influence, Influences, InputResponse, InputUse, MixBlur, MixGround,
+    MixMode, MixSpace, PaperTexture, PostCorrection, ReferenceLines, StabilizerSpeed, StrokeAssist,
+    StrokeColorChange, TaperTargets, TextureMode, TipColorChange,
 };
 use crate::lang::Lang;
-use yolu_core::brush::{builtin_tip, TipSelection, MAX_CURVE_POINTS};
+use yolu_core::brush::{builtin_tip, FlipRule, Input, Item, TipSelection, MAX_CURVE_POINTS};
 use yolu_core::generator::CurvePoint;
 use yolu_core::BrushTip;
+use yolu_core::DualItem;
+use yolu_core::WaterEdge;
+use yolu_core::{Spray, SprayDirection, SprayItem};
 use yolu_io::brushes::bundled;
 
 pub const HEADER: &str = "yolupainter-brush 1";
@@ -44,6 +64,24 @@ pub const HEADER_V4: &str = "yolupainter-brush 4";
 /// 縁のアンチエイリアス（`anti_alias`）が なし でないブラシの版。なし のブラシは版 1〜4 のままで、今までと同じバイト（読むときも、
 /// 版 4 までのファイルは なし）。版 4 までしか読めない古いアプリは、このファイルを「新しい形式」として理由つきで読み飛ばす。
 pub const HEADER_V5: &str = "yolupainter-brush 5";
+/// 最低 1 ピクセル（`controls.min_one_pixel`）を使うブラシの版。使わないブラシは版 1〜5 のままで、今までと同じバイト（読むときも、
+/// 版 5 までのファイルは切）。版 5 までしか読めない古いアプリは、このファイルを「新しい形式」として理由つきで読み飛ばす。
+pub const HEADER_V6: &str = "yolupainter-brush 6";
+/// 版 1〜6 の項目で書けない影響元を使うブラシの版（影響元は `influence.<項目>.<入力>.on`・`.min`・`.curve` だけで書く）。書けるブラシは
+/// 版 1〜6 のままで、今までと同じバイト。版 6 までしか読めない古いアプリは、このファイルを「新しい形式」として理由つきで読み飛ばす。
+pub const HEADER_V7: &str = "yolupainter-brush 7";
+/// バージョン 7 までの項目で書けない物を使うブラシのバージョン。バージョン 8 はバージョン 7 の書き方（影響元は `influence.<項目>.<入力>.…`）に、
+/// 入り抜きを掛ける項目と最小値（`assist.taper.<項目>`。既定の大きさだけ・最小値 0 でないとき）と、筆先の繰り返し方法・反転のしかた・
+/// 先端同士の比較暗・質感の回転を足す（水彩境界の `water_edge.*` もバージョン 8 の項目）。使わないブラシはバージョン 1〜7 のままで、今までと同じバイト。バージョン 7 までしか読めない古いアプリは、
+/// このファイルを「新しい形式」として理由つきで読み飛ばす。バージョン 8 の鍵がバージョン 7 までのファイルにあれば、知らない項目として断る。
+pub const HEADER_V8: &str = "yolupainter-brush 8";
+/// バージョン 8 までの項目で書けない物を使うブラシのバージョン。バージョン 9 はバージョン 8 の書き方に、ツールプロパティに出す行の目の印
+/// （`rows.shown`。初めの形でないとき）・画面上のサイズで指定（`controls.size_by_screen=1`）・傾きの最大値（`influence.<項目>.tilt.max`。100% でないとき）・
+/// 連続吹き付け（`tip.continuous=1`）・リボン（`tip.ribbon=1`）を足す。
+/// 使わないブラシはバージョン 1〜8 のままで、今までと同じバイト。バージョン 8 までしか読めない古いアプリは、このファイルを「新しい形式」として
+/// 理由つきで読み飛ばす。バージョン 9 の鍵がバージョン 8 までのファイルにあれば、知らない項目として断る（読み戻しても目の印が初めの形・画面上のサイズで指定が切・
+/// 傾きの最大値が 100% のブラシは、前のバージョンで書くので、前のバージョンのファイルは今までと同じ値で読む）。
+pub const HEADER_V9: &str = "yolupainter-brush 9";
 const EXTENSION: &str = "ylbrush";
 const ORDER_FILE: &str = "order.conf";
 /// 1 ファイルの大きさの上限。
@@ -88,48 +126,20 @@ impl StoreError {
     pub fn describe(&self, lang: Lang) -> String {
         match self {
             StoreError::Io(e) => lang.file_error(e),
-            StoreError::TooLarge => lang
-                .pick("ファイルが大きすぎます", "The file is too large")
-                .into(),
-            StoreError::NotABrush => lang
-                .pick("ブラシのファイルではありません", "Not a brush file")
-                .into(),
-            StoreError::NewerVersion(v) => lang.pick(
-                format!("新しい形式です（{v}）"),
-                format!("A newer format ({v})"),
-            ),
-            StoreError::Syntax(line) => lang.pick(
-                format!("{line} 行目が読めません"),
-                format!("Cannot read line {line}"),
-            ),
-            StoreError::UnknownKey(k) => lang.pick(
-                format!("知らない項目「{k}」があります"),
-                format!("Unknown item \"{k}\""),
-            ),
-            StoreError::DuplicateKey(k) => lang.pick(
-                format!("項目「{k}」が重なっています"),
-                format!("Repeated item \"{k}\""),
-            ),
-            StoreError::BadValue(k) => lang.pick(
-                format!("項目「{k}」の値が読めません"),
-                format!("Invalid value of \"{k}\""),
-            ),
-            StoreError::UnknownTip(n) => lang.pick(
-                format!("知らない画像「{n}」があります"),
-                format!("Unknown image \"{n}\""),
-            ),
+            StoreError::TooLarge => lang.t("brushes-the-file-is-too-large").into(),
+            StoreError::NotABrush => lang.t("brushes-not-a-brush-file").into(),
+            StoreError::NewerVersion(v) => lang.f("brushes-a-newer-format", &[("v", &v)]),
+            StoreError::Syntax(line) => lang.f("brushes-cannot-read-line", &[("line", &line)]),
+            StoreError::UnknownKey(k) => lang.f("brushes-unknown-item", &[("k", &k)]),
+            StoreError::DuplicateKey(k) => lang.f("brushes-repeated-item", &[("k", &k)]),
+            StoreError::BadValue(k) => lang.f("brushes-invalid-value-of", &[("k", &k)]),
+            StoreError::UnknownTip(n) => lang.f("brushes-unknown-image", &[("n", &n)]),
             StoreError::Invalid(e) => lang.core_error(e),
-            StoreError::BadImage(short) => lang.pick(
-                format!("画像「{short}」を読めません"),
-                format!("Cannot read the image \"{short}\""),
-            ),
-            StoreError::Mismatch => lang
-                .pick(
-                    "書いた内容を読み戻せませんでした",
-                    "The written file did not read back the same",
-                )
-                .into(),
-            StoreError::TooMany => lang.pick("ファイルが多すぎます", "Too many files").into(),
+            StoreError::BadImage(short) => {
+                lang.f("brushes-cannot-read-the-image", &[("short", &short)])
+            }
+            StoreError::Mismatch => lang.t("brushes-the-written-file-did-not").into(),
+            StoreError::TooMany => lang.t("brushes-too-many-files").into(),
         }
     }
 }
@@ -187,6 +197,11 @@ fn dual_mode_id(mode: DualBrushMode) -> &'static str {
         DualBrushMode::LinearBurn => "linear-burn",
         DualBrushMode::HardMix => "hard-mix",
         DualBrushMode::Subtract => "subtract",
+        DualBrushMode::Normal => "normal",
+        DualBrushMode::Add => "add",
+        DualBrushMode::Lighten => "lighten",
+        DualBrushMode::Screen => "screen",
+        DualBrushMode::LinearHeight => "linear-height",
     }
 }
 
@@ -309,18 +324,97 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     let b = canonical(&user.brush);
     let assist = carried_assist(user.assist);
     let mut pending = Pending::default();
-    let header = if b.base.anti_alias != AntiAlias::None {
+    let v9 = needs_v9(&b, assist);
+    let v8 = needs_v8(&b, assist) || v9;
+    let v7 = needs_v7(&b) || v8;
+    let mut w = Writer(format!(
+        "{}\n",
+        header_for(&b, assist.is_some(), v7, v8, v9)
+    ));
+    write_base(&mut w, user, &b, v7);
+    write_tip_and_jitter(&mut w, &mut pending, &b);
+    write_texture_and_dual(&mut w, &mut pending, &b);
+    write_color_and_controls(&mut w, &b, v7);
+    if v8 {
+        write_water_edge(&mut w, &b);
+        write_color_change(&mut w, &b);
+        write_spray(&mut w, &b);
+        write_dual_v8(&mut w, &mut pending, &b);
+        write_reference_lines(&mut w, &b);
+    }
+    if v7 {
+        write_influences(&mut w, &b);
+    } else {
+        write_pressure_responses(&mut w, &b);
+    }
+    // 色の混ぜ（版 3。混ぜ方が切のブラシは書かない）
+    if uses_mix(&b) {
+        write_mix(&mut w, &b, v7);
+    }
+    // 入り抜き・手ぶれ補正（版 4。持たないブラシは書かない）
+    if let Some(a) = assist {
+        w.line("assist.stabilizer", a.stabilizer);
+        w.line("assist.taper_in", a.taper_in);
+        w.line("assist.taper_out", a.taper_out);
+        // 入り抜きを掛ける項目と最小値（バージョン 8。既定の大きさだけ・最小値 0 は書かない）
+        if v8 && !a.taper_targets.is_default() {
+            write_taper_targets(&mut w, &a.taper_targets);
+        }
+        // 手ぶれ補正の速度による調整・はらい・後補正（バージョン 9。既定は書かない）
+        if v9 {
+            write_correction(&mut w, &a);
+        }
+    }
+    // バージョン 9 の項目（使うブラシだけ書く）
+    if v9 {
+        write_v9(&mut w, &b);
+    }
+    write_effect(&mut w, &b.effect);
+    if let Some(meta) = user.import.as_ref().map(ImportMeta::normalized) {
+        write_import(&mut w, &meta);
+    }
+    Ok(Encoded {
+        text: w.0,
+        images: pending.images,
+    })
+}
+
+/// 書き出すファイルの版（使う項目が一番新しい版）。
+fn header_for(b: &Brush, has_assist: bool, v7: bool, v8: bool, v9: bool) -> &'static str {
+    if v9 {
+        HEADER_V9
+    } else if v8 {
+        HEADER_V8
+    } else if v7 {
+        HEADER_V7
+    } else if b.controls.min_one_pixel {
+        HEADER_V6
+    } else if b.base.anti_alias != AntiAlias::None {
         HEADER_V5
-    } else if assist.is_some() {
+    } else if has_assist {
         HEADER_V4
-    } else if uses_mix(&b) {
+    } else if uses_mix(b) {
         HEADER_V3
-    } else if uses_pressure_response(&b) {
+    } else if uses_pressure_response(b) {
         HEADER_V2
     } else {
         HEADER
-    };
-    let mut w = Writer(format!("{header}\n"));
+    }
+}
+
+/// 入り抜きを掛ける項目と最小値（`assist.taper.<項目>` を 8 項目とも。掛けない項目は `off`）。
+fn write_taper_targets(w: &mut Writer, targets: &TaperTargets) {
+    for item in Item::ALL {
+        let key = format!("assist.taper.{}", item.id());
+        match targets.min(item) {
+            Some(min) => w.line(&key, min),
+            None => w.line(&key, "off"),
+        }
+    }
+}
+
+/// 名前・グループ・基本の数値（版 1〜6 は筆圧の切り替えも）・縁のアンチエイリアス。
+fn write_base(w: &mut Writer, user: &UserBrush, b: &Brush, v7: bool) {
     let name: String = user.name.chars().take(MAX_NAME_CHARS).collect();
     w.line("name", name.replace(['\n', '\r'], " "));
     w.line("group", user.group.id());
@@ -329,13 +423,20 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     w.single("spacing", b.base.spacing);
     w.single("opacity", b.base.opacity);
     w.single("flow", b.base.flow);
-    w.bool("pressure_size", b.base.pressure_size);
-    w.bool("pressure_opacity", b.base.pressure_opacity);
-    w.bool("pressure_flow", b.base.pressure_flow);
+    if !v7 {
+        let inf = &b.influences;
+        w.bool("pressure_size", inf.size.pressure.on);
+        w.bool("pressure_opacity", inf.opacity.pressure.on);
+        w.bool("pressure_flow", inf.flow.pressure.on);
+    }
     // 縁のアンチエイリアス（版 5。なし のブラシは書かない）
     if b.base.anti_alias != AntiAlias::None {
         w.line("anti_alias", b.base.anti_alias.id());
     }
+}
+
+/// 筆先（`tip.*`）とばらつき（`jitter.*`）。
+fn write_tip_and_jitter(w: &mut Writer, pending: &mut Pending, b: &Brush) {
     let t = &b.tip;
     match &t.image {
         Some(image) => w.line("tip.image", pending.token(image)),
@@ -346,18 +447,22 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     } else {
         w.line("tip.images", pending.list(&t.images));
     }
-    w.line(
-        "tip.selection",
-        match t.selection {
-            TipSelection::Random => "random",
-            TipSelection::Sequential => "sequential",
-        },
-    );
+    w.line("tip.selection", selection_id(t.selection));
     w.line("tip.angle", t.angle);
     w.line("tip.roundness", t.roundness);
     w.bool("tip.follow", t.follow_direction);
-    w.bool("tip.flip_x", t.flip_x);
-    w.bool("tip.flip_y", t.flip_y);
+    w.bool("tip.flip_x", flip_keys(t.flip_x).0);
+    w.bool("tip.flip_y", flip_keys(t.flip_y).0);
+    // バージョン 8 の項目（使うブラシだけ書く）
+    if let Some(id) = flip_keys(t.flip_x).1 {
+        w.line("tip.flip_x_rule", id);
+    }
+    if let Some(id) = flip_keys(t.flip_y).1 {
+        w.line("tip.flip_y_rule", id);
+    }
+    if t.darken_overlap {
+        w.bool("tip.darken", true);
+    }
     let j = &b.jitter;
     w.line("jitter.size", j.size);
     w.line("jitter.angle", j.angle);
@@ -366,11 +471,18 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     w.line("jitter.flow", j.flow);
     w.line("jitter.scatter", j.scatter);
     w.line("jitter.count", j.count);
+}
+
+/// 紙の質感（`texture*`）とデュアルブラシ（`dual*`）。持たなければ書かない。
+fn write_texture_and_dual(w: &mut Writer, pending: &mut Pending, b: &Brush) {
     if let Some(tex) = &b.texture {
         w.line("texture", pending.token(&tex.image));
         w.line("texture.depth", tex.depth);
         w.line("texture.scale", tex.scale);
         w.line("texture.mode", mode_id(tex.mode));
+        if tex.angle != 0.0 {
+            w.line("texture.angle", tex.angle);
+        }
     }
     if let Some(d) = &b.dual {
         w.line("dual", 1);
@@ -387,6 +499,10 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
         w.line("dual.count", d.count);
         w.line("dual.mode", dual_mode_id(d.mode));
     }
+}
+
+/// 色のゆらぎ（`color.*`）と操作（`controls.*`。版 1〜6 は傾き・速さの切り替えも）。
+fn write_color_and_controls(w: &mut Writer, b: &Brush, v7: bool) {
     let c = &b.color;
     w.line("color.fg_bg", c.foreground_background);
     w.line("color.hue", c.hue);
@@ -395,23 +511,276 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     w.line("color.purity", c.purity);
     w.bool("color.per_tip", c.per_tip);
     let k = &b.controls;
+    let inf = &b.influences;
     w.line("controls.fade_size", k.fade_size);
     w.line("controls.fade_opacity", k.fade_opacity);
     w.line("controls.fade_flow", k.fade_flow);
-    w.bool("controls.tilt_size", k.tilt_size);
-    w.bool("controls.tilt_opacity", k.tilt_opacity);
-    w.bool("controls.tilt_flow", k.tilt_flow);
+    if !v7 {
+        w.bool("controls.tilt_size", inf.size.tilt.on);
+        w.bool("controls.tilt_opacity", inf.opacity.tilt.on);
+        w.bool("controls.tilt_flow", inf.flow.tilt.on);
+    }
     w.bool("controls.tilt_angle", k.tilt_angle);
     w.bool("controls.rotation_angle", k.rotation_angle);
-    w.bool("controls.speed_size", k.speed_size);
-    w.bool("controls.speed_opacity", k.speed_opacity);
-    w.bool("controls.speed_flow", k.speed_flow);
-    w.line("controls.speed_max", k.speed_max);
-    // 筆圧の応え（版 2。既定の項目は書かない）
-    if k.pressure_hardness {
+    if !v7 {
+        w.bool("controls.speed_size", inf.size.speed.on);
+        w.bool("controls.speed_opacity", inf.opacity.speed.on);
+        w.bool("controls.speed_flow", inf.flow.speed.on);
+    }
+    w.line("controls.speed_max", inf.speed_max);
+    // 最低 1 ピクセル（版 6。切は書かない）
+    if k.min_one_pixel {
+        w.bool("controls.min_one_pixel", true);
+    }
+}
+
+/// 色の変化（バージョン 8。`color.tip.*`・`color.sub_mix`・`color.stroke.*`・`color.target`。切・0・メインは書かない）。
+fn write_color_change(w: &mut Writer, b: &Brush) {
+    let c = &b.color;
+    if let Some(t) = &c.tip {
+        w.single("color.tip.hue", t.hue);
+        w.single("color.tip.saturation", t.saturation);
+        w.single("color.tip.value", t.value);
+    }
+    if c.sub_mix != 0.0 {
+        w.single("color.sub_mix", c.sub_mix);
+    }
+    if let Some(s) = &c.stroke {
+        w.single("color.stroke.hue", s.hue);
+        w.single("color.stroke.saturation", s.saturation);
+        w.single("color.stroke.value", s.value);
+        w.single("color.stroke.sub_mix", s.sub_mix);
+    }
+    if c.target != ColorTarget::Main {
+        w.line("color.target", c.target.id());
+    }
+}
+
+/// 水彩境界（バージョン 8 の `water_edge.*`。ドラッグ後に処理が切・ぼかし幅 0 は書かない）。水彩境界の無いブラシは何も書かない。
+fn write_water_edge(w: &mut Writer, b: &Brush) {
+    let Some(e) = &b.water_edge else {
+        return;
+    };
+    w.single("water_edge.width", e.width);
+    w.single("water_edge.opacity", e.opacity);
+    w.single("water_edge.darkness", e.darkness);
+    if e.after_stroke {
+        w.bool("water_edge.after_stroke", true);
+    }
+    if e.blur != 0.0 {
+        w.single("water_edge.blur", e.blur);
+    }
+}
+
+/// 散布効果（バージョン 8。`spray.*`。無いブラシは書かない。粒子サイズと粒子密度はいつも書き、ほかは既定（切・0・なし）なら書かない）。
+fn write_spray(w: &mut Writer, b: &Brush) {
+    if let Some(s) = &b.spray {
+        write_spray_keys(w, "spray", s);
+    }
+}
+
+/// はみ出し防止（`refer.*`。切のブラシは書かない）。
+fn write_reference_lines(w: &mut Writer, b: &Brush) {
+    let l = &b.reference_lines;
+    if !l.enabled {
+        return;
+    }
+    w.bool("refer.on", true);
+    w.single("refer.margin", l.margin);
+    if l.expand {
+        w.bool("refer.expand", true);
+    }
+    w.single("refer.amount", l.amount);
+    w.line("refer.mode", expand_mode_id(l.mode));
+}
+
+fn expand_mode_id(mode: ExpandMode) -> &'static str {
+    match mode {
+        ExpandMode::Square => "square",
+        ExpandMode::Round => "round",
+        ExpandMode::Darkest => "darkest",
+    }
+}
+
+/// 散布効果の鍵（`<prefix>.size` など。主は `spray`、2 つ目は `dual.spray`）。
+fn write_spray_keys(w: &mut Writer, prefix: &str, s: &Spray) {
+    let key = |name: &str| format!("{prefix}.{name}");
+    w.single(&key("size"), s.size);
+    if s.link_size {
+        w.bool(&key("link_size"), true);
+    }
+    w.single(&key("density"), s.density);
+    if s.bias != 0.0 {
+        w.single(&key("bias"), s.bias);
+    }
+    if s.angle != 0.0 {
+        w.single(&key("angle"), s.angle);
+    }
+    if s.direction != SprayDirection::None {
+        w.line(&key("direction"), s.direction.id());
+    }
+    if let Some(r) = s.random_angle {
+        w.single(&key("random_angle"), r);
+    }
+}
+
+/// デュアルブラシのバージョン 8 の項目（`dual.*`。サイズの連動・濃度・2 つ目のアンチエイリアス・向きの足し・複数の筆先と選び方・反転・
+/// 比較暗・紙の質感・散布効果）。既定（切・1・主と同じ・0・空・ランダム・なし）は書かない。
+fn write_dual_v8(w: &mut Writer, pending: &mut Pending, b: &Brush) {
+    let Some(d) = &b.dual else {
+        return;
+    };
+    write_dual_tips(w, pending, d);
+    if d.link_size {
+        w.bool("dual.link_size", true);
+    }
+    if d.flow != 1.0 {
+        w.single("dual.flow", d.flow);
+    }
+    if let Some(level) = d.anti_alias {
+        w.line("dual.anti_alias", level.id());
+    }
+    for (key, on) in [
+        ("dual.angle_tilt", d.angle_tilt),
+        ("dual.angle_rotation", d.angle_rotation),
+        ("dual.angle_line", d.angle_line),
+    ] {
+        if on {
+            w.bool(key, true);
+        }
+    }
+    if d.angle_random != 0.0 {
+        w.single("dual.angle_random", d.angle_random);
+    }
+    if let Some(tex) = &d.texture {
+        w.line("dual.texture", pending.token(&tex.image));
+        w.single("dual.texture.depth", tex.depth);
+        w.single("dual.texture.scale", tex.scale);
+        w.line("dual.texture.mode", mode_id(tex.mode));
+        if tex.angle != 0.0 {
+            w.single("dual.texture.angle", tex.angle);
+        }
+    }
+    if let Some(s) = &d.spray {
+        write_spray_keys(w, "dual.spray", s);
+    }
+}
+
+/// 2 つ目の複数の筆先と選び方・反転・比較暗（主の `tip.*` と同じ値の名前）。
+fn write_dual_tips(w: &mut Writer, pending: &mut Pending, d: &DualBrush) {
+    if !d.tips.is_empty() {
+        w.line("dual.tips", pending.list(&d.tips));
+    }
+    if d.selection != TipSelection::Random {
+        w.line("dual.selection", selection_id(d.selection));
+    }
+    for (key, rule) in [("dual.flip_x", d.flip_x), ("dual.flip_y", d.flip_y)] {
+        if flip_keys(rule).0 {
+            w.bool(key, true);
+        }
+    }
+    for (key, rule) in [
+        ("dual.flip_x_rule", d.flip_x),
+        ("dual.flip_y_rule", d.flip_y),
+    ] {
+        if let Some(id) = flip_keys(rule).1 {
+            w.line(key, id);
+        }
+    }
+    if d.darken_overlap {
+        w.bool("dual.darken", true);
+    }
+}
+
+/// 影響元（バージョン 7。使わない入力・既定の最小値と曲線は書かない。色と散布とデュアルの項目はバージョン 8）。
+fn write_influences(w: &mut Writer, b: &Brush) {
+    let item_keys = Item::ALL
+        .into_iter()
+        .map(|i| (i.id(), b.influences.get(i)))
+        .chain(
+            ColorItem::ALL
+                .into_iter()
+                .map(|i| (i.id(), b.influences.color(i))),
+        )
+        .chain(
+            SprayItem::ALL
+                .into_iter()
+                .map(|i| (i.id(), b.influences.spray(i))),
+        )
+        .chain(
+            DualItem::ALL
+                .into_iter()
+                .map(|i| (i.id(), b.influences.dual(i))),
+        );
+    for (id, influence) in item_keys {
+        for input in Input::ALL {
+            let u = influence.input(input);
+            let key = format!("influence.{id}.{}", input.id());
+            if u.on {
+                w.bool(&format!("{key}.on"), true);
+            }
+            if u.response.min() != 0.0 {
+                w.single(&format!("{key}.min"), u.response.min());
+            }
+            if !u.response.curve().is_empty() {
+                w.line(&format!("{key}.curve"), curve_text(u.response.curve()));
+            }
+            // 傾きの最大値（バージョン 9。100% は書かない）
+            if input == Input::Tilt && u.response.max() != 1.0 {
+                w.single(&format!("{key}.max"), u.response.max());
+            }
+        }
+    }
+}
+
+/// バージョン 9 の項目: 画面上のサイズで指定・ツールプロパティに出す行の目の印（`rows.shown`。行の名前のコンマ区切り。1 つも出さないときは空）・
+/// 連続吹き付け（`tip.continuous`）・リボン（`tip.ribbon`）。切の項目は書かない。
+fn write_v9(w: &mut Writer, b: &Brush) {
+    if b.controls.size_by_screen {
+        w.bool("controls.size_by_screen", true);
+    }
+    if b.tip.continuous {
+        w.bool("tip.continuous", true);
+    }
+    if b.tip.ribbon {
+        w.bool("tip.ribbon", true);
+    }
+    if let Some(rows) = &b.shown_rows {
+        w.line("rows.shown", rows.join(","));
+    }
+}
+
+/// バージョン 9 の補正の項目: 手ぶれ補正の速度による調整（`assist.stabilizer_speed`。`fast` すばやく描いたときに弱く補正・`slow` ゆっくり
+/// 描いたときに補正）・はらい（`assist.sweep`。0〜1）・後補正（`assist.post`・`.strength`・`.by_speed`・`.by_view_scale`）。既定の項目は書かない
+/// （後補正は、4 つの値のどれかが既定でなければ 4 つとも書く）。
+fn write_correction(w: &mut Writer, a: &StrokeAssist) {
+    if let Some(kind) = a.stabilizer_speed {
+        w.line("assist.stabilizer_speed", stabilizer_speed_id(kind));
+    }
+    if a.sweep > 0.0 {
+        w.line("assist.sweep", a.sweep);
+    }
+    if !a.post.is_default_setting() {
+        w.bool("assist.post", a.post.on);
+        w.line("assist.post.strength", a.post.strength);
+        w.bool("assist.post.by_speed", a.post.by_speed);
+        w.bool("assist.post.by_view_scale", a.post.by_view_scale);
+    }
+}
+
+fn stabilizer_speed_id(kind: StabilizerSpeed) -> &'static str {
+    match kind {
+        StabilizerSpeed::WeakenWhenFast => "fast",
+        StabilizerSpeed::SlowOnly => "slow",
+    }
+}
+
+/// 筆圧の応え（版 2。既定の項目は書かない）。
+fn write_pressure_responses(w: &mut Writer, b: &Brush) {
+    if b.influences.hardness.pressure.on {
         w.bool("controls.pressure_hardness", true);
     }
-    for (name, r) in pressure_items(&b) {
+    for (name, r) in pressure_items(b) {
         if r.min() != 0.0 {
             w.single(&format!("pressure.{name}.min"), r.min());
         }
@@ -419,33 +788,47 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
             w.line(&format!("pressure.{name}.curve"), curve_text(r.curve()));
         }
     }
-    // 色の混ぜ（版 3。混ぜ方が切のブラシは書かない）
-    if uses_mix(&b) {
-        let m = &b.mix;
-        w.line("mix.mode", mix_mode_id(m.mode));
-        w.single("mix.paint", m.paint);
-        w.single("mix.density", m.density);
-        w.single("mix.stretch", m.stretch);
-        w.line("mix.ground", mix_ground_id(m.ground));
-        for (name, on, r) in mix_pressure_items(m) {
-            if on {
-                w.bool(&format!("mix.{name}.pressure"), true);
-            }
-            if r.min() != 0.0 {
-                w.single(&format!("mix.{name}.min"), r.min());
-            }
-            if !r.curve().is_empty() {
-                w.line(&format!("mix.{name}.curve"), curve_text(r.curve()));
-            }
+}
+
+/// 色の混ぜ（`mix.*`）。絵の具の量・濃さの筆圧は版 3〜6 の鍵で書き、版 7 は影響元の項目に書いた。
+fn write_mix(w: &mut Writer, b: &Brush, v7: bool) {
+    let m = &b.mix;
+    w.line("mix.mode", mix_mode_id(m.mode));
+    w.single("mix.paint", m.paint);
+    w.single("mix.density", m.density);
+    w.single("mix.stretch", m.stretch);
+    w.line("mix.ground", mix_ground_id(m.ground));
+    // バージョン 8 の項目（既定は書かない）
+    if m.space != MixSpace::Standard {
+        w.line("mix.space", mix_space_id(m.space));
+    }
+    if m.correction != 0 {
+        w.line("mix.correction", m.correction);
+    }
+    match m.blur {
+        MixBlur::Auto => {}
+        MixBlur::Fixed(px) => w.single("mix.blur", px),
+        MixBlur::Linked => w.line("mix.blur", "linked"),
+    }
+    if m.load != 1.0 {
+        w.single("mix.load", m.load);
+    }
+    for (name, on, r) in mix_pressure_items(b).into_iter().filter(|_| !v7) {
+        if on {
+            w.bool(&format!("mix.{name}.pressure"), true);
+        }
+        if r.min() != 0.0 {
+            w.single(&format!("mix.{name}.min"), r.min());
+        }
+        if !r.curve().is_empty() {
+            w.line(&format!("mix.{name}.curve"), curve_text(r.curve()));
         }
     }
-    // 入り抜き・手ぶれ補正（版 4。持たないブラシは書かない）
-    if let Some(a) = assist {
-        w.line("assist.stabilizer", a.stabilizer);
-        w.line("assist.taper_in", a.taper_in);
-        w.line("assist.taper_out", a.taper_out);
-    }
-    match b.effect {
+}
+
+/// 効果（`effect*`）。
+fn write_effect(w: &mut Writer, effect: &BrushEffect) {
+    match *effect {
         BrushEffect::Paint => w.line("effect", "paint"),
         BrushEffect::Blur { radius } => {
             w.line("effect", "blur");
@@ -461,31 +844,29 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
             w.line("effect.y", offset.y);
         }
     }
-    if let Some(meta) = user.import.as_ref().map(ImportMeta::normalized) {
-        w.line(
-            "import.source",
-            meta.source.replace(|c: char| c.is_control(), " "),
-        );
-        if meta.pattern {
-            w.bool("import.pattern", true);
-        }
-        if !meta.gaps.is_empty() {
-            let ids: Vec<&str> = meta.gaps.iter().map(|g| g.id()).collect();
-            w.line("import.gaps", ids.join(","));
-        }
-        if !meta.mapped.is_empty() {
-            let ids: Vec<&str> = meta
-                .mapped
-                .iter()
-                .map(|m| super::gaps::mapped_id(*m))
-                .collect();
-            w.line("import.mapped", ids.join(","));
-        }
+}
+
+/// 取り込んだブラシの出どころと、表せなかった項目の印（`import.*`）。
+fn write_import(w: &mut Writer, meta: &ImportMeta) {
+    w.line(
+        "import.source",
+        meta.source.replace(|c: char| c.is_control(), " "),
+    );
+    if meta.pattern {
+        w.bool("import.pattern", true);
     }
-    Ok(Encoded {
-        text: w.0,
-        images: pending.images,
-    })
+    if !meta.gaps.is_empty() {
+        let ids: Vec<&str> = meta.gaps.iter().map(|g| g.id()).collect();
+        w.line("import.gaps", ids.join(","));
+    }
+    if !meta.mapped.is_empty() {
+        let ids: Vec<&str> = meta
+            .mapped
+            .iter()
+            .map(|m| super::gaps::mapped_id(*m))
+            .collect();
+        w.line("import.mapped", ids.join(","));
+    }
 }
 
 /// 項目を取り出しながら読む（取り出さなかった項目は最後に「知らない項目」として断る）。
@@ -549,19 +930,192 @@ impl Reader {
     }
 }
 
-/// 筆圧の応えの項目（ファイルの名前と応え）。
-fn pressure_items(b: &Brush) -> [(&'static str, &PressureResponse); 4] {
+/// 版 2 の筆圧の応えの項目（ファイルの名前と応え）。
+fn pressure_items(b: &Brush) -> [(&'static str, &InputResponse); 4] {
+    let i = &b.influences;
     [
-        ("size", &b.pressure.size),
-        ("opacity", &b.pressure.opacity),
-        ("flow", &b.pressure.flow),
-        ("hardness", &b.pressure.hardness),
+        ("size", &i.size.pressure.response),
+        ("opacity", &i.opacity.pressure.response),
+        ("flow", &i.flow.pressure.response),
+        ("hardness", &i.hardness.pressure.response),
     ]
 }
 
 /// 筆圧の応え（最小値・曲線・硬さの切り替え）を 1 つでも使うか（使えば版 2 で書く）。
 fn uses_pressure_response(b: &Brush) -> bool {
-    b.controls.pressure_hardness || !b.pressure.is_identity()
+    b.influences.hardness.pressure.on || pressure_items(b).iter().any(|(_, r)| !r.is_identity())
+}
+
+/// 版 1〜6 の項目で書けない影響元を使うか（使えば版 7 で書く）。版 1〜6 が書けるのは、大きさ・不透明度・流量・硬さの筆圧（切り替えと
+/// 最小値・曲線）、大きさ・不透明度・流量の傾き・速度の切り替え（応えは直線）、混ぜるブラシの絵の具の量・濃さの筆圧だけ。`b` は正規の形
+/// （混ぜないブラシの絵の具の影響元は既定）。
+fn needs_v7(b: &Brush) -> bool {
+    let i = &b.influences;
+    let switch_only = |u: &InputUse| u.response.is_identity();
+    let scalar = [&i.size, &i.opacity, &i.flow]
+        .into_iter()
+        .any(|f| !switch_only(&f.tilt) || !switch_only(&f.speed) || !f.random.is_default());
+    let pressure_only =
+        |f: &Influence| f.tilt.is_default() && f.speed.is_default() && f.random.is_default();
+    scalar
+        || !pressure_only(&i.hardness)
+        || !i.roundness.is_default()
+        || !i.texture_density.is_default()
+        || !pressure_only(&i.mix_paint)
+        || !pressure_only(&i.mix_density)
+}
+
+/// バージョン 7 までの項目で書けない物を使うか（使えばバージョン 8 で書く）。入り抜きの影響先が既定（大きさだけ・最小値 0）でないブラシと、
+/// 筆先の繰り返し方法・反転のしかた・先端同士の比較暗・質感の回転を使うブラシ。バージョン 8 にする条件は、ここに `||` で足す。
+fn needs_v8(b: &Brush, assist: Option<StrokeAssist>) -> bool {
+    b.water_edge.is_some()
+        || assist.is_some_and(|a| !a.taper_targets.is_default())
+        || b.reference_lines.enabled
+        || uses_tip_rules(b)
+        || uses_color_change(b)
+        || uses_spray(b)
+        || uses_dual_v8(b)
+        || uses_mix_v8(b)
+}
+
+/// 色の混ぜのバージョン 8 の項目（重ねる方式・知覚的な混ぜ・輝度の補正・にじむ強さの固定値・筆の初めの絵の具の量）を使うか。混ぜ方が切なら、
+/// 使っていない（`canonical` が既定へそろえる）。
+fn uses_mix_v8(b: &Brush) -> bool {
+    let m = &b.mix;
+    m.is_active()
+        && (m.mode == MixMode::Layer
+            || m.space != MixSpace::Standard
+            || m.correction != 0
+            || m.blur != MixBlur::Auto
+            || m.load != 1.0)
+}
+
+/// バージョン 8 までの項目で書けない物を使うか（使えばバージョン 9 で書く）: 目の印が初めの形でない・画面上のサイズで指定・傾きの最大値が 100% でない・
+/// ブラシが持つ補正が速度による調整・はらい・後補正を使う・連続吹き付け・リボン。`b` は正規の形（目の印は初めの形なら None）。バージョン 9 にする条件は、ここに `||` で足す。
+fn needs_v9(b: &Brush, assist: Option<StrokeAssist>) -> bool {
+    b.shown_rows.is_some()
+        || b.controls.size_by_screen
+        || uses_tilt_max(b)
+        || assist.is_some_and(|a| a.uses_correction())
+        || b.tip.continuous
+        || b.tip.ribbon
+}
+
+/// どれかの項目の傾きの最大値が 100% でないか。
+fn uses_tilt_max(b: &Brush) -> bool {
+    let i = &b.influences;
+    let tilt = |f: &Influence| f.tilt.response.max() != 1.0;
+    Item::ALL.into_iter().any(|x| tilt(i.get(x)))
+        || ColorItem::ALL.into_iter().any(|x| tilt(i.color(x)))
+        || SprayItem::ALL.into_iter().any(|x| tilt(i.spray(x)))
+        || DualItem::ALL.into_iter().any(|x| tilt(i.dual(x)))
+}
+
+/// デュアルブラシのバージョン 8 の項目（足したモード・サイズの連動・濃度・2 つ目のアンチエイリアス・向きの足し・複数の筆先と選び方・反転・
+/// 比較暗・紙の質感・散布効果と、デュアルの項目の影響元）を使うか。
+fn uses_dual_v8(b: &Brush) -> bool {
+    b.dual.as_ref().is_some_and(|d| {
+        d.mode.is_extended()
+            || d.link_size
+            || d.flow != 1.0
+            || d.anti_alias.is_some()
+            || d.angle_tilt
+            || d.angle_rotation
+            || d.angle_line
+            || d.angle_random != 0.0
+            || uses_dual_tips_texture_spray(d)
+    }) || DualItem::ALL
+        .into_iter()
+        .any(|i| !b.influences.dual(i).is_default())
+}
+
+/// 2 つ目の複数の筆先・選び方・反転・比較暗・紙の質感・散布効果を使うか。
+fn uses_dual_tips_texture_spray(d: &DualBrush) -> bool {
+    !d.tips.is_empty()
+        || d.selection != TipSelection::Random
+        || d.flip_x != FlipRule::Off
+        || d.flip_y != FlipRule::Off
+        || d.darken_overlap
+        || d.texture.is_some()
+        || d.spray.is_some()
+}
+
+/// 散布効果（と、散布の項目の影響元）を使うか。
+fn uses_spray(b: &Brush) -> bool {
+    b.spray.is_some()
+        || SprayItem::ALL
+            .into_iter()
+            .any(|i| !b.influences.spray(i).is_default())
+}
+
+/// 色の変化（先端・サブ描画色混合率・ストロークごと・変化対象と、色の項目の影響元）を使うか。
+fn uses_color_change(b: &Brush) -> bool {
+    let c = &b.color;
+    c.tip.is_some()
+        || c.sub_mix != 0.0
+        || c.stroke.is_some()
+        || c.target != ColorTarget::Main
+        || ColorItem::ALL
+            .into_iter()
+            .any(|i| !b.influences.color(i).is_default())
+}
+
+/// 筆先の繰り返し方法（バージョン 1〜7 が書ける乱数・順だけでない）・反転のしかた・先端同士の比較暗・質感の回転を使うか。
+fn uses_tip_rules(b: &Brush) -> bool {
+    let t = &b.tip;
+    !matches!(t.selection, TipSelection::Random | TipSelection::Sequential)
+        || flip_keys(t.flip_x).1.is_some()
+        || flip_keys(t.flip_y).1.is_some()
+        || t.darken_overlap
+        || b.texture.as_ref().is_some_and(|tex| tex.angle != 0.0)
+}
+
+/// 筆先の繰り返し方法のファイルに書く名前（`random`・`sequential` はバージョン 1〜7 の値）。
+fn selection_id(selection: TipSelection) -> &'static str {
+    match selection {
+        TipSelection::Random => "random",
+        TipSelection::Sequential => "sequential",
+        TipSelection::PingPong => "pingpong",
+        TipSelection::Hold => "hold",
+        TipSelection::Once => "once",
+        TipSelection::Shuffle => "shuffle",
+    }
+}
+
+/// 繰り返し方法の名前（バージョン 8 の値をすべて読む。2 つ目の筆先の値はバージョン 8 にしか無い）。
+fn selection(id: &str) -> Option<TipSelection> {
+    [
+        TipSelection::Random,
+        TipSelection::Sequential,
+        TipSelection::PingPong,
+        TipSelection::Hold,
+        TipSelection::Once,
+        TipSelection::Shuffle,
+    ]
+    .into_iter()
+    .find(|s| selection_id(*s) == id)
+}
+
+/// 反転のしかたを、ファイルの 2 つの鍵（`…flip_x` の旗と `…flip_x_rule` の名前）へ分ける。いつも反転は旗（バージョン 1 から）、ランダムと
+/// 折り返し時はバージョン 8 の規則の名前。反転のしかたは 1 つの列挙で持つので、旗と規則が同時に立つ書き方は書かない。
+fn flip_keys(rule: FlipRule) -> (bool, Option<&'static str>) {
+    match rule {
+        FlipRule::Off => (false, None),
+        FlipRule::On => (true, None),
+        FlipRule::Random => (false, Some("random")),
+        FlipRule::OnFold => (false, Some("fold")),
+    }
+}
+
+/// ファイルの 2 つの鍵から反転のしかたを読む（`rule` は規則の名前。`fixed` と、鍵が無いときは旗に従う。規則があれば規則を優先する:
+/// 旗と規則が両方ある前の書き方でも、ランダム・折り返し時のとき旗は見なかった）。
+fn flip_from_keys(flag: bool, rule: Option<&str>) -> Option<FlipRule> {
+    match rule {
+        None | Some("fixed") => Some(if flag { FlipRule::On } else { FlipRule::Off }),
+        Some("random") => Some(FlipRule::Random),
+        Some("fold") => Some(FlipRule::OnFold),
+        Some(_) => None,
+    }
 }
 
 /// 色の混ぜを使うか（使えば版 3 で書く）。混ぜ方が切なら、ほかの値が既定でなくても使っていない（`canonical` が既定へそろえる）。
@@ -574,6 +1128,14 @@ fn mix_mode_id(mode: MixMode) -> &'static str {
         MixMode::Off => "off",
         MixMode::Mix => "mix",
         MixMode::Smear => "smear",
+        MixMode::Layer => "layer",
+    }
+}
+
+fn mix_space_id(space: MixSpace) -> &'static str {
+    match space {
+        MixSpace::Standard => "standard",
+        MixSpace::Perceptual => "perceptual",
     }
 }
 
@@ -584,11 +1146,20 @@ fn mix_ground_id(ground: MixGround) -> &'static str {
     }
 }
 
-/// 色の混ぜの筆圧の項目（ファイルの名前・筆圧で変えるか・応え）。
-fn mix_pressure_items(m: &ColorMix) -> [(&'static str, bool, &PressureResponse); 2] {
+/// 色の混ぜの筆圧の項目（版 3 のファイルの名前・筆圧で変えるか・応え）。
+fn mix_pressure_items(b: &Brush) -> [(&'static str, bool, &InputResponse); 2] {
+    let i = &b.influences;
     [
-        ("paint", m.pressure_paint, &m.response_paint),
-        ("density", m.pressure_density, &m.response_density),
+        (
+            "paint",
+            i.mix_paint.pressure.on,
+            &i.mix_paint.pressure.response,
+        ),
+        (
+            "density",
+            i.mix_density.pressure.on,
+            &i.mix_density.pressure.response,
+        ),
     ]
 }
 
@@ -622,9 +1193,11 @@ fn texture_mode(id: &str) -> Option<TextureMode> {
     TextureMode::ALL.into_iter().find(|m| mode_id(*m) == id)
 }
 
-fn dual_mode(id: &str) -> Option<DualBrushMode> {
-    DualBrushMode::ALL
+/// 保存の名前のモード。足したモード（[`DualBrushMode::EXTENDED`]）はバージョン 8 の値（バージョン 7 までのファイルにあれば None）。
+fn dual_mode(id: &str, version: u32) -> Option<DualBrushMode> {
+    DualBrushMode::EVERY
         .into_iter()
+        .filter(|m| version >= 8 || !m.is_extended())
         .find(|m| dual_mode_id(*m) == id)
 }
 
@@ -655,29 +1228,7 @@ pub fn decode_user(
     text: &str,
     load: &mut dyn FnMut(&str) -> Result<Arc<BrushTip>, StoreError>,
 ) -> Result<Decoded, StoreError> {
-    let mut lines = text.lines();
-    let version = match lines.next() {
-        Some(HEADER) => 1,
-        Some(HEADER_V2) => 2,
-        Some(HEADER_V3) => 3,
-        Some(HEADER_V4) => 4,
-        Some(HEADER_V5) => 5,
-        Some(first) if first.starts_with("yolupainter-brush ") => {
-            return Err(StoreError::NewerVersion(first.to_owned()))
-        }
-        _ => return Err(StoreError::NotABrush),
-    };
-    let mut map = HashMap::new();
-    for (i, line) in lines.enumerate() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let (key, value) = line.split_once('=').ok_or(StoreError::Syntax(i + 2))?;
-        if map.insert(key.to_owned(), value.to_owned()).is_some() {
-            return Err(StoreError::DuplicateKey(key.to_owned()));
-        }
-    }
-    let mut r = Reader { map };
+    let (version, mut r) = split_file(text)?;
     let name = r.take("name").ok_or(StoreError::BadValue("name".into()))?;
     let name = super::clean_name(&name).ok_or(StoreError::BadValue("name".into()))?;
     let group = r
@@ -685,181 +1236,46 @@ pub fn decode_user(
         .and_then(|g| Group::from_id(&g))
         .ok_or(StoreError::BadValue("group".into()))?;
     let mut b = Brush::default();
-    b.base.radius = r.single("radius", b.base.radius)?;
-    b.base.hardness = r.single("hardness", b.base.hardness)?;
-    b.base.spacing = r.single("spacing", b.base.spacing)?;
-    b.base.opacity = r.single("opacity", b.base.opacity)?;
-    b.base.flow = r.single("flow", b.base.flow)?;
-    b.base.pressure_size = r.bool("pressure_size", b.base.pressure_size)?;
-    b.base.pressure_opacity = r.bool("pressure_opacity", b.base.pressure_opacity)?;
-    b.base.pressure_flow = r.bool("pressure_flow", b.base.pressure_flow)?;
-    // 縁のアンチエイリアスは版 5 の項目（版 4 までのファイルにあれば、知らない項目として断る。無ければ なし）
-    if version >= 5 {
-        if let Some(id) = r.take("anti_alias") {
-            b.base.anti_alias =
-                AntiAlias::from_id(&id).ok_or(StoreError::BadValue("anti_alias".into()))?;
-        }
+    // 版 7 の影響元は、書いた項目だけ（無い入力は使わない）。版 1〜6 は今までの既定（筆圧で大きさと不透明度）から読む
+    if version >= 7 {
+        b.influences = Influences::none();
     }
-    b.tip.image = r.tip("tip.image", load)?;
-    if let Some(list) = r.take("tip.images") {
-        if list != "none" {
-            for token in list.split(',') {
-                b.tip.images.extend(resolve(token, load)?);
-            }
-        }
+    let legacy = version <= 6;
+    read_base(&mut r, &mut b, version)?;
+    read_tip_and_jitter(&mut r, &mut b, version, load)?;
+    read_texture_and_dual(&mut r, &mut b, version, load)?;
+    read_color_and_controls(&mut r, &mut b, version)?;
+    // 色の変化はバージョン 8 の項目（バージョン 7 までのファイルにあれば、知らない項目として断る）
+    if version >= 8 {
+        read_water_edge(&mut r, &mut b)?;
+        read_color_change(&mut r, &mut b)?;
+        read_spray(&mut r, &mut b)?;
+        read_reference_lines(&mut r, &mut b)?;
     }
-    b.tip.selection = match r.take("tip.selection").as_deref() {
-        None | Some("random") => TipSelection::Random,
-        Some("sequential") => TipSelection::Sequential,
-        Some(_) => return Err(StoreError::BadValue("tip.selection".into())),
-    };
-    b.tip.angle = r.float("tip.angle", b.tip.angle)?;
-    b.tip.roundness = r.float("tip.roundness", b.tip.roundness)?;
-    b.tip.follow_direction = r.bool("tip.follow", b.tip.follow_direction)?;
-    b.tip.flip_x = r.bool("tip.flip_x", b.tip.flip_x)?;
-    b.tip.flip_y = r.bool("tip.flip_y", b.tip.flip_y)?;
-    b.jitter.size = r.float("jitter.size", b.jitter.size)?;
-    b.jitter.angle = r.float("jitter.angle", b.jitter.angle)?;
-    b.jitter.roundness = r.float("jitter.roundness", b.jitter.roundness)?;
-    b.jitter.opacity = r.float("jitter.opacity", b.jitter.opacity)?;
-    b.jitter.flow = r.float("jitter.flow", b.jitter.flow)?;
-    b.jitter.scatter = r.float("jitter.scatter", b.jitter.scatter)?;
-    b.jitter.count = r.parse("jitter.count", b.jitter.count)?;
-    if let Some(image) = r.tip("texture", load)? {
-        let mut texture = PaperTexture::new(image, 0.5);
-        texture.depth = r.float("texture.depth", texture.depth)?;
-        texture.scale = r.float("texture.scale", texture.scale)?;
-        if let Some(mode) = r.take("texture.mode") {
-            texture.mode =
-                texture_mode(&mode).ok_or(StoreError::BadValue("texture.mode".into()))?;
-        }
-        b.texture = Some(texture);
+    // 画面上のサイズで指定・目の印はバージョン 9 の項目（バージョン 8 までのファイルにあれば、知らない項目として断る）
+    if version >= 9 {
+        read_v9(&mut r, &mut b)?;
     }
-    if r.bool("dual", false)? {
-        let mut dual = DualBrush::default();
-        dual.tip = r.tip("dual.tip", load)?;
-        dual.radius = r.float("dual.radius", dual.radius)?;
-        dual.hardness = r.float("dual.hardness", dual.hardness)?;
-        dual.spacing = r.float("dual.spacing", dual.spacing)?;
-        dual.angle = r.float("dual.angle", dual.angle)?;
-        dual.roundness = r.float("dual.roundness", dual.roundness)?;
-        dual.scatter = r.float("dual.scatter", dual.scatter)?;
-        dual.count = r.parse("dual.count", dual.count)?;
-        if let Some(mode) = r.take("dual.mode") {
-            dual.mode = dual_mode(&mode).ok_or(StoreError::BadValue("dual.mode".into()))?;
-        }
-        b.dual = Some(dual);
+    // 筆圧の応えは版 2〜6 の項目（版 1・7 のファイルにあれば、知らない項目として断る）
+    if (2..=6).contains(&version) {
+        read_pressure_responses(&mut r, &mut b)?;
     }
-    b.color.foreground_background = r.float("color.fg_bg", b.color.foreground_background)?;
-    b.color.hue = r.float("color.hue", b.color.hue)?;
-    b.color.saturation = r.float("color.saturation", b.color.saturation)?;
-    b.color.brightness = r.float("color.brightness", b.color.brightness)?;
-    b.color.purity = r.float("color.purity", b.color.purity)?;
-    b.color.per_tip = r.bool("color.per_tip", b.color.per_tip)?;
-    let k = &mut b.controls;
-    k.fade_size = r.parse("controls.fade_size", k.fade_size)?;
-    k.fade_opacity = r.parse("controls.fade_opacity", k.fade_opacity)?;
-    k.fade_flow = r.parse("controls.fade_flow", k.fade_flow)?;
-    k.tilt_size = r.bool("controls.tilt_size", k.tilt_size)?;
-    k.tilt_opacity = r.bool("controls.tilt_opacity", k.tilt_opacity)?;
-    k.tilt_flow = r.bool("controls.tilt_flow", k.tilt_flow)?;
-    k.tilt_angle = r.bool("controls.tilt_angle", k.tilt_angle)?;
-    k.rotation_angle = r.bool("controls.rotation_angle", k.rotation_angle)?;
-    k.speed_size = r.bool("controls.speed_size", k.speed_size)?;
-    k.speed_opacity = r.bool("controls.speed_opacity", k.speed_opacity)?;
-    k.speed_flow = r.bool("controls.speed_flow", k.speed_flow)?;
-    k.speed_max = r.float("controls.speed_max", k.speed_max)?;
-    // 筆圧の応えは版 2 の項目（版 1 のファイルにあれば、知らない項目として断る）
-    if version >= 2 {
-        b.controls.pressure_hardness = r.bool("controls.pressure_hardness", false)?;
-        for (name, _) in pressure_items(&Brush::default()) {
-            let min = r.single(&format!("pressure.{name}.min"), 0.0)?;
-            let curve_key = format!("pressure.{name}.curve");
-            let curve = match r.take(&curve_key) {
-                Some(text) => parse_curve(&text).ok_or(StoreError::BadValue(curve_key))?,
-                None => Vec::new(),
-            };
-            let response = PressureResponse::new(min, curve).map_err(StoreError::Invalid)?;
-            match name {
-                "size" => b.pressure.size = response,
-                "opacity" => b.pressure.opacity = response,
-                "flow" => b.pressure.flow = response,
-                _ => b.pressure.hardness = response,
-            }
-        }
+    // 影響元は版 7 の項目（版 6 までのファイルにあれば、知らない項目として断る）
+    if version >= 7 {
+        read_influences(&mut r, &mut b, version)?;
     }
-    // 色の混ぜは版 3 の項目（版 1・2 のファイルにあれば、知らない項目として断る）
+    // 色の混ぜは版 3 の項目（版 1・2 のファイルにあれば、知らない項目として断る）。絵の具の量・濃さの筆圧は版 3〜6 の鍵
     if version >= 3 {
-        b.mix = read_mix(&mut r)?;
+        b.mix = read_mix(&mut r, &mut b.influences, legacy, version >= 8)?;
     }
     // 入り抜き・手ぶれ補正は版 4 の項目（版 3 までのファイルにあれば、知らない項目として断る）。版 4 でも、1 つも無ければ持たない
     let assist = if version >= 4 {
-        let keys = ["assist.stabilizer", "assist.taper_in", "assist.taper_out"];
-        let present = keys.iter().any(|k| r.map.contains_key(*k));
-        let value = |r: &mut Reader, key: &str| r.float(key, 0.0);
-        let (stabilizer, taper_in, taper_out) = (
-            value(&mut r, keys[0])?,
-            value(&mut r, keys[1])?,
-            value(&mut r, keys[2])?,
-        );
-        present.then_some(StrokeAssist {
-            stabilizer,
-            taper_in,
-            taper_out,
-            curve: false,
-        })
+        read_assist(&mut r, version)?
     } else {
         None
     };
-    b.effect = match r.take("effect").as_deref() {
-        None | Some("paint") => BrushEffect::Paint,
-        Some("blur") => BrushEffect::Blur {
-            radius: r.parse("effect.radius", 3)?,
-        },
-        Some("smudge") => BrushEffect::Smudge {
-            strength: r.float("effect.strength", 0.5)?,
-        },
-        Some("clone") => BrushEffect::Clone {
-            offset: DVec2::new(r.float("effect.x", 0.0)?, r.float("effect.y", 0.0)?),
-        },
-        Some(_) => return Err(StoreError::BadValue("effect".into())),
-    };
-    let import = {
-        let source = r.take("import.source");
-        let pattern = r.take("import.pattern");
-        let gaps = r.take("import.gaps");
-        let mapped = r.take("import.mapped");
-        if source.is_none() && pattern.is_none() && gaps.is_none() && mapped.is_none() {
-            None
-        } else {
-            let source: String = source
-                .unwrap_or_default()
-                .chars()
-                .filter(|c| !c.is_control())
-                .collect::<String>()
-                .trim()
-                .chars()
-                .take(MAX_SOURCE_CHARS)
-                .collect();
-            let pattern = match pattern.as_deref() {
-                None | Some("0") => false,
-                Some("1") => true,
-                Some(_) => return Err(StoreError::BadValue("import.pattern".into())),
-            };
-            // 知らない項目の名前は読み飛ばす（新しい版が足した項目。描き方には関わらない情報）
-            let gaps = gaps
-                .unwrap_or_default()
-                .split(',')
-                .filter_map(Gap::from_id)
-                .collect();
-            let mapped = mapped
-                .unwrap_or_default()
-                .split(',')
-                .filter_map(super::gaps::mapped_from_id)
-                .collect();
-            Some(ImportMeta::new(source, pattern, gaps).with_mapped(mapped))
-        }
-    };
+    b.effect = read_effect(&mut r)?;
+    let import = read_import(&mut r)?;
     if let Some(key) = r.map.keys().min() {
         return Err(StoreError::UnknownKey(key.clone()));
     }
@@ -877,13 +1293,643 @@ pub fn decode_user(
     })
 }
 
-/// 版 3 の色の混ぜの項目を読む（無い項目は既定）。
-fn read_mix(r: &mut Reader) -> Result<ColorMix, StoreError> {
+/// 先頭の行から版を決め、残りの `key=value` の行を項目の表にする。
+fn split_file(text: &str) -> Result<(u32, Reader), StoreError> {
+    let mut lines = text.lines();
+    let version = match lines.next() {
+        Some(HEADER) => 1,
+        Some(HEADER_V2) => 2,
+        Some(HEADER_V3) => 3,
+        Some(HEADER_V4) => 4,
+        Some(HEADER_V5) => 5,
+        Some(HEADER_V6) => 6,
+        Some(HEADER_V7) => 7,
+        Some(HEADER_V8) => 8,
+        Some(HEADER_V9) => 9,
+        Some(first) if first.starts_with("yolupainter-brush ") => {
+            return Err(StoreError::NewerVersion(first.to_owned()))
+        }
+        _ => return Err(StoreError::NotABrush),
+    };
+    let mut map = HashMap::new();
+    for (i, line) in lines.enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let (key, value) = line.split_once('=').ok_or(StoreError::Syntax(i + 2))?;
+        if map.insert(key.to_owned(), value.to_owned()).is_some() {
+            return Err(StoreError::DuplicateKey(key.to_owned()));
+        }
+    }
+    Ok((version, Reader { map }))
+}
+
+/// 基本の数値・版 1〜6 の筆圧の切り替え・縁のアンチエイリアスを読む。
+fn read_base(r: &mut Reader, b: &mut Brush, version: u32) -> Result<(), StoreError> {
+    b.base.radius = r.single("radius", b.base.radius)?;
+    b.base.hardness = r.single("hardness", b.base.hardness)?;
+    b.base.spacing = r.single("spacing", b.base.spacing)?;
+    b.base.opacity = r.single("opacity", b.base.opacity)?;
+    b.base.flow = r.single("flow", b.base.flow)?;
+    if version <= 6 {
+        let i = &mut b.influences;
+        i.size.pressure.on = r.bool("pressure_size", i.size.pressure.on)?;
+        i.opacity.pressure.on = r.bool("pressure_opacity", i.opacity.pressure.on)?;
+        i.flow.pressure.on = r.bool("pressure_flow", i.flow.pressure.on)?;
+    }
+    // 縁のアンチエイリアスは版 5 の項目（版 4 までのファイルにあれば、知らない項目として断る。無ければ なし）
+    if version >= 5 {
+        if let Some(id) = r.take("anti_alias") {
+            b.base.anti_alias =
+                AntiAlias::from_id(&id).ok_or(StoreError::BadValue("anti_alias".into()))?;
+        }
+    }
+    Ok(())
+}
+
+/// 筆先（`tip.*`）とばらつき（`jitter.*`）を読む。
+fn read_tip_and_jitter(
+    r: &mut Reader,
+    b: &mut Brush,
+    version: u32,
+    load: &mut dyn FnMut(&str) -> Result<Arc<BrushTip>, StoreError>,
+) -> Result<(), StoreError> {
+    b.tip.image = r.tip("tip.image", load)?;
+    if let Some(list) = r.take("tip.images") {
+        if list != "none" {
+            for token in list.split(',') {
+                b.tip.images.extend(resolve(token, load)?);
+            }
+        }
+    }
+    // 繰り返し方法の新しい値はバージョン 8 のもの（バージョン 7 までのファイルにあれば、値が読めないものとして断る）
+    b.tip.selection = match r.take("tip.selection").as_deref() {
+        None | Some("random") => TipSelection::Random,
+        Some("sequential") => TipSelection::Sequential,
+        Some("pingpong") if version >= 8 => TipSelection::PingPong,
+        Some("hold") if version >= 8 => TipSelection::Hold,
+        Some("once") if version >= 8 => TipSelection::Once,
+        Some("shuffle") if version >= 8 => TipSelection::Shuffle,
+        Some(_) => return Err(StoreError::BadValue("tip.selection".into())),
+    };
+    b.tip.angle = r.float("tip.angle", b.tip.angle)?;
+    b.tip.roundness = r.float("tip.roundness", b.tip.roundness)?;
+    b.tip.follow_direction = r.bool("tip.follow", b.tip.follow_direction)?;
+    let flags = [r.bool("tip.flip_x", false)?, r.bool("tip.flip_y", false)?];
+    let mut rules = [None, None];
+    // 反転のしかた・先端同士の比較暗はバージョン 8 の項目（バージョン 7 までのファイルにあれば、知らない項目として断る）
+    if version >= 8 {
+        for (key, rule) in ["tip.flip_x_rule", "tip.flip_y_rule"]
+            .into_iter()
+            .zip(&mut rules)
+        {
+            *rule = r.take(key).map(|id| (key, id));
+        }
+        b.tip.darken_overlap = r.bool("tip.darken", false)?;
+    }
+    for ((flag, rule), slot) in flags
+        .into_iter()
+        .zip(rules)
+        .zip([&mut b.tip.flip_x, &mut b.tip.flip_y])
+    {
+        let name = rule.as_ref().map(|(_, id)| id.as_str());
+        *slot = flip_from_keys(flag, name).ok_or_else(|| {
+            StoreError::BadValue(rule.as_ref().map_or_else(String::new, |(k, _)| (*k).into()))
+        })?;
+    }
+    b.jitter.size = r.float("jitter.size", b.jitter.size)?;
+    b.jitter.angle = r.float("jitter.angle", b.jitter.angle)?;
+    b.jitter.roundness = r.float("jitter.roundness", b.jitter.roundness)?;
+    b.jitter.opacity = r.float("jitter.opacity", b.jitter.opacity)?;
+    b.jitter.flow = r.float("jitter.flow", b.jitter.flow)?;
+    b.jitter.scatter = r.float("jitter.scatter", b.jitter.scatter)?;
+    b.jitter.count = r.parse("jitter.count", b.jitter.count)?;
+    Ok(())
+}
+
+/// 紙の質感（`texture*`）とデュアルブラシ（`dual*`）を読む。
+fn read_texture_and_dual(
+    r: &mut Reader,
+    b: &mut Brush,
+    version: u32,
+    load: &mut dyn FnMut(&str) -> Result<Arc<BrushTip>, StoreError>,
+) -> Result<(), StoreError> {
+    if let Some(image) = r.tip("texture", load)? {
+        let mut texture = PaperTexture::new(image, 0.5);
+        texture.depth = r.float("texture.depth", texture.depth)?;
+        texture.scale = r.float("texture.scale", texture.scale)?;
+        // 質感の回転はバージョン 8 の項目（バージョン 7 までのファイルにあれば、知らない項目として断る）
+        if version >= 8 {
+            texture.angle = r.float("texture.angle", texture.angle)?;
+        }
+        if let Some(mode) = r.take("texture.mode") {
+            texture.mode =
+                texture_mode(&mode).ok_or(StoreError::BadValue("texture.mode".into()))?;
+        }
+        b.texture = Some(texture);
+    }
+    if r.bool("dual", false)? {
+        let mut dual = DualBrush::default();
+        dual.tip = r.tip("dual.tip", load)?;
+        dual.radius = r.float("dual.radius", dual.radius)?;
+        dual.hardness = r.float("dual.hardness", dual.hardness)?;
+        dual.spacing = r.float("dual.spacing", dual.spacing)?;
+        dual.angle = r.float("dual.angle", dual.angle)?;
+        dual.roundness = r.float("dual.roundness", dual.roundness)?;
+        dual.scatter = r.float("dual.scatter", dual.scatter)?;
+        dual.count = r.parse("dual.count", dual.count)?;
+        if let Some(mode) = r.take("dual.mode") {
+            dual.mode =
+                dual_mode(&mode, version).ok_or(StoreError::BadValue("dual.mode".into()))?;
+        }
+        // サイズの連動・濃度・2 つ目のアンチエイリアス・向きの足しはバージョン 8 の項目（バージョン 7 までのファイルにあれば、知らない項目として断る）
+        if version >= 8 {
+            read_dual_v8(r, &mut dual)?;
+            read_dual_tips(r, &mut dual, load)?;
+            dual.texture = read_dual_texture(r, load)?;
+            dual.spray = read_spray_keys(r, "dual.spray")?;
+        }
+        b.dual = Some(dual);
+    }
+    Ok(())
+}
+
+/// 色のゆらぎ（`color.*`）と操作（`controls.*`。版 1〜6 は傾き・速さの切り替えも）を読む。
+fn read_color_and_controls(r: &mut Reader, b: &mut Brush, version: u32) -> Result<(), StoreError> {
+    b.color.foreground_background = r.float("color.fg_bg", b.color.foreground_background)?;
+    b.color.hue = r.float("color.hue", b.color.hue)?;
+    b.color.saturation = r.float("color.saturation", b.color.saturation)?;
+    b.color.brightness = r.float("color.brightness", b.color.brightness)?;
+    b.color.purity = r.float("color.purity", b.color.purity)?;
+    b.color.per_tip = r.bool("color.per_tip", b.color.per_tip)?;
+    let legacy = version <= 6;
+    let k = &mut b.controls;
+    k.fade_size = r.parse("controls.fade_size", k.fade_size)?;
+    k.fade_opacity = r.parse("controls.fade_opacity", k.fade_opacity)?;
+    k.fade_flow = r.parse("controls.fade_flow", k.fade_flow)?;
+    if legacy {
+        let i = &mut b.influences;
+        i.size.tilt.on = r.bool("controls.tilt_size", i.size.tilt.on)?;
+        i.opacity.tilt.on = r.bool("controls.tilt_opacity", i.opacity.tilt.on)?;
+        i.flow.tilt.on = r.bool("controls.tilt_flow", i.flow.tilt.on)?;
+    }
+    let k = &mut b.controls;
+    k.tilt_angle = r.bool("controls.tilt_angle", k.tilt_angle)?;
+    k.rotation_angle = r.bool("controls.rotation_angle", k.rotation_angle)?;
+    if legacy {
+        let i = &mut b.influences;
+        i.size.speed.on = r.bool("controls.speed_size", i.size.speed.on)?;
+        i.opacity.speed.on = r.bool("controls.speed_opacity", i.opacity.speed.on)?;
+        i.flow.speed.on = r.bool("controls.speed_flow", i.flow.speed.on)?;
+    }
+    b.influences.speed_max = r.float("controls.speed_max", b.influences.speed_max)?;
+    // 最低 1 ピクセルは版 6 の項目（版 5 までのファイルにあれば、知らない項目として断る。無ければ切）
+    if version >= 6 {
+        b.controls.min_one_pixel = r.bool("controls.min_one_pixel", false)?;
+    }
+    Ok(())
+}
+
+/// 版 2〜6 の筆圧の応え（硬さの切り替えと、大きさ・不透明度・流量・硬さの最小値と曲線）を読む。
+fn read_pressure_responses(r: &mut Reader, b: &mut Brush) -> Result<(), StoreError> {
+    b.influences.hardness.pressure.on = r.bool("controls.pressure_hardness", false)?;
+    for (name, item) in [
+        ("size", Item::Size),
+        ("opacity", Item::Opacity),
+        ("flow", Item::Flow),
+        ("hardness", Item::Hardness),
+    ] {
+        let response = read_response(r, &format!("pressure.{name}"), false, false)?;
+        b.influences.get_mut(item).pressure.response = response;
+    }
+    Ok(())
+}
+
+/// 色の変化（`color.tip.*`・`color.sub_mix`・`color.stroke.*`・`color.target`）を読む。先端・ストロークごとは、鍵が 1 つでもあれば持ち、
+/// 無い値は 0 とする。範囲は core の検査に任せる。
+fn read_color_change(r: &mut Reader, b: &mut Brush) -> Result<(), StoreError> {
+    let has = |r: &Reader, keys: &[&str]| keys.iter().any(|k| r.map.contains_key(*k));
+    let tip_keys = ["color.tip.hue", "color.tip.saturation", "color.tip.value"];
+    if has(r, &tip_keys) {
+        b.color.tip = Some(TipColorChange {
+            hue: r.single(tip_keys[0], 0.0)?,
+            saturation: r.single(tip_keys[1], 0.0)?,
+            value: r.single(tip_keys[2], 0.0)?,
+        });
+    }
+    b.color.sub_mix = r.single("color.sub_mix", 0.0)?;
+    let stroke_keys = [
+        "color.stroke.hue",
+        "color.stroke.saturation",
+        "color.stroke.value",
+        "color.stroke.sub_mix",
+    ];
+    if has(r, &stroke_keys) {
+        b.color.stroke = Some(StrokeColorChange {
+            hue: r.single(stroke_keys[0], 0.0)?,
+            saturation: r.single(stroke_keys[1], 0.0)?,
+            value: r.single(stroke_keys[2], 0.0)?,
+            sub_mix: r.single(stroke_keys[3], 0.0)?,
+        });
+    }
+    if let Some(id) = r.take("color.target") {
+        b.color.target = ColorTarget::ALL
+            .into_iter()
+            .find(|t| t.id() == id)
+            .ok_or(StoreError::BadValue("color.target".into()))?;
+    }
+    Ok(())
+}
+
+/// バージョン 7 の影響元（項目ごと・入力ごとの `.on`・`.min`・`.curve`）を読む。色の項目はバージョン 8 の項目。
+fn read_influences(r: &mut Reader, b: &mut Brush, version: u32) -> Result<(), StoreError> {
+    for item in Item::ALL {
+        for input in Input::ALL {
+            let key = format!("influence.{}.{}", item.id(), input.id());
+            let on = r.bool(&format!("{key}.on"), false)?;
+            let response = read_response(r, &key, false, version >= 9 && input == Input::Tilt)?;
+            *b.influences.get_mut(item).input_mut(input) = InputUse { on, response };
+        }
+    }
+    if version >= 8 {
+        for item in ColorItem::ALL {
+            for input in Input::ALL {
+                let key = format!("influence.{}.{}", item.id(), input.id());
+                let on = r.bool(&format!("{key}.on"), false)?;
+                let response =
+                    read_response(r, &key, item.signed(), version >= 9 && input == Input::Tilt)?;
+                *b.influences.color_mut(item).input_mut(input) = InputUse { on, response };
+            }
+        }
+        for item in SprayItem::ALL {
+            for input in Input::ALL {
+                let key = format!("influence.{}.{}", item.id(), input.id());
+                let on = r.bool(&format!("{key}.on"), false)?;
+                let response = read_response(r, &key, false, version >= 9 && input == Input::Tilt)?;
+                *b.influences.spray_mut(item).input_mut(input) = InputUse { on, response };
+            }
+        }
+        for item in DualItem::ALL {
+            for input in Input::ALL {
+                let key = format!("influence.{}.{}", item.id(), input.id());
+                let on = r.bool(&format!("{key}.on"), false)?;
+                let response = read_response(r, &key, false, version >= 9 && input == Input::Tilt)?;
+                *b.influences.dual_mut(item).input_mut(input) = InputUse { on, response };
+            }
+        }
+    }
+    Ok(())
+}
+
+/// デュアルブラシのバージョン 8 の項目（`dual.link_size`・`dual.flow`・`dual.anti_alias`・`dual.angle_*`）を読む。範囲は core の検査に任せる。
+fn read_dual_v8(r: &mut Reader, d: &mut DualBrush) -> Result<(), StoreError> {
+    d.link_size = r.bool("dual.link_size", false)?;
+    d.flow = r.single("dual.flow", 1.0)?;
+    if let Some(id) = r.take("dual.anti_alias") {
+        d.anti_alias =
+            Some(AntiAlias::from_id(&id).ok_or(StoreError::BadValue("dual.anti_alias".into()))?);
+    }
+    d.angle_tilt = r.bool("dual.angle_tilt", false)?;
+    d.angle_rotation = r.bool("dual.angle_rotation", false)?;
+    d.angle_line = r.bool("dual.angle_line", false)?;
+    d.angle_random = r.single("dual.angle_random", 0.0)?;
+    Ok(())
+}
+
+/// 水彩境界（`water_edge.*`）を読む。鍵が 1 つも無ければ無し。範囲は core の検査に任せる。
+fn read_water_edge(r: &mut Reader, b: &mut Brush) -> Result<(), StoreError> {
+    const NAMES: [&str; 5] = ["width", "opacity", "darkness", "after_stroke", "blur"];
+    let key = |name: &str| format!("water_edge.{name}");
+    if !NAMES.iter().any(|n| r.map.contains_key(&key(n))) {
+        return Ok(());
+    }
+    let d = WaterEdge::default();
+    b.water_edge = Some(WaterEdge {
+        width: r.single(&key("width"), d.width)?,
+        opacity: r.single(&key("opacity"), d.opacity)?,
+        darkness: r.single(&key("darkness"), d.darkness)?,
+        after_stroke: r.bool(&key("after_stroke"), false)?,
+        blur: r.single(&key("blur"), 0.0)?,
+    });
+    Ok(())
+}
+
+/// はみ出し防止（`refer.*`）を読む。鍵が無ければ切。`refer.on=1` が無いのに ほかの `refer.*`（や `refer.on=0`）があるファイルは、書き戻すと
+/// 同じバイトにならない（切のブラシは何も書かない）ので、知らない項目として断る。
+fn read_reference_lines(r: &mut Reader, b: &mut Brush) -> Result<(), StoreError> {
+    if r.map.get("refer.on").map(String::as_str) != Some("1") {
+        if let Some(key) = r.map.keys().filter(|k| k.starts_with("refer.")).min() {
+            return Err(StoreError::UnknownKey(key.clone()));
+        }
+    }
+    let d = ReferenceLines::default();
+    let mode = match r.take("refer.mode") {
+        None => d.mode,
+        Some(id) => [ExpandMode::Square, ExpandMode::Round, ExpandMode::Darkest]
+            .into_iter()
+            .find(|m| expand_mode_id(*m) == id)
+            .ok_or_else(|| StoreError::BadValue("refer.mode".into()))?,
+    };
+    b.reference_lines = ReferenceLines {
+        enabled: r.bool("refer.on", false)?,
+        margin: r.single("refer.margin", d.margin)?,
+        expand: r.bool("refer.expand", false)?,
+        amount: r.single("refer.amount", d.amount)?,
+        mode,
+    };
+    Ok(())
+}
+
+/// 散布効果（`spray.*`）を読む。鍵が 1 つでもあれば持ち、無い値は既定（粒子サイズ・粒子密度は [`Spray::default`]）。範囲は core の検査に任せる。
+fn read_spray(r: &mut Reader, b: &mut Brush) -> Result<(), StoreError> {
+    b.spray = read_spray_keys(r, "spray")?;
+    Ok(())
+}
+
+/// 散布効果の鍵（`<prefix>.size` など）を読む。鍵が 1 つも無ければ None。
+fn read_spray_keys(r: &mut Reader, prefix: &str) -> Result<Option<Spray>, StoreError> {
+    const NAMES: [&str; 7] = [
+        "size",
+        "link_size",
+        "density",
+        "bias",
+        "angle",
+        "direction",
+        "random_angle",
+    ];
+    let key = |name: &str| format!("{prefix}.{name}");
+    if !NAMES.iter().any(|n| r.map.contains_key(&key(n))) {
+        return Ok(None);
+    }
+    let d = Spray::default();
+    let direction = match r.take(&key("direction")) {
+        None => SprayDirection::None,
+        Some(id) => SprayDirection::ALL
+            .into_iter()
+            .find(|v| v.id() == id)
+            .ok_or_else(|| StoreError::BadValue(key("direction")))?,
+    };
+    let random_angle = if r.map.contains_key(&key("random_angle")) {
+        Some(r.single(&key("random_angle"), 0.0)?)
+    } else {
+        None
+    };
+    Ok(Some(Spray {
+        size: r.single(&key("size"), d.size)?,
+        link_size: r.bool(&key("link_size"), false)?,
+        density: r.single(&key("density"), d.density)?,
+        bias: r.single(&key("bias"), 0.0)?,
+        angle: r.single(&key("angle"), 0.0)?,
+        direction,
+        random_angle,
+    }))
+}
+
+/// 2 つ目の複数の筆先と選び方・反転・比較暗（`dual.tips`・`dual.selection`・`dual.flip_*`・`dual.darken`）を読む。
+fn read_dual_tips(
+    r: &mut Reader,
+    d: &mut DualBrush,
+    load: &mut dyn FnMut(&str) -> Result<Arc<BrushTip>, StoreError>,
+) -> Result<(), StoreError> {
+    if let Some(list) = r.take("dual.tips") {
+        for token in list.split(',') {
+            d.tips.extend(resolve(token, load)?);
+        }
+    }
+    if let Some(id) = r.take("dual.selection") {
+        d.selection = selection(&id).ok_or(StoreError::BadValue("dual.selection".into()))?;
+    }
+    let flags = [r.bool("dual.flip_x", false)?, r.bool("dual.flip_y", false)?];
+    for ((key, flag), slot) in [
+        ("dual.flip_x_rule", flags[0]),
+        ("dual.flip_y_rule", flags[1]),
+    ]
+    .into_iter()
+    .zip([&mut d.flip_x, &mut d.flip_y])
+    {
+        let id = r.take(key);
+        *slot = flip_from_keys(flag, id.as_deref()).ok_or(StoreError::BadValue(key.into()))?;
+    }
+    d.darken_overlap = r.bool("dual.darken", false)?;
+    Ok(())
+}
+
+/// 2 つ目の紙の質感（`dual.texture`・`dual.texture.*`）を読む。無ければ None。範囲は core の検査に任せる。
+fn read_dual_texture(
+    r: &mut Reader,
+    load: &mut dyn FnMut(&str) -> Result<Arc<BrushTip>, StoreError>,
+) -> Result<Option<PaperTexture>, StoreError> {
+    let Some(image) = r.tip("dual.texture", load)? else {
+        return Ok(None);
+    };
+    let mut texture = PaperTexture::new(image, 0.5);
+    texture.depth = r.single("dual.texture.depth", texture.depth)?;
+    texture.scale = r.single("dual.texture.scale", texture.scale)?;
+    texture.angle = r.single("dual.texture.angle", texture.angle)?;
+    if let Some(mode) = r.take("dual.texture.mode") {
+        texture.mode =
+            texture_mode(&mode).ok_or(StoreError::BadValue("dual.texture.mode".into()))?;
+    }
+    Ok(Some(texture))
+}
+
+/// 入り抜き・手ぶれ補正（`assist.*`）を読む。1 つも無ければ持たない。入り抜きの影響先（`assist.taper.*`）はバージョン 8 の項目、速度による調整・
+/// はらい・後補正（[`write_correction`]）はバージョン 9 の項目（前のバージョンのファイルにあれば、知らない項目として断る）。
+fn read_assist(r: &mut Reader, version: u32) -> Result<Option<StrokeAssist>, StoreError> {
+    let keys = ["assist.stabilizer", "assist.taper_in", "assist.taper_out"];
+    let present = keys.iter().any(|k| r.map.contains_key(*k));
+    let value = |r: &mut Reader, key: &str| r.float(key, 0.0);
+    let (stabilizer, taper_in, taper_out) =
+        (value(r, keys[0])?, value(r, keys[1])?, value(r, keys[2])?);
+    let targets = if version >= 8 {
+        read_taper_targets(r)?
+    } else {
+        None
+    };
+    let mut assist = StrokeAssist {
+        stabilizer,
+        taper_in,
+        taper_out,
+        taper_targets: targets.unwrap_or_default(),
+        curve: false,
+        ..StrokeAssist::default()
+    };
+    let corrected = version >= 9 && read_correction(r, &mut assist)?;
+    Ok((present || targets.is_some() || corrected).then_some(assist))
+}
+
+/// バージョン 9 の補正の項目（[`write_correction`]）を読む（無い項目は既定）。1 つでもあれば true。
+fn read_correction(r: &mut Reader, a: &mut StrokeAssist) -> Result<bool, StoreError> {
+    let keys = [
+        "assist.stabilizer_speed",
+        "assist.sweep",
+        "assist.post",
+        "assist.post.strength",
+        "assist.post.by_speed",
+        "assist.post.by_view_scale",
+    ];
+    let present = keys.iter().any(|k| r.map.contains_key(*k));
+    a.stabilizer_speed = match r.take(keys[0]).as_deref() {
+        None => None,
+        Some("fast") => Some(StabilizerSpeed::WeakenWhenFast),
+        Some("slow") => Some(StabilizerSpeed::SlowOnly),
+        Some(_) => return Err(StoreError::BadValue(keys[0].into())),
+    };
+    a.sweep = r.float(keys[1], 0.0)?;
+    let d = PostCorrection::default();
+    a.post = PostCorrection {
+        on: r.bool(keys[2], d.on)?,
+        strength: r.float(keys[3], d.strength)?,
+        by_speed: r.bool(keys[4], d.by_speed)?,
+        by_view_scale: r.bool(keys[5], d.by_view_scale)?,
+        ..d
+    };
+    Ok(present)
+}
+
+/// 入り抜きを掛ける項目と最小値（`assist.taper.<項目>`）。1 つも無ければ None（既定）。あれば 8 項目とも要る（`off` か 0〜1 の最小値）。
+fn read_taper_targets(r: &mut Reader) -> Result<Option<TaperTargets>, StoreError> {
+    let key = |item: Item| format!("assist.taper.{}", item.id());
+    if !Item::ALL.into_iter().any(|i| r.map.contains_key(&key(i))) {
+        return Ok(None);
+    }
+    let mut targets = TaperTargets::NONE;
+    for item in Item::ALL {
+        let k = key(item);
+        let text = r.take(&k).ok_or_else(|| StoreError::BadValue(k.clone()))?;
+        let min = match text.as_str() {
+            "off" => None,
+            number => Some(
+                number
+                    .parse::<f64>()
+                    .map_err(|_| StoreError::BadValue(k.clone()))?,
+            ),
+        };
+        targets = targets
+            .with(item, min)
+            .map_err(|_| StoreError::BadValue(k.clone()))?;
+    }
+    Ok(Some(targets))
+}
+
+/// 効果（`effect*`）を読む。
+fn read_effect(r: &mut Reader) -> Result<BrushEffect, StoreError> {
+    Ok(match r.take("effect").as_deref() {
+        None | Some("paint") => BrushEffect::Paint,
+        Some("blur") => BrushEffect::Blur {
+            radius: r.parse("effect.radius", 3)?,
+        },
+        Some("smudge") => BrushEffect::Smudge {
+            strength: r.float("effect.strength", 0.5)?,
+        },
+        Some("clone") => BrushEffect::Clone {
+            offset: DVec2::new(r.float("effect.x", 0.0)?, r.float("effect.y", 0.0)?),
+        },
+        Some(_) => return Err(StoreError::BadValue("effect".into())),
+    })
+}
+
+/// 取り込んだブラシの出どころと、表せなかった項目の印（`import.*`）を読む。1 つも無ければ取り込みではない。
+fn read_import(r: &mut Reader) -> Result<Option<ImportMeta>, StoreError> {
+    let source = r.take("import.source");
+    let pattern = r.take("import.pattern");
+    let gaps = r.take("import.gaps");
+    let mapped = r.take("import.mapped");
+    if source.is_none() && pattern.is_none() && gaps.is_none() && mapped.is_none() {
+        return Ok(None);
+    }
+    let source: String = source
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect::<String>()
+        .trim()
+        .chars()
+        .take(MAX_SOURCE_CHARS)
+        .collect();
+    let pattern = match pattern.as_deref() {
+        None | Some("0") => false,
+        Some("1") => true,
+        Some(_) => return Err(StoreError::BadValue("import.pattern".into())),
+    };
+    // 知らない項目の名前は読み飛ばす（新しい版が足した項目。描き方には関わらない情報）
+    let gaps = gaps
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(Gap::from_id)
+        .collect();
+    let mapped = mapped
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(super::gaps::mapped_from_id)
+        .collect();
+    Ok(Some(
+        ImportMeta::new(source, pattern, gaps).with_mapped(mapped),
+    ))
+}
+
+/// 応えの最小値 `<key>.min` と曲線 `<key>.curve` を読む（無ければ既定）。`signed` なら最小値は −1〜1（色相・彩度・明度の影響元）、でなければ 0〜1。
+fn read_response(
+    r: &mut Reader,
+    key: &str,
+    signed: bool,
+    max: bool,
+) -> Result<InputResponse, StoreError> {
+    let min = r.single(&format!("{key}.min"), 0.0)?;
+    // 傾きの最大値（バージョン 9）。読まない入力・バージョンでは、鍵があれば知らない項目として断る
+    let max = if max {
+        r.single(&format!("{key}.max"), 1.0)?
+    } else {
+        1.0
+    };
+    let curve_key = format!("{key}.curve");
+    let curve = match r.take(&curve_key) {
+        Some(text) => parse_curve(&text).ok_or(StoreError::BadValue(curve_key))?,
+        None => Vec::new(),
+    };
+    let response = if signed {
+        InputResponse::new_signed(min, curve)
+    } else {
+        InputResponse::new(min, curve)
+    };
+    response
+        .and_then(|response| response.with_max(max))
+        .map_err(StoreError::Invalid)
+}
+
+/// バージョン 9 の項目（`controls.size_by_screen`・`rows.shown`・`tip.continuous`・`tip.ribbon`）を読む。目の印は、行の名前の並び（知らない名前は断る）。
+fn read_v9(r: &mut Reader, b: &mut Brush) -> Result<(), StoreError> {
+    b.controls.size_by_screen = r.bool("controls.size_by_screen", false)?;
+    b.tip.continuous = r.bool("tip.continuous", false)?;
+    b.tip.ribbon = r.bool("tip.ribbon", false)?;
+    if let Some(text) = r.take("rows.shown") {
+        let mut ids = Vec::new();
+        for id in text.split(',').filter(|s| !s.is_empty()) {
+            if super::rows::Row::from_id(id).is_none() {
+                return Err(StoreError::BadValue("rows.shown".into()));
+            }
+            ids.push(id.to_owned());
+        }
+        // 初めの形と同じ並びでも、書いてあれば持つ（正規の形が決める）
+        b.shown_rows = Some(ids);
+    }
+    Ok(())
+}
+
+/// 版 3 の色の混ぜの項目を読む（無い項目は既定）。`legacy`（版 3〜6）なら絵の具の量・濃さの筆圧の鍵も読み、影響元へ写す。
+fn read_mix(
+    r: &mut Reader,
+    influences: &mut Influences,
+    legacy: bool,
+    v8: bool,
+) -> Result<ColorMix, StoreError> {
     let mut m = ColorMix::default();
     m.mode = match r.take("mix.mode").as_deref() {
         None | Some("off") => MixMode::Off,
         Some("mix") => MixMode::Mix,
         Some("smear") => MixMode::Smear,
+        // 重ねる方式はバージョン 8 の値（バージョン 7 までのファイルにあれば、読めない値として断る）
+        Some("layer") if v8 => MixMode::Layer,
         Some(_) => return Err(StoreError::BadValue("mix.mode".into())),
     };
     m.paint = r.single("mix.paint", m.paint)?;
@@ -894,21 +1940,29 @@ fn read_mix(r: &mut Reader) -> Result<ColorMix, StoreError> {
         Some("composite") => MixGround::Composite,
         Some(_) => return Err(StoreError::BadValue("mix.ground".into())),
     };
-    for name in ["paint", "density"] {
-        let on = r.bool(&format!("mix.{name}.pressure"), false)?;
-        let min = r.single(&format!("mix.{name}.min"), 0.0)?;
-        let curve_key = format!("mix.{name}.curve");
-        let curve = match r.take(&curve_key) {
-            Some(text) => parse_curve(&text).ok_or(StoreError::BadValue(curve_key))?,
-            None => Vec::new(),
+    // バージョン 8 の項目（バージョン 7 までのファイルにあれば、知らない項目として断る）
+    if v8 {
+        m.space = match r.take("mix.space").as_deref() {
+            None | Some("standard") => MixSpace::Standard,
+            Some("perceptual") => MixSpace::Perceptual,
+            Some(_) => return Err(StoreError::BadValue("mix.space".into())),
         };
-        let response = PressureResponse::new(min, curve).map_err(StoreError::Invalid)?;
-        if name == "paint" {
-            m.pressure_paint = on;
-            m.response_paint = response;
-        } else {
-            m.pressure_density = on;
-            m.response_density = response;
+        m.correction = r.parse("mix.correction", 0u8)?;
+        m.blur = match r.take("mix.blur").as_deref() {
+            None => MixBlur::Auto,
+            Some("linked") => MixBlur::Linked,
+            Some(v) => match v.parse::<f32>() {
+                Ok(px) if px.is_finite() => MixBlur::Fixed(f64::from(px)),
+                _ => return Err(StoreError::BadValue("mix.blur".into())),
+            },
+        };
+        m.load = r.single("mix.load", m.load)?;
+    }
+    if legacy {
+        for (name, item) in [("paint", Item::MixPaint), ("density", Item::MixDensity)] {
+            let on = r.bool(&format!("mix.{name}.pressure"), false)?;
+            let response = read_response(r, &format!("mix.{name}"), false, false)?;
+            influences.get_mut(item).pressure = InputUse { on, response };
         }
     }
     Ok(m)
@@ -1326,13 +2380,13 @@ mod tests {
         let mut b = Brush::default();
         b.base.radius = 33.5;
         b.base.hardness = 0.37;
-        b.base.pressure_flow = true;
+        b.influences.flow.pressure.on = true;
         b.tip = TipShape {
             image: builtin_tip("bristles"),
             angle: -42.5,
             roundness: 0.4,
             follow_direction: true,
-            flip_x: true,
+            flip_x: FlipRule::On,
             ..TipShape::default()
         };
         b.jitter = Jitter {
@@ -1358,7 +2412,7 @@ mod tests {
         b.color.per_tip = false;
         b.controls.fade_size = 120;
         b.controls.tilt_angle = true;
-        b.controls.speed_max = 1500.0;
+        b.influences.speed_max = 1500.0;
         b.effect = BrushEffect::Clone {
             offset: DVec2::new(-12.5, 40.0),
         };
@@ -1384,16 +2438,17 @@ mod tests {
     /// 筆圧の応えを全項目に入れたブラシ。
     fn pressure_brush() -> Brush {
         let mut b = Brush::default();
-        b.base.pressure_flow = true;
-        b.controls.pressure_hardness = true;
-        b.pressure.size = PressureResponse::new(0.25, vec![]).unwrap();
-        b.pressure.opacity = PressureResponse::new(
+        b.influences.flow.pressure.on = true;
+        b.influences.hardness.pressure.on = true;
+        b.influences.size.pressure.response = InputResponse::new(0.25, vec![]).unwrap();
+        b.influences.opacity.pressure.response = InputResponse::new(
             0.1,
             vec![pt(0.0, 0.0), pt(0.4, 0.7), pt(0.75, 0.8), pt(1.0, 1.0)],
         )
         .unwrap();
-        b.pressure.flow = PressureResponse::new(0.0, vec![pt(0.0, 1.0), pt(1.0, 0.2)]).unwrap();
-        b.pressure.hardness = PressureResponse::new(0.333, vec![]).unwrap();
+        b.influences.flow.pressure.response =
+            InputResponse::new(0.0, vec![pt(0.0, 1.0), pt(1.0, 0.2)]).unwrap();
+        b.influences.hardness.pressure.response = InputResponse::new(0.333, vec![]).unwrap();
         b
     }
 
@@ -1429,7 +2484,7 @@ mod tests {
         let (c, k) = ops::add_point(&Curve::identity(), 0.373_737_373_7, 0.616_161_616_1).unwrap();
         let c = ops::move_point(&c, k, 0.412_345_678_91, 0.777_777_777_7).unwrap();
         let mut b = Brush::default();
-        b.pressure.size = PressureResponse::new(0.123_456_789, vec![])
+        b.influences.size.pressure.response = InputResponse::new(0.123_456_789, vec![])
             .unwrap()
             .with_curve_shape(c.clone())
             .unwrap();
@@ -1438,8 +2493,16 @@ mod tests {
         assert!(t.starts_with("yolupainter-brush 2\n"), "{t}");
         let (_, _, back) = decode(&t).unwrap();
         assert_eq!(back, canonical(&u.brush));
-        assert_eq!(back.pressure.size.curve().len(), 3);
-        for (saved, made) in back.pressure.size.curve().iter().zip(c.points()) {
+        assert_eq!(back.influences.size.pressure.response.curve().len(), 3);
+        for (saved, made) in back
+            .influences
+            .size
+            .pressure
+            .response
+            .curve()
+            .iter()
+            .zip(c.points())
+        {
             assert!(
                 (saved.x - made.x).abs() < 1e-6 && (saved.y - made.y).abs() < 1e-6,
                 "{saved:?} {made:?}"
@@ -1457,15 +2520,15 @@ mod tests {
     fn a_brush_without_a_pressure_response_keeps_version_one_and_its_bytes() {
         // 筆圧の切り替えだけ（応えは既定）なら今までと同じ版と同じ行
         let mut b = Brush::default();
-        b.base.pressure_flow = true;
+        b.influences.flow.pressure.on = true;
         let t = text(&user(1, b));
         assert!(t.starts_with("yolupainter-brush 1\n"), "{t}");
         assert!(!t.contains("pressure."), "{t}");
         assert!(!t.contains("pressure_hardness"), "{t}");
         // 直線の曲線を明示しても既定と同じ
         let mut straight = Brush::default();
-        straight.pressure.size =
-            PressureResponse::new(0.0, vec![pt(0.0, 0.0), pt(1.0, 1.0)]).unwrap();
+        straight.influences.size.pressure.response =
+            InputResponse::new(0.0, vec![pt(0.0, 0.0), pt(1.0, 1.0)]).unwrap();
         assert_eq!(text(&user(1, straight)), text(&user(1, Brush::default())));
     }
 
@@ -1542,24 +2605,27 @@ mod tests {
 
     /// 色の混ぜを全項目に入れたブラシ（筆圧の応えも使う）。
     fn mixing_brush() -> Brush {
-        Brush {
+        let mut b = Brush {
             mix: ColorMix {
                 mode: MixMode::Smear,
                 paint: 0.625,
                 density: 0.8,
                 stretch: 0.25,
                 ground: MixGround::Composite,
-                pressure_paint: true,
-                pressure_density: true,
-                response_paint: PressureResponse::new(0.2, vec![]).unwrap(),
-                response_density: PressureResponse::new(
-                    0.0,
-                    vec![pt(0.0, 0.0), pt(0.5, 0.75), pt(1.0, 1.0)],
-                )
-                .unwrap(),
+                ..ColorMix::default()
             },
             ..Brush::default()
-        }
+        };
+        b.influences.mix_paint.pressure = InputUse {
+            on: true,
+            response: InputResponse::new(0.2, vec![]).unwrap(),
+        };
+        b.influences.mix_density.pressure = InputUse {
+            on: true,
+            response: InputResponse::new(0.0, vec![pt(0.0, 0.0), pt(0.5, 0.75), pt(1.0, 1.0)])
+                .unwrap(),
+        };
+        b
     }
 
     #[test]
@@ -1588,8 +2654,8 @@ mod tests {
         assert_eq!(text(&UserBrush { brush: back, ..u }), t);
         // 混ぜる + 筆圧の応えは、同じ版 3 のファイルに両方の項目を書く
         let mut both = mixing_brush();
-        both.controls.pressure_hardness = true;
-        both.pressure.size = PressureResponse::new(0.25, vec![]).unwrap();
+        both.influences.hardness.pressure.on = true;
+        both.influences.size.pressure.response = InputResponse::new(0.25, vec![]).unwrap();
         let t = text(&user(6, both.clone()));
         assert!(t.starts_with("yolupainter-brush 3\n"), "{t}");
         assert!(t.lines().any(|l| l == "pressure.size.min=0.25"), "{t}");
@@ -1615,7 +2681,7 @@ mod tests {
         off.mix.density = 0.2;
         off.mix.stretch = 0.9;
         off.mix.ground = MixGround::Composite;
-        off.mix.pressure_paint = true;
+        off.influences.mix_paint.pressure.on = true;
         assert_eq!(text(&user(1, off)), plain);
         // 筆圧の応えだけのブラシは版 2 のまま、混ぜの行は無い
         let t = text(&user(1, pressure_brush()));
@@ -1721,6 +2787,178 @@ mod tests {
         ));
     }
 
+    /// 下地混色の拡張（バージョン 8 の項目）を全部使うブラシ。
+    fn extended_mixing_brush() -> Brush {
+        let mut b = mixing_brush();
+        b.mix = ColorMix {
+            mode: MixMode::Layer,
+            space: MixSpace::Perceptual,
+            correction: 3,
+            blur: MixBlur::Fixed(5.0),
+            load: 0.4,
+            ..b.mix
+        };
+        b
+    }
+
+    #[test]
+    fn the_extended_mix_items_make_a_version_eight_file_and_round_trip() {
+        let u = user(9, extended_mixing_brush());
+        let t = text(&u);
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        for key in [
+            "mix.mode=layer",
+            "mix.space=perceptual",
+            "mix.correction=3",
+            "mix.blur=5",
+            "mix.load=0.4",
+        ] {
+            assert!(t.lines().any(|l| l == key), "{key}\n{t}");
+        }
+        // 影響元はバージョン 7 以上の鍵で書く（バージョン 3 の筆圧の鍵は書かない）
+        assert!(
+            t.lines().any(|l| l == "influence.mix_paint.pressure.on=1"),
+            "{t}"
+        );
+        assert!(!t.contains("mix.paint.pressure"), "{t}");
+        let (_, _, back) = decode(&t).unwrap();
+        assert_eq!(back, u.brush);
+        assert_eq!(text(&UserBrush { brush: back, ..u }), t);
+        // 1 項目だけでもバージョン 8。方式が重ねるのとき、知覚的・補正・にじむ強さ・初めの量が既定なら、それらの鍵は書かない
+        let only_layer = {
+            let mut b = mixing_brush();
+            b.mix.mode = MixMode::Layer;
+            b
+        };
+        let t = text(&user(10, only_layer));
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        assert!(t.lines().any(|l| l == "mix.mode=layer"), "{t}");
+        for key in ["mix.space", "mix.correction", "mix.blur", "mix.load"] {
+            assert!(!t.contains(key), "{key}\n{t}");
+        }
+        for (what, edit) in [
+            (
+                "space",
+                Box::new(|b: &mut Brush| b.mix.space = MixSpace::Perceptual)
+                    as Box<dyn Fn(&mut Brush)>,
+            ),
+            ("correction", Box::new(|b: &mut Brush| b.mix.correction = 1)),
+            (
+                "blur",
+                Box::new(|b: &mut Brush| b.mix.blur = MixBlur::Fixed(2.0)),
+            ),
+            ("load", Box::new(|b: &mut Brush| b.mix.load = 0.5)),
+        ] {
+            let mut b = mixing_brush();
+            edit(&mut b);
+            let t = text(&user(11, b.clone()));
+            assert!(t.starts_with("yolupainter-brush 8\n"), "{what}\n{t}");
+            assert_eq!(decode(&t).unwrap().2, canonical(&b), "{what}");
+        }
+        // バージョン 3 の混ぜる・伸ばすで、新しい値が既定なら、今までのバージョン・今までと同じバイト
+        let t = text(&user(12, mixing_brush()));
+        assert!(t.starts_with("yolupainter-brush 3\n"), "{t}");
+        for key in ["mix.space", "mix.correction", "mix.blur", "mix.load"] {
+            assert!(!t.contains(key), "{key}\n{t}");
+        }
+        // 混ぜ方が切のブラシは、新しい値が何でも持たない（バージョン 1 のまま）
+        let mut off = Brush::default();
+        off.mix.space = MixSpace::Perceptual;
+        off.mix.correction = 2;
+        off.mix.blur = MixBlur::Fixed(3.0);
+        off.mix.load = 0.1;
+        let t = text(&user(13, off));
+        assert!(
+            t.starts_with("yolupainter-brush 1\n") && !t.contains("mix."),
+            "{t}"
+        );
+        // 値は画面の精度（f32）で書き、読み戻しても同じ値
+        let mut odd = extended_mixing_brush();
+        odd.mix.load = 0.123_456_79;
+        odd.mix.blur = MixBlur::Fixed(2.345_678_9);
+        let u = user(14, odd);
+        let back = decode(&text(&u)).unwrap().2;
+        assert_eq!(back.mix.load, 0.123_456_79_f32 as f64);
+        assert_eq!(back.mix.blur, MixBlur::Fixed(2.345_678_9_f32 as f64));
+        assert_eq!(back, u.brush);
+    }
+
+    #[test]
+    fn the_extended_mix_items_are_version_eight_and_are_checked() {
+        let v8 = text(&user(1, extended_mixing_brush()));
+        // バージョン 7 までのファイルにあれば、知らない項目として断る（重ねる方式の値は、読めない値として断る）
+        for old in ["yolupainter-brush 3", "yolupainter-brush 7"] {
+            let as_old = v8.replacen("yolupainter-brush 8", old, 1);
+            assert!(decode(&as_old).is_err(), "{old}");
+        }
+        let only_keys = v8.replace("mix.mode=layer", "mix.mode=smear");
+        for old in ["yolupainter-brush 3", "yolupainter-brush 7"] {
+            let as_old = only_keys.replacen("yolupainter-brush 8", old, 1);
+            assert!(
+                matches!(decode(&as_old).unwrap_err(), StoreError::UnknownKey(k) if k.starts_with("mix.") || k.starts_with("influence.")),
+                "{old}"
+            );
+        }
+        let as_v7 = v8.replacen("yolupainter-brush 8", "yolupainter-brush 7", 1);
+        assert!(
+            matches!(decode(&as_v7).unwrap_err(), StoreError::BadValue(k) if k == "mix.mode"),
+            "重ねる方式はバージョン 7 の値ではない"
+        );
+        let bad = |from: &str, to: &str| decode(&v8.replace(from, to)).unwrap_err();
+        assert!(
+            matches!(bad("mix.space=perceptual", "mix.space=linear"), StoreError::BadValue(k) if k == "mix.space")
+        );
+        assert!(
+            matches!(bad("mix.correction=3", "mix.correction=many"), StoreError::BadValue(k) if k == "mix.correction")
+        );
+        assert!(matches!(
+            bad("mix.correction=3", "mix.correction=5"),
+            StoreError::Invalid(_)
+        ));
+        assert!(
+            matches!(bad("mix.blur=5", "mix.blur=wide"), StoreError::BadValue(k) if k == "mix.blur")
+        );
+        assert!(
+            matches!(bad("mix.blur=5", "mix.blur=NaN"), StoreError::BadValue(k) if k == "mix.blur")
+        );
+        assert!(matches!(
+            bad("mix.blur=5", "mix.blur=9"),
+            StoreError::Invalid(_)
+        ));
+        assert!(matches!(
+            bad("mix.load=0.4", "mix.load=1.5"),
+            StoreError::Invalid(_)
+        ));
+        assert!(
+            matches!(bad("mix.load=0.4", "mix.load=lots"), StoreError::BadValue(k) if k == "mix.load")
+        );
+        assert!(matches!(
+            decode(&format!("{v8}mix.load=0.5\n")).unwrap_err(),
+            StoreError::DuplicateKey(_)
+        ));
+    }
+
+    #[test]
+    fn the_linked_blur_is_a_version_eight_value() {
+        // 大きさに連動して広いにじむ強さは `mix.blur=linked`（バージョン 8）。前のバージョンのファイルにあれば断る
+        let mut b = mixing_brush();
+        b.mix.mode = MixMode::Smear;
+        b.mix.blur = MixBlur::Linked;
+        let t = text(&user(1, b.clone()));
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        assert!(t.lines().any(|l| l == "mix.blur=linked"), "{t}");
+        assert_eq!(decode(&t).unwrap().2, canonical(&b));
+        let as_v7 = t.replacen("yolupainter-brush 8", "yolupainter-brush 7", 1);
+        assert!(
+            matches!(decode(&as_v7).unwrap_err(), StoreError::UnknownKey(k) if k == "mix.blur"),
+            "{as_v7}"
+        );
+        assert!(decode(&t.replacen("yolupainter-brush 8", "yolupainter-brush 3", 1)).is_err());
+        // 今までの大きさに連動（1 割）は書かない
+        b.mix.blur = MixBlur::Auto;
+        assert!(!text(&user(1, b)).contains("mix.blur"));
+    }
+
     #[test]
     fn broken_files_are_refused_with_a_reason() {
         let ok = text(&user(1, Brush::default()));
@@ -1731,7 +2969,7 @@ mod tests {
             StoreError::NotABrush
         ));
         assert!(matches!(
-            decode("yolupainter-brush 6\nname=a\n").unwrap_err(),
+            decode("yolupainter-brush 10\nname=a\n").unwrap_err(),
             StoreError::NewerVersion(_)
         ));
         assert!(matches!(
@@ -1802,7 +3040,9 @@ mod tests {
             stabilizer: 6.0,
             taper_in: 1130.5,
             taper_out: 14.0,
+            taper_targets: Default::default(),
             curve: false,
+            ..StrokeAssist::default()
         };
         let u = carrying(assist);
         let t = text(&u);
@@ -1858,7 +3098,9 @@ mod tests {
             stabilizer: 3.0,
             taper_in: 20.0,
             taper_out: 0.0,
+            taper_targets: Default::default(),
             curve: false,
+            ..StrokeAssist::default()
         }));
         // 版 1〜3 のファイルにあれば知らない項目（今までの版の読み手と同じ断り方）
         for old in [
@@ -1872,8 +3114,8 @@ mod tests {
                 "{old}"
             );
         }
-        // 版 6 は新しい形式として断る
-        let newer = t.replacen("yolupainter-brush 4", "yolupainter-brush 6", 1);
+        // まだ無い版は新しい形式として断る
+        let newer = t.replacen("yolupainter-brush 4", "yolupainter-brush 10", 1);
         assert!(matches!(
             decode(&newer).unwrap_err(),
             StoreError::NewerVersion(_)
@@ -1898,7 +3140,9 @@ mod tests {
                 stabilizer: 0.0,
                 taper_in: 0.0,
                 taper_out: 9.0,
-                curve: false
+                taper_targets: Default::default(),
+                curve: false,
+                ..StrokeAssist::default()
             })
         );
         let none = "yolupainter-brush 4\nname=a\ngroup=pen\n";
@@ -1939,7 +3183,9 @@ mod tests {
             stabilizer: 0.0,
             taper_in: 12.0,
             taper_out: 0.0,
+            taper_targets: Default::default(),
             curve: false,
+            ..StrokeAssist::default()
         };
         let both = UserBrush {
             assist: Some(assist),
@@ -1984,10 +3230,255 @@ mod tests {
         assert_eq!(decode(none).unwrap().2.base.anti_alias, AntiAlias::None);
         let old = "yolupainter-brush 1\nname=a\ngroup=pen\nhardness=1\n";
         assert_eq!(decode(old).unwrap().2.base.anti_alias, AntiAlias::None);
-        // 版 6 は新しい形式として断る
-        let newer = t.replacen("yolupainter-brush 5", "yolupainter-brush 6", 1);
+        // まだ無い版は新しい形式として断る
+        let newer = t.replacen("yolupainter-brush 5", "yolupainter-brush 10", 1);
         assert!(matches!(
             decode(&newer).unwrap_err(),
+            StoreError::NewerVersion(_)
+        ));
+    }
+
+    fn min_pixel(mut b: Brush) -> Brush {
+        b.controls.min_one_pixel = true;
+        b
+    }
+
+    #[test]
+    fn a_brush_with_at_least_one_pixel_is_version_six_and_round_trips() {
+        let u = user(1, min_pixel(Brush::default()));
+        let t = text(&u);
+        assert!(t.starts_with("yolupainter-brush 6\n"), "{t}");
+        assert!(t.contains("\ncontrols.min_one_pixel=1\n"), "{t}");
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!(d.brush, u.brush);
+        assert!(d.brush.controls.min_one_pixel);
+        // 切のブラシは今までと同じ版・同じ文（項目を書かない）
+        let plain = text(&user(1, Brush::default()));
+        assert!(
+            plain.starts_with("yolupainter-brush 1\n") && !plain.contains("min_one_pixel"),
+            "{plain}"
+        );
+        // 版 6 は、ほかの版の項目（縁のアンチエイリアス・色の混ぜ・入り抜き）も同じファイルに書く
+        let mut both = mixing_brush();
+        both.base.anti_alias = AntiAlias::Medium;
+        both.controls.min_one_pixel = true;
+        let assist = StrokeAssist {
+            stabilizer: 0.0,
+            taper_in: 12.0,
+            taper_out: 0.0,
+            taper_targets: Default::default(),
+            curve: false,
+            ..StrokeAssist::default()
+        };
+        let u = UserBrush {
+            assist: Some(assist),
+            ..user(1, both)
+        };
+        let t = text(&u);
+        assert!(
+            t.starts_with("yolupainter-brush 6\n")
+                && t.contains("anti_alias=medium")
+                && t.contains("mix.mode=")
+                && t.contains("assist."),
+            "{t}"
+        );
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!((d.assist, d.brush), (Some(assist), u.brush.clone()));
+    }
+
+    #[test]
+    fn the_at_least_one_pixel_item_belongs_to_version_six_and_is_checked() {
+        let t = text(&user(1, min_pixel(Brush::default())));
+        // 版 1〜5 のファイルにあれば知らない項目（今までの版の読み手と同じ断り方）
+        for old in 1..=5 {
+            let as_old = t.replacen(
+                "yolupainter-brush 6",
+                &format!("yolupainter-brush {old}"),
+                1,
+            );
+            assert!(
+                matches!(decode(&as_old).unwrap_err(), StoreError::UnknownKey(k) if k == "controls.min_one_pixel"),
+                "{old}"
+            );
+        }
+        // 真偽でない値はそのファイルを断る
+        for bad in ["maybe", "2", ""] {
+            let broken = t.replace("min_one_pixel=1", &format!("min_one_pixel={bad}"));
+            assert!(
+                matches!(decode(&broken).unwrap_err(), StoreError::BadValue(k) if k == "controls.min_one_pixel"),
+                "{bad}"
+            );
+        }
+        // 版 6 でも項目が無ければ切。前の版のファイルも切として読む
+        let none = "yolupainter-brush 6\nname=a\ngroup=pen\n";
+        assert!(!decode(none).unwrap().2.controls.min_one_pixel);
+        let old = "yolupainter-brush 1\nname=a\ngroup=pen\nhardness=1\n";
+        assert!(!decode(old).unwrap().2.controls.min_one_pixel);
+        // まだ無い版は新しい形式として断る
+        let newer = t.replacen("yolupainter-brush 6", "yolupainter-brush 10", 1);
+        assert!(matches!(
+            decode(&newer).unwrap_err(),
+            StoreError::NewerVersion(_)
+        ));
+    }
+
+    /// バージョン 8 の項目を 1 つずつ使うブラシ（名前・ブラシ）。
+    fn tip_rule_brushes() -> Vec<(&'static str, Brush)> {
+        let grain = || builtin_tip("grain").unwrap();
+        let three = || {
+            vec![
+                grain(),
+                builtin_tip("dots").unwrap(),
+                builtin_tip("rim").unwrap(),
+            ]
+        };
+        let listed = |selection: TipSelection| {
+            let mut b = Brush::default();
+            b.tip.images = three();
+            b.tip.selection = selection;
+            b
+        };
+        let mut out = Vec::new();
+        for (name, selection) in [
+            ("pingpong", TipSelection::PingPong),
+            ("hold", TipSelection::Hold),
+            ("once", TipSelection::Once),
+            ("shuffle", TipSelection::Shuffle),
+        ] {
+            out.push((name, listed(selection)));
+        }
+        let mut b = listed(TipSelection::PingPong);
+        b.tip.flip_x = FlipRule::OnFold;
+        b.tip.flip_y = FlipRule::Random;
+        out.push(("flip rules", b));
+        let mut b = Brush::default();
+        b.tip.darken_overlap = true;
+        out.push(("darken", b));
+        let mut b = Brush::default();
+        let mut t = PaperTexture::new(grain(), 0.5);
+        t.angle = 143.0;
+        b.texture = Some(t);
+        out.push(("texture angle", b));
+        out
+    }
+
+    #[test]
+    fn a_brush_with_tip_rules_is_version_eight_and_round_trips() {
+        for (what, b) in tip_rule_brushes() {
+            let u = user(1, b);
+            let t = text(&u);
+            assert!(t.starts_with("yolupainter-brush 8\n"), "{what}: {t}");
+            let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+            assert_eq!(d.brush, u.brush, "{what}");
+            // 書き戻しても同じ文（鍵の順・値が安定）
+            assert_eq!(text(&user(1, d.brush)), t, "{what}");
+        }
+        let (_, b) = &tip_rule_brushes()[4];
+        let t = text(&user(1, b.clone()));
+        assert!(
+            t.contains("\ntip.flip_x_rule=fold\n") && t.contains("\ntip.flip_y_rule=random\n"),
+            "{t}"
+        );
+        // 今までの設定（乱数・順・反転が固定・足す・回転なし）はバージョン 1〜7 のまま、バージョン 8 の鍵を書かない
+        let mut old = Brush::default();
+        old.tip.images = vec![builtin_tip("grain").unwrap(), builtin_tip("dots").unwrap()];
+        old.tip.selection = TipSelection::Sequential;
+        old.tip.flip_x = FlipRule::On;
+        old.texture = Some(PaperTexture::new(builtin_tip("grain").unwrap(), 0.5));
+        let t = text(&user(1, old.clone()));
+        assert!(t.starts_with("yolupainter-brush 1\n"), "{t}");
+        for key in ["flip_x_rule", "flip_y_rule", "darken", "texture.angle"] {
+            assert!(!t.contains(key), "{key}");
+        }
+        assert_eq!(
+            decode_user(&t, &mut |_| unreachable!()).unwrap().brush,
+            canonical(&old)
+        );
+    }
+
+    #[test]
+    fn version_eight_writes_the_influences_in_the_version_seven_keys() {
+        let mut b = influence_brush();
+        b.tip.darken_overlap = true;
+        let t = text(&user(1, b.clone()));
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        assert!(
+            t.contains("influence.size.") && !t.contains("pressure_size="),
+            "{t}"
+        );
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!(d.brush, canonical(&b));
+        // バージョン 8 でも影響元がバージョン 1〜6 で書けるブラシは、バージョン 8 の鍵だけが足される（影響元はバージョン 7 の鍵）
+        let mut plain = Brush::default();
+        plain.tip.darken_overlap = true;
+        let t = text(&user(1, plain));
+        assert!(
+            t.starts_with("yolupainter-brush 8\n") && t.contains("influence."),
+            "{t}"
+        );
+    }
+
+    #[test]
+    fn the_version_eight_items_belong_to_version_eight_and_are_checked() {
+        for (what, b) in tip_rule_brushes() {
+            let t = text(&user(1, b));
+            // バージョン 7 までのファイルにあれば、知らない項目か読めない値として断る
+            for old in 1..=7 {
+                let as_old = t.replacen(
+                    "yolupainter-brush 8",
+                    &format!("yolupainter-brush {old}"),
+                    1,
+                );
+                let err = decode(&as_old).unwrap_err();
+                assert!(
+                    matches!(
+                        &err,
+                        StoreError::UnknownKey(_)
+                            | StoreError::BadValue(_)
+                            | StoreError::UnknownTip(_)
+                    ),
+                    "{what} をバージョン {old} として: {err:?}"
+                );
+            }
+        }
+        // バージョン 8 のファイルの中の読めない値
+        let (_, b) = &tip_rule_brushes()[4];
+        let t = text(&user(1, b.clone()));
+        for (from, to, key) in [
+            (
+                "tip.flip_x_rule=fold",
+                "tip.flip_x_rule=sideways",
+                "tip.flip_x_rule",
+            ),
+            (
+                "tip.flip_y_rule=random",
+                "tip.flip_y_rule=",
+                "tip.flip_y_rule",
+            ),
+            (
+                "tip.selection=pingpong",
+                "tip.selection=circle",
+                "tip.selection",
+            ),
+        ] {
+            let broken = t.replace(from, to);
+            assert!(
+                matches!(decode(&broken).unwrap_err(), StoreError::BadValue(k) if k == key),
+                "{key}"
+            );
+        }
+        let (_, d) = &tip_rule_brushes()[5];
+        let t = text(&user(1, d.clone()));
+        assert!(matches!(
+            decode(&t.replace("tip.darken=1", "tip.darken=2")).unwrap_err(),
+            StoreError::BadValue(k) if k == "tip.darken"
+        ));
+        // バージョン 8 でも項目が無ければ既定。まだ無いバージョンは新しい形式として断る
+        let none = "yolupainter-brush 8\nname=a\ngroup=pen\n";
+        let b = decode(none).unwrap().2;
+        assert_eq!((b.tip.flip_x, b.tip.darken_overlap), (FlipRule::Off, false));
+        assert!(matches!(
+            decode(&none.replacen("brush 8", "brush 10", 1)).unwrap_err(),
             StoreError::NewerVersion(_)
         ));
     }
@@ -2000,7 +3491,9 @@ mod tests {
             stabilizer: 12.0,
             taper_in: 25.0,
             taper_out: 40.0,
+            taper_targets: Default::default(),
             curve: false,
+            ..StrokeAssist::default()
         };
         let mut u = carrying(assist);
         u.id = 3;
@@ -2125,11 +3618,15 @@ mod tests {
         let hash = images::fingerprint(&shared);
         std::fs::write(
             store.path_of(3),
-            format!("yolupainter-brush 9\ntip.image=img:{hash}\n"),
+            format!("yolupainter-brush 10\ntip.image=img:{hash}\n"),
         )
         .unwrap();
         store.delete_brush(2).unwrap();
-        assert_eq!(count(), 1, "新しい版のファイルが指している画像は残す");
+        assert_eq!(
+            count(),
+            1,
+            "新しいバージョンのファイルが指している画像は残す"
+        );
         store.delete_brush(3).unwrap();
         assert_eq!(count(), 0);
         std::fs::remove_dir_all(dir).unwrap();
@@ -2388,7 +3885,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("brush-00000005.ylbrush");
-        std::fs::write(&path, "yolupainter-brush 6\nname=future\n").unwrap();
+        std::fs::write(&path, "yolupainter-brush 10\nname=future\n").unwrap();
         let report = load_all(&dir);
         assert!(report.brushes.is_empty());
         assert!(matches!(
@@ -2397,8 +3894,1908 @@ mod tests {
         ));
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "yolupainter-brush 6\nname=future\n"
+            "yolupainter-brush 10\nname=future\n"
         );
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// 版 1〜6 の見本（前の形の書き手が書いたファイル）と、それを今の形で作るブラシ・入り抜き。
+    fn version_samples() -> Vec<(&'static str, Brush, Option<StrokeAssist>)> {
+        let straight = |min: f64| InputResponse::new(min, vec![]).unwrap();
+        let mut v = Vec::new();
+        let mut b = Brush::default();
+        b.influences.flow.pressure.on = true;
+        b.influences.opacity.tilt.on = true;
+        b.influences.size.speed.on = true;
+        b.influences.speed_max = 1500.0;
+        v.push((
+            include_str!("../../tests/ylbrush_files/v1.ylbrush"),
+            b,
+            None,
+        ));
+        let mut b = Brush::default();
+        b.influences.opacity.pressure.on = false;
+        b.influences.size.tilt.on = true;
+        b.influences.hardness.pressure.on = true;
+        b.influences.size.pressure.response = straight(0.25);
+        b.influences.opacity.pressure.response =
+            InputResponse::new(0.1, vec![pt(0.0, 0.0), pt(0.4, 0.7), pt(1.0, 1.0)]).unwrap();
+        b.influences.hardness.pressure.response = straight(0.333);
+        v.push((
+            include_str!("../../tests/ylbrush_files/v2.ylbrush"),
+            b,
+            None,
+        ));
+        let mut b = Brush::default();
+        b.influences.flow.speed.on = true;
+        b.mix = ColorMix {
+            mode: MixMode::Smear,
+            paint: 0.625,
+            density: 0.8,
+            stretch: 0.25,
+            ground: MixGround::Composite,
+            ..ColorMix::default()
+        };
+        b.influences.mix_paint.pressure = InputUse {
+            on: true,
+            response: straight(0.2),
+        };
+        b.influences.mix_density.pressure.response =
+            InputResponse::new(0.0, vec![pt(0.0, 0.0), pt(0.5, 0.75), pt(1.0, 1.0)]).unwrap();
+        v.push((
+            include_str!("../../tests/ylbrush_files/v3.ylbrush"),
+            b,
+            None,
+        ));
+        let mut b = Brush::default();
+        b.influences.flow.tilt.on = true;
+        b.influences.size.pressure.on = false;
+        let assist = StrokeAssist {
+            stabilizer: 0.0,
+            taper_in: 12.0,
+            taper_out: 30.0,
+            taper_targets: Default::default(),
+            curve: false,
+            ..StrokeAssist::default()
+        };
+        v.push((
+            include_str!("../../tests/ylbrush_files/v4.ylbrush"),
+            b,
+            Some(assist),
+        ));
+        let mut b = Brush::default();
+        b.base.anti_alias = AntiAlias::Strong;
+        b.influences.flow.pressure = InputUse {
+            on: true,
+            response: InputResponse::new(0.0, vec![pt(0.0, 1.0), pt(1.0, 0.2)]).unwrap(),
+        };
+        v.push((
+            include_str!("../../tests/ylbrush_files/v5.ylbrush"),
+            b,
+            None,
+        ));
+        let mut b = Brush::default();
+        b.controls.min_one_pixel = true;
+        b.influences.opacity.speed.on = true;
+        b.influences.speed_max = 800.0;
+        v.push((
+            include_str!("../../tests/ylbrush_files/v6.ylbrush"),
+            b,
+            None,
+        ));
+        v
+    }
+
+    #[test]
+    fn files_of_versions_one_to_six_read_into_the_same_influences_and_write_back_the_same_bytes() {
+        for (version, (text, brush, assist)) in version_samples().into_iter().enumerate() {
+            let version = version + 1;
+            assert!(
+                text.starts_with(&format!("yolupainter-brush {version}\n")),
+                "{version}"
+            );
+            assert!(!text.contains("influence."), "{version}");
+            // 読むと、前の形の鍵が影響元へ写る
+            let d = decode_user(text, &mut |_| unreachable!()).unwrap();
+            assert_eq!(d.brush, canonical(&brush), "バージョン {version}");
+            assert_eq!(d.assist, assist, "バージョン {version}");
+            // 読んだものを書くと同じバイト。今の形で作ったブラシも、前の形の書き手と同じバイトで書く
+            let back = UserBrush {
+                id: 1,
+                name: d.name,
+                group: d.group,
+                brush: d.brush,
+                import: d.import,
+                assist: d.assist,
+            };
+            assert_eq!(
+                super::encode(&back).unwrap().text,
+                text,
+                "バージョン {version}"
+            );
+            let made = UserBrush {
+                id: 1,
+                name: "sample".into(),
+                group: Group::Pen,
+                brush,
+                import: None,
+                assist,
+            };
+            assert_eq!(
+                super::encode(&made).unwrap().text,
+                text,
+                "バージョン {version}"
+            );
+        }
+    }
+
+    /// 版 1〜6 で書けない影響元を使うブラシ。
+    fn influence_brush() -> Brush {
+        let mut b = Brush::default();
+        let i = &mut b.influences;
+        i.opacity.random = InputUse {
+            on: true,
+            response: InputResponse::new(0.4, vec![]).unwrap(),
+        };
+        i.size.tilt = InputUse {
+            on: true,
+            response: InputResponse::new(0.2, vec![pt(0.0, 0.0), pt(0.5, 0.9), pt(1.0, 1.0)])
+                .unwrap(),
+        };
+        i.size.pressure.response = InputResponse::new(0.25, vec![]).unwrap();
+        i.flow.speed.on = true;
+        i.hardness.speed = InputUse {
+            on: true,
+            response: InputResponse::new(0.5, vec![]).unwrap(),
+        };
+        i.roundness.pressure = InputUse::STRAIGHT;
+        i.texture_density.tilt = InputUse::STRAIGHT;
+        // 切った入力も最小値と曲線を残す
+        i.flow.random.response = InputResponse::new(0.75, vec![]).unwrap();
+        i.speed_max = 1200.0;
+        b.controls.tilt_angle = true;
+        b
+    }
+
+    #[test]
+    fn a_brush_with_influences_older_versions_cannot_write_is_version_seven_and_round_trips() {
+        let u = user(9, influence_brush());
+        let t = text(&u);
+        assert!(t.starts_with("yolupainter-brush 7\n"), "{t}");
+        for key in [
+            "influence.size.pressure.on=1",
+            "influence.size.pressure.min=0.25",
+            "influence.size.tilt.on=1",
+            "influence.size.tilt.min=0.2",
+            "influence.size.tilt.curve=0:0,0.5:0.9,1:1",
+            "influence.opacity.pressure.on=1",
+            "influence.opacity.random.on=1",
+            "influence.opacity.random.min=0.4",
+            "influence.flow.speed.on=1",
+            "influence.flow.random.min=0.75",
+            "influence.hardness.speed.on=1",
+            "influence.hardness.speed.min=0.5",
+            "influence.roundness.pressure.on=1",
+            "influence.texture_density.tilt.on=1",
+            "controls.tilt_angle=1",
+            "controls.speed_max=1200",
+        ] {
+            assert!(t.lines().any(|l| l == key), "{key}\n{t}");
+        }
+        // 版 7 は前の版の影響元の鍵を書かない。切った入力・既定の応えは書かない
+        for old in [
+            "pressure_size=",
+            "pressure_opacity=",
+            "pressure_flow=",
+            "controls.tilt_size",
+            "controls.speed_size",
+            "controls.pressure_hardness",
+            "pressure.size",
+            "influence.flow.random.on",
+            "influence.mix_",
+        ] {
+            assert!(!t.contains(old), "{old}\n{t}");
+        }
+        let back = decode(&t).unwrap().2;
+        assert_eq!(back, canonical(&u.brush));
+        assert_eq!(text(&user(9, back)), t, "読み戻して書いても同じバイト");
+        // 混ぜるブラシの絵の具の量・濃さの影響元も、版 7 の鍵で書く（版 3 の鍵は書かない）
+        let mut m = mixing_brush();
+        m.influences.mix_density.random = InputUse::STRAIGHT;
+        let t = text(&user(3, m.clone()));
+        assert!(t.starts_with("yolupainter-brush 7\n"), "{t}");
+        assert!(
+            t.lines().any(|l| l == "influence.mix_paint.pressure.on=1"),
+            "{t}"
+        );
+        assert!(
+            t.lines()
+                .any(|l| l == "influence.mix_paint.pressure.min=0.2"),
+            "{t}"
+        );
+        assert!(
+            t.lines().any(|l| l == "influence.mix_density.random.on=1"),
+            "{t}"
+        );
+        assert!(t.lines().any(|l| l == "mix.mode=smear"), "{t}");
+        assert!(
+            !t.contains("mix.paint.pressure") && !t.contains("mix.density.curve"),
+            "{t}"
+        );
+        assert_eq!(decode(&t).unwrap().2, canonical(&m));
+        // 混ぜないブラシの絵の具の影響元は持たない（版も上げない）
+        let mut off = Brush::default();
+        off.influences.mix_paint.random = InputUse::STRAIGHT;
+        assert!(text(&user(1, off)).starts_with("yolupainter-brush 1\n"));
+    }
+
+    #[test]
+    fn the_influence_items_belong_to_version_seven_and_are_checked() {
+        let v7 = text(&user(9, influence_brush()));
+        let bad = |from: &str, to: &str| {
+            assert!(v7.contains(from), "{from}");
+            decode(&v7.replacen(from, to, 1)).unwrap_err()
+        };
+        // 前の版の影響元の鍵は、版 7 では知らない項目
+        for legacy in [
+            "pressure_size=1",
+            "controls.tilt_size=1",
+            "controls.speed_flow=1",
+            "controls.pressure_hardness=1",
+            "pressure.size.min=0.5",
+            "mix.paint.pressure=1",
+        ] {
+            assert!(
+                matches!(
+                    decode(&format!("{v7}{legacy}\n")).unwrap_err(),
+                    StoreError::UnknownKey(k) if legacy.starts_with(&k)
+                ),
+                "{legacy}"
+            );
+        }
+        // 版 7 の鍵は、版 1〜6 のファイルでは知らない項目
+        for (text, _, _) in version_samples() {
+            assert!(matches!(
+                decode(&format!("{text}influence.size.random.on=1\n")).unwrap_err(),
+                StoreError::UnknownKey(k) if k == "influence.size.random.on"
+            ));
+        }
+        assert!(matches!(
+            bad("influence.opacity.random.on=1", "influence.opacity.random.on=yes"),
+            StoreError::BadValue(k) if k == "influence.opacity.random.on"
+        ));
+        assert!(matches!(
+            bad(
+                "influence.opacity.random.min=0.4",
+                "influence.opacity.random.min=1.5"
+            ),
+            StoreError::Invalid(_)
+        ));
+        assert!(matches!(
+            bad("influence.size.tilt.curve=0:0,0.5:0.9,1:1", "influence.size.tilt.curve=0:0;1:1"),
+            StoreError::BadValue(k) if k == "influence.size.tilt.curve"
+        ));
+        assert!(matches!(
+            bad(
+                "influence.size.tilt.curve=0:0,0.5:0.9,1:1",
+                "influence.size.tilt.curve=0:0,0.5:2,1:1"
+            ),
+            StoreError::Invalid(_)
+        ));
+        assert!(matches!(
+            bad("controls.speed_max=1200", "controls.speed_max=0"),
+            StoreError::Invalid(_)
+        ));
+        assert!(matches!(
+            decode(&format!("{v7}influence.size.wobble.on=1\n")).unwrap_err(),
+            StoreError::UnknownKey(k) if k == "influence.size.wobble.on"
+        ));
+    }
+    /// 入り抜きの影響先が既定でない入り抜き（不透明度 0.25・流量 0.5。大きさは掛けない）。
+    fn targeted_assist() -> StrokeAssist {
+        let targets = TaperTargets::NONE
+            .with(Item::Opacity, Some(0.25))
+            .unwrap()
+            .with(Item::Flow, Some(0.5))
+            .unwrap();
+        StrokeAssist {
+            stabilizer: 0.0,
+            taper_in: 12.0,
+            taper_out: 30.0,
+            taper_targets: targets,
+            curve: false,
+            ..StrokeAssist::default()
+        }
+    }
+
+    #[test]
+    fn a_brush_with_taper_targets_is_version_eight_and_round_trips() {
+        let assist = targeted_assist();
+        let u = UserBrush {
+            assist: Some(assist),
+            ..user(1, Brush::default())
+        };
+        let t = text(&u);
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        for line in [
+            "assist.taper.size=off\n",
+            "assist.taper.opacity=0.25\n",
+            "assist.taper.flow=0.5\n",
+            "assist.taper.hardness=off\n",
+            "assist.taper.roundness=off\n",
+            "assist.taper.texture_density=off\n",
+            "assist.taper.mix_paint=off\n",
+            "assist.taper.mix_density=off\n",
+            "assist.taper_in=12\n",
+        ] {
+            assert!(t.contains(line), "{line}: {t}");
+        }
+        assert!(
+            t.contains("influence.size.pressure.on=1"),
+            "バージョン 8 はバージョン 7 の影響元の鍵で書く: {t}"
+        );
+        assert!(!t.contains("pressure_size="), "{t}");
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!(d.assist, Some(assist));
+        assert_eq!(d.brush, canonical(&Brush::default()));
+        // 読み戻して書き直しても同じ文
+        let back = UserBrush {
+            assist: d.assist,
+            brush: d.brush,
+            ..user(1, Brush::default())
+        };
+        assert_eq!(text(&back), t);
+        // 大きさの最小値も、0.0 ちょうどの項目も書き戻せる
+        let sized = StrokeAssist {
+            taper_targets: TaperTargets::SIZE_ONLY.with(Item::Size, Some(0.3)).unwrap(),
+            ..assist
+        };
+        let t = text(&UserBrush {
+            assist: Some(sized),
+            ..user(1, Brush::default())
+        });
+        assert!(t.contains("assist.taper.size=0.3\n"), "{t}");
+        assert_eq!(
+            decode_user(&t, &mut |_| unreachable!()).unwrap().assist,
+            Some(sized)
+        );
+    }
+
+    #[test]
+    fn a_brush_whose_taper_targets_are_the_default_keeps_its_older_version_and_bytes() {
+        let assist = StrokeAssist {
+            taper_in: 12.0,
+            taper_out: 30.0,
+            ..StrokeAssist::default()
+        };
+        assert!(assist.taper_targets.is_default());
+        let t = text(&carrying(assist));
+        assert!(
+            t.starts_with("yolupainter-brush 4\n") && !t.contains("assist.taper."),
+            "{t}"
+        );
+        // 影響元でバージョン 7 になるブラシも、入り抜きの影響先が既定ならバージョン 7 のまま
+        let mut b = Brush::default();
+        b.influences.size.random = InputUse::STRAIGHT;
+        let t = text(&UserBrush {
+            assist: Some(assist),
+            ..user(1, b)
+        });
+        assert!(
+            t.starts_with("yolupainter-brush 7\n") && !t.contains("assist.taper."),
+            "{t}"
+        );
+    }
+
+    #[test]
+    fn the_taper_target_items_belong_to_version_eight_and_are_checked() {
+        let v8 = text(&UserBrush {
+            assist: Some(targeted_assist()),
+            ..user(1, Brush::default())
+        });
+        let decode = |t: &str| decode_user(t, &mut |_| unreachable!());
+        // バージョン 7 までのファイルにあれば、知らない項目として断る
+        for old in 4..=7 {
+            let as_old = v8.replacen(
+                "yolupainter-brush 8",
+                &format!("yolupainter-brush {old}"),
+                1,
+            );
+            assert!(
+                matches!(decode(&as_old).unwrap_err(), StoreError::UnknownKey(_)),
+                "バージョン {old}"
+            );
+        }
+        let as_v7 = v8.replacen("yolupainter-brush 8", "yolupainter-brush 7", 1);
+        assert!(
+            matches!(decode(&as_v7).unwrap_err(), StoreError::UnknownKey(k) if k.starts_with("assist.taper.")),
+            "バージョン 7"
+        );
+        // 8 項目のどれかが無い・値が読めない・範囲の外は、そのファイルを断る
+        let without = v8.replace("assist.taper.mix_paint=off\n", "");
+        assert!(matches!(
+            decode(&without).unwrap_err(),
+            StoreError::BadValue(k) if k == "assist.taper.mix_paint"
+        ));
+        for bad in ["on", "x", "NaN", "inf", "-0.1", "1.5", ""] {
+            let broken = v8.replace("assist.taper.flow=0.5", &format!("assist.taper.flow={bad}"));
+            assert!(
+                matches!(decode(&broken).unwrap_err(), StoreError::BadValue(k) if k == "assist.taper.flow"),
+                "{bad}"
+            );
+        }
+        assert!(matches!(
+            decode(&format!("{v8}assist.taper.size=off\n")).unwrap_err(),
+            StoreError::DuplicateKey(_)
+        ));
+        // バージョン 8 でも影響先の鍵が 1 つも無ければ既定（大きさだけ）
+        let none: String = v8
+            .lines()
+            .filter(|l| !l.starts_with("assist.taper."))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        assert_eq!(
+            decode(&none).unwrap().assist.map(|a| a.taper_targets),
+            Some(TaperTargets::default())
+        );
+    }
+    fn color_change_brush() -> Brush {
+        let signed = |min: f64| InputUse {
+            on: true,
+            response: InputResponse::new_signed(min, vec![]).unwrap(),
+        };
+        let mut b = Brush::default();
+        b.color.tip = Some(TipColorChange {
+            hue: 90.0,
+            saturation: 0.5,
+            value: -0.25,
+        });
+        b.color.sub_mix = 0.5;
+        b.color.stroke = Some(StrokeColorChange {
+            hue: 45.0,
+            saturation: 0.25,
+            value: 0.5,
+            sub_mix: 0.75,
+        });
+        b.color.target = ColorTarget::MainAndSub;
+        b.influences.color_hue.random = signed(-1.0);
+        b.influences.color_saturation.pressure = InputUse::STRAIGHT;
+        b.influences.color_value.pressure = InputUse {
+            on: true,
+            response: InputResponse::new_signed(
+                -0.5,
+                vec![pt(0.0, 0.0), pt(0.5, 0.8), pt(1.0, 1.0)],
+            )
+            .unwrap(),
+        };
+        b.influences.color_sub_mix.random = InputUse {
+            on: true,
+            response: InputResponse::new(0.25, vec![]).unwrap(),
+        };
+        b
+    }
+
+    #[test]
+    fn a_brush_with_a_color_change_is_version_eight_and_round_trips() {
+        let b = color_change_brush();
+        let u = user(1, b.clone());
+        let t = text(&u);
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        for line in [
+            "color.tip.hue=90",
+            "color.tip.saturation=0.5",
+            "color.tip.value=-0.25",
+            "color.sub_mix=0.5",
+            "color.stroke.hue=45",
+            "color.stroke.sub_mix=0.75",
+            "color.target=main_and_sub",
+            "influence.color_hue.random.on=1",
+            "influence.color_hue.random.min=-1",
+            "influence.color_value.pressure.min=-0.5",
+            "influence.color_sub_mix.random.min=0.25",
+        ] {
+            assert!(t.lines().any(|l| l == line), "{line}: {t}");
+        }
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!(d.brush, canonical(&b));
+        assert_eq!(text(&user(1, d.brush)), t, "書き戻しても同じ文");
+        // 変化が切・値が 0・メイン・影響元が既定のブラシは、色の鍵を 1 つも書かない
+        let mut only_target = Brush::default();
+        only_target.color.target = ColorTarget::Sub;
+        let t = text(&user(1, only_target.clone()));
+        assert!(t.starts_with("yolupainter-brush 8\n") && t.contains("color.target=sub\n"));
+        assert_eq!(decode(&t).unwrap().2, canonical(&only_target));
+        // 値が f32 に収まらない小数は、保存と同じ精度に丸めた正規の形で一致する
+        let mut odd = Brush::default();
+        odd.color.sub_mix = 0.123_456_789_012;
+        let d = decode(&text(&user(1, odd.clone()))).unwrap().2;
+        assert_eq!(d.color.sub_mix, odd.color.sub_mix as f32 as f64);
+        assert_eq!(d, canonical(&odd));
+    }
+
+    #[test]
+    fn brushes_without_a_color_change_keep_their_version_and_their_bytes() {
+        for (what, b) in [
+            ("既定", Brush::default()),
+            ("影響元", influence_brush()),
+            ("色のゆらぎ", {
+                let mut b = Brush::default();
+                b.color.hue = 0.25;
+                b.color.foreground_background = 0.5;
+                b
+            }),
+        ] {
+            let t = text(&user(1, b));
+            let expected = if what == "影響元" { "7" } else { "1" };
+            assert!(
+                t.starts_with(&format!("yolupainter-brush {expected}\n")),
+                "{what}: {t}"
+            );
+            for key in [
+                "color.tip",
+                "color.sub_mix",
+                "color.stroke",
+                "color.target",
+                "color_hue",
+                "color_sub_mix",
+            ] {
+                assert!(!t.contains(key), "{what}: {key}");
+            }
+        }
+        // バージョン 1〜6 の見本（前のバージョンの書き手が書いたファイル）は、読んで書き戻すと同じバイト
+        for (what, file) in [
+            ("v1", include_str!("../../tests/ylbrush_files/v1.ylbrush")),
+            ("v6", include_str!("../../tests/ylbrush_files/v6.ylbrush")),
+        ] {
+            let d = decode_user(file, &mut |_| unreachable!()).unwrap();
+            let again = encode(&UserBrush {
+                id: 1,
+                name: d.name.clone(),
+                group: d.group,
+                brush: d.brush.clone(),
+                import: d.import.clone(),
+                assist: d.assist,
+            })
+            .unwrap()
+            .text;
+            assert_eq!(again, file, "{what}");
+        }
+    }
+
+    #[test]
+    fn the_color_change_items_belong_to_version_eight_and_are_checked() {
+        let t = text(&user(1, color_change_brush()));
+        // バージョン 7 までのファイルにあれば、知らない項目として断る
+        for old in 1..=7 {
+            let as_old = t.replacen(
+                "yolupainter-brush 8",
+                &format!("yolupainter-brush {old}"),
+                1,
+            );
+            let err = decode(&as_old).unwrap_err();
+            assert!(
+                matches!(&err, StoreError::UnknownKey(_) | StoreError::BadValue(_)),
+                "バージョン {old}: {err:?}"
+            );
+        }
+        let mut only_influence = Brush::default();
+        only_influence.influences.color_hue.random = InputUse::STRAIGHT;
+        let t = text(&user(1, only_influence));
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        let as_seven = t.replacen("yolupainter-brush 8", "yolupainter-brush 7", 1);
+        assert!(matches!(
+            decode(&as_seven).unwrap_err(),
+            StoreError::UnknownKey(k) if k == "influence.color_hue.random.on"
+        ));
+        // バージョン 8 のファイルの中の読めない値・範囲の外
+        let t = text(&user(1, color_change_brush()));
+        for (from, to) in [
+            ("color.target=main_and_sub", "color.target=left"),
+            ("color.tip.hue=90", "color.tip.hue=NaN"),
+            ("color.tip.value=-0.25", "color.tip.value=x"),
+        ] {
+            assert!(
+                matches!(
+                    decode(&t.replace(from, to)).unwrap_err(),
+                    StoreError::BadValue(_)
+                ),
+                "{to}"
+            );
+        }
+        for (from, to) in [
+            ("color.tip.hue=90", "color.tip.hue=361"),
+            ("color.tip.saturation=0.5", "color.tip.saturation=1.5"),
+            ("color.sub_mix=0.5", "color.sub_mix=-0.5"),
+            ("color.stroke.hue=45", "color.stroke.hue=181"),
+            ("color.stroke.value=0.5", "color.stroke.value=-0.5"),
+            (
+                "influence.color_hue.random.min=-1",
+                "influence.color_hue.random.min=-1.5",
+            ),
+            (
+                "influence.color_sub_mix.random.min=0.25",
+                "influence.color_sub_mix.random.min=-0.25",
+            ),
+        ] {
+            assert!(
+                matches!(
+                    decode(&t.replace(from, to)).unwrap_err(),
+                    StoreError::Invalid(_)
+                ),
+                "{to}"
+            );
+        }
+        // 色の項目でない影響元の負の最小値も断る
+        let plain = text(&user(1, color_change_brush())).replace(
+            "influence.color_hue.random.on=1",
+            "influence.size.random.on=1\ninfluence.size.random.min=-0.5\ninfluence.color_hue.random.on=1",
+        );
+        assert!(matches!(
+            decode(&plain).unwrap_err(),
+            StoreError::Invalid(_)
+        ));
+        assert!(matches!(
+            decode(&format!("{t}color.tip.hue=1\n")).unwrap_err(),
+            StoreError::DuplicateKey(_)
+        ));
+    }
+
+    fn spray_brush() -> Brush {
+        let mut b = Brush {
+            spray: Some(Spray {
+                size: 12.5,
+                link_size: true,
+                density: 7.0,
+                bias: -0.5,
+                angle: 30.0,
+                direction: SprayDirection::Center,
+                random_angle: Some(0.25),
+            }),
+            ..Brush::default()
+        };
+        b.influences.spray_size.random = InputUse {
+            on: true,
+            response: InputResponse::new(0.25, vec![]).unwrap(),
+        };
+        b.influences.spray_density.pressure = InputUse::STRAIGHT;
+        b
+    }
+
+    #[test]
+    fn a_brush_with_a_spray_is_version_eight_and_round_trips() {
+        let b = spray_brush();
+        let t = text(&user(1, b.clone()));
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        for line in [
+            "spray.size=12.5",
+            "spray.link_size=1",
+            "spray.density=7",
+            "spray.bias=-0.5",
+            "spray.angle=30",
+            "spray.direction=center",
+            "spray.random_angle=0.25",
+            "influence.spray_size.random.on=1",
+            "influence.spray_size.random.min=0.25",
+            "influence.spray_density.pressure.on=1",
+        ] {
+            assert!(t.lines().any(|l| l == line), "{line}: {t}");
+        }
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!(d.brush, canonical(&b));
+        assert_eq!(text(&user(1, d.brush)), t, "書き戻しても同じ文");
+        // 既定の値（連動・偏向・向き・ランダムが無い）は書かない
+        let plain = Brush {
+            spray: Some(Spray::default()),
+            ..Brush::default()
+        };
+        let t = text(&user(1, plain.clone()));
+        let spray_lines: Vec<&str> = t.lines().filter(|l| l.starts_with("spray.")).collect();
+        assert_eq!(spray_lines, ["spray.size=10", "spray.density=5"], "{t}");
+        assert_eq!(decode(&t).unwrap().2, canonical(&plain));
+        // 影響元だけでもバージョン 8
+        let mut only_influence = Brush::default();
+        only_influence.influences.spray_density.random = InputUse::STRAIGHT;
+        let t = text(&user(1, only_influence.clone()));
+        assert!(
+            t.starts_with("yolupainter-brush 8\n") && !t.contains("spray."),
+            "{t}"
+        );
+        assert_eq!(decode(&t).unwrap().2, canonical(&only_influence));
+        // f32 に収まらない小数は、保存と同じ精度に丸めた正規の形で一致する
+        let odd = Brush {
+            spray: Some(Spray {
+                size: 3.123_456_789_012,
+                bias: 0.123_456_789_012,
+                ..Spray::default()
+            }),
+            ..Brush::default()
+        };
+        let d = decode(&text(&user(1, odd.clone()))).unwrap().2;
+        assert_eq!(d.spray.unwrap().size, 3.123_456_789_012f64 as f32 as f64);
+        assert_eq!(d, canonical(&odd));
+    }
+
+    #[test]
+    fn brushes_without_a_spray_keep_their_version_and_their_bytes() {
+        for (what, b, version) in [
+            ("既定", Brush::default(), "1"),
+            ("影響元", influence_brush(), "7"),
+            ("色の変化", color_change_brush(), "8"),
+        ] {
+            let t = text(&user(1, b));
+            assert!(
+                t.starts_with(&format!("yolupainter-brush {version}\n")),
+                "{what}: {t}"
+            );
+            assert!(!t.contains("spray"), "{what}: {t}");
+        }
+        for (what, file) in [
+            ("v1", include_str!("../../tests/ylbrush_files/v1.ylbrush")),
+            ("v6", include_str!("../../tests/ylbrush_files/v6.ylbrush")),
+        ] {
+            let d = decode_user(file, &mut |_| unreachable!()).unwrap();
+            assert!(d.brush.spray.is_none(), "{what}");
+            let again = encode(&UserBrush {
+                id: 1,
+                name: d.name.clone(),
+                group: d.group,
+                brush: d.brush.clone(),
+                import: d.import.clone(),
+                assist: d.assist,
+            })
+            .unwrap()
+            .text;
+            assert_eq!(again, file, "{what}");
+        }
+    }
+
+    #[test]
+    fn the_spray_items_belong_to_version_eight_and_are_checked() {
+        let t = text(&user(1, spray_brush()));
+        // バージョン 7 までのファイルにあれば、知らない項目として断る
+        for old in 1..=7 {
+            let as_old = t.replacen(
+                "yolupainter-brush 8",
+                &format!("yolupainter-brush {old}"),
+                1,
+            );
+            let err = decode(&as_old).unwrap_err();
+            assert!(
+                matches!(&err, StoreError::UnknownKey(_) | StoreError::BadValue(_)),
+                "バージョン {old}: {err:?}"
+            );
+        }
+        let mut only_influence = Brush::default();
+        only_influence.influences.spray_size.pressure = InputUse::STRAIGHT;
+        let as_seven = text(&user(1, only_influence)).replacen(
+            "yolupainter-brush 8",
+            "yolupainter-brush 7",
+            1,
+        );
+        assert!(matches!(
+            decode(&as_seven).unwrap_err(),
+            StoreError::UnknownKey(k) if k == "influence.spray_size.pressure.on"
+        ));
+        // バージョン 8 のファイルの中の読めない値・範囲の外
+        for (from, to) in [
+            ("spray.direction=center", "spray.direction=left"),
+            ("spray.size=12.5", "spray.size=NaN"),
+            ("spray.link_size=1", "spray.link_size=2"),
+            ("spray.density=7", "spray.density=x"),
+        ] {
+            assert!(
+                matches!(
+                    decode(&t.replace(from, to)).unwrap_err(),
+                    StoreError::BadValue(_)
+                ),
+                "{to}"
+            );
+        }
+        for (from, to) in [
+            ("spray.size=12.5", "spray.size=0"),
+            ("spray.size=12.5", "spray.size=10001"),
+            ("spray.density=7", "spray.density=0.5"),
+            ("spray.bias=-0.5", "spray.bias=-1.5"),
+            ("spray.angle=30", "spray.angle=361"),
+            ("spray.random_angle=0.25", "spray.random_angle=2"),
+            (
+                "influence.spray_size.random.min=0.25",
+                "influence.spray_size.random.min=-0.25",
+            ),
+        ] {
+            assert!(
+                matches!(
+                    decode(&t.replace(from, to)).unwrap_err(),
+                    StoreError::Invalid(_)
+                ),
+                "{to}"
+            );
+        }
+        assert!(matches!(
+            decode(&format!("{t}spray.size=1\n")).unwrap_err(),
+            StoreError::DuplicateKey(_)
+        ));
+    }
+
+    fn dual_v8_brush() -> Brush {
+        let mut b = Brush {
+            dual: Some(DualBrush {
+                radius: 6.5,
+                mode: DualBrushMode::LinearHeight,
+                link_size: true,
+                flow: 0.75,
+                anti_alias: Some(AntiAlias::Strong),
+                angle_tilt: true,
+                angle_rotation: true,
+                angle_line: true,
+                angle_random: 0.5,
+                ..DualBrush::default()
+            }),
+            ..Brush::default()
+        };
+        b.influences.dual_size.pressure = InputUse::STRAIGHT;
+        b.influences.dual_spacing.random = InputUse {
+            on: true,
+            response: InputResponse::new(0.25, vec![]).unwrap(),
+        };
+        b
+    }
+
+    #[test]
+    fn a_brush_with_the_new_dual_items_is_version_eight_and_round_trips() {
+        let b = dual_v8_brush();
+        let t = text(&user(1, b.clone()));
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        for line in [
+            "dual=1",
+            "dual.mode=linear-height",
+            "dual.link_size=1",
+            "dual.flow=0.75",
+            "dual.anti_alias=strong",
+            "dual.angle_tilt=1",
+            "dual.angle_rotation=1",
+            "dual.angle_line=1",
+            "dual.angle_random=0.5",
+            "influence.dual_size.pressure.on=1",
+            "influence.dual_spacing.random.on=1",
+            "influence.dual_spacing.random.min=0.25",
+        ] {
+            assert!(t.lines().any(|l| l == line), "{line}: {t}");
+        }
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!(d.brush, canonical(&b));
+        assert_eq!(text(&user(1, d.brush)), t, "書き戻しても同じ文");
+        // 足したモードだけ・影響元だけでもバージョン 8
+        for mode in DualBrushMode::EXTENDED {
+            let only_mode = Brush {
+                dual: Some(DualBrush {
+                    mode,
+                    ..DualBrush::default()
+                }),
+                ..Brush::default()
+            };
+            let t = text(&user(1, only_mode.clone()));
+            assert!(t.starts_with("yolupainter-brush 8\n"), "{mode:?}: {t}");
+            assert_eq!(decode(&t).unwrap().2, canonical(&only_mode), "{mode:?}");
+        }
+        let mut only_influence = Brush {
+            dual: Some(DualBrush::default()),
+            ..Brush::default()
+        };
+        only_influence.influences.dual_thickness.tilt = InputUse::STRAIGHT;
+        let t = text(&user(1, only_influence.clone()));
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        assert_eq!(decode(&t).unwrap().2, canonical(&only_influence));
+        // f32 に収まらない小数は、保存と同じ精度に丸めた正規の形で一致する
+        let odd = Brush {
+            dual: Some(DualBrush {
+                flow: 0.123_456_789_012,
+                angle_random: 0.987_654_321_098,
+                ..DualBrush::default()
+            }),
+            ..Brush::default()
+        };
+        let d = decode(&text(&user(1, odd.clone()))).unwrap().2;
+        assert_eq!(
+            d.dual.as_ref().unwrap().flow,
+            0.123_456_789_012f64 as f32 as f64
+        );
+        assert_eq!(d, canonical(&odd));
+    }
+
+    #[test]
+    fn dual_brushes_without_the_new_items_keep_their_version_and_their_bytes() {
+        for mode in DualBrushMode::ALL {
+            let b = Brush {
+                dual: Some(DualBrush {
+                    mode,
+                    ..DualBrush::default()
+                }),
+                ..Brush::default()
+            };
+            let t = text(&user(1, b.clone()));
+            assert!(t.starts_with("yolupainter-brush 1\n"), "{mode:?}: {t}");
+            for key in [
+                "dual.link_size",
+                "dual.flow",
+                "dual.anti_alias",
+                "dual.angle_",
+                "influence.dual_",
+            ] {
+                assert!(!t.contains(key), "{mode:?} {key}: {t}");
+            }
+            assert_eq!(decode(&t).unwrap().2, canonical(&b));
+        }
+        for (what, file) in [
+            ("v1", include_str!("../../tests/ylbrush_files/v1.ylbrush")),
+            ("v6", include_str!("../../tests/ylbrush_files/v6.ylbrush")),
+        ] {
+            let d = decode_user(file, &mut |_| unreachable!()).unwrap();
+            let again = encode(&UserBrush {
+                id: 1,
+                name: d.name.clone(),
+                group: d.group,
+                brush: d.brush.clone(),
+                import: d.import.clone(),
+                assist: d.assist,
+            })
+            .unwrap()
+            .text;
+            assert_eq!(again, file, "{what}");
+        }
+    }
+
+    #[test]
+    fn the_new_dual_items_belong_to_version_eight_and_are_checked() {
+        let t = text(&user(1, dual_v8_brush()));
+        // バージョン 7 までのファイルにあれば、知らない項目・知らない値として断る
+        for old in 1..=7 {
+            let as_old = t.replacen(
+                "yolupainter-brush 8",
+                &format!("yolupainter-brush {old}"),
+                1,
+            );
+            let err = decode(&as_old).unwrap_err();
+            assert!(
+                matches!(&err, StoreError::UnknownKey(_) | StoreError::BadValue(_)),
+                "バージョン {old}: {err:?}"
+            );
+        }
+        // 足したモードの値は、バージョン 7 までのファイルでは読めない値
+        for mode in DualBrushMode::EXTENDED {
+            let only_mode = Brush {
+                dual: Some(DualBrush {
+                    mode,
+                    ..DualBrush::default()
+                }),
+                ..Brush::default()
+            };
+            let as_one =
+                text(&user(1, only_mode)).replacen("yolupainter-brush 8", "yolupainter-brush 1", 1);
+            assert!(
+                matches!(decode(&as_one).unwrap_err(), StoreError::BadValue(k) if k == "dual.mode"),
+                "{mode:?}"
+            );
+        }
+        let mut only_influence = Brush {
+            dual: Some(DualBrush::default()),
+            ..Brush::default()
+        };
+        only_influence.influences.dual_flow.pressure = InputUse::STRAIGHT;
+        let as_seven = text(&user(1, only_influence)).replacen(
+            "yolupainter-brush 8",
+            "yolupainter-brush 7",
+            1,
+        );
+        assert!(matches!(
+            decode(&as_seven).unwrap_err(),
+            StoreError::UnknownKey(k) if k == "influence.dual_flow.pressure.on"
+        ));
+        // デュアルブラシの無いファイルの、デュアルの新しい鍵は知らない項目
+        let stray = format!("{}dual.flow=0.5\n", text(&user(1, color_change_brush())));
+        assert!(matches!(
+            decode(&stray).unwrap_err(),
+            StoreError::UnknownKey(k) if k == "dual.flow"
+        ));
+        // バージョン 8 のファイルの中の読めない値・範囲の外
+        for (from, to) in [
+            ("dual.mode=linear-height", "dual.mode=height"),
+            ("dual.anti_alias=strong", "dual.anti_alias=max"),
+            ("dual.link_size=1", "dual.link_size=2"),
+            ("dual.flow=0.75", "dual.flow=x"),
+        ] {
+            assert!(
+                matches!(
+                    decode(&t.replace(from, to)).unwrap_err(),
+                    StoreError::BadValue(_)
+                ),
+                "{to}"
+            );
+        }
+        for (from, to) in [
+            ("dual.flow=0.75", "dual.flow=1.5"),
+            ("dual.flow=0.75", "dual.flow=NaN"),
+            ("dual.angle_random=0.5", "dual.angle_random=2"),
+            (
+                "influence.dual_spacing.random.min=0.25",
+                "influence.dual_spacing.random.min=-0.25",
+            ),
+        ] {
+            assert!(
+                matches!(
+                    decode(&t.replace(from, to)).unwrap_err(),
+                    StoreError::Invalid(_) | StoreError::BadValue(_)
+                ),
+                "{to}"
+            );
+        }
+        assert!(matches!(
+            decode(&format!("{t}dual.flow=1\n")).unwrap_err(),
+            StoreError::DuplicateKey(_)
+        ));
+    }
+
+    /// 2 つ目に複数の筆先・選び方・反転・比較暗・紙の質感・散布効果を入れたブラシ（画像は組み込みの筆先）。
+    fn dual_second_half_brush() -> Brush {
+        Brush {
+            dual: Some(DualBrush {
+                tips: vec![builtin_tip("dots").unwrap(), builtin_tip("rim").unwrap()],
+                selection: TipSelection::PingPong,
+                flip_x: FlipRule::OnFold,
+                flip_y: FlipRule::Random,
+                darken_overlap: true,
+                texture: Some(PaperTexture {
+                    mode: TextureMode::Overlay,
+                    scale: 2.5,
+                    angle: 30.0,
+                    ..PaperTexture::new(builtin_tip("grain").unwrap(), 0.75)
+                }),
+                spray: Some(Spray {
+                    size: 4.5,
+                    link_size: true,
+                    density: 7.0,
+                    bias: -0.25,
+                    angle: 15.0,
+                    direction: SprayDirection::Center,
+                    random_angle: Some(0.5),
+                }),
+                ..DualBrush::default()
+            }),
+            ..Brush::default()
+        }
+    }
+
+    #[test]
+    fn a_brush_with_the_second_tips_texture_and_spray_is_version_eight_and_round_trips() {
+        let b = dual_second_half_brush();
+        let t = text(&user(1, b.clone()));
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        for line in [
+            "dual.tips=dots,rim",
+            "dual.selection=pingpong",
+            "dual.flip_x_rule=fold",
+            "dual.flip_y_rule=random",
+            "dual.darken=1",
+            "dual.texture=grain",
+            "dual.texture.depth=0.75",
+            "dual.texture.scale=2.5",
+            "dual.texture.mode=overlay",
+            "dual.texture.angle=30",
+            "dual.spray.size=4.5",
+            "dual.spray.link_size=1",
+            "dual.spray.density=7",
+            "dual.spray.bias=-0.25",
+            "dual.spray.angle=15",
+            "dual.spray.direction=center",
+            "dual.spray.random_angle=0.5",
+        ] {
+            assert!(t.lines().any(|l| l == line), "{line}: {t}");
+        }
+        // 主の項目には書かない
+        for key in ["\ntexture=", "\nspray.", "tip.darken", "tip.flip_x_rule"] {
+            assert!(!t.contains(key), "{key}: {t}");
+        }
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!(d.brush, canonical(&b));
+        assert_eq!(text(&user(1, d.brush)), t, "書き戻しても同じ文");
+        // どれか 1 つだけでもバージョン 8 で、読み戻すと同じ
+        let full = b.dual.clone().unwrap();
+        let plain = DualBrush::default();
+        let singles = [
+            DualBrush {
+                tips: full.tips.clone(),
+                ..plain.clone()
+            },
+            DualBrush {
+                selection: TipSelection::Hold,
+                ..plain.clone()
+            },
+            DualBrush {
+                flip_y: FlipRule::On,
+                ..plain.clone()
+            },
+            DualBrush {
+                flip_x: FlipRule::Random,
+                ..plain.clone()
+            },
+            DualBrush {
+                darken_overlap: true,
+                ..plain.clone()
+            },
+            DualBrush {
+                texture: full.texture.clone(),
+                ..plain.clone()
+            },
+            DualBrush {
+                spray: full.spray,
+                ..plain.clone()
+            },
+        ];
+        for one in singles {
+            let only = Brush {
+                dual: Some(one),
+                ..Brush::default()
+            };
+            let t = text(&user(1, only.clone()));
+            assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+            assert_eq!(decode(&t).unwrap().2, canonical(&only), "{t}");
+        }
+        // f32 に収まらない小数は、保存と同じ精度に丸めた正規の形で一致する
+        let mut odd = dual_second_half_brush();
+        let d = odd.dual.as_mut().unwrap();
+        d.texture.as_mut().unwrap().depth = 0.123_456_789_012;
+        d.spray.as_mut().unwrap().bias = 0.987_654_321_098;
+        let back = decode(&text(&user(1, odd.clone()))).unwrap().2;
+        let bd = back.dual.as_ref().unwrap();
+        assert_eq!(
+            bd.texture.as_ref().unwrap().depth,
+            0.123_456_789_012f64 as f32 as f64
+        );
+        assert_eq!(bd.spray.unwrap().bias, 0.987_654_321_098f64 as f32 as f64);
+        assert_eq!(back, canonical(&odd));
+    }
+
+    #[test]
+    fn the_second_tips_texture_and_spray_belong_to_version_eight_and_are_checked() {
+        let t = text(&user(1, dual_second_half_brush()));
+        // バージョン 7 までのファイルにあれば、知らない項目として断る
+        for old in 1..=7 {
+            let as_old = t.replacen(
+                "yolupainter-brush 8",
+                &format!("yolupainter-brush {old}"),
+                1,
+            );
+            assert!(
+                matches!(
+                    decode(&as_old).unwrap_err(),
+                    StoreError::UnknownKey(_) | StoreError::BadValue(_)
+                ),
+                "バージョン {old}"
+            );
+        }
+        let as_seven = text(&user(
+            1,
+            Brush {
+                dual: Some(DualBrush {
+                    darken_overlap: true,
+                    ..DualBrush::default()
+                }),
+                ..Brush::default()
+            },
+        ))
+        .replacen("yolupainter-brush 8", "yolupainter-brush 7", 1);
+        assert!(matches!(
+            decode(&as_seven).unwrap_err(),
+            StoreError::UnknownKey(k) if k == "dual.darken"
+        ));
+        // デュアルブラシの無いファイルの、2 つ目の鍵は知らない項目
+        let stray = format!(
+            "{}dual.spray.size=3\n",
+            text(&user(1, color_change_brush()))
+        );
+        assert!(matches!(
+            decode(&stray).unwrap_err(),
+            StoreError::UnknownKey(k) if k == "dual.spray.size"
+        ));
+        // 紙の質感の画像の無い質感の値は知らない項目
+        let orphan = t.replace("dual.texture=grain\n", "");
+        assert!(matches!(
+            decode(&orphan).unwrap_err(),
+            StoreError::UnknownKey(k) if k.starts_with("dual.texture.")
+        ));
+        // 読めない値
+        for (from, to) in [
+            ("dual.selection=pingpong", "dual.selection=bounce"),
+            ("dual.flip_x_rule=fold", "dual.flip_x_rule=always"),
+            ("dual.flip_y_rule=random", "dual.flip_y_rule=sideways"),
+            ("dual.darken=1", "dual.darken=yes"),
+            ("dual.texture.mode=overlay", "dual.texture.mode=height"),
+            ("dual.texture.depth=0.75", "dual.texture.depth=x"),
+            ("dual.spray.direction=center", "dual.spray.direction=up"),
+            ("dual.spray.density=7", "dual.spray.density=x"),
+        ] {
+            assert!(
+                matches!(
+                    decode(&t.replace(from, to)).unwrap_err(),
+                    StoreError::BadValue(_)
+                ),
+                "{to}"
+            );
+        }
+        // いつも反転は旗（`dual.flip_x=1`）で書く。旗の値は 0 か 1
+        let on = text(&user(
+            1,
+            Brush {
+                dual: Some(DualBrush {
+                    flip_x: FlipRule::On,
+                    ..DualBrush::default()
+                }),
+                ..Brush::default()
+            },
+        ));
+        assert!(on.lines().any(|l| l == "dual.flip_x=1"), "{on}");
+        assert!(matches!(
+            decode(&on.replace("dual.flip_x=1", "dual.flip_x=2")).unwrap_err(),
+            StoreError::BadValue(_)
+        ));
+        assert!(matches!(
+            decode(&t.replace("dual.tips=dots,rim", "dual.tips=dots,nope")).unwrap_err(),
+            StoreError::UnknownTip(_)
+        ));
+        // 範囲の外・NaN・枚数の上限
+        let many = vec!["dots"; 257].join(",");
+        for (from, to) in [
+            (
+                "dual.texture.depth=0.75",
+                "dual.texture.depth=1.5".to_string(),
+            ),
+            (
+                "dual.texture.depth=0.75",
+                "dual.texture.depth=NaN".to_string(),
+            ),
+            (
+                "dual.texture.scale=2.5",
+                "dual.texture.scale=100".to_string(),
+            ),
+            ("dual.spray.density=7", "dual.spray.density=0".to_string()),
+            ("dual.spray.bias=-0.25", "dual.spray.bias=-2".to_string()),
+            ("dual.tips=dots,rim", format!("dual.tips={many}")),
+        ] {
+            assert!(
+                matches!(
+                    decode(&t.replace(from, &to)).unwrap_err(),
+                    StoreError::Invalid(_) | StoreError::BadValue(_)
+                ),
+                "{to}"
+            );
+        }
+        assert!(matches!(
+            decode(&format!("{t}dual.darken=1\n")).unwrap_err(),
+            StoreError::DuplicateKey(_)
+        ));
+    }
+
+    // ───────── バージョン 9: 目の印・画面上のサイズで指定・傾きの最大値 ─────────
+
+    /// バージョン 9 の項目を全部使うブラシ（目の印は大きさを外して消去を足した形、傾きの最大値は 2 つの項目）。
+    fn version_nine_brush() -> Brush {
+        let mut b = Brush::default();
+        b.controls.size_by_screen = true;
+        super::super::rows::set_shown(&mut b, super::super::rows::Row::Size, false);
+        super::super::rows::set_shown(&mut b, super::super::rows::Row::Erase, true);
+        b.influences.size.tilt = InputUse {
+            on: true,
+            response: InputResponse::new(0.25, vec![])
+                .unwrap()
+                .with_max(0.75)
+                .unwrap(),
+        };
+        b.influences.color_hue.tilt = InputUse {
+            on: true,
+            response: InputResponse::new_signed(-0.5, vec![])
+                .unwrap()
+                .with_max(0.5)
+                .unwrap(),
+        };
+        b
+    }
+
+    #[test]
+    fn a_brush_with_eyes_size_on_screen_and_a_tilt_maximum_is_version_nine_and_round_trips() {
+        let b = version_nine_brush();
+        let u = user(1, b.clone());
+        let t = text(&u);
+        assert!(t.starts_with("yolupainter-brush 9\n"), "{t}");
+        for line in [
+            "controls.size_by_screen=1",
+            "influence.size.tilt.on=1",
+            "influence.size.tilt.min=0.25",
+            "influence.size.tilt.max=0.75",
+            "influence.color_hue.tilt.min=-0.5",
+            "influence.color_hue.tilt.max=0.5",
+        ] {
+            assert!(t.lines().any(|l| l == line), "{line}: {t}");
+        }
+        // 目の印は、行の名前を表の並びでコンマ区切りに（大きさを外して消去を足した形）
+        let shown = t
+            .lines()
+            .find_map(|l| l.strip_prefix("rows.shown="))
+            .unwrap();
+        assert!(!shown.split(',').any(|r| r == "size"), "{shown}");
+        assert!(shown.split(',').any(|r| r == "erase") && shown.split(',').any(|r| r == "opacity"));
+        // 傾きの最大値が 100% の入力と、ほかの入力には max を書かない
+        assert!(
+            !t.contains("influence.size.pressure.max") && !t.contains("influence.flow.tilt.max")
+        );
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!(d.brush, u.brush);
+        assert_eq!(text(&user(1, d.brush)), t, "書き戻しても同じ文");
+        // 目の印が全部消えた形（空）も、そのまま覚える
+        let none = Brush {
+            shown_rows: Some(Vec::new()),
+            ..Brush::default()
+        };
+        let t = text(&user(1, none.clone()));
+        assert!(
+            t.starts_with("yolupainter-brush 9\n") && t.contains("\nrows.shown=\n"),
+            "{t}"
+        );
+        assert_eq!(decode(&t).unwrap().2.shown_rows, Some(Vec::new()));
+    }
+
+    #[test]
+    fn brushes_without_the_version_nine_items_keep_their_version_and_their_bytes() {
+        // 初めの形の目の印・切の画面上のサイズ・100% の傾きの最大値は、今までのバージョンのまま、今までと同じバイト
+        let mut default_eyes = Brush::default();
+        super::super::rows::set_shown(&mut default_eyes, super::super::rows::Row::Size, false);
+        super::super::rows::set_shown(&mut default_eyes, super::super::rows::Row::Size, true);
+        assert_eq!(default_eyes.shown_rows, None);
+        let mut full_tilt = Brush::default();
+        full_tilt.influences.size.tilt = InputUse {
+            on: true,
+            response: InputResponse::new(0.5, vec![])
+                .unwrap()
+                .with_max(1.0)
+                .unwrap(),
+        };
+        for (what, b, version) in [
+            ("既定", Brush::default(), 1),
+            ("初めの形の目", default_eyes, 1),
+            ("傾きの最大値 100%", full_tilt, 7),
+        ] {
+            let t = text(&user(1, b.clone()));
+            assert!(
+                t.starts_with(&format!("yolupainter-brush {version}\n")),
+                "{what}: {t}"
+            );
+            for key in ["rows.shown", "size_by_screen", "tilt.max"] {
+                assert!(!t.contains(key), "{what} {key}");
+            }
+            assert_eq!(decode(&t).unwrap().2, canonical(&b), "{what}");
+        }
+        // 前のバージョンのファイルは、目の印が初めの形・画面上のサイズが切・傾きの最大値が 100% で開く
+        let v8 = "yolupainter-brush 8\nname=a\ngroup=pen\n";
+        let b = decode(v8).unwrap().2;
+        assert_eq!(b.shown_rows, None);
+        assert!(!b.controls.size_by_screen);
+        assert!(b.influences.size.tilt.response.max() == 1.0);
+        for row in super::super::rows::Row::ALL {
+            assert_eq!(
+                super::super::rows::is_shown(&b, row),
+                row.default_shown(),
+                "{row:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_version_nine_items_belong_to_version_nine_and_are_checked() {
+        let u = user(1, version_nine_brush());
+        let t = text(&u);
+        // バージョン 8 までのファイルにバージョン 9 の鍵があれば、知らない項目として断る
+        for older in [8, 7] {
+            let old = t.replacen(
+                "yolupainter-brush 9",
+                &format!("yolupainter-brush {older}"),
+                1,
+            );
+            assert!(
+                matches!(decode(&old).unwrap_err(), StoreError::UnknownKey(_)),
+                "{older}"
+            );
+        }
+        for key in ["controls.size_by_screen=1\n", "rows.shown="] {
+            let at = t.find(key).unwrap();
+            let end = t[at..].find('\n').unwrap() + at + 1;
+            let old = format!("yolupainter-brush 8\nname=a\ngroup=pen\n{}", &t[at..end]);
+            assert!(
+                matches!(decode(&old).unwrap_err(), StoreError::UnknownKey(k) if key.starts_with(&k)),
+                "{key}"
+            );
+        }
+        // 読めない値・範囲の外・知らない行の名前
+        for (from, to, ok) in [
+            (
+                "controls.size_by_screen=1",
+                "controls.size_by_screen=2",
+                false,
+            ),
+            (
+                "influence.size.tilt.max=0.75",
+                "influence.size.tilt.max=1.5",
+                false,
+            ),
+            (
+                "influence.size.tilt.max=0.75",
+                "influence.size.tilt.max=-0.1",
+                false,
+            ),
+            (
+                "influence.size.tilt.max=0.75",
+                "influence.size.tilt.max=NaN",
+                false,
+            ),
+            (
+                "influence.size.tilt.max=0.75",
+                "influence.size.tilt.max=1",
+                true,
+            ),
+        ] {
+            assert_eq!(decode(&t.replace(from, to)).is_ok(), ok, "{to}");
+        }
+        let shown = t.lines().find(|l| l.starts_with("rows.shown=")).unwrap();
+        assert!(matches!(
+            decode(&t.replace(shown, "rows.shown=size,no_such_row")).unwrap_err(),
+            StoreError::BadValue(k) if k == "rows.shown"
+        ));
+        // 傾き以外の入力には最大値の鍵が無い（書かないので、あれば知らない項目）
+        assert!(matches!(
+            decode(&format!("{t}influence.size.pressure.max=0.5\n")).unwrap_err(),
+            StoreError::UnknownKey(_)
+        ));
+        assert!(matches!(
+            decode(&format!("{t}controls.size_by_screen=1\n")).unwrap_err(),
+            StoreError::DuplicateKey(_)
+        ));
+    }
+
+    #[test]
+    fn continuous_spraying_and_ribbon_are_version_nine_and_round_trip() {
+        let mut b = Brush::default();
+        b.tip.continuous = true;
+        b.tip.ribbon = true;
+        b.tip.image = builtin_tip("charcoal");
+        let u = user(1, b.clone());
+        let t = text(&u);
+        assert!(t.starts_with("yolupainter-brush 9\n"), "{t}");
+        assert!(t.lines().any(|l| l == "tip.continuous=1"), "{t}");
+        assert!(t.lines().any(|l| l == "tip.ribbon=1"), "{t}");
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!(d.brush, u.brush);
+        assert_eq!(text(&user(1, d.brush)), t, "書き戻しても同じ文");
+        // 切の項目は書かない（片方だけでもバージョン 9）
+        for (continuous, ribbon) in [(true, false), (false, true)] {
+            let mut one = Brush::default();
+            one.tip.continuous = continuous;
+            one.tip.ribbon = ribbon;
+            let t = text(&user(1, one.clone()));
+            assert!(t.starts_with("yolupainter-brush 9\n"), "{t}");
+            assert_eq!(t.contains("tip.continuous"), continuous);
+            assert_eq!(t.contains("tip.ribbon"), ribbon);
+            assert_eq!(decode(&t).unwrap().2, canonical(&one));
+        }
+        // 両方切のブラシは前のバージョンのまま
+        assert!(text(&user(1, Brush::default())).starts_with("yolupainter-brush 1\n"));
+        // バージョン 8 までのファイルにあれば知らない項目として断る。値は 0 と 1 だけ
+        for key in ["tip.continuous=1", "tip.ribbon=1"] {
+            for older in [8, 1] {
+                let old = format!("yolupainter-brush {older}\nname=a\ngroup=pen\n{key}\n");
+                assert!(
+                    matches!(decode(&old).unwrap_err(), StoreError::UnknownKey(k) if key.starts_with(&k)),
+                    "{older} {key}"
+                );
+            }
+            let bad = t.replace(key, &key.replace("=1", "=2"));
+            if bad != t {
+                assert!(decode(&bad).is_err(), "{key}");
+            }
+        }
+        let bad = text(&u).replace("tip.ribbon=1", "tip.ribbon=yes");
+        assert!(matches!(
+            decode(&bad).unwrap_err(),
+            StoreError::BadValue(k) if k == "tip.ribbon"
+        ));
+    }
+
+    fn water_edge_brush() -> Brush {
+        Brush {
+            water_edge: Some(WaterEdge {
+                width: 4.5,
+                opacity: 0.25,
+                darkness: 0.75,
+                after_stroke: true,
+                blur: 2.5,
+            }),
+            ..Brush::default()
+        }
+    }
+
+    fn refer_brush() -> Brush {
+        Brush {
+            reference_lines: ReferenceLines {
+                enabled: true,
+                margin: 20.0,
+                expand: true,
+                amount: -4.0,
+                mode: ExpandMode::Square,
+            },
+            ..Brush::default()
+        }
+    }
+
+    // ───────── バージョン 9: 補正の拡張（手ぶれ補正の速度による調整・はらい・後補正） ─────────
+
+    fn corrected_assist() -> StrokeAssist {
+        StrokeAssist {
+            stabilizer: 12.0,
+            stabilizer_speed: Some(StabilizerSpeed::SlowOnly),
+            sweep: 0.25,
+            post: PostCorrection {
+                on: true,
+                strength: 6.0,
+                by_speed: false,
+                by_view_scale: true,
+                // ストロークの始めの値は保存しない
+                view_scale: 3.0,
+            },
+            ..StrokeAssist::default()
+        }
+    }
+
+    #[test]
+    fn a_brush_with_a_water_edge_is_version_eight_and_round_trips() {
+        let b = water_edge_brush();
+        let t = text(&user(1, b.clone()));
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        for line in [
+            "water_edge.width=4.5",
+            "water_edge.opacity=0.25",
+            "water_edge.darkness=0.75",
+            "water_edge.after_stroke=1",
+            "water_edge.blur=2.5",
+        ] {
+            assert!(t.lines().any(|l| l == line), "{line}: {t}");
+        }
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!(d.brush, canonical(&b));
+        assert_eq!(text(&user(1, d.brush)), t, "書き戻しても同じ文");
+        // ドラッグ後に処理が切・ぼかし幅 0 は書かない
+        let plain = Brush {
+            water_edge: Some(WaterEdge::default()),
+            ..Brush::default()
+        };
+        let t = text(&user(1, plain.clone()));
+        let lines: Vec<&str> = t.lines().filter(|l| l.starts_with("water_edge.")).collect();
+        assert_eq!(
+            lines,
+            [
+                "water_edge.width=4",
+                "water_edge.opacity=0.3",
+                "water_edge.darkness=0.3"
+            ],
+            "{t}"
+        );
+        assert_eq!(decode(&t).unwrap().2, canonical(&plain));
+        // f32 に収まらない小数は、保存と同じ精度に丸めた正規の形で一致する
+        let odd = Brush {
+            water_edge: Some(WaterEdge {
+                width: 3.123_456_789_012,
+                ..WaterEdge::default()
+            }),
+            ..Brush::default()
+        };
+        let d = decode(&text(&user(1, odd.clone()))).unwrap().2;
+        assert_eq!(d, canonical(&odd));
+        assert_eq!(
+            d.water_edge.unwrap().width,
+            3.123_456_789_012f64 as f32 as f64
+        );
+    }
+
+    #[test]
+    fn brushes_without_a_water_edge_keep_their_version_and_bytes() {
+        for (what, b, version) in [
+            ("既定", Brush::default(), "1"),
+            ("影響元", influence_brush(), "7"),
+            ("散布", spray_brush(), "8"),
+        ] {
+            let t = text(&user(1, b));
+            assert!(
+                t.starts_with(&format!("yolupainter-brush {version}\n")),
+                "{what}: {t}"
+            );
+            assert!(!t.contains("water_edge"), "{what}: {t}");
+        }
+        for file in [
+            include_str!("../../tests/ylbrush_files/v1.ylbrush"),
+            include_str!("../../tests/ylbrush_files/v6.ylbrush"),
+        ] {
+            let d = decode_user(file, &mut |_| unreachable!()).unwrap();
+            assert!(d.brush.water_edge.is_none());
+        }
+    }
+
+    #[test]
+    fn a_brush_that_carries_the_correction_settings_is_version_nine_and_round_trips() {
+        let u = carrying(corrected_assist());
+        let t = text(&u);
+        assert!(t.starts_with("yolupainter-brush 9\n"), "{t}");
+        for line in [
+            "assist.stabilizer=12",
+            "assist.stabilizer_speed=slow",
+            "assist.sweep=0.25",
+            "assist.post=1",
+            "assist.post.strength=6",
+            "assist.post.by_speed=0",
+            "assist.post.by_view_scale=1",
+        ] {
+            assert!(t.lines().any(|l| l == line), "{line}: {t}");
+        }
+        assert!(!t.contains("view_scale=3"));
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        let want = StrokeAssist {
+            post: PostCorrection {
+                view_scale: 1.0,
+                ..corrected_assist().post
+            },
+            ..corrected_assist()
+        };
+        assert_eq!(d.assist, Some(want));
+        assert_eq!(
+            text(&UserBrush {
+                assist: d.assist,
+                ..user(1, d.brush)
+            }),
+            t,
+            "書き戻しても同じ文"
+        );
+        // 補正タイプの「すばやく描いたときに弱く補正」、後補正だけ・はらいだけでもバージョン 9
+        for assist in [
+            StrokeAssist {
+                stabilizer: 4.0,
+                stabilizer_speed: Some(StabilizerSpeed::WeakenWhenFast),
+                ..StrokeAssist::default()
+            },
+            StrokeAssist {
+                post: PostCorrection {
+                    on: true,
+                    ..PostCorrection::default()
+                },
+                ..StrokeAssist::default()
+            },
+            StrokeAssist {
+                sweep: 1.0,
+                ..StrokeAssist::default()
+            },
+        ] {
+            let t = text(&carrying(assist));
+            assert!(t.starts_with("yolupainter-brush 9\n"), "{t}");
+            let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+            assert_eq!(d.assist, Some(assist), "{t}");
+        }
+    }
+
+    #[test]
+    fn the_water_edge_items_belong_to_version_eight_and_are_checked() {
+        let t = text(&user(1, water_edge_brush()));
+        // バージョン 7 までのファイルにあれば、知らない項目として断る
+        for old in 1..=7 {
+            let as_old = t.replacen(
+                "yolupainter-brush 8",
+                &format!("yolupainter-brush {old}"),
+                1,
+            );
+            let err = decode(&as_old).unwrap_err();
+            // バージョン 7 は影響元の鍵を読めるので、残るのは水彩境界の鍵
+            assert!(
+                match &err {
+                    StoreError::UnknownKey(k) => old < 7 || k.starts_with("water_edge."),
+                    StoreError::BadValue(_) => old < 7,
+                    _ => false,
+                },
+                "バージョン {old}: {err:?}"
+            );
+        }
+        for (from, to) in [
+            ("water_edge.width=4.5", "water_edge.width=NaN"),
+            ("water_edge.after_stroke=1", "water_edge.after_stroke=2"),
+            ("water_edge.opacity=0.25", "water_edge.opacity=x"),
+        ] {
+            assert!(
+                matches!(
+                    decode(&t.replace(from, to)).unwrap_err(),
+                    StoreError::BadValue(_)
+                ),
+                "{to}"
+            );
+        }
+        for (from, to) in [
+            ("water_edge.width=4.5", "water_edge.width=0"),
+            ("water_edge.width=4.5", "water_edge.width=21"),
+            ("water_edge.opacity=0.25", "water_edge.opacity=1.5"),
+            ("water_edge.darkness=0.75", "water_edge.darkness=-1"),
+            ("water_edge.blur=2.5", "water_edge.blur=30"),
+        ] {
+            assert!(
+                matches!(
+                    decode(&t.replace(from, to)).unwrap_err(),
+                    StoreError::Invalid(_)
+                ),
+                "{to}"
+            );
+        }
+        assert!(matches!(
+            decode(&format!("{t}water_edge.blur=1\n")).unwrap_err(),
+            StoreError::DuplicateKey(_)
+        ));
+    }
+
+    #[test]
+    fn reference_lines_make_a_version_eight_file_and_round_trip() {
+        let u = user(21, refer_brush());
+        let t = text(&u);
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        for key in [
+            "refer.on=1",
+            "refer.margin=20",
+            "refer.expand=1",
+            "refer.amount=-4",
+            "refer.mode=square",
+        ] {
+            assert!(t.lines().any(|l| l == key), "{key}\n{t}");
+        }
+        let (_, _, back) = decode(&t).unwrap();
+        assert_eq!(back, u.brush);
+        assert_eq!(text(&UserBrush { brush: back, ..u }), t);
+        // 領域拡縮が切なら `refer.expand` は書かない（量と方法は書く）
+        let mut b = refer_brush();
+        b.reference_lines.expand = false;
+        b.reference_lines.mode = ExpandMode::Darkest;
+        let t = text(&user(22, b.clone()));
+        assert!(!t.contains("refer.expand"), "{t}");
+        assert!(t.lines().any(|l| l == "refer.mode=darkest"), "{t}");
+        assert_eq!(decode(&t).unwrap().2, canonical(&b));
+        // はみ出し防止が切のブラシは、値が何でも書かない（今までのバージョン・今までと同じバイト）
+        let off = Brush {
+            reference_lines: ReferenceLines {
+                enabled: false,
+                margin: 55.0,
+                expand: true,
+                amount: 3.0,
+                mode: ExpandMode::Round,
+            },
+            ..Brush::default()
+        };
+        assert_eq!(text(&user(23, off)), text(&user(23, Brush::default())));
+        // 値は画面の精度（f32）で書き、読み戻しても同じ値
+        let mut odd = refer_brush();
+        odd.reference_lines.margin = 12.345_679;
+        let u = user(24, odd);
+        let back = decode(&text(&u)).unwrap().2;
+        assert_eq!(back.reference_lines.margin, 12.345_679_f32 as f64);
+        assert_eq!(back, u.brush);
+    }
+
+    #[test]
+    fn reference_lines_are_version_eight_and_are_checked() {
+        let v8 = text(&user(1, refer_brush()));
+        // バージョン 7 までのファイルにあれば、知らない項目として断る
+        for old in ["yolupainter-brush 1", "yolupainter-brush 7"] {
+            let as_old = v8.replacen("yolupainter-brush 8", old, 1);
+            assert!(
+                matches!(decode(&as_old).unwrap_err(), StoreError::UnknownKey(k) if k.starts_with("refer.") || k.starts_with("influence.")),
+                "{old}"
+            );
+        }
+        let as_v7 = v8.replacen("yolupainter-brush 8", "yolupainter-brush 7", 1);
+        assert!(
+            matches!(decode(&as_v7).unwrap_err(), StoreError::UnknownKey(k) if k.starts_with("refer.")),
+            "バージョン 7 の影響元の鍵は読め、はみ出し防止の鍵で断る"
+        );
+        // 入の印が無いのにほかの鍵がある・入の印が 0 のファイルは、書き戻すと同じバイトにならないので断る
+        for no_on in [
+            v8.replace("refer.on=1\n", ""),
+            v8.replace("refer.on=1", "refer.on=0"),
+        ] {
+            assert!(
+                matches!(decode(&no_on).unwrap_err(), StoreError::UnknownKey(k) if k == "refer.amount"),
+                "{no_on}"
+            );
+        }
+        let bad = |from: &str, to: &str| decode(&v8.replace(from, to)).unwrap_err();
+        assert!(
+            matches!(bad("refer.mode=square", "refer.mode=hex"), StoreError::BadValue(k) if k == "refer.mode")
+        );
+        assert!(matches!(
+            bad("refer.margin=20", "refer.margin=150"),
+            StoreError::Invalid(_)
+        ));
+        assert!(matches!(
+            bad("refer.amount=-4", "refer.amount=101"),
+            StoreError::Invalid(_)
+        ));
+        assert!(
+            matches!(bad("refer.amount=-4", "refer.amount=NaN"), StoreError::BadValue(k) if k == "refer.amount")
+        );
+        assert!(matches!(
+            decode(&format!("{v8}refer.on=1\n")).unwrap_err(),
+            StoreError::DuplicateKey(_)
+        ));
+    }
+
+    #[test]
+    fn brushes_without_the_correction_settings_keep_their_version_and_bytes() {
+        // 速度による調整・はらい・後補正を使わない入り抜き・手ぶれ補正は、バージョン 4 のまま、補正の鍵を書かない
+        let assist = StrokeAssist {
+            stabilizer: 6.0,
+            ..StrokeAssist::default()
+        };
+        let t = text(&carrying(assist));
+        assert!(t.starts_with("yolupainter-brush 4\n"), "{t}");
+        for key in ["stabilizer_speed", "sweep", "assist.post"] {
+            assert!(!t.contains(key), "{key}");
+        }
+        // 前のバージョンのファイルは、補正の拡張が切で開く
+        let d = decode_user(
+            "yolupainter-brush 4\nname=a\ngroup=pen\nassist.stabilizer=6\n",
+            &mut |_| unreachable!(),
+        )
+        .unwrap();
+        assert_eq!(d.assist, Some(assist));
+        assert!(!d.assist.unwrap().uses_correction());
+    }
+
+    #[test]
+    fn the_correction_settings_belong_to_version_nine_and_are_checked() {
+        let t = text(&carrying(corrected_assist()));
+        // バージョン 8 までのファイルに補正の鍵があれば、知らない項目として断る
+        for older in [8, 4] {
+            let old = t.replacen(
+                "yolupainter-brush 9",
+                &format!("yolupainter-brush {older}"),
+                1,
+            );
+            assert!(
+                matches!(decode(&old).unwrap_err(), StoreError::UnknownKey(_)),
+                "{older}"
+            );
+        }
+        // 読めない値・範囲の外
+        for (from, to, ok) in [
+            (
+                "assist.stabilizer_speed=slow",
+                "assist.stabilizer_speed=fast",
+                true,
+            ),
+            (
+                "assist.stabilizer_speed=slow",
+                "assist.stabilizer_speed=2",
+                false,
+            ),
+            ("assist.sweep=0.25", "assist.sweep=1", true),
+            ("assist.sweep=0.25", "assist.sweep=1.5", false),
+            ("assist.sweep=0.25", "assist.sweep=-0.1", false),
+            ("assist.sweep=0.25", "assist.sweep=NaN", false),
+            ("assist.post=1", "assist.post=2", false),
+            ("assist.post.strength=6", "assist.post.strength=100", true),
+            ("assist.post.strength=6", "assist.post.strength=101", false),
+            ("assist.post.by_speed=0", "assist.post.by_speed=yes", false),
+        ] {
+            assert_eq!(decode(&t.replace(from, to)).is_ok(), ok, "{to}");
+        }
+        assert!(matches!(
+            decode(&format!("{t}assist.sweep=0.5\n")).unwrap_err(),
+            StoreError::DuplicateKey(_)
+        ));
     }
 }

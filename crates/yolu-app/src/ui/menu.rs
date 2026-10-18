@@ -598,7 +598,7 @@ fn draw_level<A: Clone>(
                     }
                 }
             }
-            bar.end(ui, base.with("scroll"), &mut level.scroll);
+            bar.end_menu(ui, base.with("scroll"), &mut level.scroll);
         });
     out
 }

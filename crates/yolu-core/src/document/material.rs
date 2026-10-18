@@ -1,5 +1,6 @@
 use super::*;
 use crate::material::ChannelPaint;
+use crate::Reason;
 
 #[derive(Default)]
 pub(super) struct MaterialState {
@@ -46,7 +47,9 @@ impl Document {
     ) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
         if !self.undo.is_empty() || !self.redo.is_empty() {
-            return Err(CoreError::Unsupported("ID 色の復元は読み込み直後だけ"));
+            return Err(CoreError::Unsupported(
+                Reason::IdColorsRestoreOnlyAfterLoading,
+            ));
         }
         self.id_colors = colors;
         Ok(())
@@ -64,7 +67,7 @@ impl Document {
         self.ensure_no_stroke()?;
         priority
             .validate()
-            .map_err(|_| CoreError::InvalidArgument("ベイクの優先の値が範囲外です"))?;
+            .map_err(|_| CoreError::InvalidArgument(Reason::BakePriorityOutOfRange))?;
         if self.bake_priority == priority {
             return Ok(());
         }
@@ -89,12 +92,12 @@ impl Document {
         self.ensure_no_stroke()?;
         if !self.undo.is_empty() || !self.redo.is_empty() {
             return Err(CoreError::Unsupported(
-                "ベイクの優先の復元は読み込み直後だけ",
+                Reason::BakePriorityRestoreOnlyAfterLoading,
             ));
         }
         priority
             .validate()
-            .map_err(|_| CoreError::InvalidArgument("ベイクの優先の値が範囲外です"))?;
+            .map_err(|_| CoreError::InvalidArgument(Reason::BakePriorityOutOfRange))?;
         self.bake_priority = priority;
         Ok(())
     }
@@ -186,13 +189,13 @@ impl Document {
     }
     pub(super) fn validate_material(&self, channels: &[ChannelPaint]) -> Result<(), CoreError> {
         if channels.is_empty() {
-            return Err(CoreError::InvalidArgument("空のマテリアル"));
+            return Err(CoreError::InvalidArgument(Reason::EmptyMaterial));
         }
         let mut seen = std::collections::HashSet::new();
         for c in channels {
             self.require_channel(c.channel)?;
             if !seen.insert(c.channel) {
-                return Err(CoreError::InvalidArgument("重複したチャンネル"));
+                return Err(CoreError::InvalidArgument(Reason::DuplicateChannel));
             }
         }
         Ok(())
@@ -256,6 +259,7 @@ impl Document {
     }
     pub(super) fn finish_material(&mut self) -> Result<StrokeResult, CoreError> {
         let first = self.active.take().unwrap();
+        self.saved.stroke_ended();
         self.journal.memo.clear(); // 描き終えた（下の覚えを手放す）
         let result = StrokeResult {
             changed: false,
@@ -332,6 +336,7 @@ impl Document {
         let Some(first) = self.active.take() else {
             return false;
         };
+        self.saved.stroke_ended();
         self.journal.memo.clear(); // 取り消した（下の覚えを手放す）
         let layer = first.layer;
         let index = first.layer_index;

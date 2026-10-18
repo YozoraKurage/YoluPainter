@@ -5,6 +5,7 @@
 //! 手で塗る・塗りつぶす・マテリアルで塗ると次の描き直しで消えるので、パスレイヤーには断る。パスを外す（[`Document::rasterize`]）と
 //! 今の画素だけが残り、普通に塗れる。
 
+use crate::Reason;
 use std::collections::BTreeSet;
 
 use super::material::MaterialCommand;
@@ -43,11 +44,9 @@ impl Document {
     /// パスを持つレイヤーに手で描く・塗る操作を断る（次の描き直しで消える）。
     pub(super) fn refuse_path_layer(&self, index: usize) -> Result<(), CoreError> {
         if self.layers[index].has_paths() {
-            Err(CoreError::Unsupported(
-                "パスで描かれたレイヤーには手で描けない",
-            ))
+            Err(CoreError::Unsupported(Reason::CannotPaintByHandOnPathLayer))
         } else if self.layers[index].text.is_some() {
-            Err(CoreError::Unsupported("テキストレイヤーには手で描けない"))
+            Err(CoreError::Unsupported(Reason::CannotPaintByHandOnTextLayer))
         } else {
             Ok(())
         }
@@ -87,14 +86,10 @@ impl Document {
         let l = &self.layers[index];
         // 塗りつぶしレイヤーのパスは、塗りつぶしと効果のスタックの結果の上に重ねる（評価の最後）
         if !matches!(l.kind, LayerKind::Raster | LayerKind::Fill) {
-            return Err(CoreError::Unsupported(
-                "パスで描けるのはラスターと塗りつぶしレイヤーだけ",
-            ));
+            return Err(CoreError::Unsupported(Reason::PathsOnlyOnRasterOrFill));
         }
         if l.text.is_some() {
-            return Err(CoreError::Unsupported(
-                "テキストレイヤーにはパスを付けられない",
-            ));
+            return Err(CoreError::Unsupported(Reason::TextLayerCannotHavePath));
         }
         validate_list(entries).map_err(paths_error)?;
         for e in entries {
@@ -107,21 +102,15 @@ impl Document {
                 && e.path.material().is_none()
                 && !l.is_channel_enabled(e.path.channel())
             {
-                return Err(CoreError::Unsupported(
-                    "パスのチャンネルがレイヤーで有効でない",
-                ));
+                return Err(CoreError::Unsupported(Reason::PathChannelNotEnabled));
             }
         }
         if let (Some(old), Some(new)) = (l.paths.first(), entries.first()) {
             if old.path.channel() != new.path.channel() {
-                return Err(CoreError::Unsupported(
-                    "レイヤーのパスはチャンネルを変えない",
-                ));
+                return Err(CoreError::Unsupported(Reason::LayerPathKeepsChannel));
             }
             if old.path.is_canvas() != new.path.is_canvas() {
-                return Err(CoreError::Unsupported(
-                    "レイヤーのパスは種類（モデルの上かキャンバスの上か）を変えない",
-                ));
+                return Err(CoreError::Unsupported(Reason::LayerPathKeepsKind));
             }
         }
         // パスはレイヤーの画素を描き直す（アルファも変わる）ので、画像・透明部分・すべてのロックで断る。型と状態の検査のあと（C# の
@@ -161,7 +150,7 @@ impl Document {
             for (c, s) in rendered {
                 if map.insert(c, s).is_some() {
                     return Err(CoreError::InvalidArgument(
-                        "描いた面のチャンネルが重なっている",
+                        Reason::PaintedSurfaceChannelsDuplicated,
                     ));
                 }
             }
@@ -177,7 +166,7 @@ impl Document {
             })
         {
             return Err(CoreError::InvalidArgument(
-                "描いた面は、パスのチャンネルごとに、キャンバスと同じ大きさで 1 つ",
+                Reason::OnePaintedSurfacePerPathChannel,
             ));
         }
         let old_paths = self.layers[index].paths.clone();
@@ -322,7 +311,7 @@ impl Document {
         self.ensure_no_stroke()?;
         if entries.is_empty() {
             return Err(CoreError::InvalidArgument(
-                "パスレイヤーにはパスが 1 本以上要る",
+                Reason::PathLayerNeedsAtLeastOnePath,
             ));
         }
         validate_list(&entries).map_err(paths_error)?;
@@ -342,7 +331,7 @@ impl Document {
             })
         {
             return Err(CoreError::InvalidArgument(
-                "描いた面は、パスのチャンネルごとに、キャンバスと同じ大きさで 1 つ",
+                Reason::OnePaintedSurfacePerPathChannel,
             ));
         }
         let id = self.new_layer_id();
@@ -423,7 +412,7 @@ impl Document {
         self.ensure_no_stroke()?;
         if entries.iter().any(|e| !e.path.is_canvas()) {
             return Err(CoreError::InvalidArgument(
-                "3D のパスは呼び手が形で描いて set_paths へ渡す",
+                Reason::ModelPathsSetWithSetPaths,
             ));
         }
         validate_list(&entries).map_err(paths_error)?;
@@ -457,7 +446,7 @@ impl Document {
         // 塗りつぶしレイヤーは画素を持たない（パスの画素は評価の最後に重ねるだけ）ので、パスを外すと絵が消える。画素にはしない
         if self.layers[index].kind == LayerKind::Fill {
             return Err(CoreError::Unsupported(
-                "塗りつぶしレイヤーのパスは画素にできない",
+                Reason::FillLayerPathsCannotBeRasterized,
             ));
         }
         // 画素は変えないので、すべてのロックだけで断る（C# の Rasterize）
@@ -481,9 +470,7 @@ impl Document {
         let index = self.index_of(layer)?;
         let old = self.layers[index].paths.clone();
         let Some(i) = old.iter().position(|e| e.id() == path) else {
-            return Err(CoreError::InvalidArgument(
-                "名前を替えるパスがレイヤーに無い",
-            ));
+            return Err(CoreError::InvalidArgument(Reason::PathToRenameMissing));
         };
         if old[i].name == name {
             return Ok(());
@@ -514,9 +501,7 @@ impl Document {
         self.require_channel(channel)?;
         let index = self.index_of(id)?;
         if self.layers[index].kind != LayerKind::Fill {
-            return Err(CoreError::Unsupported(
-                "塗りつぶしレイヤーのパスの画素は塗りつぶしレイヤーだけ",
-            ));
+            return Err(CoreError::Unsupported(Reason::FillPathPixelsNeedFillLayer));
         }
         if self.ensure_surface(index, channel) {
             self.external_mutation();
@@ -567,21 +552,17 @@ impl Document {
             || entries.is_empty()
         {
             return Err(CoreError::Unsupported(
-                "パスを付けられるのはパスの無いラスターか塗りつぶしレイヤーだけ",
+                Reason::PathsAttachOnlyToLayerWithoutPaths,
             ));
         }
         for e in &entries {
             for c in e.path.channels() {
                 if l.surface(c).is_none() {
-                    return Err(CoreError::Unsupported(
-                        "パスのチャンネルの面がレイヤーに無い",
-                    ));
+                    return Err(CoreError::Unsupported(Reason::PathChannelSurfaceMissing));
                 }
             }
             if e.path.material().is_none() && !l.is_channel_enabled(e.path.channel()) {
-                return Err(CoreError::Unsupported(
-                    "パスのチャンネルがレイヤーで有効でない",
-                ));
+                return Err(CoreError::Unsupported(Reason::PathChannelNotEnabled));
             }
         }
         self.layers[index].paths = entries;

@@ -1,5 +1,5 @@
 //! 寸法・タイル寸法を変えて置くときの画素を、C# の Core が作った答えと全バイトで照らす
-//! （`tools/csharp-golden/SmartGolden.cs`。元が複数タイルで疎・一様・端のタイルが混ざる面、Normal のチャンネル、マスク）。
+//! （元が複数タイルで疎・一様・端のタイルが混ざる面、Normal のチャンネル、マスク）。
 use yolu_core::{
     smart::{SmartMaterial, SmartPlacement, SmartResampling},
     Channel, Document, Rgba8,

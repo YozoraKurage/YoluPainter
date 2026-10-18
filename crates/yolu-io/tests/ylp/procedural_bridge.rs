@@ -128,7 +128,7 @@ fn the_version_follows_the_features_used() {
     assert_eq!(PROCEDURAL_VERSION, 23);
     // 版 24（色調補正の 6 種）は adjust_bridge の試験が固定する
     assert_eq!(yolu_io::EFFECTS_VERSION, 28);
-    assert_eq!(MAX_NATIVE_VERSION, yolu_io::RULERS_VERSION);
+    assert_eq!(MAX_NATIVE_VERSION, yolu_io::LAYER_SETS_VERSION);
     // Unity 版と同じ機能だけなら版 21 のまま（Unity 0.2.0 が読める）
     assert_eq!(
         NativeDocument::from_core(&plain()).unwrap().version(),
@@ -154,7 +154,7 @@ fn the_version_follows_the_features_used() {
     assert_eq!(
         native.to_core().unwrap().channels().len(),
         7,
-        "ユーザーチャンネルも版 23 で残る"
+        "ユーザーチャンネルもバージョン 23 で残る"
     );
     // 既存の種類の Generator だけの文書は版 21
     let mut old = plain();
@@ -318,7 +318,7 @@ fn a_ylp_keeps_the_stages_and_the_version() {
     let spec = SetSpec {
         id: "0f0f0f0f-0000-4000-8000-000000000001".into(),
         name: "Set".into(),
-        material: yolu_io::MaterialRef::Unassigned,
+        materials: vec![yolu_io::MaterialRef::Unassigned],
         document: Some(native.clone().into()),
         composites: vec![],
     };
@@ -375,8 +375,8 @@ fn read_fixture(name: &str) -> Vec<u8> {
 }
 
 /// 版 23 の正解の正本（Rust が書いたもの。固定の ID で作り、ファイルと同じバイト列になる）。
-/// 作り直すときは `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp procedural_bridge::`、続けて
-/// `python3 tools/io-fixtures/generate.py --source <Unity 版> --procedural` で Unity 版の読み手の記録を取り直す。
+/// 作り直すときは `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp procedural_bridge::`。
+/// Unity 版の読み手の記録（`*.unity.txt`）は Unity 0.2.0 で取った物で、取り直す道は無い。
 #[test]
 fn version_23_fixture_is_what_this_writer_produces() {
     let bytes = NativeDocument::from_core(&document(false))
@@ -395,7 +395,7 @@ fn version_23_fixture_is_what_this_writer_produces() {
 
 #[test]
 fn unity_0_2_0_reader_refuses_version_23_before_touching_the_file() {
-    // Unity 0.2.0 の DocumentBinary・YlpFormat に Rust が書いた版 23 を読ませた記録（tools/io-fixtures --procedural）。
+    // Unity 0.2.0 の DocumentBinary・YlpFormat に Rust が書いた版 23 を読ませた記録。
     // 版 22 と同じく「Unsupported archive version」で断り、Unity 版は種類 64・65 を別の意味で読まない
     let record = String::from_utf8(read_fixture("procedural-v23.unity.txt")).unwrap();
     let lines: Vec<&str> = record.lines().collect();

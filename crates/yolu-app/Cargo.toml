@@ -35,6 +35,9 @@ image = { version = "0.25", default-features = false, features = ["png", "tga", 
 png = "0.18"   # MIT OR Apache-2.0（取り込んだ筆先の画像を、名前つきの灰色の PNG で置く。yolu-io が既に使っている版）
 sha2 = "0.10"   # MIT OR Apache-2.0（筆先の画像を内容の SHA-256 で名づける。yolu-io が既に使っている版）
 arboard = { version = "3.6", default-features = false, features = ["image-data", "wayland-data-control"] }
+fluent-bundle = "0.16"   # Apache-2.0 OR MIT（画面の文の .ftl を読んで整形する。`lang`）
+fluent-syntax = "0.12"   # Apache-2.0 OR MIT（.ftl の構文木。fluent-bundle が使う版。メッセージの名前を全部たどる）
+unic-langid = "0.9"   # MIT OR Apache-2.0（Fluent の言語の識別子。fluent-bundle が使う版）
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }   # MIT（ファイルを選ぶウィンドウ。Windows は OS のウィンドウ、Linux は xdg-desktop-portal）
 
 [target.'cfg(target_os = "linux")'.dependencies]

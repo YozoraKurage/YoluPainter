@@ -137,11 +137,15 @@ fn local(rect: Rect, p: Pos2) -> Vec2 {
 }
 
 fn camera_view(app: &AppState, rect: Rect) -> CameraView {
-    app.view3d.camera.view(rect.width(), rect.height())
+    app.view3d.view.camera.view(rect.width(), rect.height())
 }
 
-/// 今のギズモの輪（ポーズのモードで、骨を選んでいるとき）。
+/// 今のギズモの輪（ポーズのモードで、ボーンを選んでいるとき。シェルフでポーズのプリセットを見せているビューでは出さない: そのビューの
+/// 形は今のポーズでないので、回しても見えている形は動かない）。
 pub fn current_rings(app: &AppState, rect: Rect) -> Option<Rings> {
+    if app.view3d.view.pose != super::hide::ViewPose::Current {
+        return None;
+    }
     let s = app.view3d.pose.session.as_ref()?;
     let bone = s.selected?;
     rings(&s.rig, s.pose(), bone, &camera_view(app, rect))
@@ -224,8 +228,9 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2) {
             return;
         }
     }
-    // 輪の外: 面の下のボーンを選ぶ
-    if let Some(bone) = bone_at(app, rect, at) {
+    // 輪の外: ボーンの丸が先、丸の外は面の下のボーンを選ぶ
+    if let Some(bone) = super::bone_marks::bone_at(app, rect, at).or_else(|| bone_at(app, rect, at))
+    {
         if let Some(s) = app.view3d.pose.session.as_mut() {
             s.selected = Some(bone);
             reveal(s, bone);

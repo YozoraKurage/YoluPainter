@@ -4,12 +4,13 @@
 //! 並びの計算は ID と親の列（[`Tree`]）の上で行い、結果の前後を 1 つの段（Structure）にする。グループの中身はいつもグループの
 //! すぐ下に続けて並ぶ。
 
+use crate::Reason;
 use std::collections::{HashMap, HashSet};
 
 use super::{Command, Document, Order};
 use crate::adjust::AdjustmentSettings;
 use crate::error::CoreError;
-use crate::layer::{ChannelBlend, Layer, LayerId};
+use crate::layer::{ChannelBlend, Layer, LayerId, LayerSetId};
 use crate::surface::Surface;
 use crate::types::{Channel, ChannelInfo, LayerKind, Rgba8};
 
@@ -27,6 +28,8 @@ pub const MAX_GROUP_DEPTH: usize = 64;
 pub(crate) struct Tree {
     pub order: Order,
     groups: HashSet<LayerId>,
+    /// レイヤーのレイヤーセット（一番上の段の兄弟は同じレイヤーセットのレイヤーだけ）。
+    sets: HashMap<LayerId, LayerSetId>,
 }
 
 impl Tree {
@@ -75,13 +78,22 @@ impl Tree {
         let start = self.subtree_start(top);
         self.order[start..=top].iter().map(|e| e.0).collect()
     }
-    /// まとまりを parent の position（その親の兄弟の中の位置、0 = 一番下）へ動かす（C# の MoveSubtreeInternal）。
+    /// 並びの i 番が、親 parent・レイヤーセット set の段の兄弟か。
+    pub(super) fn is_sibling(&self, i: usize, parent: Option<LayerId>, set: LayerSetId) -> bool {
+        self.order[i].1 == parent && self.sets.get(&self.order[i].0) == Some(&set)
+    }
+    /// レイヤーのレイヤーセット。
+    pub(super) fn set_of(&self, id: LayerId) -> LayerSetId {
+        self.sets[&id]
+    }
+    /// まとまりを parent の position（その親の兄弟の中の位置、0 = 一番下。兄弟は同じレイヤーセットのレイヤー）へ動かす（C# の MoveSubtreeInternal）。
     fn move_subtree(&mut self, id: LayerId, parent: Option<LayerId>, position: usize) {
+        let set = self.set_of(id);
         let top = self.index(id);
         let start = self.subtree_start(top);
         let mut block: Vec<_> = self.order.drain(start..=top).collect();
         let siblings: Vec<usize> = (0..self.order.len())
-            .filter(|&i| self.order[i].1 == parent)
+            .filter(|&i| self.is_sibling(i, parent, set))
             .collect();
         let insert_at = if position < siblings.len() {
             self.subtree_start(siblings[position])
@@ -115,6 +127,7 @@ impl Document {
                 .filter(|l| l.is_group())
                 .map(|l| l.id)
                 .collect(),
+            sets: self.layers.iter().map(|l| (l.id, l.set)).collect(),
         }
     }
     fn order(&self) -> Order {
@@ -193,7 +206,7 @@ impl Document {
         Ok(())
     }
 
-    /// 新しいレイヤーを above のすぐ上（同じグループの中）へ、なければ一番上へ入れる（1 回の Undo）。
+    /// 新しいレイヤーを above のすぐ上（同じグループ・レイヤーセットの中）へ、なければ最初のレイヤーセットの一番上へ入れる（1 回の Undo）。
     pub(super) fn insert_new(
         &mut self,
         layer: Layer,
@@ -205,19 +218,25 @@ impl Document {
     /// `insert_new` の、履歴の費用を指定する形（レイヤーが画素やパスを持って入るとき、その分も費用に数える）。
     pub(super) fn insert_new_costed(
         &mut self,
-        mut layer: Layer,
+        layer: Layer,
         above: Option<LayerId>,
         cost: u64,
     ) -> Result<LayerId, CoreError> {
+        self.insert_new_in(layer, above, None, cost)
+    }
+
+    /// `insert_new_costed` の、above が無いときの入れ先のレイヤーセットを選べる形（None は最初のレイヤーセット）。
+    pub(super) fn insert_new_in(
+        &mut self,
+        mut layer: Layer,
+        above: Option<LayerId>,
+        in_set: Option<LayerSetId>,
+        cost: u64,
+    ) -> Result<LayerId, CoreError> {
         self.ensure_no_stroke()?;
-        let (index, parent) = match above {
-            Some(a) => {
-                let i = self.index_of(a)?;
-                (i + 1, self.layers[i].parent)
-            }
-            None => (self.layers.len(), None),
-        };
+        let (index, parent, set) = self.placement_in(above, in_set)?;
         layer.parent = parent;
+        layer.set = set;
         let id = layer.id;
         self.execute(
             Command::Insert {
@@ -307,7 +326,9 @@ impl Document {
                 if channels.is_none() {
                     continue;
                 }
-                return Err(CoreError::Unsupported("色相/彩度は色のチャンネルだけ"));
+                return Err(CoreError::Unsupported(
+                    Reason::HueSaturationNeedsColorChannel,
+                ));
             }
             layer.set_enabled(c, true);
         }
@@ -385,7 +406,8 @@ impl Document {
     }
 
     /// レイヤー（グループなら中身ごと）をグループ parent（None は一番上の段）の子の position（0 = 一番下）へ動かす。
-    /// グループを自分の中へは入れられない。同じ所なら何もしない。
+    /// グループを自分の中へは入れられない。動かせるのは同じレイヤーセットの中だけ（別のレイヤーセットのグループへは断る。一番上の段は、
+    /// そのレイヤーのレイヤーセットの一番上の段）。同じ所なら何もしない。
     pub fn move_layer_to(
         &mut self,
         id: LayerId,
@@ -393,17 +415,20 @@ impl Document {
         position: usize,
     ) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
-        self.index_of(id)?;
+        let set = self.layers[self.index_of(id)?].set;
         if let Some(p) = parent {
             let pl = self.layer(p).ok_or(CoreError::LayerNotFound)?;
             if !pl.is_group() {
-                return Err(CoreError::InvalidArgument("グループにだけ入れられる"));
+                return Err(CoreError::InvalidArgument(Reason::ParentNotAGroup));
+            }
+            if pl.set != set {
+                return Err(CoreError::InvalidArgument(Reason::IntoGroupOfOtherLayerSet));
             }
             let mut cur = Some(p);
             while let Some(c) = cur {
                 if c == id {
                     return Err(CoreError::InvalidArgument(
-                        "グループを自分の中へは入れられない",
+                        Reason::CannotMoveGroupIntoItself,
                     ));
                 }
                 cur = self.layer(c).and_then(|l| l.parent);
@@ -412,10 +437,10 @@ impl Document {
         let siblings = self
             .layers
             .iter()
-            .filter(|l| l.parent == parent && l.id != id)
+            .filter(|l| l.parent == parent && l.set == set && l.id != id)
             .count();
         if position > siblings {
-            return Err(CoreError::InvalidArgument("new_index"));
+            return Err(CoreError::InvalidArgument(Reason::NewIndex));
         }
         let mut tree = self.tree();
         let before = tree.order.clone();
@@ -440,7 +465,7 @@ impl Document {
     pub fn group_layers(&mut self, ids: &[LayerId], name: &str) -> Result<LayerId, CoreError> {
         self.ensure_no_stroke()?;
         if ids.is_empty() {
-            return Err(CoreError::InvalidArgument("まとめるレイヤーが無い"));
+            return Err(CoreError::InvalidArgument(Reason::NoLayersToMerge));
         }
         let mut members: Vec<usize> = Vec::new();
         for id in ids {
@@ -450,15 +475,20 @@ impl Document {
             }
         }
         let parent = self.layers[members[0]].parent;
+        let set = self.layers[members[0]].set;
+        if members.iter().any(|&i| self.layers[i].set != set) {
+            return Err(CoreError::InvalidArgument(Reason::GroupAcrossLayerSets));
+        }
         if members.iter().any(|&i| self.layers[i].parent != parent) {
             return Err(CoreError::InvalidArgument(
-                "同じグループの中のレイヤーだけをまとめられる",
+                Reason::MergeRequiresLayersInSameGroup,
             ));
         }
         members.sort();
         let gid = self.new_layer_id();
         let mut group = Layer::new(gid, name, LayerKind::Group);
         group.parent = parent;
+        group.set = set;
         let mut tree = self.tree();
         let before = tree.order.clone();
         let member_ids: Vec<LayerId> = members.iter().map(|&i| self.layers[i].id).collect();
@@ -470,6 +500,7 @@ impl Document {
         let insert_at = tree.index(*member_ids.last().expect("空でない")) + 1;
         tree.order.insert(insert_at, (gid, parent));
         tree.groups.insert(gid);
+        tree.sets.insert(gid, set);
         for (k, m) in member_ids.iter().enumerate() {
             tree.move_subtree(*m, Some(gid), k);
         }
@@ -491,7 +522,7 @@ impl Document {
         self.ensure_no_stroke()?;
         let index = self.index_of(id)?;
         if !self.layers[index].is_group() {
-            return Err(CoreError::Unsupported("グループではない"));
+            return Err(CoreError::Unsupported(Reason::NotGroup));
         }
         let tree = self.tree();
         let before = tree.order.clone();
@@ -532,7 +563,7 @@ impl Document {
     pub fn children_of(&self, parent: Option<LayerId>) -> Result<Vec<LayerId>, CoreError> {
         if let Some(p) = parent {
             if !self.layer(p).ok_or(CoreError::LayerNotFound)?.is_group() {
-                return Err(CoreError::InvalidArgument("グループではない"));
+                return Err(CoreError::InvalidArgument(Reason::NotGroup));
             }
         }
         Ok(self
@@ -551,7 +582,7 @@ impl Document {
             layer = self.layer(p).ok_or(CoreError::LayerNotFound)?;
             depth += 1;
             if depth > self.layers.len() {
-                return Err(CoreError::InvalidArgument("入れ子が輪になっている"));
+                return Err(CoreError::InvalidArgument(Reason::CyclicHierarchy));
             }
         }
         Ok(depth)
@@ -576,32 +607,37 @@ impl Document {
                 None => open.clear(),
                 Some(p) => {
                     let Some(&pi) = index_of.get(&p) else {
-                        return Err(CoreError::InvalidArgument("無いグループに入っている"));
+                        return Err(CoreError::InvalidArgument(Reason::ParentGroupNotFound));
                     };
                     if !tree.is_group(p) {
-                        return Err(CoreError::InvalidArgument(
-                            "グループでないレイヤーの中に入っている",
-                        ));
+                        return Err(CoreError::InvalidArgument(Reason::ParentNotGroup));
                     }
                     if pi == i {
-                        return Err(CoreError::InvalidArgument(
-                            "グループの入れ子が輪になっている",
-                        ));
+                        return Err(CoreError::InvalidArgument(Reason::CyclicGroupHierarchy));
                     }
                     if pi < i {
-                        return Err(CoreError::InvalidArgument("レイヤーはグループの下に並ぶ"));
+                        return Err(CoreError::InvalidArgument(
+                            Reason::LayersMustFollowTheirGroup,
+                        ));
+                    }
+                    if tree.sets.get(&id) != tree.sets.get(&p) {
+                        return Err(CoreError::InvalidArgument(
+                            Reason::GroupChildInOtherLayerSet,
+                        ));
                     }
                     // p が開いていなければ、p の子が途切れてから戻ってきた（子が連続していない）
                     while open.last() != Some(&p) {
                         if open.pop().is_none() {
-                            return Err(CoreError::InvalidArgument("グループの中身が続いていない"));
+                            return Err(CoreError::InvalidArgument(
+                                Reason::GroupChildrenNotContiguous,
+                            ));
                         }
                     }
                 }
             }
             if tree.is_group(id) {
                 if open.len() >= MAX_GROUP_DEPTH {
-                    return Err(CoreError::InvalidArgument("グループの入れ子が深すぎる"));
+                    return Err(CoreError::InvalidArgument(Reason::GroupNestingTooDeep));
                 }
                 open.push(id);
             }
@@ -615,7 +651,7 @@ impl Document {
         for &(id, parent) in tree.order.iter().rev() {
             let d = parent.map_or(0, |p| depth.get(&p).map_or(0, |d| d + 1));
             if tree.is_group(id) && d >= MAX_GROUP_DEPTH {
-                return Err(CoreError::InvalidArgument("グループの入れ子が深すぎる"));
+                return Err(CoreError::InvalidArgument(Reason::GroupNestingTooDeep));
             }
             depth.insert(id, d);
         }
@@ -638,7 +674,7 @@ impl Document {
             cur = self.layer(p).ok_or(CoreError::LayerNotFound)?.parent;
         }
         if above + inner > MAX_GROUP_DEPTH {
-            return Err(CoreError::InvalidArgument("グループの入れ子が深すぎる"));
+            return Err(CoreError::InvalidArgument(Reason::GroupNestingTooDeep));
         }
         Ok(())
     }
@@ -667,7 +703,9 @@ impl Document {
     pub fn set_structure_for_load(&mut self, parents: &[Option<LayerId>]) -> Result<(), CoreError> {
         self.ensure_loadable()?;
         if parents.len() != self.layers.len() {
-            return Err(CoreError::InvalidArgument("親の数がレイヤーの数と違う"));
+            return Err(CoreError::InvalidArgument(
+                Reason::ParentCountDoesNotMatchLayerCount,
+            ));
         }
         let mut tree = self.tree();
         for (e, p) in tree.order.iter_mut().zip(parents) {
@@ -692,11 +730,11 @@ impl Document {
         self.ensure_no_stroke()?;
         info.validate()?;
         if self.channels.iter().flatten().any(|c| c.name == info.name) {
-            return Err(CoreError::InvalidArgument("同じ名前のチャンネルがある"));
+            return Err(CoreError::InvalidArgument(Reason::ChannelNameExists));
         }
         let index = (Channel::STANDARD_COUNT..Channel::MAX)
             .find(|&i| self.channels.get(i).is_none_or(|c| c.is_none()))
-            .ok_or(CoreError::InvalidArgument("チャンネルは 64 まで"))?;
+            .ok_or(CoreError::InvalidArgument(Reason::TooManyChannels))?;
         let channel = Channel::from_index(index).expect("64 未満");
         self.execute(
             Command::ChannelInfo {
@@ -720,10 +758,10 @@ impl Document {
         self.ensure_loadable()?;
         info.validate()?;
         if channel.is_standard() || self.channel_info(channel).is_some() {
-            return Err(CoreError::InvalidArgument("その番号のチャンネルはもうある"));
+            return Err(CoreError::InvalidArgument(Reason::ChannelIdExists));
         }
         if self.channels.iter().flatten().any(|c| c.name == info.name) {
-            return Err(CoreError::InvalidArgument("同じ名前のチャンネルがある"));
+            return Err(CoreError::InvalidArgument(Reason::ChannelNameExists));
         }
         let i = channel.index();
         if self.channels.len() <= i {
@@ -744,7 +782,7 @@ impl Document {
         self.ensure_no_stroke()?;
         let old = self.require_channel(channel)?.clone();
         if channel.is_standard() {
-            return Err(CoreError::Unsupported("標準のチャンネルは変えられない"));
+            return Err(CoreError::Unsupported(Reason::CannotChangeBuiltInChannel));
         }
         info.validate()?;
         if old == info {
@@ -759,7 +797,7 @@ impl Document {
                         .is_some_and(|a| !a.applies_to(info.kind))
             });
             if stuck {
-                return Err(CoreError::Unsupported("色相/彩度のレイヤーが有効"));
+                return Err(CoreError::Unsupported(Reason::HueSaturationLayerEnabled));
             }
         }
         if self
@@ -768,7 +806,7 @@ impl Document {
             .enumerate()
             .any(|(i, c)| i != channel.index() && c.as_ref().is_some_and(|c| c.name == info.name))
         {
-            return Err(CoreError::InvalidArgument("同じ名前のチャンネルがある"));
+            return Err(CoreError::InvalidArgument(Reason::ChannelNameExists));
         }
         let cost = 64 + 2 * (old.name.len() + info.name.len()) as u64;
         self.execute(
@@ -787,7 +825,7 @@ impl Document {
         self.ensure_no_stroke()?;
         let old = self.require_channel(channel)?.clone();
         if channel.is_standard() {
-            return Err(CoreError::Unsupported("標準のチャンネルは消せない"));
+            return Err(CoreError::Unsupported(Reason::CannotRemoveBuiltInChannel));
         }
         let bytes: u64 = self
             .layers

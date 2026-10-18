@@ -35,9 +35,14 @@ pub(super) fn working_bytes(
         Settings::SlopeBlur { .. } | Settings::DirectionalBlur { .. } | Settings::Warp { .. } => {
             input * 12 + output * 4
         }
-        // 入力・出力と、行ごとの最大・最小の表（3 チャンネル × 段の数）
-        Settings::Morphology { .. } => {
-            input * (4 + 3 * u64::from(levels(input_width as usize))) + output * 4
+        // 入力・出力と、行ごとの最大・最小の表（3 チャンネル × 段の数）、出力の 1 行の最大・最小（`best`。出力の幅 ≤ 入力の幅）、
+        // 行ごとの区間の表（`spans`。半径 + 1 行分）
+        Settings::Morphology { radius, .. } => {
+            let levels = u64::from(levels(input_width as usize));
+            // 1 行の区間の数は `runs` の切れ目の数 − 1 以下: 切れ目は 4 つ + 2 × 段の数（重なりは減るだけ）
+            let runs_per_row = 3 + 2 * levels;
+            let spans = (u64::from(*radius) + 1) * runs_per_row * std::mem::size_of::<Run>() as u64;
+            input * (4 + 3 * levels) + output * 4 + input_width * 3 + spans
         }
         // ぼかし（`gaussian_q`）と同じ作業に、ぼかした画素（グローは明るい所の画素）を 1 枚
         Settings::EdgeDetect { .. } | Settings::HighPass { .. } | Settings::Glow { .. } => {
@@ -317,19 +322,85 @@ fn directional_blur(
     let (sin, cos) = sin_cos_deg(angle);
     // 両側へ distance、取る数は長さに比例（両端と中心を含む奇数。上限 512）
     let n = (2 * (distance.ceil() as u32) + 1).min(MAX_LINE_SAMPLES);
-    each_pixel(image, next, t, check, |x, y, input| {
-        let mut sum = [0.0; 4];
-        for k in 0..n {
+    // 長さが正の有限値でないと読む位置が NaN になる: 下の速い読み方は使わず、画素ごとに双線形で読む
+    if !(distance.is_finite() && distance > 0.0) {
+        return each_pixel(image, next, t, check, |x, y, input| {
+            let mut sum = [0.0; 4];
+            for k in 0..n {
+                let d = -distance + 2.0 * distance * f64::from(k) / f64::from(n - 1);
+                let px = image.place(f64::from(x) + cos * d, x, distance, image.w);
+                let py = image.place(f64::from(y) + sin * d, y, distance, image.h);
+                let p = src.sample(px, py);
+                for c in 0..4 {
+                    sum[c] += p[c];
+                }
+            }
+            let n = f64::from(n);
+            unpremultiply(sum.map(|v| v / n), input)
+        });
+    }
+    // 画素ごとの双線形の読み（`Premultiplied::sample`）と同じ式・同じ順の f64 の計算で、画素によらない部分を前に出す:
+    // 線上の位置のずれ（cos × d、sin × d）は取る点ごとに 1 回、縦の位置・行・重みは出力の行ごとに 1 回。位置は 0 以上なので
+    // floor は切り捨てと同じ値（呼び出しの多い floor を使わない）。
+    let steps: Vec<(f64, f64)> = (0..n)
+        .map(|k| {
             let d = -distance + 2.0 * distance * f64::from(k) / f64::from(n - 1);
-            let px = image.place(f64::from(x) + cos * d, x, distance, image.w);
-            let py = image.place(f64::from(y) + sin * d, y, distance, image.h);
-            let p = src.sample(px, py);
-            for c in 0..4 {
-                sum[c] += p[c];
+            (cos * d, sin * d)
+        })
+        .collect();
+    let r = image.r;
+    let stride = r.width as usize;
+    let (last_x, last_y) = (r.x + r.width - 1, r.y + r.height - 1);
+    let (max_x, count) = (f64::from(image.w - 1), f64::from(n));
+    /// 取る点ごとの縦の読み: 上と下の行の先頭（u16 の添字）と、下の重み・上の重み。
+    struct Line {
+        above: usize,
+        below: usize,
+        weight: f64,
+        rest: f64,
+    }
+    let mut lines: Vec<Line> = Vec::with_capacity(n as usize);
+    let mut line_y = u32::MAX;
+    each_pixel(image, next, t, check, |x, y, input| {
+        if y != line_y {
+            line_y = y;
+            lines.clear();
+            for &(_, shift) in &steps {
+                let py = image.place(f64::from(y) + shift, y, distance, image.h);
+                let fy = py as u32;
+                let ty = py - f64::from(fy);
+                let row = |v: u32| (v.max(r.y).min(last_y) - r.y) as usize * stride * 4;
+                lines.push(Line {
+                    above: row(fy),
+                    below: row(fy + 1),
+                    weight: ty,
+                    rest: 1.0 - ty,
+                });
             }
         }
-        let n = f64::from(n);
-        unpremultiply(sum.map(|v| v / n), input)
+        let (center, low, high) = (
+            f64::from(x),
+            f64::from(x) - distance,
+            f64::from(x) + distance,
+        );
+        let mut sum = [0.0; 4];
+        for (&(shift, _), line) in steps.iter().zip(&lines) {
+            let px = (center + shift).clamp(low, high).clamp(0.0, max_x);
+            let fx = px as u32;
+            let tx = px - f64::from(fx);
+            let ux = 1.0 - tx;
+            let col = |v: u32| (v.max(r.x).min(last_x) - r.x) as usize * 4;
+            let (xa, xb) = (col(fx), col(fx + 1));
+            let at = |row: usize, c: usize| &q[row + c..row + c + 4];
+            let (p00, p10) = (at(line.above, xa), at(line.above, xb));
+            let (p01, p11) = (at(line.below, xa), at(line.below, xb));
+            for c in 0..4 {
+                let top = f64::from(p00[c]) * ux + f64::from(p10[c]) * tx;
+                let bottom = f64::from(p01[c]) * ux + f64::from(p11[c]) * tx;
+                sum[c] += top * line.rest + bottom * line.weight;
+            }
+        }
+        unpremultiply(sum.map(|v| v / count), input)
     })
 }
 
@@ -413,32 +484,131 @@ fn morphology(
             x
         })
         .collect();
-    let (w, h) = (i64::from(image.w), i64::from(image.h));
+    let h = i64::from(image.h);
+    // 行ごとの横の区間（行の半幅 half ごとに 1 組。出力の行によらない）。区間の中は、ウィンドウの左右の端が画像の端で止まるか止まらないかと、
+    // 2 つの段の引き（k）が変わらない。
+    let spans: Vec<Vec<Run>> = widths
+        .iter()
+        .map(|&half| runs(next, image, half, count))
+        .collect();
+    let mut best = vec![neutral; next.width as usize * 3];
+    let mut best_y = u32::MAX;
     each_pixel(image, next, t, check, |x, y, input| {
+        if y != best_y {
+            // 出力の行 y の最大・最小を、ウィンドウの行 dy ごとに、区間の幅だけまとめて（行の連続した並びとして）畳む。最大・最小は順に
+            // よらず同じ値で、画素ごとにウィンドウの行を数えるのと同じバイト。
+            best_y = y;
+            best.fill(neutral);
+            for dy in -r..=r {
+                // 画像の外の行は、端の行の（より広い）ウィンドウに含まれる
+                let yy = i64::from(y) + dy;
+                if !(0..h).contains(&yy) {
+                    continue;
+                }
+                let row = (yy as u32 - image.r.y) as usize * cw * 3;
+                for run in &spans[dy.unsigned_abs() as usize] {
+                    let plane_row = plane * run.level + row;
+                    let take = |col: usize, fixed: bool| -> Operand<'_> {
+                        let at = plane_row + col * 3;
+                        if fixed {
+                            Operand::Fixed([table[at], table[at + 1], table[at + 2]])
+                        } else {
+                            Operand::Run(&table[at..at + run.len * 3])
+                        }
+                    };
+                    let (left, right) = (
+                        take(run.left, run.left_fixed),
+                        take(run.right, run.right_fixed),
+                    );
+                    let out = &mut best[run.start * 3..(run.start + run.len) * 3];
+                    if dilate {
+                        fold(out, left, right, u8::max);
+                    } else {
+                        fold(out, left, right, u8::min);
+                    }
+                }
+            }
+        }
         if input[3] == 0 {
             return input;
         }
-        let mut best = [neutral; 3];
-        for dy in -r..=r {
-            // 画像の外の行は、端の行の（より広い）ウィンドウに含まれる
-            let yy = i64::from(y) + dy;
-            if !(0..h).contains(&yy) {
-                continue;
-            }
-            let half = widths[dy.unsigned_abs() as usize];
-            let lo = (i64::from(x) - half).max(0) as u32 - image.r.x;
-            let hi = (i64::from(x) + half).min(w - 1) as u32 - image.r.x;
-            let row = (yy as u32 - image.r.y) as usize;
-            let span = (hi - lo + 1) as usize;
-            let k = (usize::BITS - 1 - span.leading_zeros()) as usize;
-            let a = (row * cw + lo as usize) * 3 + plane * k;
-            let b = (row * cw + hi as usize + 1 - (1 << k)) * 3 + plane * k;
-            for c in 0..3 {
-                best[c] = pick(best[c], pick(table[a + c], table[b + c]));
+        let i = (x - next.x) as usize * 3;
+        [best[i], best[i + 1], best[i + 2], input[3]]
+    })
+}
+
+/// 行の 1 つの区間: 出力の列 start から len 画素。ウィンドウの左の端の列は、画素ごとに 1 つずつ進む並び（left_fixed でなければ。画像の左端で
+/// 止まれば全部同じ列）。右も同じ。level は 2 つの段の値（行の x から 2^level 画素の最大・最小）の段。
+pub(super) struct Run {
+    start: usize,
+    len: usize,
+    left: usize,
+    left_fixed: bool,
+    right: usize,
+    right_fixed: bool,
+    level: usize,
+}
+
+/// 区間の 2 つの引きの先。
+enum Operand<'a> {
+    Run(&'a [u8]),
+    Fixed([u8; 3]),
+}
+
+/// out の各バイトを pick(out, pick(left, right)) に（RGB の 3 バイトずつの並びのまま。Fixed は 3 バイトの繰り返し）。
+fn fold(out: &mut [u8], left: Operand<'_>, right: Operand<'_>, pick: impl Fn(u8, u8) -> u8 + Copy) {
+    match (left, right) {
+        (Operand::Run(l), Operand::Run(r)) => {
+            for ((o, &l), &r) in out.iter_mut().zip(l).zip(r) {
+                *o = pick(*o, pick(l, r));
             }
         }
-        [best[0], best[1], best[2], input[3]]
-    })
+        (Operand::Run(l), Operand::Fixed(r)) | (Operand::Fixed(r), Operand::Run(l)) => {
+            for ((o, &l), &r) in out.iter_mut().zip(l).zip(r.iter().cycle()) {
+                *o = pick(*o, pick(l, r));
+            }
+        }
+        (Operand::Fixed(l), Operand::Fixed(r)) => {
+            for (o, (&l, &r)) in out.iter_mut().zip(l.iter().zip(&r).cycle()) {
+                *o = pick(*o, pick(l, r));
+            }
+        }
+    }
+}
+
+/// 半幅 half のウィンドウの行を、出力の列 [next.x, next.x + next.width) について、ウィンドウの左右の端が画像の端で止まるか・段の引きが変わらない
+/// 区間に分ける。ウィンドウは x ± half を画像の中へ寄せたもの。区間の長さ span = 右 − 左 + 1 の段は floor(log2(span))。
+fn runs(next: Rect, image: &Image<'_>, half: i64, levels: usize) -> Vec<Run> {
+    let (first, end) = (i64::from(next.x), i64::from(next.x) + i64::from(next.width));
+    let w = i64::from(image.w);
+    // 状態が変わる列: 左が止まらなくなる half、右が止まる w − half、片方だけ止まっている間に span が 2 のべきを跨ぐ列
+    let mut cuts = vec![first, end, half, w - half];
+    for j in 1..=levels as u32 {
+        let p = 1i64 << j;
+        cuts.push(p - half - 1);
+        cuts.push(w + half - p + 1);
+    }
+    cuts.retain(|c| (first..=end).contains(c));
+    cuts.sort_unstable();
+    cuts.dedup();
+    cuts.windows(2)
+        .map(|pair| {
+            let (a, b) = (pair[0], pair[1]);
+            let (left_fixed, right_fixed) = (a - half < 0, a + half > w - 1);
+            let lo = if left_fixed { 0 } else { a - half };
+            let hi = if right_fixed { w - 1 } else { a + half };
+            let level = (i64::BITS - 1 - (hi - lo + 1).leading_zeros()) as usize;
+            Run {
+                start: (a - first) as usize,
+                len: (b - a) as usize,
+                left: (lo - i64::from(image.r.x)) as usize,
+                left_fixed,
+                right: (hi + 1 - (1i64 << level) - i64::from(image.r.x)) as usize,
+                right_fixed,
+                level,
+            }
+        })
+        .collect()
 }
 
 // ───────── ぼかしを使う段（エッジ検出・ハイパス・グロー） ─────────

@@ -3,6 +3,7 @@
 //! 今のセットから遠いセットから持たない（その面は絵の無い描き方で、セットの一覧が印とツールチップで言う）。
 //! 描きは egui_kittest（wgpu のソフトの描画）。絵の読みは光なしの「チャンネルだけ」の表示で値そのまま。
 use crate::common;
+use crate::common::drive::{Drive, DriveApp};
 
 use common::*;
 use egui::Pos2;
@@ -107,7 +108,7 @@ fn scene_grid(n: usize, cols: usize, size: u32) -> Harness<'static, YoluApp> {
         .load_live_link_model(&model_with(n, size, cols, &(0..n).collect::<Vec<_>>(), 1))
         .unwrap();
     h.run();
-    h.state_mut().state.view3d.camera = OrbitCamera {
+    h.view3d_mut().view.camera = OrbitCamera {
         target: Vec3::ZERO,
         yaw: 0.0,
         pitch: 0.0,
@@ -125,10 +126,10 @@ fn scene_grid(n: usize, cols: usize, size: u32) -> Harness<'static, YoluApp> {
             Channel::Color,
         ))));
     h.run();
-    let s = &h.state().state;
-    assert_eq!(s.sets.len(), n);
+    let s = h.app();
+    assert_eq!(s.sets().len(), n);
     for i in 0..n {
-        assert_eq!(s.sets.get(i).unwrap().bound, Some(i as u32), "セット {i}");
+        assert_eq!(s.sets().get(i).unwrap().bound, [i as u32], "セット {i}");
     }
     h
 }
@@ -141,8 +142,7 @@ fn op(h: &mut Harness<'_, YoluApp>, op: Op) {
 /// セット i の文書に、全面の Color の塗りつぶしレイヤーを足す（今のセットでなくてもよい）。
 fn paint(h: &mut Harness<'_, YoluApp>, set: usize, rgb: [u8; 3]) -> yolu_core::LayerId {
     let layer = h
-        .state_mut()
-        .state
+        .app_mut()
         .set_doc_mut(set)
         .add_fill_layer(
             "色",
@@ -155,19 +155,14 @@ fn paint(h: &mut Harness<'_, YoluApp>, set: usize, rgb: [u8; 3]) -> yolu_core::L
 }
 
 fn switch(h: &mut Harness<'_, YoluApp>, set: usize) {
-    h.state_mut().state.switch_set(set).unwrap();
+    h.app_mut().switch_set(set).unwrap();
     h.run();
 }
 
 /// 世界の点が見えている画素。
 fn screen_of(h: &Harness<'_, YoluApp>, world: Vec3) -> Pos2 {
     let area = h.state().view3d_rect().unwrap();
-    let view = h
-        .state()
-        .state
-        .view3d
-        .camera
-        .view(area.width(), area.height());
+    let view = h.view3d().view.camera.view(area.width(), area.height());
     let p = view.to_screen(world).expect("カメラの前");
     area.min + egui::vec2(p.x, p.y)
 }
@@ -270,8 +265,7 @@ fn another_sets_picture_follows_its_document_while_it_is_not_current() {
     paint(&mut h, 2, COLORS[2]);
     assert_close(face(&mut h, 1, 3), COLORS[1], 2, "初め");
     // ほかのセットの文書のレイヤーの値を替える（今のセットは 0 のまま）
-    h.state_mut()
-        .state
+    h.app_mut()
         .set_doc_mut(1)
         .set_fill_value(
             layer,
@@ -282,7 +276,7 @@ fn another_sets_picture_follows_its_document_while_it_is_not_current() {
         .unwrap();
     h.run();
     assert_close(face(&mut h, 1, 3), COLORS[3], 2, "値を替えた");
-    assert_eq!(h.state().state.sets.current_index(), 0);
+    assert_eq!(h.sets().current_index(), 0);
     // レイヤーを足す（全面を覆う）
     paint(&mut h, 1, COLORS[2]);
     assert_close(face(&mut h, 1, 3), COLORS[2], 2, "レイヤーを足した");
@@ -298,8 +292,8 @@ fn a_hidden_set_is_neither_shown_nor_held_and_comes_back_when_shown() {
         paint(&mut h, i, *c);
     }
     assert_eq!(h.state().view3d_held_materials().len(), 2);
-    let uid = h.state().state.sets.get(2).unwrap().uid;
-    h.state_mut().state.apply(Action::ToggleSetVisible(uid));
+    let uid = h.sets().get(2).unwrap().uid;
+    h.act(Action::ToggleSetVisible(uid));
     h.run();
     // 隠したセットの面は見えず、その絵は持たない
     let at = screen_of(&h, Vec3::new(quad_x(2, 3), 0.0, 0.0));
@@ -308,13 +302,13 @@ fn a_hidden_set_is_neither_shown_nor_held_and_comes_back_when_shown() {
     assert_eq!(h.state().view3d_held_materials(), vec![1]);
     assert_close(face(&mut h, 1, 3), COLORS[1], 2, "ほかは見えたまま");
     // 目を開くと、戻る（文書は変わっていないので、そのまま持ち直す）
-    h.state_mut().state.apply(Action::ToggleSetVisible(uid));
+    h.act(Action::ToggleSetVisible(uid));
     h.run();
     assert_close(face(&mut h, 2, 3), COLORS[2], 2, "戻った");
     assert_eq!(h.state().view3d_held_materials().len(), 2);
     // 今のセットを隠しても、ほかのセットの絵はそのまま
-    let uid0 = h.state().state.sets.get(0).unwrap().uid;
-    h.state_mut().state.apply(Action::ToggleSetVisible(uid0));
+    let uid0 = h.sets().get(0).unwrap().uid;
+    h.act(Action::ToggleSetVisible(uid0));
     h.run();
     assert_close(face(&mut h, 1, 3), COLORS[1], 2, "今のセットを隠した");
     assert_close(face(&mut h, 2, 3), COLORS[2], 2, "今のセットを隠した");
@@ -335,11 +329,9 @@ fn a_set_over_the_memory_budget_is_left_out_farthest_first_and_the_list_says_why
     assert_close(face(&mut h, 0, 3), COLORS[0], 2, "今のセット");
     assert_close(face(&mut h, 1, 3), COLORS[1], 2, "近いセット");
     assert!(is_checker(face(&mut h, 2, 3)), "遠いセットは絵の無い描き方");
-    assert_eq!(h.state().state.view3d.unpainted, vec![2]);
+    assert_eq!(h.view3d().unpainted, vec![2]);
     // 一覧の行: 3 つ目だけ印（警告）とツールチップ。文は名前・状態・短い理由だけ
-    let look = |h: &Harness<'_, YoluApp>, i| {
-        yolu_app::panels::texture_sets::set_state(&h.state().state, i)
-    };
+    let look = |h: &Harness<'_, YoluApp>, i| yolu_app::panels::texture_sets::set_state(h.app(), i);
     assert_eq!(look(&h, 0), None);
     assert_eq!(look(&h, 1), None);
     let mark = look(&h, 2).expect("印が出る");
@@ -352,14 +344,14 @@ fn a_set_over_the_memory_budget_is_left_out_farthest_first_and_the_list_says_why
     assert_close(face(&mut h, 2, 3), COLORS[2], 2, "今のセット 2");
     assert_close(face(&mut h, 1, 3), COLORS[1], 2, "近いセット 1");
     assert!(is_checker(face(&mut h, 0, 3)), "遠いセット 0");
-    assert_eq!(h.state().state.view3d.unpainted, vec![0]);
+    assert_eq!(h.view3d().unpainted, vec![0]);
     assert_eq!(h.state().view3d_held_materials(), vec![1]);
 
     // 予算を戻すと、全部持つ。印も消える
     h.state_mut().view3d_set_paint_budget(512 << 20);
     h.run();
     assert_close(face(&mut h, 0, 3), COLORS[0], 2, "予算を戻した");
-    assert!(h.state().state.view3d.unpainted.is_empty());
+    assert!(h.view3d().unpainted.is_empty());
     assert_eq!(look(&h, 0), None);
     let s = h.state().view3d_stats().unwrap();
     assert_eq!((s.other_sets, s.other_skipped), (2, 0));
@@ -380,7 +372,7 @@ fn new_pictures_for_the_other_sets_are_built_over_frames_and_the_window_keeps_as
         .apply(Action::View3d(Op::Shading(Shading::Channel(
             Channel::Color,
         ))));
-    h.state_mut().state.view3d.camera = OrbitCamera {
+    h.view3d_mut().view.camera = OrbitCamera {
         target: Vec3::ZERO,
         yaw: 0.0,
         pitch: 0.0,
@@ -389,8 +381,7 @@ fn new_pictures_for_the_other_sets_are_built_over_frames_and_the_window_keeps_as
         ..Default::default()
     };
     for (i, c) in COLORS.iter().enumerate() {
-        h.state_mut()
-            .state
+        h.app_mut()
             .set_doc_mut(i)
             .add_fill_layer(
                 "色",
@@ -442,7 +433,7 @@ fn the_current_sets_bytes_come_off_the_budget_before_the_others() {
     assert_close(face(&mut h, 0, 3), COLORS[0], 2, "今のセットは見える");
     assert!(is_checker(face(&mut h, 1, 3)));
     assert!(is_checker(face(&mut h, 2, 3)));
-    assert_eq!(h.state().state.view3d.unpainted, vec![1, 2]);
+    assert_eq!(h.view3d().unpainted, vec![1, 2]);
 }
 
 #[test]
@@ -506,7 +497,7 @@ fn raising_the_cap_builds_the_other_sets_again_at_the_larger_size() {
 
 /// 最初のレイヤー（絵を描けるレイヤー）に、模様（画素ごとに違う色）を全面に置く。
 fn speckle(h: &mut Harness<'_, YoluApp>, set: usize, size: u32) {
-    let doc = h.state_mut().state.set_doc_mut(set);
+    let doc = h.app_mut().set_doc_mut(set);
     let layer = doc.layers()[0].id();
     for y in 0..size {
         for x in 0..size {
@@ -556,11 +547,10 @@ fn a_demoted_picture_equals_one_built_from_the_document_at_the_cap() {
     assert_levels_match(&demoted, &built, "縮めた絵と文書から作った絵");
     // 縮めた後に、そのセットの文書が変わっても、変わったタイルだけ足して合う: 文書の (4..8, 4..8) の 4 × 4 を白にすると、縮めた絵の
     // 1 画素（左から 1、上から 1 行目）が白になり、ほかの画素は文書から作り直した絵と合う
-    let layer = h.state().state.set_doc(0).layers()[0].id();
+    let layer = h.app().set_doc(0).layers()[0].id();
     for y in 4..8 {
         for x in 4..8 {
-            h.state_mut()
-                .state
+            h.app_mut()
                 .set_doc_mut(0)
                 .set_channel_pixel(layer, Channel::Color, x, y, Rgba8::new(255, 255, 255, 255))
                 .unwrap();
@@ -621,8 +611,7 @@ fn edits_made_just_before_the_set_changes_still_reach_the_demoted_picture() {
     paint(&mut h, 0, COLORS[0]);
     paint(&mut h, 1, COLORS[1]);
     assert_close(face(&mut h, 0, 2), COLORS[0], 2, "初め");
-    h.state_mut()
-        .state
+    h.app_mut()
         .set_doc_mut(0)
         .add_fill_layer(
             "あと",
@@ -633,7 +622,7 @@ fn edits_made_just_before_the_set_changes_still_reach_the_demoted_picture() {
             None,
         )
         .unwrap();
-    h.state_mut().state.switch_set(1).unwrap();
+    h.app_mut().switch_set(1).unwrap();
     h.run();
     assert_close(face(&mut h, 0, 2), COLORS[2], 2, "替える前の変更が見える");
     assert_close(face(&mut h, 1, 2), COLORS[1], 2, "今のセット");
@@ -644,7 +633,7 @@ fn a_picture_whose_mip_sizes_do_not_match_the_reduced_size_is_rebuilt_from_the_d
     // 510² を 1/4 にすると 128²（切り上げ）だが、ミップの 2 段目は 127²。大きさが合わないので、コピーでなく文書から作り直す
     let mut h = scene(2, 510);
     h.state_mut().view3d_set_other_cap(128);
-    assert_eq!(h.state().state.doc.width(), 510);
+    assert_eq!(h.doc().width(), 510);
     paint(&mut h, 0, COLORS[0]);
     paint(&mut h, 1, COLORS[1]);
     let before = h.state().view3d_stats().unwrap().other_demotions;
@@ -678,16 +667,14 @@ fn every_channel_of_another_set_looks_the_same_as_when_it_is_the_current_set() {
             .iter()
             .map(|(c, v)| (*c, Rgba8::new(v[0], v[1], v[2], v[3])))
             .collect();
-        h.state_mut()
-            .state
+        h.app_mut()
             .set_doc_mut(set)
             .add_fill_layer("値", &values, None)
             .unwrap();
     }
     // Normal は Height からも作る（Normal の出力）
     for set in 0..2 {
-        h.state_mut()
-            .state
+        h.app_mut()
             .set_doc_mut(set)
             .add_fill_layer(
                 "法線",
@@ -726,8 +713,7 @@ fn a_normal_map_of_another_set_tilts_only_that_set() {
     let mut h = scene(3, 256);
     // 標準（PBR）の法線マップを見る試験: 新しいセットの既定（lilToon。ノーマルマップは切）でなく標準を明示する
     for set in 0..3 {
-        h.state_mut()
-            .state
+        h.app_mut()
             .set_doc_mut(set)
             .restore_look(yolu_core::look::MaterialLook::default())
             .unwrap();
@@ -744,8 +730,7 @@ fn a_normal_map_of_another_set_tilts_only_that_set() {
         if set == 1 {
             values.push((Channel::Normal, Rgba8::new(217, 128, 217, 255)));
         }
-        h.state_mut()
-            .state
+        h.app_mut()
             .set_doc_mut(set)
             .add_fill_layer("面", &values, None)
             .unwrap();
@@ -783,8 +768,15 @@ fn synthetic_map(
     kind: yolu_core::mesh_maps::MeshMapKind,
     f: impl Fn(u32, u32) -> f32,
 ) -> yolu_core::mesh_maps::BakedMeshMap {
+    synthetic_map_sized(kind, 16, f)
+}
+
+fn synthetic_map_sized(
+    kind: yolu_core::mesh_maps::MeshMapKind,
+    size: u32,
+    f: impl Fn(u32, u32) -> f32,
+) -> yolu_core::mesh_maps::BakedMeshMap {
     use yolu_core::mesh_maps::{BakedMeshMap, MeshMapProvenance};
-    let size = 16u32;
     let provenance = MeshMapProvenance {
         kind,
         engine_version: 1,
@@ -819,10 +811,10 @@ fn a_baked_mesh_map_shows_only_on_the_current_sets_faces() {
         paint(&mut h, i, *c);
     }
     {
-        let state = &mut h.state_mut().state;
-        let index = state.sets.current_index();
+        let state = h.app_mut();
+        let index = state.sets().current_index();
         state
-            .sets
+            .sets_mut()
             .get_mut(index)
             .unwrap()
             .mesh_maps
@@ -847,7 +839,7 @@ fn a_baked_mesh_map_shows_only_on_the_current_sets_faces() {
 /// 最初のレイヤーの 1 チャンネルに、画素ごとに違う値の模様を全面に置く。アルファも画素ごとに違い、透明（RGB は残っていても見えない）と
 /// 半透明を含む。
 fn speckle_channel(h: &mut Harness<'_, YoluApp>, set: usize, size: u32, channel: Channel) {
-    let doc = h.state_mut().state.set_doc_mut(set);
+    let doc = h.app_mut().set_doc_mut(set);
     let layer = doc.layers()[0].id();
     for y in 0..size {
         for x in 0..size {
@@ -940,8 +932,7 @@ fn a_demoted_normal_picture_equals_one_built_from_the_document_for_derived_and_p
         |h| {
             speckle_channel(h, 0, 256, Channel::Height);
             speckle_channel(h, 0, 256, Channel::Normal);
-            h.state_mut()
-                .state
+            h.app_mut()
                 .set_doc_mut(0)
                 .set_normal_settings(NormalSettings::DEFAULT.with_derive(true), false)
                 .unwrap();
@@ -953,8 +944,7 @@ fn a_demoted_normal_picture_equals_one_built_from_the_document_for_derived_and_p
     assert_demoted_equals_built(
         |h| {
             speckle_channel(h, 0, 256, Channel::Height);
-            h.state_mut()
-                .state
+            h.app_mut()
                 .set_doc_mut(0)
                 .set_normal_settings(
                     NormalSettings::DEFAULT
@@ -976,7 +966,7 @@ fn the_other_sets_do_not_keep_their_composition_work_buffers() {
     // セットの数に比例して CPU のメモリが残る
     let mut h = scene(4, 512);
     for set in 0..4 {
-        let doc = h.state_mut().state.set_doc_mut(set);
+        let doc = h.app_mut().set_doc_mut(set);
         doc.add_fill_layer(
             "値",
             &[
@@ -1012,9 +1002,15 @@ fn the_other_sets_do_not_keep_their_composition_work_buffers() {
         let s = h.state().view3d_stats().unwrap();
         assert_eq!(s.other_scratch_bytes, 0, "今のセット {to}: {s:?}");
     }
-    let layer = h.state().state.set_doc(2).layers()[0].id();
-    h.state_mut()
-        .state
+    let layer = h
+        .app()
+        .set_doc(2)
+        .layers()
+        .iter()
+        .find(|l| l.kind() == yolu_app::engine::LayerKind::Raster)
+        .unwrap()
+        .id();
+    h.app_mut()
         .set_doc_mut(2)
         .set_channel_pixel(layer, Channel::Height, 9, 9, Rgba8::new(255, 255, 255, 255))
         .unwrap();
@@ -1102,8 +1098,7 @@ fn switching_the_current_set_keeps_a_picture_the_budget_shrank_instead_of_buildi
     paint(&mut h, 0, COLORS[0]);
     paint(&mut h, 1, COLORS[1]);
     let extra = h
-        .state_mut()
-        .state
+        .app_mut()
         .set_doc_mut(0)
         .add_fill_layer(
             "余分",
@@ -1120,11 +1115,7 @@ fn switching_the_current_set_keeps_a_picture_the_budget_shrank_instead_of_buildi
     let s = h.state().view3d_stats().unwrap();
     assert_eq!((s.paint_level, s.paint_by_budget), (1, true), "{s:?}");
     assert_eq!((s.other_sets, s.other_skipped), (1, 0), "{s:?}");
-    h.state_mut()
-        .state
-        .set_doc_mut(0)
-        .remove_layer(extra)
-        .unwrap();
+    h.app_mut().set_doc_mut(0).remove_layer(extra).unwrap();
     h.run();
     let s = h.state().view3d_stats().unwrap();
     assert_eq!(s.paint_level, 1, "縮めは上げるだけ: {s:?}");
@@ -1165,9 +1156,7 @@ fn a_material_with_every_face_hidden_by_the_pose_is_not_held_and_comes_back_with
     let bytes = h.state().view3d_stats().unwrap().other_bytes;
     // 三角形は板ごとに 2 つ（0 1 | 2 3 | 4 5）。板 2 の両方を隠す（ポーズの「面を隠す」）
     let mask = |hidden: [bool; 6]| Some(Arc::new(FaceMask::new(hidden.to_vec())));
-    h.state_mut()
-        .state
-        .view3d
+    h.view3d_mut()
         .set_face_mask(mask([false, false, false, false, true, true]));
     h.run();
     // 面の無いマテリアルのセットは持たない・絵を見せられない扱い（予算の警告）にもしない
@@ -1175,22 +1164,17 @@ fn a_material_with_every_face_hidden_by_the_pose_is_not_held_and_comes_back_with
     let s = h.state().view3d_stats().unwrap();
     assert_eq!((s.other_sets, s.other_skipped), (1, 0), "{s:?}");
     assert!(s.other_bytes < bytes);
-    assert!(h.state().state.view3d.unpainted.is_empty());
-    assert_eq!(
-        yolu_app::panels::texture_sets::set_state(&h.state().state, 2),
-        None
-    );
+    assert!(h.view3d().unpainted.is_empty());
+    assert_eq!(yolu_app::panels::texture_sets::set_state(h.app(), 2), None);
     assert_eq!(face(&mut h, 2, 3), backdrop(&mut h), "隠した面は見えない");
     assert_close(face(&mut h, 1, 3), COLORS[1], 2, "ほかの面はそのまま");
     // 面を戻すと、文書から作り直して絵が出る
-    h.state_mut().state.view3d.set_face_mask(None);
+    h.view3d_mut().set_face_mask(None);
     h.run();
     assert_eq!(h.state().view3d_held_materials(), vec![1, 2]);
     assert_close(face(&mut h, 2, 3), COLORS[2], 2, "戻した面");
     // 面の一部だけを隠すなら、マテリアルは残り、見える面にはそのセットの絵が出る（板 2 の右上の三角形だけ隠す）
-    h.state_mut()
-        .state
-        .view3d
+    h.view3d_mut()
         .set_face_mask(mask([false, false, false, false, false, true]));
     h.run();
     assert_eq!(h.state().view3d_held_materials(), vec![1, 2]);
@@ -1216,9 +1200,9 @@ fn a_set_follows_its_material_when_the_model_is_replaced_and_the_materials_chang
         .unwrap();
     h.run();
     let bound: Vec<_> = (0..3)
-        .map(|i| h.state().state.sets.get(i).unwrap().bound)
+        .map(|i| h.sets().get(i).unwrap().bound.clone())
         .collect();
-    assert_eq!(bound, vec![Some(1), Some(2), Some(0)]);
+    assert_eq!(bound, [[1], [2], [0]]);
     // ほかのセット（M1・M2）の絵は付き直したマテリアル（2・0）の面に出る。持ち物の記録も付き直した先
     assert_eq!(h.state().view3d_held_materials(), vec![2, 0]);
     for (i, want) in COLORS.iter().take(3).enumerate() {
@@ -1234,7 +1218,7 @@ fn a_set_follows_its_material_when_the_model_is_replaced_and_the_materials_chang
             &format!("セット 2 のとき、板 {i}"),
         );
     }
-    assert!(h.state().state.view3d.unpainted.is_empty());
+    assert!(h.view3d().unpainted.is_empty());
 }
 
 #[test]
@@ -1255,8 +1239,7 @@ fn sixty_four_sets_each_show_their_own_picture() {
     }
     let mut h = scene_grid(N, 8, 64);
     for (set, c) in colors.iter().enumerate() {
-        h.state_mut()
-            .state
+        h.app_mut()
             .set_doc_mut(set)
             .add_fill_layer(
                 "色",
@@ -1296,8 +1279,8 @@ fn the_list_mark_for_a_set_left_out_of_the_budget_says_why_in_both_languages() {
     }
     h.state_mut().view3d_set_paint_budget(900_000);
     h.run();
-    assert_eq!(h.state().state.view3d.unpainted, vec![2]);
-    let look = |h: &Harness<'_, YoluApp>, i| set_state(&h.state().state, i);
+    assert_eq!(h.view3d().unpainted, vec![2]);
+    let look = |h: &Harness<'_, YoluApp>, i| set_state(h.app(), i);
     let left_out = look(&h, 2).expect("印が出る");
     assert_eq!(left_out.icon, "warning");
     assert!(left_out.tooltip.contains("GPU"), "{}", left_out.tooltip);
@@ -1306,11 +1289,11 @@ fn the_list_mark_for_a_set_left_out_of_the_budget_says_why_in_both_languages() {
         .lines()
         .for_each(|line| assert_plain("予算の印", line));
     assert!(look(&h, 1).is_none(), "予算に収まるセットに印は無い");
-    h.state_mut().state.lang = Lang::En;
+    h.set_lang(Lang::En);
     let en = look(&h, 2).unwrap();
     assert!(en.tooltip.contains("GPU memory budget"), "{}", en.tooltip);
     assert!(!has_japanese(&en.tooltip), "{}", en.tooltip);
-    h.state_mut().state.lang = Lang::Ja;
+    h.set_lang(Lang::Ja);
     // 予算を戻すと、印が消える
     h.state_mut().view3d_set_paint_budget(512 << 20);
     h.run();
@@ -1326,8 +1309,8 @@ fn a_budget_mark_does_not_outlive_the_model_or_the_current_set_while_the_3d_view
     }
     h.state_mut().view3d_set_paint_budget(900_000);
     h.run();
-    assert_eq!(h.state().state.view3d.unpainted, vec![2]);
-    assert!(set_state(&h.state().state, 2).is_some());
+    assert_eq!(h.view3d().unpainted, vec![2]);
+    assert!(set_state(h.app(), 2).is_some());
 
     // キャンバスのタブが前に出ている間は 3D が描かれず、印の元は更新されない。モデルを替えると前のモデルのマテリアルの番号の印は消える
     // （今のセット 0 のマテリアルは 0 のまま、マテリアルの並びが替わって、番号 2 はセット 1 のマテリアルになる）
@@ -1336,42 +1319,128 @@ fn a_budget_mark_does_not_outlive_the_model_or_the_current_set_while_the_3d_view
         .load_live_link_model(&model_with(3, 256, 3, &[0, 2, 1], 2))
         .unwrap();
     h.run();
-    assert!(h.state().state.view3d.unpainted.is_empty());
+    assert!(h.view3d().unpainted.is_empty());
     for i in 0..3 {
-        assert_eq!(
-            set_state(&h.state().state, i),
-            None,
-            "セット {i} に前の印が残らない"
-        );
+        assert_eq!(set_state(h.app(), i), None, "セット {i} に前の印が残らない");
     }
     // 3D が前に出ると、新しいモデルのマテリアルで計算し直す（今のセット 0 から遠いセット 2 のマテリアルは 1）
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
-    assert_eq!(h.state().state.view3d.unpainted, vec![1]);
-    assert!(set_state(&h.state().state, 2).is_some());
-    assert_eq!(set_state(&h.state().state, 0), None);
+    assert_eq!(h.view3d().unpainted, vec![1]);
+    assert!(set_state(h.app(), 2).is_some());
+    assert_eq!(set_state(h.app(), 0), None);
 
     // 3D が描かれていないあいだに今のセットを替えても、前の印を残さない（今のセット 2 に、見せていない印が付かない）
     click_tab(&mut h, yolu_app::Tab::Canvas);
-    h.state_mut().state.switch_set(2).unwrap();
+    h.app_mut().switch_set(2).unwrap();
     h.run();
-    assert!(h.state().state.view3d.unpainted.is_empty());
-    assert_eq!(set_state(&h.state().state, 2), None);
+    assert!(h.view3d().unpainted.is_empty());
+    assert_eq!(set_state(h.app(), 2), None);
+}
+
+#[test]
+fn a_mesh_map_view_shows_every_set_with_its_own_baked_map() {
+    use yolu_core::mesh_maps::MeshMapKind;
+    let mut h = scene(3, 64);
+    // セット 0 と 1 にだけ、違う値の AO を焼いてある（セット 2 には無い）
+    for (set, value) in [(0usize, 0.2f32), (1, 0.8)] {
+        h.app_mut()
+            .sets_mut()
+            .get_mut(set)
+            .unwrap()
+            .mesh_maps
+            .put(vec![synthetic_map(
+                MeshMapKind::AmbientOcclusion,
+                move |_, _| value,
+            )]);
+    }
+    h.run();
+    op(
+        &mut h,
+        Op::Shading(Shading::MeshMap(MeshMapKind::AmbientOcclusion)),
+    );
+    // 今のセットでないセットの面にも、そのセットの焼いたマップを出す（無いセットは市松）
+    for current in [0, 1, 2] {
+        switch(&mut h, current);
+        assert_eq!(
+            h.view3d().view.display.shading,
+            Shading::MeshMap(MeshMapKind::AmbientOcclusion),
+            "どれかのセットにマップがあれば、今のセットに無くても戻さない"
+        );
+        assert_close(
+            face(&mut h, 0, 3),
+            [51, 51, 51],
+            3,
+            &format!("今のセット {current}: セット 0"),
+        );
+        assert_close(
+            face(&mut h, 1, 3),
+            [204, 204, 204],
+            3,
+            &format!("今のセット {current}: セット 1"),
+        );
+        let c = face(&mut h, 2, 3);
+        assert!(
+            is_checker(c),
+            "今のセット {current}: マップの無いセット 2 は市松: {c:?}"
+        );
+    }
+    // どのセットにも無くなったら、マテリアルの表示へ戻す
+    for set in [0, 1] {
+        h.app_mut().sets_mut().get_mut(set).unwrap().mesh_maps = Default::default();
+    }
+    h.run();
+    assert_eq!(h.view3d().view.display.shading, Shading::Material);
+}
+
+#[test]
+fn a_mesh_map_keeps_its_full_size_once_its_set_becomes_the_current_one() {
+    use yolu_core::mesh_maps::MeshMapKind;
+    let mut h = scene(2, 64);
+    // ほかのセットの画像は 16 まで縮める（64 → 16 は 2 段）。どちらのセットのマップも 64²
+    h.set_other_cap(16);
+    for set in 0..2 {
+        h.app_mut()
+            .sets_mut()
+            .get_mut(set)
+            .unwrap()
+            .mesh_maps
+            .put(vec![synthetic_map_sized(
+                MeshMapKind::AmbientOcclusion,
+                64,
+                |_, _| 0.5,
+            )]);
+    }
+    h.run();
+    op(
+        &mut h,
+        Op::Shading(Shading::MeshMap(MeshMapKind::AmbientOcclusion)),
+    );
+    let level = |h: &Harness<'_, YoluApp>| h.view3d_stats().unwrap().map_level;
+    assert_eq!(level(&h), 0, "今のセット 0 は元の大きさ");
+    // ほかのセットとして縮めて作った画像を、今のセットになっても使い回さない
+    switch(&mut h, 1);
+    assert_eq!(level(&h), 0, "今のセット 1 も元の大きさ");
+    // 戻したセット 0 も、ほかのセットだったあいだに縮めた画像を使わない
+    switch(&mut h, 0);
+    assert_eq!(level(&h), 0, "戻したセット 0 は元の大きさ");
 }
 
 #[test]
 fn snapshot_sets_in_3d_with_the_farthest_set_left_out_of_the_budget() {
-    let mut snapshots = egui_kittest::SnapshotResults::new();
     for lang in yolu_app::lang::Lang::ALL {
         let mut h = scene(3, 256);
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         for (i, c) in COLORS.iter().take(3).enumerate() {
             paint(&mut h, i, *c);
         }
         h.state_mut().view3d_set_paint_budget(900_000);
         h.run();
-        h.snapshot(lang.pick("view3d_sets_over_budget_ja", "view3d_sets_over_budget_en"));
-        snapshots.extend_harness(&mut h);
+        // 英語の絵は撮らない（3D の絵に文字は無い）
+        if lang == yolu_app::lang::Lang::Ja {
+            let area = crate::view3d_area(&h);
+            crate::common::shot::region(&mut h, "view3d_sets_over_budget_ja", area);
+        }
     }
 }
 
@@ -1411,26 +1480,26 @@ fn measure_frames_by_triangles_and_set_count() {
             let mesh = sphere_with_materials(grid, n);
             let triangles: usize = mesh.submeshes.iter().map(|s| s.indices.len() / 3).sum();
             {
-                let state = &mut h.state_mut().state;
+                let state = h.app_mut();
                 // セットを n 個にする（足りなければ足す）
-                while state.sets.len() < n {
+                while state.sets().len() < n {
                     state.add_texture_set().unwrap();
                 }
             }
             for i in 0..n {
-                let state = &mut h.state_mut().state;
-                state.sets.get_mut(i).unwrap().bound = Some(i as u32);
-                state.sets.get_mut(i).unwrap().visible = true;
+                let state = h.app_mut();
+                state.sets_mut().get_mut(i).unwrap().bound = vec![i as u32];
+                state.sets_mut().get_mut(i).unwrap().visible = true;
             }
-            let revision = h.state_mut().state.view3d.next_revision();
+            let revision = h.view3d_mut().next_revision();
             let model = ViewModel::new("球", vec![mesh], vec![None; n], revision).unwrap();
             model.tangents();
-            h.state_mut().state.view3d.set_model(model);
+            h.view3d_mut().set_model(model);
             // 今のセットを、材質 0 に付いたセット 0 にする（この人形は Live Link のモデルでないので、描くマテリアルは常に 0。今のセットが別だと、
             // 材質 0 の面に別のセットの絵が貼られ、本当のセットの面が 1 つ絵の無い描き方になる）
-            h.state_mut().state.switch_set(0).unwrap();
-            h.state_mut().state.view3d.material = 0;
-            h.state_mut().state.view3d.camera = OrbitCamera {
+            h.app_mut().switch_set(0).unwrap();
+            h.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
+            h.view3d_mut().view.camera = OrbitCamera {
                 target: Vec3::ZERO,
                 yaw: 20.0,
                 pitch: 10.0,
@@ -1440,8 +1509,7 @@ fn measure_frames_by_triangles_and_set_count() {
             };
             for set in 0..n {
                 let rgb = COLORS[set % 4];
-                h.state_mut()
-                    .state
+                h.app_mut()
                     .set_doc_mut(set)
                     .add_fill_layer(
                         "色",
@@ -1453,14 +1521,14 @@ fn measure_frames_by_triangles_and_set_count() {
                     )
                     .unwrap();
             }
-            h.state_mut().state.sync_view3d();
+            h.app_mut().sync_view3d();
             h.run();
             h.state().view3d_wait_gpu();
             // カメラを回すだけ（絵は同じ）の 1 フレーム。GPU の完了まで待つ
             let mut wall = Vec::new();
             let mut cpu = Vec::new();
             for frame in 0..48 {
-                h.state_mut().state.view3d.camera.yaw += 3.0 + frame as f32 * 0.01;
+                h.view3d_mut().view.camera.yaw += 3.0 + frame as f32 * 0.01;
                 let started = Instant::now();
                 h.step();
                 h.state().view3d_wait_gpu();
@@ -1496,7 +1564,7 @@ fn measure_switching_sets() {
     h.state_mut()
         .apply(Action::View3d(Op::Shading(Shading::Material)));
     for (set, rgb) in COLORS.iter().take(3).enumerate() {
-        let doc = h.state_mut().state.set_doc_mut(set);
+        let doc = h.app_mut().set_doc_mut(set);
         doc.add_fill_layer(
             "値",
             &[
@@ -1545,7 +1613,7 @@ fn measure_switching_sets() {
             let (mut walls, mut syncs, mut peak) = (Vec::new(), Vec::new(), 0u64);
             let mut held = 0;
             for to in [1usize, 2, 0, 1, 0, 2, 1, 2, 0] {
-                h.state_mut().state.switch_set(to).unwrap();
+                h.app_mut().switch_set(to).unwrap();
                 let started = Instant::now();
                 h.step();
                 h.state().view3d_wait_gpu();

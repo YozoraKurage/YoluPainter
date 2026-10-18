@@ -24,7 +24,7 @@ pub mod shelf;
 pub mod smart;
 mod store;
 pub use archive::{Archive, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES};
-pub use distribution::{Found, Inventory, Removal, IMPORTED_ORIGINAL};
+pub use distribution::{Found, Inventory, Removal, ShelfItem, IMPORTED_ORIGINAL};
 pub use generation::{
     generation_time_ms, utc_stamp, CommitOptions, Committed, Fault, Files, Footprint, Generation,
     GenerationFootprint, GenerationInfo, GenerationStore, LowSpace, RecoveryInfo, SpaceGuard,
@@ -32,9 +32,9 @@ pub use generation::{
 };
 pub use native::{
     NativeDocument, NativeField, NativeValue, ADJUST_VERSION, ANTI_ALIAS_VERSION,
-    BAKE_PRIORITY_VERSION, EFFECTS_VERSION, MAX_NATIVE_VERSION, MIXING_VERSION, PATHS_VERSION,
-    POINT_GRADIENT_VERSION, PROCEDURAL_VERSION, RULERS_VERSION, SEAMS_VERSION, SPLIT_VERSION,
-    TEXT_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
+    BAKE_PRIORITY_VERSION, EFFECTS_VERSION, LAYER_SETS_VERSION, MAX_NATIVE_VERSION, MIXING_VERSION,
+    PATHS_VERSION, POINT_GRADIENT_VERSION, PROCEDURAL_VERSION, RULERS_VERSION, SEAMS_VERSION,
+    SPLIT_VERSION, TEXT_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
 pub use package::{
     Blob, Keep, Limits, Package, Thresholds, MAX_ENTRIES, MAX_ONE_ENTRY, MAX_PART_BYTES,
@@ -42,8 +42,8 @@ pub use package::{
 };
 pub use project::{
     entry_form, FormatInfo, MaterialAsset, MaterialRef, Note, Project, Resource, SetSpec,
-    TextureSet, WriterInfo, MAX_FORMAT, MAX_PROJECT_SETS, MODEL_PATH_MAX, RESOURCE_ENTRIES,
-    ROOT_ENTRIES, SAVED_SELECTIONS_FORMAT, SET_ENTRIES,
+    TextureSet, WriterInfo, MAX_FORMAT, MAX_PROJECT_SETS, MAX_SET_MATERIALS, MODEL_PATH_MAX,
+    MULTI_MATERIAL_FORMAT, RESOURCE_ENTRIES, ROOT_ENTRIES, SAVED_SELECTIONS_FORMAT, SET_ENTRIES,
 };
 pub use selection::{Selection, SelectionTile};
 use std::fmt;

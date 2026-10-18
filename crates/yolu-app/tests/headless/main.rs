@@ -20,23 +20,38 @@ mod disk_cache;
 mod effects;
 mod fillfx;
 mod frame_pacing;
+mod ftl_keys;
 mod guide_keys;
 mod island_variation;
+mod layer_sets;
 mod liltoon_io;
 mod livelink_files;
 mod mcp_server;
 mod new_layer_position;
 mod no_developer_words;
 mod no_instruction_text;
+mod no_literal_pick;
 mod notice_rules;
 mod overlap_uv;
 mod pose_saved;
 mod pose_takes;
 mod procedural;
 mod recovery;
+mod reference_lines;
 mod save_background;
 mod saved_selections;
+mod starter_document;
 mod symmetry_seeds;
 mod tmp_cleanup;
 mod tool_layout;
 mod uv_topology;
+
+/// 画面の外枠（`YoluApp`）を直に持つテスト（ウィンドウを作らずフレームを回す）も、AppState の欄を運転の口で読み書きする。
+impl common::drive::Drive for yolu_app::YoluApp {
+    fn app(&self) -> &yolu_app::state::AppState {
+        &self.state
+    }
+    fn app_mut(&mut self) -> &mut yolu_app::state::AppState {
+        &mut self.state
+    }
+}

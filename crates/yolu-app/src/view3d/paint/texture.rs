@@ -183,11 +183,27 @@ impl Paint {
         srgb: bool,
         encoder: &mut wgpu::CommandEncoder,
     ) -> Option<ImageTexture> {
+        self.create_image_capped(rgba, size, srgb, u32::MAX, encoder)
+    }
+
+    /// `create_image` の、辺の上限 `cap` を足した形（今のセットでないセットの絵と同じく、縮めて持つ）。
+    pub fn create_image_capped(
+        &self,
+        rgba: &[u8],
+        size: [u32; 2],
+        srgb: bool,
+        cap: u32,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> Option<ImageTexture> {
         if size[0] == 0 || size[1] == 0 || rgba.len() as u64 != size[0] as u64 * size[1] as u64 * 4
         {
             return None;
         }
-        let limit = self.device.limits().max_texture_dimension_2d;
+        let limit = self
+            .device
+            .limits()
+            .max_texture_dimension_2d
+            .min(cap.max(1));
         let shift = choose_shift(size, 4, limit, self.budget / 2);
         let region = DocRect::new(0, 0, size[0], size[1]);
         let (data, w, h) = if srgb {

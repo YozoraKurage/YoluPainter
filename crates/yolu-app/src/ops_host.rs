@@ -67,6 +67,7 @@ impl<'a> AppHost<'a> {
         // 離した後の残りを塗っている 3D のストローク（確定待ち）は、外からの操作を受ける前に確定する（「描いている最中」で断らない）
         crate::view3d::input::settle(state);
         let base = state
+            .session
             .project
             .as_ref()
             .filter(|p| p.is_file())
@@ -89,10 +90,17 @@ impl<'a> AppHost<'a> {
         self.started.take()
     }
 
-    /// 描いている最中か、保存の途中なら、断る理由。
+    /// 描いている最中か、保存の途中か、保存していない変更の問いに答える前なら、断る理由（書く・保存する操作が見る）。問いの間に文書や保存先を
+    /// 変えると、答えで捨てる中身が問いのときと変わる。
     fn busy(&self) -> Option<OpError> {
         if self.state.is_stroking() {
             return Some(busy("描いている最中です", "A stroke is in progress"));
+        }
+        if self.state.ui.discard_ask.is_some() {
+            return Some(busy(
+                "保存していない変更の問いに答える前です",
+                "The question about unsaved changes is waiting for an answer",
+            ));
         }
         if self.state.is_saving() {
             return Some(busy("保存の途中です", "A save is in progress"));
@@ -109,6 +117,7 @@ impl<'a> AppHost<'a> {
     /// 開いている .ylp のファイル（まだファイルが無い文書は None）。
     fn open_file(&self) -> Option<PathBuf> {
         self.state
+            .session
             .project
             .as_ref()
             .filter(|p| p.is_file())
@@ -118,17 +127,19 @@ impl<'a> AppHost<'a> {
     fn resolve(&self, set: Option<&str>) -> Result<usize, OpError> {
         let list: Vec<(&str, &str)> = self
             .state
+            .session
             .sets
             .iter()
             .map(|s| (s.id.as_str(), s.name.as_str()))
             .collect();
-        yolu_ops::refs::resolve_set(&list, set, &self.state.sets.current().id)
+        yolu_ops::refs::resolve_set(&list, set, &self.state.session.sets.current().id)
     }
 
     /// セットが、開いた・保存したあとに編集されたか（まだファイルに無いセットは、いつも編集済み）。
     fn unsaved(&self, index: usize) -> bool {
         let doc = self.state.set_doc(index);
         self.state
+            .session
             .sets
             .get(index)
             .is_some_and(|s| s.saved != Some((doc.id(), doc.revision())))
@@ -137,10 +148,11 @@ impl<'a> AppHost<'a> {
     /// セットの大きさとレイヤーの数。読むだけのセットは、画面に出している見せるだけの文書でなく、ファイルの正本の値。
     fn size_of(&self, index: usize) -> (u32, u32, u32) {
         let doc = self.state.set_doc(index);
-        let set = &self.state.sets.get(index).expect("範囲内");
+        let set = &self.state.session.sets.get(index).expect("範囲内");
         if set.read_only.is_some() {
             let native = self
                 .state
+                .session
                 .project
                 .as_ref()
                 .and_then(|p| p.project().sets().iter().find(|s| s.id == set.id));
@@ -158,11 +170,11 @@ impl<'a> AppHost<'a> {
     fn stem(&self) -> String {
         self.open_file()
             .and_then(|f| f.file_stem().map(|s| s.to_string_lossy().into_owned()))
-            .unwrap_or_else(|| self.state.project_name.clone())
+            .unwrap_or_else(|| self.state.session.project_name.clone())
     }
 
     fn summary(&self, index: usize) -> SetSummary {
-        let set = self.state.sets.get(index).expect("範囲内");
+        let set = self.state.session.sets.get(index).expect("範囲内");
         let (width, height, layers) = self.size_of(index);
         let reason = set.read_only.as_deref().map(reason_text);
         SetSummary {
@@ -187,13 +199,17 @@ impl<'a> AppHost<'a> {
         started: &StartedSave,
         facts: crate::project::SavedFacts,
     ) -> Reply {
-        let project = state.project.as_ref();
+        let project = state.session.project.as_ref();
         let mut notes = Vec::new();
         for id in &facts.sets_written {
-            let Some(index) = state.sets.iter().position(|s| s.id == *id) else {
+            let Some(index) = state.session.sets.iter().position(|s| s.id == *id) else {
                 continue;
             };
-            let name = state.sets.get(index).map_or("", |s| s.name.as_str());
+            let name = state
+                .session
+                .sets
+                .get(index)
+                .map_or("", |s| s.name.as_str());
             let inactive = inactive_texts(state.set_doc(index));
             if !inactive.is_empty() {
                 notes.push(Text::new(
@@ -227,7 +243,7 @@ impl<'a> AppHost<'a> {
 }
 
 impl OpHost for AppHost<'_> {
-    /// 同梱のフォント（画面の書体と同じファイル）。起動中のアプリだけが同梱のフォントの文字を描ける。
+    /// 同梱のフォント（画面のフォントと同じファイル）。起動中のアプリだけが同梱のフォントの文字を描ける。
     fn bundled_font(&self, name: &str) -> Option<std::sync::Arc<[u8]>> {
         crate::textlayer::bundled_font(name)
     }
@@ -249,23 +265,24 @@ impl OpHost for AppHost<'_> {
     /// `$selected`: 今のテクスチャセットで選んでいるレイヤー（ほかのセットには選んでいるレイヤーが無い）。
     fn selected_layer(&mut self, set: Option<&str>) -> Result<String, OpError> {
         let index = self.resolve(set)?;
-        if index != self.state.sets.current_index() {
+        if index != self.state.session.sets.current_index() {
             return Err(yolu_ops::refs::no_selection(Some((
                 "選んでいるレイヤーは今のテクスチャセットにだけあります",
                 "only the current texture set has a selected layer",
             ))));
         }
         self.state
+            .session
             .selected_layer
-            .filter(|id| self.state.doc.layer(*id).is_some())
+            .filter(|id| self.state.session.doc.layer(*id).is_some())
             .map(|id| id.to_string())
             .ok_or_else(|| yolu_ops::refs::no_selection(None))
     }
 
     fn doc_info(&mut self) -> Result<DocInfo, OpError> {
-        let project = self.state.project.as_ref().filter(|p| p.is_file());
+        let project = self.state.session.project.as_ref().filter(|p| p.is_file());
         let info = project.map(|p| p.project().info());
-        let sets: Vec<SetSummary> = (0..self.state.sets.len())
+        let sets: Vec<SetSummary> = (0..self.state.session.sets.len())
             .map(|i| self.summary(i))
             .collect();
         Ok(DocInfo {
@@ -283,14 +300,14 @@ impl OpHost for AppHost<'_> {
                 || self.state.shelf.changed
                 || sets.iter().any(|s| s.unsaved),
             sets,
-            current_set: self.state.sets.current().id.clone(),
+            current_set: self.state.session.sets.current().id.clone(),
             notes: Vec::new(),
         })
     }
 
     fn open(&mut self, path: &Path, _confirm: bool) -> Result<DocInfo, OpError> {
         match self.open_file() {
-            Some(file) if crate::project::same_file(&file, path) => self.doc_info(),
+            Some(file) if crate::userfiles::same_file(&file, path) => self.doc_info(),
             _ => Err(OpError::new(
                 ErrorCode::Unsupported,
                 "起動中のアプリはプロジェクトを開き替えません（アプリで開いているプロジェクトを使います）",
@@ -310,8 +327,8 @@ impl OpHost for AppHost<'_> {
         let stem = self.stem();
         let unsaved = self.unsaved(index);
         let source_budget = self.state.load_source_bytes();
-        let set_count = self.state.sets.len();
-        let ts = self.state.sets.get(index).expect("範囲内");
+        let set_count = self.state.session.sets.len();
+        let ts = self.state.session.sets.get(index).expect("範囲内");
         let read_only = ts.read_only.as_deref().map(reason_text);
         let view = SetView {
             id: &ts.id,
@@ -338,14 +355,14 @@ impl OpHost for AppHost<'_> {
             return Err(e);
         }
         let (id, name, read_only) = {
-            let ts = self.state.sets.get(index).expect("範囲内");
+            let ts = self.state.session.sets.get(index).expect("範囲内");
             (ts.id.clone(), ts.name.clone(), ts.read_only.clone())
         };
         if let Some(reason) = read_only {
             return Err(read_only_error(&name, Some(&reason_text(&reason))));
         }
         let state = &mut *self.state;
-        let current = index == state.sets.current_index();
+        let current = index == state.session.sets.current_index();
         let doc = state.set_doc_mut(index);
         // 直前の画面の操作（スライダーなど）の段に混ざらないよう、取り消しのまとめを切る
         doc.end_coalescing();
@@ -359,7 +376,7 @@ impl OpHost for AppHost<'_> {
             doc,
         );
         if (doc.id(), doc.revision()) != before {
-            state.modified = true;
+            state.session.mark_modified();
             if current {
                 // 消したレイヤーを選んだままにしない（画面の取り消しと同じ後始末）
                 state.ensure_selection();
@@ -396,7 +413,7 @@ impl OpHost for AppHost<'_> {
         }
         let same_file = open_file
             .as_ref()
-            .is_some_and(|f| crate::project::same_file(f, &target));
+            .is_some_and(|f| crate::userfiles::same_file(f, &target));
         let exists = std::fs::symlink_metadata(&target).is_ok();
         if exists && !confirm {
             return Err(OpError::replace_confirm_required(&[target
@@ -405,6 +422,7 @@ impl OpHost for AppHost<'_> {
         }
         let upgraded_from = self
             .state
+            .session
             .project
             .as_ref()
             .map(|p| p.format())
@@ -414,7 +432,12 @@ impl OpHost for AppHost<'_> {
             return Ok(Reply::Saved(Saved {
                 path: target.display().to_string(),
                 written: false,
-                format: self.state.project.as_ref().map_or(7, |p| p.format()),
+                format: self
+                    .state
+                    .session
+                    .project
+                    .as_ref()
+                    .map_or(7, |p| p.format()),
                 upgraded_from: None,
                 sets_written: Vec::new(),
                 backup: None,
@@ -479,8 +502,8 @@ mod tests {
         let mut state = AppState::new(64, 64);
         let (searching, _hold) = Worker::parked();
         state.text.fonts.worker = Some(searching);
-        let layers = state.doc.layers().len();
-        let undo = state.doc.undo_count();
+        let layers = state.session.doc.layers().len();
+        let undo = state.session.doc.undo_count();
         let refused = yolu_ops::execute(&mut AppHost::new(&mut state), &add).unwrap_err();
         assert_eq!(refused.code, ErrorCode::Busy);
         assert!(
@@ -493,13 +516,18 @@ mod tests {
             "{}",
             refused.message.en
         );
-        assert_eq!(state.doc.layers().len(), layers, "断った命令は何も変えない");
-        assert_eq!(state.doc.undo_count(), undo);
+        assert_eq!(
+            state.session.doc.layers().len(),
+            layers,
+            "断った命令は何も変えない"
+        );
+        assert_eq!(state.session.doc.undo_count(), undo);
         // 一覧ができた: その一覧（OS の一覧ではなく、アプリが持っている物）から選ぶ
         state.text.fonts.worker = None;
         state.text.fonts.list = Some(list);
         yolu_ops::execute(&mut AppHost::new(&mut state), &add).expect("一覧から選べる");
         let layer = state
+            .session
             .doc
             .layers()
             .iter()

@@ -3,6 +3,7 @@
 //! `headless_` で始まる試験は画面を描かず、Wine でも回る。
 #![allow(clippy::chunks_exact_to_as_chunks)]
 use crate::common;
+use crate::common::drive::Drive;
 
 use std::path::{Path, PathBuf};
 
@@ -59,7 +60,7 @@ fn pen_stroke(h: &mut H, from: Pos2, to: Pos2, pressure: f32) {
 
 /// 文書の合成の全部（straight RGBA）。
 fn pixels(h: &H) -> Vec<u8> {
-    let doc = &h.state().state.doc;
+    let doc = h.doc();
     doc.composite(doc.bounds()).unwrap()
 }
 
@@ -69,7 +70,7 @@ fn painted(bytes: &[u8]) -> usize {
 
 fn app_with_adjust(adjust: PressureAdjust) -> H {
     let mut h = app(1280.0, 800.0, 256);
-    h.state_mut().state.prefs.settings.pressure = adjust;
+    h.prefs_mut().settings.pressure = adjust;
     h.run();
     h
 }
@@ -82,7 +83,7 @@ fn headless_adjust_pressure_follows_the_settings_and_the_default_is_the_identity
     for p in [0.0f32, 0.3, 0.77, 1.0] {
         assert_eq!(s.adjust_pressure(p).to_bits(), p.to_bits());
     }
-    s.prefs.settings.pressure = PressureAdjust::new(0.2, 0.6, vec![]).unwrap();
+    s.prefs_mut().settings.pressure = PressureAdjust::new(0.2, 0.6, vec![]).unwrap();
     assert!((s.adjust_pressure(0.4) - 0.5).abs() < 1e-6);
     assert_eq!(s.adjust_pressure(0.1), 0.0);
     assert_eq!(s.adjust_pressure(0.9), 1.0);
@@ -165,9 +166,7 @@ fn a_touch_force_goes_through_the_adjustment_like_a_pen_point() {
 
 /// 筆圧の調整を開く（設定のウィンドウが「ペン」の区分で開く）。
 fn open_window(h: &mut H) {
-    h.state_mut()
-        .state
-        .apply(Action::Pressure(PressureAction::Open));
+    h.act(Action::Pressure(PressureAction::Open));
     h.run();
 }
 
@@ -236,7 +235,7 @@ fn app_with_settings(path: &Path) -> H {
 
 /// 描く枠の矩形。
 fn frame_of(h: &H) -> egui::Rect {
-    h.state().state.pressure.frame.expect("ウィンドウを描いた")
+    h.pressure().frame.expect("ウィンドウを描いた")
 }
 
 /// 枠の中で、筆圧が lo〜hi に一様に変わる線を n 本引く（1 本は 12 点）。引いた筆圧を返す。
@@ -268,9 +267,9 @@ fn the_window_collects_strokes_in_its_frame_and_fits_the_adjustment_from_them() 
     let dir = settings_dir("window");
     let path = dir.join("YoluPainter").join("settings.conf");
     let mut h = app_with_settings(&path);
-    assert!(!h.state().state.pressure.open());
+    assert!(!h.pressure().open());
     open_window(&mut h);
-    assert!(h.state().state.pressure.open());
+    assert!(h.pressure().open());
     let rect = yolu_app::prefs::last_rect(&h.ctx).expect("ウィンドウが開いている");
     assert!(rect.contains_rect(frame_of(&h)));
     // 枠の外（ウィンドウの外のキャンバスの上）に描いても集めない（そこは普通にキャンバスへ描ける）
@@ -306,28 +305,28 @@ fn the_window_collects_strokes_in_its_frame_and_fits_the_adjustment_from_them() 
     .find(|&(from, to)| outside(from) && outside(to))
     .expect("ウィンドウの外にキャンバスの上の点がある");
     pen_stroke(&mut h, from, to, 0.7);
-    assert!(h.state().state.pressure.strokes.is_empty());
+    assert!(h.pressure().strokes.is_empty());
     let outside_painted = painted(&pixels(&h));
     assert!(outside_painted > 0, "ウィンドウの外はキャンバスへ描ける");
 
     // 足りない間は決められない（短い理由が出る）
     let drawn = draw_strokes(&mut h, 1, 0.2, 0.6);
-    assert_eq!(h.state().state.pressure.strokes.len(), 1);
-    assert_eq!(h.state().state.pressure.samples(), drawn);
+    assert_eq!(h.pressure().strokes.len(), 1);
+    assert_eq!(h.pressure().samples(), drawn);
     let fit_at = h.get_by_label("自動調整").rect().center();
     click(&mut h, fit_at);
-    assert_eq!(h.state().state.pressure.note, Some(FitError::TooFew));
-    assert!(h.state().state.prefs.settings.pressure.is_default());
+    assert_eq!(h.pressure().note, Some(FitError::TooFew));
+    assert!(h.prefs().settings.pressure.is_default());
 
     // 描き足すと決まる: 分布から作った調整と同じ。文書には何も描かれていない
     let mut drawn = drawn;
     drawn.extend(draw_strokes(&mut h, 3, 0.2, 0.6));
-    assert_eq!(h.state().state.pressure.strokes.len(), 4);
+    assert_eq!(h.pressure().strokes.len(), 4);
     let before = pixels(&h);
     click(&mut h, fit_at);
     let fitted = fit(&drawn).unwrap();
-    assert_eq!(h.state().state.prefs.settings.pressure, fitted);
-    assert!(h.state().state.pressure.note.is_none());
+    assert_eq!(h.prefs().settings.pressure, fitted);
+    assert!(h.pressure().note.is_none());
     assert!(!fitted.is_default());
     assert_eq!(
         painted(&before),
@@ -339,16 +338,16 @@ fn the_window_collects_strokes_in_its_frame_and_fits_the_adjustment_from_them() 
     // 元に戻す（開いたときへ）・既定（直線へ）
     h.get_by_label("元に戻す").click();
     h.run();
-    assert!(h.state().state.prefs.settings.pressure.is_default());
+    assert!(h.prefs().settings.pressure.is_default());
     click(&mut h, fit_at);
-    assert_eq!(h.state().state.prefs.settings.pressure, fitted);
+    assert_eq!(h.prefs().settings.pressure, fitted);
     h.get_by_label("既定").click();
     h.run();
-    assert!(h.state().state.prefs.settings.pressure.is_default());
+    assert!(h.prefs().settings.pressure.is_default());
     // 消す: 線が無くなり、自動調整は押せない
     h.get_by_label("消す").click();
     h.run();
-    assert!(h.state().state.pressure.strokes.is_empty());
+    assert!(h.pressure().strokes.is_empty());
 
     // 調整は設定のファイルへ書かれる（既定でない値だけ）
     click(&mut h, fit_at);
@@ -368,12 +367,12 @@ fn the_window_collects_strokes_in_its_frame_and_fits_the_adjustment_from_them() 
     // 閉じると線を捨てる。次の起動は、書いた調整で始まる
     h.get_by_label("閉じる").click();
     h.run();
-    assert!(!h.state().state.pressure.open());
-    assert!(h.state().state.pressure.strokes.is_empty());
-    let saved = h.state().state.prefs.settings.pressure.clone();
+    assert!(!h.pressure().open());
+    assert!(h.pressure().strokes.is_empty());
+    let saved = h.prefs().settings.pressure.clone();
     drop(h);
     let h = app_with_settings(&path);
-    assert_eq!(h.state().state.prefs.settings.pressure, saved);
+    assert_eq!(h.prefs().settings.pressure, saved);
     assert!(!saved.is_default());
 }
 
@@ -399,22 +398,22 @@ fn the_open_window_collects_a_touch_force_inside_its_frame_and_a_closed_window_c
         h.run();
     };
     let mut h = app_with_adjust(PressureAdjust::default());
-    assert!(h.state().state.pressure.strokes.is_empty());
+    assert!(h.pressure().strokes.is_empty());
     // ウィンドウが閉じている間は何も集めない（開いたときは空から始まる）
     let (x, y) = (400.0, 400.0);
     touch(&mut h, pos2(x, y), egui::TouchPhase::Start, Some(0.5));
     touch(&mut h, pos2(x, y), egui::TouchPhase::End, None);
-    assert!(h.state().state.pressure.strokes.is_empty());
+    assert!(h.pressure().strokes.is_empty());
     open_window(&mut h);
     let frame = frame_of(&h);
-    assert!(h.state().state.pressure.strokes.is_empty());
+    assert!(h.pressure().strokes.is_empty());
     // 枠の中の線は 1 本ずつ集まる。力の無い点（End）は集めない
     line(&mut h, frame.center().y, 0.8);
-    assert_eq!(h.state().state.pressure.strokes.len(), 1);
-    assert_eq!(h.state().state.pressure.samples(), vec![0.8, 0.4]);
+    assert_eq!(h.pressure().strokes.len(), 1);
+    assert_eq!(h.pressure().samples(), vec![0.8, 0.4]);
     line(&mut h, frame.center().y + 10.0, 0.6);
-    assert_eq!(h.state().state.pressure.strokes.len(), 2);
-    assert_eq!(h.state().state.pressure.samples(), vec![0.8, 0.4, 0.6, 0.3]);
+    assert_eq!(h.pressure().strokes.len(), 2);
+    assert_eq!(h.pressure().samples(), vec![0.8, 0.4, 0.6, 0.3]);
     // 枠の外の点は集めない
     touch(
         &mut h,
@@ -428,14 +427,14 @@ fn the_open_window_collects_a_touch_force_inside_its_frame_and_a_closed_window_c
         egui::TouchPhase::End,
         None,
     );
-    assert_eq!(h.state().state.pressure.strokes.len(), 2);
+    assert_eq!(h.pressure().strokes.len(), 2);
     // 閉じると線を捨て、そのあとの枠だった所の点も集めない
     h.get_by_label("閉じる").click();
     h.run();
-    assert!(!h.state().state.pressure.open());
+    assert!(!h.pressure().open());
     touch(&mut h, frame.center(), egui::TouchPhase::Start, Some(0.7));
     touch(&mut h, frame.center(), egui::TouchPhase::End, None);
-    assert!(h.state().state.pressure.strokes.is_empty());
+    assert!(h.pressure().strokes.is_empty());
 }
 
 #[test]
@@ -445,31 +444,25 @@ fn window_actions_set_the_range_and_the_curve_and_the_collected_distribution_sta
     open_window(&mut h);
     let drawn = draw_strokes(&mut h, 4, 0.1, 0.5);
     // 動かしたほうが、相手の手前（最小の幅）で止まる。相手は動かさない
-    h.state_mut()
-        .state
-        .apply(Action::Pressure(PressureAction::SetRange {
-            low: 0.95,
-            high: 1.0,
-            moved_low: true,
-        }));
-    let p = &h.state().state.prefs.settings.pressure;
+    h.act(Action::Pressure(PressureAction::SetRange {
+        low: 0.95,
+        high: 1.0,
+        moved_low: true,
+    }));
+    let p = &h.prefs().settings.pressure;
     assert!((p.high() - p.low() - yolu_app::pen::adjust::MIN_SPAN).abs() < 1e-6);
     assert_eq!(p.high(), 1.0);
-    h.state_mut()
-        .state
-        .apply(Action::Pressure(PressureAction::SetRange {
-            low: 0.2,
-            high: 0.3,
-            moved_low: true,
-        }));
-    h.state_mut()
-        .state
-        .apply(Action::Pressure(PressureAction::SetRange {
-            low: 0.25,
-            high: 0.3,
-            moved_low: true,
-        }));
-    let p = &h.state().state.prefs.settings.pressure;
+    h.act(Action::Pressure(PressureAction::SetRange {
+        low: 0.2,
+        high: 0.3,
+        moved_low: true,
+    }));
+    h.act(Action::Pressure(PressureAction::SetRange {
+        low: 0.25,
+        high: 0.3,
+        moved_low: true,
+    }));
+    let p = &h.prefs().settings.pressure;
     assert!(
         (p.low() - 0.2).abs() < 1e-6 && p.high() == 0.3,
         "{} {}",
@@ -477,12 +470,10 @@ fn window_actions_set_the_range_and_the_curve_and_the_collected_distribution_sta
         p.high()
     );
     let bent = Curve::new(vec![pt(0.0, 0.0), pt(0.5, 0.8), pt(1.0, 1.0)]).unwrap();
-    h.state_mut()
-        .state
-        .apply(Action::Pressure(PressureAction::SetCurve(bent.clone())));
-    assert_eq!(h.state().state.prefs.settings.pressure.curve().len(), 3);
+    h.act(Action::Pressure(PressureAction::SetCurve(bent.clone())));
+    assert_eq!(h.prefs().settings.pressure.curve().len(), 3);
     // 調整は曲線の点を画面の精度（f32）に丸めて持つ
-    let held = h.state().state.prefs.settings.pressure.curve_shape();
+    let held = h.prefs().settings.pressure.curve_shape();
     for (a, b) in held.points().iter().zip(bent.points()) {
         assert!(
             (a.x - b.x).abs() < 1e-6 && (a.y - b.y).abs() < 1e-6,
@@ -492,7 +483,7 @@ fn window_actions_set_the_range_and_the_curve_and_the_collected_distribution_sta
     // 範囲外の曲線は、共通の曲線の型が作る時点で断る（調整へは届かない）
     assert!(Curve::new(vec![pt(0.0, 0.0), pt(0.5, 2.0), pt(1.0, 1.0)]).is_err());
     // 描いた分布は調整を変えても変わらない（調整を通す前の値を集めている）
-    assert_eq!(h.state().state.pressure.samples(), drawn);
+    assert_eq!(h.pressure().samples(), drawn);
     h.run();
 }
 
@@ -507,15 +498,13 @@ fn the_curve_frame_adds_moves_and_removes_points_and_the_curve_bends_the_pen_pre
     open_window(&mut h);
     h.run();
     let frame = h
-        .state()
-        .state
-        .pressure
+        .pressure()
         .curve_frame
         .expect("ウィンドウが曲線の枠を描いた");
     let g = frame.shrink(6.0);
     let at = |x: f32, y: f32| pos2(g.left() + x * g.width(), g.bottom() - y * g.height());
     let primary = egui::PointerButton::Primary;
-    let curve = |h: &H| h.state().state.prefs.settings.pressure.curve_shape();
+    let curve = |h: &H| h.prefs().settings.pressure.curve_shape();
     let watch = || std::fs::write(&path, "watch\n").unwrap();
     let untouched = || {
         assert_eq!(
@@ -548,12 +537,12 @@ fn the_curve_frame_adds_moves_and_removes_points_and_the_curve_bends_the_pen_pre
         (p.x - 0.5).abs() < 0.02 && (p.y - 0.8).abs() < 0.02,
         "{p:?}"
     );
-    assert!(!h.state().state.prefs.settings.pressure.is_default());
+    assert!(!h.prefs().settings.pressure.is_default());
     // ペンの筆圧がその曲線で曲がる（下限 0・上限 1 のまま）
-    let bent_pressure = h.state().state.adjust_pressure(0.5);
+    let bent_pressure = h.app().adjust_pressure(0.5);
     assert!((bent_pressure - 0.8).abs() < 0.03, "{bent_pressure}");
-    assert_eq!(h.state().state.adjust_pressure(1.0), 1.0);
-    assert_eq!(h.state().state.adjust_pressure(0.0), 0.0);
+    assert_eq!(h.app().adjust_pressure(1.0), 1.0);
+    assert_eq!(h.app().adjust_pressure(0.0), 0.0);
     // 設定のファイルには曲線が書かれる
     assert!(std::fs::read_to_string(&path)
         .unwrap()
@@ -561,7 +550,7 @@ fn the_curve_frame_adds_moves_and_removes_points_and_the_curve_bends_the_pen_pre
         .any(|l| l.starts_with("pressure_curve=")));
 
     // Esc でやめると、押す前のまま（書かない）
-    let before = h.state().state.prefs.settings.pressure.clone();
+    let before = h.prefs().settings.pressure.clone();
     watch();
     let mid = bent.points()[1];
     let mid_at = at(mid.x as f32, mid.y as f32);
@@ -576,7 +565,7 @@ fn the_curve_frame_adds_moves_and_removes_points_and_the_curve_bends_the_pen_pre
     release(&h, at(0.3, 0.2), primary);
     h.step();
     h.run();
-    assert_eq!(h.state().state.prefs.settings.pressure, before);
+    assert_eq!(h.prefs().settings.pressure, before);
     untouched();
 
     // 点を右クリックで消すと、直線（既定）に戻る
@@ -588,16 +577,16 @@ fn the_curve_frame_adds_moves_and_removes_points_and_the_curve_bends_the_pen_pre
     h.step();
     h.run();
     assert!(curve(&h).is_identity());
-    assert!(h.state().state.prefs.settings.pressure.is_default());
+    assert!(h.prefs().settings.pressure.is_default());
 
     // 隣との間隔は 0.02 以上: 点（0.5, 0.8）を足し、そこから縦に離れた（つかめない）所で、横の間隔が 0.02 未満の所を押しても点は増えない。
     // 0.02 以上離れた所なら増える
     click(&mut h, at(0.5, 0.8));
     assert_eq!(curve(&h).points().len(), 3);
-    let three = h.state().state.prefs.settings.pressure.clone();
+    let three = h.prefs().settings.pressure.clone();
     for x in [0.5, 0.51, 0.49] {
         click(&mut h, at(x, 0.3));
-        assert_eq!(h.state().state.prefs.settings.pressure, three, "x={x}");
+        assert_eq!(h.prefs().settings.pressure, three, "x={x}");
     }
     click(&mut h, at(0.56, 0.3));
     assert_eq!(curve(&h).points().len(), 4, "間隔が足りていれば増える");
@@ -612,7 +601,7 @@ fn the_curve_frame_adds_moves_and_removes_points_and_the_curve_bends_the_pen_pre
         h.step();
         h.run();
     }
-    assert!(h.state().state.prefs.settings.pressure.is_default());
+    assert!(h.prefs().settings.pressure.is_default());
 
     // 点は 16 個まで（足せない所では何も起きない）。どの点からも 0.02 以上離れた所を押して、数の上限で断られることを確かめる
     for i in 1..16 {
@@ -622,13 +611,13 @@ fn the_curve_frame_adds_moves_and_removes_points_and_the_curve_bends_the_pen_pre
         click(&mut h, at(x, 0.5));
     }
     assert_eq!(curve(&h).points().len(), Curve::MAX_POINTS);
-    let full = h.state().state.prefs.settings.pressure.clone();
+    let full = h.prefs().settings.pressure.clone();
     click(&mut h, at(0.03, 0.9));
-    assert_eq!(h.state().state.prefs.settings.pressure, full);
+    assert_eq!(h.prefs().settings.pressure, full);
     // 既定へ戻す
     h.get_by_label("既定").click();
     h.run();
-    assert!(h.state().state.prefs.settings.pressure.is_default());
+    assert!(h.prefs().settings.pressure.is_default());
 }
 
 /// 下限のスライダーをドラッグする: 動かす間は値が動くが設定のファイルへは書かず、離すと 1 回だけ書く（ドラッグの間じゅう同期付きの書き込みをしない）。
@@ -646,7 +635,7 @@ fn dragging_a_range_slider_writes_the_settings_once_on_release() {
         .rect();
     let y = slider.bottom() - 4.0;
     let at = |fraction: f32| pos2(slider.left() + slider.width() * fraction, y);
-    let low = |h: &H| h.state().state.prefs.settings.pressure.low();
+    let low = |h: &H| h.prefs().settings.pressure.low();
     // 書いたかどうかは、ファイルを見張り用の中身に替えておき、書き換えられたかで見る
     let watch = || std::fs::write(&path, "watch\n").unwrap();
     let untouched = || {
@@ -664,15 +653,17 @@ fn dragging_a_range_slider_writes_the_settings_once_on_release() {
             .find_map(|l| l.strip_prefix("pressure_low=").and_then(|v| v.parse().ok()))
     };
 
+    // 押しただけでは動かない。動かした量で値が変わる（溝の幅いっぱいで 100%）
+    let start = low(&h);
     watch();
     press(&h, at(0.2), primary);
     h.step();
-    assert!(h.state().state.pressure.dragging);
-    assert!((low(&h) - 0.2).abs() < 0.02, "{}", low(&h));
+    assert!((low(&h) - start).abs() < 1e-6, "{}", low(&h));
     untouched();
     move_to(&h, at(0.4));
     h.step();
-    assert!((low(&h) - 0.4).abs() < 0.02, "{}", low(&h));
+    assert!(h.pressure().dragging);
+    assert!((low(&h) - (start + 0.2)).abs() < 0.02, "{}", low(&h));
     untouched();
     move_to(&h, at(0.3));
     h.step();
@@ -681,9 +672,9 @@ fn dragging_a_range_slider_writes_the_settings_once_on_release() {
     release(&h, at(0.3), primary);
     h.step();
     h.run();
-    assert!(!h.state().state.pressure.dragging);
+    assert!(!h.pressure().dragging);
     let value = low(&h);
-    assert!((value - 0.3).abs() < 0.02, "{value}");
+    assert!((value - (start + 0.1)).abs() < 0.02, "{value}");
     assert_eq!(written_low(), Some(value));
     watch();
     h.step();
@@ -695,11 +686,11 @@ fn dragging_a_range_slider_writes_the_settings_once_on_release() {
     h.step();
     move_to(&h, at(0.7));
     h.step();
-    assert!((low(&h) - 0.7).abs() < 0.02);
+    assert!((low(&h) - (value + 0.1)).abs() < 0.02, "{}", low(&h));
     key(&h, egui::Key::Escape, egui::Modifiers::NONE);
     h.step();
     assert_eq!(low(&h), value, "押す前の値に戻る");
-    assert!(!h.state().state.pressure.dragging);
+    assert!(!h.pressure().dragging);
     untouched();
     release(&h, at(0.7), primary);
     h.step();
@@ -714,12 +705,10 @@ fn dragging_a_range_slider_writes_the_settings_once_on_release() {
     h.step();
     untouched();
     let mid = low(&h);
-    h.state_mut()
-        .state
-        .apply(Action::Prefs(yolu_app::prefs::PrefsAction::Close));
+    h.act(Action::Prefs(yolu_app::prefs::PrefsAction::Close));
     h.step();
     h.run();
-    assert!(!h.state().state.pressure.dragging);
+    assert!(!h.pressure().dragging);
     assert_eq!(written_low(), Some(mid));
     release(&h, at(0.55), primary);
     h.run();
@@ -731,7 +720,7 @@ fn dragging_a_range_slider_writes_the_settings_once_on_release() {
 fn window_state() -> (AppState, egui::Rect) {
     let mut s = AppState::new(64, 64);
     let frame = egui::Rect::from_min_size(pos2(100.0, 100.0), vec2(380.0, 96.0));
-    s.pressure.frame = Some(frame);
+    s.pressure_mut().frame = Some(frame);
     (s, frame)
 }
 
@@ -761,12 +750,12 @@ fn headless_the_window_keeps_at_most_the_stroke_limit_and_drops_the_oldest_strok
             .chain([inside(frame, 3, 0.0, false)])
             .collect();
         s.pressure_observe(1.0, &points);
-        assert!(s.pressure.strokes.len() <= window::MAX_STROKES);
+        assert!(s.pressure().strokes.len() <= window::MAX_STROKES);
     }
-    assert_eq!(s.pressure.strokes.len(), window::MAX_STROKES);
+    assert_eq!(s.pressure().strokes.len(), window::MAX_STROKES);
     // 残るのは新しい 64 本（古い 6 本が落ちた）
-    let first_mark = s.pressure.strokes[0][0].pressure;
-    let last_mark = s.pressure.strokes.last().unwrap()[0].pressure;
+    let first_mark = s.pressure().strokes[0][0].pressure;
+    let last_mark = s.pressure().strokes.last().unwrap()[0].pressure;
     assert_eq!(
         first_mark,
         (total - window::MAX_STROKES + 1) as f32 / 1000.0
@@ -781,16 +770,16 @@ fn headless_one_long_stroke_keeps_at_most_the_dot_limit_by_dropping_its_oldest_d
     for i in 0..n {
         // 筆圧は点の番号の目印（0 でない値）
         s.pressure_observe(1.0, &[inside(frame, i, (i + 1) as f32 / 100_000.0, true)]);
-        let dots: usize = s.pressure.strokes.iter().map(Vec::len).sum();
+        let dots: usize = s.pressure().strokes.iter().map(Vec::len).sum();
         assert!(dots <= window::MAX_DOTS, "{i}: {dots}");
     }
-    assert_eq!(s.pressure.strokes.len(), 1, "1 本の線のまま");
-    let stroke = &s.pressure.strokes[0];
+    assert_eq!(s.pressure().strokes.len(), 1, "1 本の線のまま");
+    let stroke = &s.pressure().strokes[0];
     assert_eq!(stroke.len(), window::MAX_DOTS);
     // 古い点から捨てている: 先頭は 701 番目、最後は最後の点
     assert_eq!(stroke[0].pressure, 701.0 / 100_000.0);
     assert_eq!(stroke.last().unwrap().pressure, n as f32 / 100_000.0);
-    assert_eq!(s.pressure.samples().len(), window::MAX_DOTS);
+    assert_eq!(s.pressure().samples().len(), window::MAX_DOTS);
 }
 
 #[test]
@@ -804,7 +793,7 @@ fn headless_several_long_strokes_drop_whole_old_strokes_first_and_then_the_head_
         }
         s.pressure_observe(1.0, &[inside(frame, 0, 0.0, false)]);
     }
-    let lens: Vec<usize> = s.pressure.strokes.iter().map(Vec::len).collect();
+    let lens: Vec<usize> = s.pressure().strokes.iter().map(Vec::len).collect();
     // 24000 点 → 4000 点を古い線の頭から捨てる
     assert_eq!(lens, [4_000, 8_000, 8_000]);
     assert_eq!(lens.iter().sum::<usize>(), window::MAX_DOTS);
@@ -812,10 +801,10 @@ fn headless_several_long_strokes_drop_whole_old_strokes_first_and_then_the_head_
     for i in 0..each {
         s.pressure_observe(1.0, &[inside(frame, i, 0.4, true)]);
     }
-    let lens: Vec<usize> = s.pressure.strokes.iter().map(Vec::len).collect();
+    let lens: Vec<usize> = s.pressure().strokes.iter().map(Vec::len).collect();
     assert_eq!(lens, [4_000, 8_000, 8_000]);
-    assert_eq!(s.pressure.strokes[0][0].pressure, 0.2);
-    assert_eq!(s.pressure.strokes.last().unwrap()[0].pressure, 0.4);
+    assert_eq!(s.pressure().strokes[0][0].pressure, 0.2);
+    assert_eq!(s.pressure().strokes.last().unwrap()[0].pressure, 0.4);
 }
 
 #[test]
@@ -827,13 +816,13 @@ fn headless_fitting_a_distribution_clamped_on_one_side_does_not_panic_and_gives_
         let mut points: Vec<PenSample> = (0..20).map(|i| inside(frame, i, lo, true)).collect();
         points.extend((20..100).map(|i| inside(frame, i, hi, true)));
         s.pressure_observe(1.0, &points);
-        s.apply(Action::Pressure(PressureAction::Fit));
+        s.act(Action::Pressure(PressureAction::Fit));
         assert!(
-            s.pressure.note.is_none(),
+            s.pressure().note.is_none(),
             "{lo} {hi}: {:?}",
-            s.pressure.note
+            s.pressure().note
         );
-        let a = &s.prefs.settings.pressure;
+        let a = &s.prefs().settings.pressure;
         assert!(
             a.low() >= 0.0
                 && a.high() <= 1.0
@@ -851,9 +840,7 @@ fn the_window_is_in_both_languages_and_its_text_names_things_without_instruction
     for label in ["自動調整", "消す", "元に戻す", "既定", "下限", "上限"] {
         let _ = h.get_by_label(label);
     }
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Language(Lang::En)));
+    h.act(Action::M2Ui(UiOp::Language(Lang::En)));
     h.run();
     for label in ["Auto", "Clear", "Revert", "Default", "Low", "High"] {
         let _ = h.get_by_label(label);
@@ -864,21 +851,10 @@ fn the_window_is_in_both_languages_and_its_text_names_things_without_instruction
     }
 }
 
-/// ウィンドウの中だけを撮って、正解の絵と比べる（ほかのパネルの変更で壊れない）。
+/// ウィンドウの中だけを撮る（ほかのパネルの変更で壊れない）。
 fn shot(h: &mut H, name: &str) {
     let rect = yolu_app::prefs::last_rect(&h.ctx).expect("ウィンドウが開いている");
-    h.event(egui::Event::PointerGone);
-    h.step();
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().floor() as u32,
-        rect.top().floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+    crate::common::shot::clean_region(h, name, rect);
 }
 
 #[test]
@@ -890,9 +866,7 @@ fn the_window_looks_the_same_before_and_after_fitting_and_in_english() {
     let fit_at = h.get_by_label("自動調整").rect().center();
     click(&mut h, fit_at);
     shot(&mut h, "pressure_window_fitted");
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Language(Lang::En)));
+    h.act(Action::M2Ui(UiOp::Language(Lang::En)));
     h.run();
     shot(&mut h, "pressure_window_english");
 }

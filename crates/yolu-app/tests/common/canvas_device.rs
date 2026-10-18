@@ -19,7 +19,7 @@ pub fn begin(name: &str) -> Option<MutexGuard<'static, ()>> {
         Err(reason) => {
             // libtest の成功時の出力捕捉を通さず、省略を通常の cargo test でも残す。
             let _ = writeln!(std::io::stderr(),
-                "省略: canvas_gpu::{name}: {reason}。未検証: この試験の GPU 合成・表示と CPU との比較、切替・復帰の保証。");
+                "省略: canvas_gpu::{name}: {reason}。未検証: このテストの GPU 合成・表示と CPU との比較、切替・復帰の保証。");
             // CI の画面の試験のジョブは YOLUPAINTER_REQUIRE_GPU を付け、使える描画器が無いときに通った扱いにしない（yolu-gpu の試験と同じ）
             assert!(
                 std::env::var_os("YOLUPAINTER_REQUIRE_GPU").is_none(),
@@ -59,7 +59,7 @@ fn select_device() -> Result<WgpuSetupExisting, String> {
             if !backends.intersects(backend) {
                 continue;
             }
-            let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+            let mut descriptor = yolu_gpu::instance_descriptor();
             descriptor.backends = backend;
             let instance = wgpu::Instance::new(descriptor);
             let mut adapters = instance.enumerate_adapters(backend).await;
@@ -69,8 +69,7 @@ fn select_device() -> Result<WgpuSetupExisting, String> {
             }
             for adapter in adapters {
                 let info = adapter.get_info();
-                let WgpuSetup::CreateNew(defaults) = egui_kittest::wgpu::default_wgpu_setup()
-                else {
+                let WgpuSetup::CreateNew(defaults) = crate::common::default_wgpu_setup() else {
                     unreachable!()
                 };
                 let descriptor = (defaults.device_descriptor)(&adapter);

@@ -1,0 +1,32 @@
+# Screen text (windows). Keys are "windows-" plus a short name from the English text; tooltip keys end in -tip.
+
+windows-and-more = and { $existing } more
+windows-files-to-replace = Files to Replace
+windows-of-images-already-exist = { $existing } of { $total } images already exist
+windows-cancel = Cancel
+windows-replace = Replace
+windows-replaces-the-files-with-the-tip = Replaces the files with the same names
+windows-close-window = Close Window
+windows-normal = Normal
+windows-linear = Linear
+windows-replaced = Replaced
+windows-new = New
+windows-exported-images = Exported Images
+windows-close = Close
+windows-files = { $many } files
+windows-replace-the-imported-psd = Replace the Imported PSD
+windows-this-project-was-imported-from-tip = This project was imported from this PSD. It is replaced by the exported PSD
+windows-replaces-the-files-with-the-2-tip = Replaces the files with the same names with the exported PSDs
+windows-px = { $pixels } px
+windows-merge-layers = Merge Layers
+windows-the-look-changes = The look changes
+windows-merge = Merge
+windows-merges-even-though-the-look-tip = Merges even though the look changes (Undo brings the layers back)
+windows-psd-import = PSD Import
+windows-psd-export = PSD Export
+windows-cancel-tip = Cancel
+windows-saving = Saving
+windows-text = ,{" "}
+windows-there-are-unsaved-changes = There are unsaved changes.
+windows-running-jobs-will-be-cancelled = Running jobs ({ $names }) will be cancelled. Quit?
+windows-there-are-unsaved-changes-and = There are unsaved changes, and running jobs ({ $names }) will be cancelled.

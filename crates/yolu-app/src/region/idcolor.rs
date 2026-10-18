@@ -20,10 +20,11 @@ use yolu_core::mesh_maps::{
 };
 use yolu_core::SelectionMask;
 
-use super::tools::{read_only_message, Hover, Where};
-use crate::lang::Lang;
+use super::tools::{Hover, Where};
+use crate::lang::{Count, Lang};
 use crate::notice::Source;
 use crate::selection::{combine_name, combine_of};
+use crate::state::key::PointerButton;
 use crate::state::AppState;
 use crate::view3d::model::ViewModel;
 
@@ -65,7 +66,7 @@ impl AppState {
     fn id_parts(&mut self, wait: bool) -> Option<Result<&Parts, String>> {
         let lang = self.lang;
         let Some(model) = self.view3d.full_model().cloned() else {
-            return Some(Err(lang.pick("モデルがありません", "No model").into()));
+            return Some(Err(lang.t("region-no-model").into()));
         };
         if !self
             .region
@@ -109,7 +110,7 @@ impl AppState {
             .triangles()
             .iter()
             .zip(&parts.of_triangle)
-            .filter(|(t, _)| t.material == material)
+            .filter(|(t, _)| material.contains(t.material))
             .map(|(_, p)| *p)
             .collect();
         out.sort_unstable();
@@ -129,7 +130,7 @@ impl AppState {
 
     /// 手動の ID の色が別のモデルのものか（色があって、今のモデルの指紋と違う）。モデルが無い・入力を作り終えるまでは false。
     pub fn id_colors_foreign(&mut self) -> bool {
-        let colors = self.doc.id_colors().clone();
+        let colors = self.session.doc.id_colors().clone();
         if colors.colors().is_empty() {
             return false;
         }
@@ -152,9 +153,16 @@ impl AppState {
 
     fn id_map(&mut self, wait: bool) -> Result<Arc<BakedMeshMap>, String> {
         let lang = self.lang;
-        let index = self.sets.current_index();
-        let Some(map) = self.sets.current().mesh_maps.get(MeshMapKind::Id).cloned() else {
-            return Err(lang.pick("ID マップがありません", "No ID map").into());
+        let index = self.session.sets.current_index();
+        let Some(map) = self
+            .session
+            .sets
+            .current()
+            .mesh_maps
+            .get(MeshMapKind::Id)
+            .cloned()
+        else {
+            return Err(lang.t("region-no-id-map").into());
         };
         let input = if wait {
             Some(self.bake_input())
@@ -162,29 +170,15 @@ impl AppState {
             self.bake_input_nowait()
         };
         let check = match input {
-            None => {
-                return Err(lang
-                    .pick("ID マップを確かめています", "Checking the ID map")
-                    .into())
-            }
+            None => return Err(lang.t("region-checking-the-id-map").into()),
             Some(Ok(input)) => self.mesh_map_check_with(index, MeshMapKind::Id, Some(&input)),
             // モデルが無い・入力を作れない: 照合できない
             Some(Err(_)) => self.mesh_map_check_with(index, MeshMapKind::Id, None),
         };
         match check.map(|c| c.state) {
             Some(MeshMapState::Current) => Ok(map),
-            Some(MeshMapState::Stale) => Err(lang
-                .pick(
-                    "ID マップが古いです（ベイクし直し）",
-                    "The ID map is stale (bake again)",
-                )
-                .into()),
-            _ => Err(lang
-                .pick(
-                    "ID マップを確かめられません",
-                    "The ID map cannot be checked",
-                )
-                .into()),
+            Some(MeshMapState::Stale) => Err(lang.t("region-the-id-map-is-stale").into()),
+            _ => Err(lang.t("region-the-id-map-cannot-be").into()),
         }
     }
 
@@ -198,10 +192,10 @@ impl AppState {
         let drag = matches!(op, IdColorOp::Drag { .. });
         let next = match op {
             IdColorOp::EndDrag => {
-                self.doc.end_coalescing();
+                self.session.doc.end_coalescing();
                 // まとめていた段が、押したままの Esc などで捨てられていれば（そのあとウィンドウの戻しが次のフレームに届く）、変わっていないので
                 // 知らせない（直前の「取り消しました。」を上書きしない）。段を捨てると履歴の段の数が減るので、ドラッグで入れたときの数と比べる
-                let kept = self.region.id.dragged.take() == Some(self.doc.undo_count());
+                let kept = self.region.id.dragged.take() == Some(self.session.doc.undo_count());
                 if kept {
                     self.info(Source::Bake, changed(lang));
                 }
@@ -214,12 +208,12 @@ impl AppState {
         let Some(next) = next else {
             return;
         };
-        match self.doc.set_id_colors(next, drag) {
+        match self.session.doc.set_id_colors(next, drag) {
             Ok(()) => {
-                self.modified = true;
+                self.session.mark_modified();
                 self.region.hover = None;
                 if drag {
-                    self.region.id.dragged = Some(self.doc.undo_count());
+                    self.region.id.dragged = Some(self.session.doc.undo_count());
                 } else {
                     self.region.id.dragged = None;
                     self.info(Source::Bake, changed(lang));
@@ -236,7 +230,7 @@ impl AppState {
     /// 部品の色を `rgb`（None は自動）にした手動の ID の色。断るときは理由を出して None。
     fn id_color_next(&mut self, part: usize, rgb: Option<u32>) -> Option<IdColorAssignments> {
         let lang = self.lang;
-        let colors = self.doc.id_colors().clone();
+        let colors = self.session.doc.id_colors().clone();
         // 押して直すときは、入力を作り終えるまで待つ
         let parts = match self.id_parts(true)? {
             Ok(p) => p,
@@ -247,20 +241,11 @@ impl AppState {
         };
         let count = parts.of_triangle.iter().max().map_or(0, |m| m + 1);
         if part >= count {
-            self.refuse(
-                Source::Bake,
-                lang.pick("その部品はありません", "No such part"),
-            );
+            self.refuse(Source::Bake, lang.t("region-no-such-part"));
             return None;
         }
         if !colors.colors().is_empty() && colors.binding() != parts.binding {
-            self.refuse(
-                Source::Bake,
-                lang.pick(
-                    "手動の ID の色は別のモデルのものです",
-                    "These manual ID colors belong to another model",
-                ),
-            );
+            self.refuse(Source::Bake, lang.t("region-these-manual-id-colors-belong"));
             return None;
         }
         if rgb.is_some_and(|c| c > 0xffffff) {
@@ -272,7 +257,7 @@ impl AppState {
                 self.fail(
                     Source::Bake,
                     lang.with_reason(
-                        lang.pick("ID の色を変えられません", "Cannot change the ID color"),
+                        lang.t("region-cannot-change-the-id-color"),
                         lang.mesh_map_error(&e),
                     ),
                 );
@@ -284,46 +269,43 @@ impl AppState {
 
 /// 手動の ID の色を変えた知らせ。
 fn changed(lang: Lang) -> &'static str {
-    lang.pick("手動の ID の色を変えました。", "Manual ID colors changed.")
+    lang.t("region-manual-id-colors-changed")
 }
 
 /// ポインタの下の ID の色。取れなければ理由。
 fn color_under(app: &mut AppState, w: Where, at: Pos2, map: &BakedMeshMap) -> Result<u32, String> {
     let lang = app.lang;
-    let none = |s: &'static str, e: &'static str| lang.pick(s, e).to_owned();
     match w {
         Where::Surface(rect) => {
             let Some((model, material)) = app.region_model() else {
                 return Err(app.region_missing_reason());
             };
-            let view = app.view3d.camera.view(rect.width(), rect.height());
+            let view = app.view3d.view.camera.view(rect.width(), rect.height());
             let p = Vec2::new(at.x - rect.left(), at.y - rect.top());
             let Some(hit) = pick(&model.geometry, &view, p) else {
-                return Err(none(
-                    "ポインタの下にモデルがありません",
-                    "Nothing of the model under the pointer",
-                ));
+                return Err(lang.t("region-nothing-of-the-model-under").to_owned());
             };
-            if hit.material != material {
+            if !material.contains(hit.material) {
                 let name = model.material_name(hit.material as usize, lang);
-                return Err(super::tools::other_set_face(lang, &name));
+                return Err(crate::stroke_gate::other_set_face(lang, &name));
             }
             match try_get_at_uv(map, hit.uv.x as f64, hit.uv.y as f64) {
                 Ok(Some(rgb)) => Ok(rgb),
-                _ => Err(none(
-                    "その面には ID の色がありません",
-                    "No ID color at that face",
-                )),
+                _ => Err(lang.t("region-no-id-color-at-that").to_owned()),
             }
         }
         Where::Canvas(view) => {
             let (x, y) = view.to_canvas(at);
-            if x < 0.0 || y < 0.0 || x >= app.doc.width() as f64 || y >= app.doc.height() as f64 {
-                return Err(none("キャンバスの外です", "Outside the canvas"));
+            if x < 0.0
+                || y < 0.0
+                || x >= app.session.doc.width() as f64
+                || y >= app.session.doc.height() as f64
+            {
+                return Err(lang.t("region-outside-the-canvas").to_owned());
             }
             match try_get(map, x.floor() as i64, y.floor() as i64) {
                 Ok(Some(rgb)) => Ok(rgb),
-                _ => Err(none("そこには部品がありません", "No part there")),
+                _ => Err(lang.t("region-no-part-there").to_owned()),
             }
         }
     }
@@ -333,7 +315,7 @@ fn color_under(app: &mut AppState, w: Where, at: Pos2, map: &BakedMeshMap) -> Re
 pub fn select_by_id(app: &mut AppState, w: Where, at: Pos2) {
     let lang = app.lang;
     // 読むだけのセットは選択範囲も変えない（変えても、Undo が読むだけのセットで断られて戻せない）
-    if let Some(message) = read_only_message(app) {
+    if let Err(message) = crate::stroke_gate::read_only(app) {
         app.refuse(Source::Selection, message);
         return;
     }
@@ -359,10 +341,10 @@ pub fn select_by_id(app: &mut AppState, w: Where, at: Pos2) {
     // 組み合わせ方は選択のツールと同じ（キーの修飾が無ければ、オプションバーで選んだ方）
     let mode = combine_of(
         app.sel.combine,
-        egui::PointerButton::Primary,
+        PointerButton::Primary,
         app.region.modifiers,
     );
-    let mask = match SelectionMask::from_id_colors(&app.doc, &map, &[rgb], tolerance) {
+    let mask = match SelectionMask::from_id_colors(&app.session.doc, &map, &[rgb], tolerance) {
         Ok(m) => m,
         Err(e) => {
             app.notify(
@@ -373,7 +355,7 @@ pub fn select_by_id(app: &mut AppState, w: Where, at: Pos2) {
             return;
         }
     };
-    if let Err(e) = app.doc.combine_selection(&mask, mode) {
+    if let Err(e) = app.session.doc.combine_selection(&mask, mode) {
         app.notify(
             crate::notice::Kind::of_core(&e),
             Source::Selection,
@@ -381,16 +363,15 @@ pub fn select_by_id(app: &mut AppState, w: Where, at: Pos2) {
         );
         return;
     }
-    app.modified = true;
+    app.session.mark_modified();
     app.info(
         Source::Selection,
-        if app.doc.selection().is_none() {
-            lang.pick("何も選択されていません。", "Nothing selected.")
-                .into()
+        if app.session.doc.selection().is_none() {
+            lang.t("region-nothing-selected").into()
         } else {
             format!(
                 "{} {} ± {} ({})",
-                lang.pick("ID の色", "ID color"),
+                lang.t("region-id-color"),
                 hex(rgb),
                 tolerance,
                 combine_name(lang, mode)
@@ -431,7 +412,7 @@ pub fn update_hover(app: &mut AppState, w: Where, at: Pos2) {
     }
     let mut tris = Vec::new();
     for (i, t) in model.geometry.triangles().iter().enumerate() {
-        if t.material != material {
+        if !material.contains(t.material) {
             continue;
         }
         let c = (t.uv_a + t.uv_b + t.uv_c) / 3.0;
@@ -464,7 +445,7 @@ pub fn update_hover(app: &mut AppState, w: Where, at: Pos2) {
 
 /// 手動の ID の色の見本と一覧の見出しに使う、部品の色（手動があればそれ、無ければ None）。
 pub fn manual_color(app: &AppState, part: usize) -> Option<u32> {
-    app.doc.id_colors().colors().get(&part).copied()
+    app.session.doc.id_colors().colors().get(&part).copied()
 }
 
 /// 色の 16 進（#RRGGBB）。
@@ -482,12 +463,7 @@ pub fn parse_rgb(s: &str) -> Option<u32> {
 
 /// 手動の ID の色の状態（個数。色は文書の状態で、.ylp に保存される）。
 pub fn manual_state_line(lang: Lang, count: usize) -> Option<String> {
-    (count > 0).then(|| {
-        lang.pick(
-            format!("手動の色 {count} 個"),
-            format!("{count} manual color{}", if count == 1 { "" } else { "s" }),
-        )
-    })
+    (count > 0).then(|| lang.f("region-n-manual-colors", &[("count", &Count(count))]))
 }
 
 #[cfg(test)]

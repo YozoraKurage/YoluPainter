@@ -2,6 +2,7 @@
 //! 変えた入力）で同じことができる、つまみの太さと掴める幅がカラーセットの欄（egui の `ScrollArea`・`ScrollStyle::thin`）と同じ、
 //! 中身が収まるときはつまみを出さない。部品だけを置いたウィンドウと、本物のウィンドウ（レイヤーの欄・一覧のウィンドウ）で確かめる。
 use crate::common;
+use crate::common::drive::Drive;
 
 use egui::epaint::Shape;
 use egui::{pos2, vec2, Event, Modifiers, MouseWheelUnit, PointerButton, Pos2, Rect, TouchPhase};
@@ -21,7 +22,7 @@ struct Pane {
 
 fn draw(ui: &mut egui::Ui, p: &mut Pane) {
     if !p.ready {
-        // 書体は次のフレームから効く
+        // フォントは次のフレームから効く
         YoluApp::setup(ui.ctx());
         p.ready = true;
         ui.ctx().request_repaint();
@@ -389,7 +390,7 @@ fn the_layers_list_scrolls_by_dragging_its_handle_with_a_pen() {
     use yolu_app::state::Action;
     let mut h = common::app(1280.0, 800.0, 128);
     for _ in 0..40 {
-        h.state_mut().apply(Action::NewLayer);
+        h.act(Action::NewLayer);
     }
     h.run();
     let bars: Vec<Rect> = h
@@ -402,7 +403,7 @@ fn the_layers_list_scrolls_by_dragging_its_handle_with_a_pen() {
         .iter()
         .find(|r| r.left() > 900.0)
         .unwrap_or_else(|| panic!("{bars:?}"));
-    assert_eq!(h.state().state.ui.layer_scroll, 0.0);
+    assert_eq!(h.ui().layer_scroll, 0.0);
     let from = pos2(bar.center().x, bar.top() + 6.0);
     let touch = |phase, pos| Event::Touch {
         device_id: egui::TouchDeviceId(1),
@@ -435,9 +436,9 @@ fn the_layers_list_scrolls_by_dragging_its_handle_with_a_pen() {
     h.event(Event::PointerGone);
     h.run();
     assert!(
-        h.state().state.ui.layer_scroll > 20.0,
+        h.ui().layer_scroll > 20.0,
         "ペンでつまみを引いたぶん一覧が動く: {}",
-        h.state().state.ui.layer_scroll
+        h.ui().layer_scroll
     );
 }
 
@@ -562,17 +563,7 @@ fn the_handle_looks_right_at_rest_hovered_and_grabbed() {
     h.run();
     let shot = |h: &mut Harness<'_, Pane>, name: &str| {
         let view = h.state().view;
-        let image = h.render().expect("描画");
-        let rect = view.expand(8.0);
-        let cropped = image::imageops::crop_imm(
-            &image,
-            rect.left().floor() as u32,
-            rect.top().floor() as u32,
-            rect.width().ceil() as u32,
-            rect.height().ceil() as u32,
-        )
-        .to_image();
-        egui_kittest::image_snapshot(&cropped, name);
+        common::shot::region(h, name, view.expand(8.0));
     };
     shot(&mut h, "scroll_handle_rest");
     let at = on_bar(&h, handle(&h).center().y - h.state().view.top());

@@ -1,0 +1,52 @@
+# 画面の文（project）。キーは「project-」と英語の文から作った短い名前、ツールチップの文はキーの終わりが -tip。
+
+project-reading-the-project-stopped = プロジェクトを読む途中で止まりました
+project-saved-composite-read-only = 保存した合成（読むだけ）
+project-no-saved-composite = 保存した合成の絵なし
+project-invalid-saved-composite = 保存した合成の絵を読めません（{ $e }）
+project-saved-composite-size-differs-from = 保存した合成の絵の大きさ { $width }×{ $height } がキャンバスの { $width_2 }×{ $height_2 } と違う
+project-cannot-open = { $file }を開けません
+project-cannot-open-the-recovery = 復旧を開けません
+project-cannot-read-the-of = { $name }の { $name_2 } を読めません
+project-untitled = 名称未設定
+project-opened = 開きました: { $name }。
+project-opened-backup = 開きました: { $name }（退避）。
+project-recovered-texture-sets = 復旧しました（テクスチャセット { $value }）。
+project-some-texture-sets-opened-read = 読むだけで開いたテクスチャセットがあります
+project-text = ・
+project-mesh-map-s = {" "}メッシュマップ { $map_count } 枚。
+project-text-2 = {""}
+project-the-mesh-maps-are-kept = メッシュマップはファイルには残っています。
+project-some-texture-sets-are-read = 効果の入力がそろわないので、読むだけのテクスチャセットがあります
+project-the-live-link-model-is = Live Link のモデルは自動では開きません（ファイルには残っています）。
+project-cannot-read-the-model-reference = モデルの参照を読めません（{ $e }）。
+project-the-project-s-assets-cannot = {" "}プロジェクトのアセットを読めません（{ $reason }）。
+project-cannot-create-a-new-project = 新しいプロジェクトを作れません
+project-new-project-created = 新しいプロジェクトを作りました。
+project-too-large-to-reopen-within = {" "}今の「レイヤーのメモリ」の予算では開き直せません。
+project-previous-version-backups = {" "}前のバージョンは { $name }-backups~ に残しました。
+project-cannot-copy-texture-set = セット「{ $name }」の写しを取れません
+project-texture-set-could-not-be = テクスチャセット{ $quoted }は読めないため、保存に入れていません。
+project-cannot-write-the-mesh-maps = セット「{ $name }」のメッシュマップを書けません
+project-cannot-write-the-project-s = プロジェクトのアセットを書けません
+project-cannot-build-the-contents-of = セット「{ $name }」の中身を作れません
+project-cannot-build-the-composite-png = セット「{ $name }」の合成の PNG を作れません
+project-saving = 保存しています
+project-the-save-stopped = 処理が止まりました
+project-cannot-save-while-saving-for = 配布用に保存の途中は保存しません
+project-canceled = 取り消しました
+project-invalid-overwrite-target = 上書きする先を .ylp として読めません
+project-saved = 保存しました: { $file }。
+project-wrote-mesh-map-s = {" "}メッシュマップ { $map_total } 枚を書きました。
+project-overwrote-unreadable-look-settings = 読めなかった見た目の設定を上書きしました
+project-text-3 = 、
+project-replaced-unreadable-remembered-selections = 読めなかった覚えた選択範囲の項目を置き換えました
+project-cannot-save-to = { $file }に保存できません
+project-notes-with-a-stop = {" "}{ $notes }
+project-notes-separator = {" "}
+project-could-not-delete-old-backups = {" "}古い退避 { $n } 件を消せませんでした（{ $reason }）。
+project-cannot-be-read-and-have = { $count ->
+       *[other] { $quoted }は保存したことが無く、読めません
+    }
+project-quoted-names-separator = {""}
+project-replaced-the-unreadable-pose-with = {" "}読めなかったポーズを、今のポーズで置き換えました。

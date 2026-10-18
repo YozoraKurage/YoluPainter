@@ -15,7 +15,7 @@ use yolu_gpu::{bake_mesh_maps, BakeBackend, BakeGpu, GpuBakeError, GpuBakeOption
 
 /// アダプターが無くて試験を飛ばす。`YOLUPAINTER_REQUIRE_GPU` があれば、飛ばさず失敗にする。
 fn skipped(why: &str) {
-    eprintln!("GPU ベイク試験をスキップ: {why}");
+    eprintln!("GPU ベイクテストをスキップ: {why}");
     assert!(
         std::env::var_os("YOLUPAINTER_REQUIRE_GPU").is_none(),
         "YOLUPAINTER_REQUIRE_GPU があるのに GPU を使えない: {why}"
@@ -30,7 +30,7 @@ fn gpu() -> Option<BakeGpu> {
         ..Default::default()
     }) {
         Ok(g) => {
-            eprintln!("GPU ベイク試験: {}", g.adapter());
+            eprintln!("GPU ベイクテスト: {}", g.adapter());
             Some(g)
         }
         Err(GpuBakeError::Unavailable(e)) => {
@@ -53,13 +53,13 @@ fn gpu_ray_query() -> Option<BakeGpu> {
         ..Default::default()
     }) {
         Ok(g) if g.adapter().ray_query => {
-            eprintln!("ray query の試験: {}", g.adapter());
+            eprintln!("ray query のテスト: {}", g.adapter());
             return Some(g);
         }
         Ok(g) => format!("{} は ray query を使えない", g.adapter()),
         Err(e) => e.to_string(),
     };
-    eprintln!("ray query の試験をスキップ: {why}");
+    eprintln!("ray query のテストをスキップ: {why}");
     assert!(
         std::env::var_os("YOLUPAINTER_REQUIRE_RAY_QUERY").is_none(),
         "YOLUPAINTER_REQUIRE_RAY_QUERY があるのに ray query を使えない: {why}"
@@ -725,7 +725,7 @@ fn auto_falls_back_to_cpu_with_a_reason_and_the_gpu_mode_uses_the_software_adapt
     assert_eq!(run.gpu.as_ref().unwrap().0, adapter);
     assert_eq!(r.maps.len(), 2);
     // GPU が壊れたら理由つきで CPU に戻り、次は作り直す
-    slot.fail_for_test("試験の故障");
+    slot.fail_for_test("テストの故障");
     let (r, run) = bake_mesh_maps(
         BakeBackend::Gpu,
         &slot,
@@ -742,7 +742,7 @@ fn auto_falls_back_to_cpu_with_a_reason_and_the_gpu_mode_uses_the_software_adapt
         run.fallback_reason
             .as_deref()
             .unwrap()
-            .contains("試験の故障"),
+            .contains("テストの故障"),
         "{:?}",
         run.fallback_reason
     );
@@ -847,7 +847,7 @@ fn a_dispatch_never_exceeds_the_workgroup_limit_even_when_the_chunk_has_grown_to
     assert_eq!(baked.stats.bands, 1);
     assert!(
         u64::from(baked.stats.max_dispatch_texels) * 2 > 1 << 22 && texels > 1 << 22,
-        "育った dispatch が 2^21 を超えるはず（この試験の前提）: {}",
+        "育った dispatch が 2^21 を超えるはず（このテストの前提）: {}",
         baked.stats.max_dispatch_texels
     );
     assert!(
@@ -1229,13 +1229,13 @@ fn a_failure_midway_on_ray_query_is_redone_on_compute_but_a_hang_or_a_compute_fa
         .1
     };
     // ray query の途中の失敗 → compute でやり直して GPU で焼ける
-    slot.fail_midway_for_test("試験の失敗", MidFailure::RayQuery);
+    slot.fail_midway_for_test("テストの失敗", MidFailure::RayQuery);
     let redone = run(&slot);
     let (_, stats) = redone.gpu.expect("compute でやり直して GPU で焼いた");
     assert!(redone.fallback_kind.is_none());
     assert_eq!(stats.method, yolu_gpu::GpuBakeMethod::Compute);
     assert_eq!(stats.ray_query_why, Some(yolu_gpu::RayQueryWhy::RunFailed));
-    assert!(slot.ray_query_block().unwrap().contains("試験の失敗"));
+    assert!(slot.ray_query_block().unwrap().contains("テストの失敗"));
     // 止めたあとは、毎回 ray query で失敗して CPU に落ちない（同じ設定のあいだ compute のまま）
     let next = run(&slot);
     let (_, stats) = next.gpu.expect("GPU で焼いた");
@@ -1246,7 +1246,7 @@ fn a_failure_midway_on_ray_query_is_redone_on_compute_but_a_hang_or_a_compute_fa
     assert!(slot.ray_query_block().is_none());
     slot.probe(true).unwrap(); // 作り直す（失敗の差し込みは、作り直したデバイスに入れる）
                                // 固まりの疑い（完了待ちの時間切れ）は、同じ GPU でやり直さず CPU に戻る
-    slot.fail_midway_for_test("試験の固まり", MidFailure::RayQueryHung);
+    slot.fail_midway_for_test("テストの固まり", MidFailure::RayQueryHung);
     let hung = run(&slot);
     assert!(hung.gpu.is_none());
     assert_eq!(hung.fallback_kind, Some(yolu_gpu::FallbackKind::Failed));
@@ -1256,7 +1256,7 @@ fn a_failure_midway_on_ray_query_is_redone_on_compute_but_a_hang_or_a_compute_fa
     );
     // compute の道の失敗も CPU に戻る
     slot.probe(true).unwrap();
-    slot.fail_midway_for_test("試験の失敗（compute）", MidFailure::Compute);
+    slot.fail_midway_for_test("テストの失敗（compute）", MidFailure::Compute);
     let plain = run(&slot);
     assert!(plain.gpu.is_none());
     assert_eq!(plain.fallback_kind, Some(yolu_gpu::FallbackKind::Failed));

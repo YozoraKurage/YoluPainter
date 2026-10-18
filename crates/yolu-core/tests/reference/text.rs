@@ -4,6 +4,7 @@
 #![allow(clippy::chunks_exact_to_as_chunks)]
 use sha2::{Digest, Sha256};
 use yolu_core::text::{self, TextAlign, TextFont, TextSettings};
+use yolu_core::Reason;
 use yolu_core::{CoreError, Rgba8};
 
 use crate::golden_update;
@@ -260,10 +261,7 @@ fn rotation_turns_the_text_around_the_anchor() {
 fn an_unreadable_font_is_refused() {
     let s = base("フォント");
     let err = text::render(&s, b"not a font", 0, 64, 64, 64, u64::MAX).unwrap_err();
-    assert_eq!(
-        err,
-        CoreError::InvalidArgument("フォントのファイルを読めない")
-    );
+    assert_eq!(err, CoreError::InvalidArgument(Reason::CannotReadFontFile));
     assert!(text::layout(&s, &REGULAR[..1000], 0).is_err());
     assert!(text::check_font(REGULAR, 0).is_ok());
     assert!(

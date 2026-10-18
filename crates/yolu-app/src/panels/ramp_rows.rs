@@ -22,6 +22,7 @@ use super::properties::{
 };
 use crate::eyedrop::EyedropState;
 use crate::lang::Lang;
+use crate::rampsets::builtin::opaque_rgba8;
 use crate::rampsets::{RampSets, MAX_USER};
 use crate::ui::curve::{self, CurveStyle};
 use crate::ui::ramp::{self, ops, Selection};
@@ -190,10 +191,6 @@ impl Links {
     }
 }
 
-fn rgb8(c: [f32; 4]) -> Rgba8 {
-    Rgba8::new(w::to_byte(c[0]), w::to_byte(c[1]), w::to_byte(c[2]), 255)
-}
-
 fn bytes(c: Rgba8) -> [u8; 3] {
     [c.r, c.g, c.b]
 }
@@ -237,7 +234,7 @@ fn close_if_removed(ctx: &egui::Context, key: (&'static str, u128), before: &Ram
 
 /// 色のウィンドウの見出しに出す名前。
 fn stop_name(lang: Lang) -> &'static str {
-    lang.pick("分岐点の色", "Stop Color")
+    lang.t("panels-stop-color")
 }
 
 /// 今選んでいる分岐点（試験が読む）。
@@ -254,36 +251,27 @@ pub fn stops_salt(key: (&'static str, u128)) -> (&'static str, u128, &'static st
 fn mix_name(lang: Lang, mode: MixMode) -> (&'static str, &'static str) {
     match mode {
         MixMode::Standard => (
-            lang.pick("通常", "Standard"),
-            lang.pick(
-                "色の値をそのまま混ぜる（PSD のグラデーションと同じ）",
-                "Mix the color values as they are (the same as a PSD gradient)",
-            ),
+            lang.t("panels-standard"),
+            lang.t("panels-mix-the-color-values-as"),
         ),
         MixMode::Perceptual => (
-            lang.pick("知覚的", "Perceptual"),
-            lang.pick(
-                "人の見た目に近い空間（Oklab）で混ぜる。鮮やかで濁りにくい",
-                "Mix in a perceptual space (Oklab). Vivid and less muddy",
-            ),
+            lang.t("panels-perceptual"),
+            lang.t("panels-mix-in-a-perceptual-space"),
         ),
         MixMode::Linear => (
-            lang.pick("リニア", "Linear"),
-            lang.pick(
-                "線形の光で混ぜる。暗い色どうしでも沈まない",
-                "Mix in linear light. Dark colors do not sink",
-            ),
+            lang.t("panels-linear-2"),
+            lang.t("panels-mix-in-linear-light-dark"),
         ),
     }
 }
 
 fn correction_name(lang: Lang, level: LuminanceCorrection) -> &'static str {
     match level {
-        LuminanceCorrection::None => lang.pick("なし", "None"),
-        LuminanceCorrection::Low => lang.pick("低", "Low"),
-        LuminanceCorrection::Medium => lang.pick("中", "Medium"),
-        LuminanceCorrection::High => lang.pick("高", "High"),
-        LuminanceCorrection::Max => lang.pick("最大", "Max"),
+        LuminanceCorrection::None => lang.t("panels-none"),
+        LuminanceCorrection::Low => lang.t("panels-low-2"),
+        LuminanceCorrection::Medium => lang.t("panels-medium"),
+        LuminanceCorrection::High => lang.t("panels-high-2"),
+        LuminanceCorrection::Max => lang.t("panels-max"),
     }
 }
 
@@ -304,7 +292,7 @@ const LUMINANCE_IDS: [&str; 5] = [
 fn mixing_rows(ui: &mut Ui, rows: &mut Rows, p: &Params<'_>, ramp: &Ramp) -> Option<Ramp> {
     let lang = p.lang;
     let mut result = None;
-    group_label(ui, rows, lang.pick("混色モード", "Color Mixing"));
+    group_label(ui, rows, lang.t("panels-color-mixing"));
     let items: Vec<ChoiceButton> = MixMode::ALL
         .iter()
         .enumerate()
@@ -325,18 +313,12 @@ fn mixing_rows(ui: &mut Ui, rows: &mut Rows, p: &Params<'_>, ramp: &Ramp) -> Opt
             result = Some(ramp.with_mixing(mode, ramp.luminance_correction()));
         }
     }
-    group_label(ui, rows, lang.pick("輝度の補正", "Luminance"));
+    group_label(ui, rows, lang.t("panels-luminance"));
     let perceptual = ramp.mix_mode() == MixMode::Perceptual;
     let tip = if perceptual {
-        lang.pick(
-            "強いほど、混ぜた色が明るくなる",
-            "The stronger, the lighter the mixed colors",
-        )
+        lang.t("panels-the-stronger-the-lighter-the-tip")
     } else {
-        lang.pick(
-            "混色モードが知覚的のときだけ使える",
-            "Available only when the color mixing is Perceptual",
-        )
+        lang.t("panels-available-only-when-the-color-tip")
     };
     let items: Vec<ChoiceButton> = LuminanceCorrection::ALL
         .iter()
@@ -429,7 +411,7 @@ fn sets_rows(
     let cell_w = (list.width() - gap * (cols as f32 - 1.0)) / cols as f32;
     let mut clicked: Option<usize> = None;
     ui.scope_builder(egui::UiBuilder::new().max_rect(list), |ui| {
-        egui::ScrollArea::vertical()
+        let area = egui::ScrollArea::vertical()
             .id_salt((p.key, "ramp.sets.scroll"))
             .max_height(height)
             .auto_shrink([false, false])
@@ -484,6 +466,7 @@ fn sets_rows(
                     }
                 }
             });
+        crate::ui::scroll::pan_area(ui, &area);
     });
     if let Some(index) = clicked {
         p.sets.selected = Some(index);
@@ -515,10 +498,7 @@ fn sets_rows(
         button(0),
         (p.key, "ramp.add"),
         "add",
-        lang.pick(
-            "今のグラデーションを自分の組に追加",
-            "Add the current gradient to your set",
-        ),
+        lang.t("panels-add-the-current-gradient-to-tip"),
         false,
         can_add,
         16.0,
@@ -540,7 +520,7 @@ fn sets_rows(
         button(1),
         (p.key, "ramp.rename"),
         "edit",
-        lang.pick("名前を変える", "Rename"),
+        lang.t("panels-rename-tip"),
         renaming,
         enabled && user_selected.is_some(),
         16.0,
@@ -554,7 +534,7 @@ fn sets_rows(
         button(2),
         (p.key, "ramp.remove"),
         "delete",
-        lang.pick("自分の組から消す", "Remove from your set"),
+        lang.t("panels-remove-from-your-set-tip"),
         false,
         enabled && user_selected.is_some(),
         16.0,
@@ -579,7 +559,7 @@ fn sets_rows(
                 field,
                 (p.key, "ramp.rename.field"),
                 &current,
-                Some(lang.pick("名前", "Name")),
+                Some(lang.t("panels-name-tip")),
                 !started,
             );
             if let Some(name) = out.committed {
@@ -656,10 +636,7 @@ pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &mut Params<'_>, source: &Ramp) -> 
         &ramp,
         &mut selection,
         p.scalar,
-        lang.pick(
-            "上: 不透明度の分岐点。下: 色の分岐点（ダブルクリックで色を選ぶ）。何も無い所を押すと追加し、ドラッグで動かし、右クリックか行の外へ離すと消す。小さなひし形は中点。Esc でドラッグをやめる",
-            "Top: opacity stops. Bottom: color stops (double-click to pick a color). Click to add, drag to move, right-click or drag outside to remove. Small diamonds move the midpoint. Escape cancels a drag",
-        ),
+        lang.t("panels-top-opacity-stops-bottom-color-tip"),
         enabled,
     ) {
         close_if_removed(&ctx, p.key, &ramp, &next);
@@ -698,7 +675,7 @@ pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &mut Params<'_>, source: &Ramp) -> 
         }
     }
     // メイン・サブに付いていく分岐点（選んでいるかどうかに関わらず、全部）
-    if let Some(next) = links.follow_colors(&ramp, rgb8(p.main), rgb8(p.sub)) {
+    if let Some(next) = links.follow_colors(&ramp, opaque_rgba8(p.main), opaque_rgba8(p.sub)) {
         ramp = next;
         put(&mut result, &ramp, false);
     }
@@ -717,7 +694,7 @@ pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &mut Params<'_>, source: &Ramp) -> 
         "<",
         false,
         enabled && selection.index > 0,
-        Some(lang.pick("前の分岐点", "Previous stop")),
+        Some(lang.t("panels-previous-stop-tip")),
         None,
     )
     .clicked()
@@ -731,7 +708,7 @@ pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &mut Params<'_>, source: &Ramp) -> 
         ">",
         false,
         enabled && selection.index + 1 < count,
-        Some(lang.pick("次の分岐点", "Next stop")),
+        Some(lang.t("panels-next-stop-tip")),
         None,
     )
     .clicked()
@@ -743,7 +720,7 @@ pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &mut Params<'_>, source: &Ramp) -> 
         cells[2],
         (p.key, "ramp.stop.remove"),
         "delete",
-        lang.pick("分岐点を消す", "Remove stop"),
+        lang.t("panels-remove-stop-tip"),
         false,
         enabled && count > 2,
         16.0,
@@ -766,7 +743,7 @@ pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &mut Params<'_>, source: &Ramp) -> 
         ui,
         rows,
         "ramp.position",
-        lang.pick("位置", "Position"),
+        lang.t("panels-position"),
         (position * 100.0) as f32,
         ((min * 100.0) as f32, (max * 100.0) as f32),
         NumberFormat {
@@ -793,13 +770,10 @@ pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &mut Params<'_>, source: &Ramp) -> 
             ui,
             rows,
             "ramp.opacity",
-            lang.pick("不透明度", "Opacity"),
+            lang.t("panels-opacity"),
             s.opacity,
             (0.0, 1.0),
-            Some(lang.pick(
-                "この位置でグラデーションの色をどれだけ見せるか（0% なら元の色のまま）",
-                "How much of the gradient color shows here (0% keeps the original color)",
-            )),
+            Some(lang.t("panels-how-much-of-the-gradient-tip")),
             enabled,
         ) {
             let mut list = ramp.opacities().to_vec();
@@ -814,7 +788,7 @@ pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &mut Params<'_>, source: &Ramp) -> 
                 ui,
                 rows,
                 "ramp.opacity.midpoint",
-                lang.pick("中点", "Midpoint"),
+                lang.t("panels-midpoint"),
                 s.midpoint,
                 (0.01, 0.99),
                 None,
@@ -839,7 +813,7 @@ pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &mut Params<'_>, source: &Ramp) -> 
                 ui,
                 rows,
                 "ramp.value",
-                lang.pick("値", "Value"),
+                lang.t("panels-value"),
                 luminance,
                 (0.0, 1.0),
                 NumberFormat {
@@ -906,33 +880,24 @@ fn color_rows(
     let items = [
         ChoiceButton {
             id: "ramp.source.main",
-            label: lang.pick("メイン", "Main"),
+            label: lang.t("panels-main"),
             selected: source == Source::Main,
             enabled,
-            tooltip: Some(lang.pick(
-                "メインの色にして、メインの色を替えると付いていく",
-                "Use the main color and follow it when it changes",
-            )),
+            tooltip: Some(lang.t("panels-use-the-main-color-and-tip")),
         },
         ChoiceButton {
             id: "ramp.source.sub",
-            label: lang.pick("サブ", "Sub"),
+            label: lang.t("panels-sub"),
             selected: source == Source::Sub,
             enabled,
-            tooltip: Some(lang.pick(
-                "サブの色にして、サブの色を替えると付いていく",
-                "Use the sub color and follow it when it changes",
-            )),
+            tooltip: Some(lang.t("panels-use-the-sub-color-and-tip")),
         },
         ChoiceButton {
             id: "ramp.source.custom",
-            label: lang.pick("指定", "Custom"),
+            label: lang.t("panels-custom"),
             selected: source == Source::Fixed,
             enabled,
-            tooltip: Some(lang.pick(
-                "付いていくのをやめて、今の色のままにする",
-                "Stop following and keep the current color",
-            )),
+            tooltip: Some(lang.t("panels-stop-following-and-keep-the-tip")),
         },
     ];
     if let Some(i) = choice_buttons(ui, rows, &items) {
@@ -945,9 +910,9 @@ fn color_rows(
             Source::Fixed => links.unfollow(selection.index),
             _ => {
                 let color = if chosen == Source::Main {
-                    rgb8(p.main)
+                    opaque_rgba8(p.main)
                 } else {
-                    rgb8(p.sub)
+                    opaque_rgba8(p.sub)
                 };
                 if let Some(next) = replace_color(ramp, selection.index, color) {
                     *ramp = next;
@@ -963,7 +928,7 @@ fn color_rows(
     w::text(
         ui.painter(),
         Rect::from_min_size(row.min, vec2(LABEL, row.height())),
-        lang.pick("色", "Color"),
+        lang.t("panels-color"),
         t::LABEL,
         w::Align::Left,
     );
@@ -985,7 +950,7 @@ fn color_rows(
         target,
         stop_name(lang),
         Pick::rgb(bytes(ramp.colors()[selection.index].color)),
-        lang.pick("分岐点の色", "Stop color"),
+        lang.t("panels-stop-color-tip"),
         enabled,
     );
     if !was_target && color_window::is_target(ui.ctx(), target) {
@@ -1012,7 +977,7 @@ fn color_rows(
             ),
             (p.key, "ramp.eyedropper"),
             "tools/eyedropper",
-            lang.pick("画面の色を取得", "Pick Screen Color"),
+            lang.t("panels-pick-screen-color-tip"),
             p.eyedrop.ramp_stop_pending,
             enabled && !p.eyedrop.ramp_stop_pending,
             16.0,
@@ -1041,12 +1006,9 @@ fn segment_rows(
             ui,
             rows,
             "ramp.segment.curve",
-            lang.pick("混合率曲線", "Mixing Curve"),
+            lang.t("panels-mixing-curve"),
             curved,
-            Some(lang.pick(
-                "この分岐点から次の分岐点までの、色の混ざり方を曲線で決める（中点の代わり）",
-                "Shape the mix between this stop and the next with a curve (instead of the midpoint)",
-            )),
+            Some(lang.t("panels-shape-the-mix-between-this-tip")),
             enabled,
         ) {
             let curve = on.then(|| Ramp::curve_from_midpoint(ramp.colors()[k].midpoint));
@@ -1068,10 +1030,7 @@ fn segment_rows(
                 backdrop: None,
                 diagonal: true,
             },
-            lang.pick(
-                "横: 2 つの分岐点の間の位置。縦: 左の分岐点の色（下）から右の分岐点の色（上）への混ざり具合。何も無い所を押すと点を追加し、ドラッグで動かし、右クリックで消す",
-                "Across: position between the two stops. Up: from the left stop color (bottom) to the right stop color (top). Click to add a point, drag to move, right-click to remove",
-            ),
+            lang.t("panels-across-position-between-the-two-tip"),
             enabled,
         ) {
             if let Ok(updated) = ramp.with_segment_curve(k, Some(next)) {
@@ -1085,7 +1044,7 @@ fn segment_rows(
             ui,
             rows,
             "ramp.midpoint",
-            lang.pick("中点", "Midpoint"),
+            lang.t("panels-midpoint"),
             mid,
             (0.01, 0.99),
             None,
@@ -1110,12 +1069,12 @@ fn value_curve_rows(
     result: &mut Option<Change>,
 ) {
     let lang = p.lang;
-    group_label(ui, rows, lang.pick("値のカーブ", "Value Curve"));
+    group_label(ui, rows, lang.t("panels-value-curve"));
     let names = [
-        lang.pick("線形", "Linear"),
-        lang.pick("やわらかい", "Soft"),
-        lang.pick("かたい", "Hard"),
-        lang.pick("S 字", "S-curve"),
+        lang.t("panels-linear"),
+        lang.t("panels-soft"),
+        lang.t("panels-hard"),
+        lang.t("panels-s-curve"),
     ];
     const IDS: [&str; 4] = [
         "ramp.vc.linear",
@@ -1146,10 +1105,7 @@ fn value_curve_rows(
         r,
         (p.key, "ramp.vc.editor"),
         ramp,
-        lang.pick(
-            "形の値（横）からランプの位置（縦）へ。何も無い所を押すと点を追加し、ドラッグで動かし、右クリックで消す。Esc でドラッグをやめる",
-            "Shape value in (across), gradient position out (up). Click to add a point, drag to move, right-click to remove. Escape cancels a drag",
-        ),
+        lang.t("panels-shape-value-in-across-gradient-tip"),
         p.enabled,
     ) {
         *ramp = next;

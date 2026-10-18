@@ -233,9 +233,42 @@ impl Plan {
             .ok_or(Unsupported::UnknownChannel)?
             .kind;
         let layers = doc.layers();
+        // 合成するのは、チャンネルの出力の割り当てのレイヤーセットのレイヤーだけ
+        let output = doc
+            .channel_output(channel)
+            .map_err(|_| Unsupported::UnknownChannel)?;
+        // 割り当てが無いチャンネルの最終の結果は、そのチャンネルの既定値で塗った画素（CPU の `Document::composite_into` と同じ）。
+        // 面を持たない塗りつぶしの命令を 1 つだけ置く（既存の命令で足り、シェーダーも CPU への回しも要らない）
+        if output.is_none() {
+            let default = doc
+                .channel_info(channel)
+                .ok_or(Unsupported::UnknownChannel)?
+                .default;
+            let entries = vec![LayerData {
+                kind: op::LAYER,
+                opacity: 1.0,
+                mode: BlendMode::Normal as u32,
+                slot: NONE,
+                mask: NONE,
+                fill: u32::from_le_bytes(default.to_array()),
+                ..bytemuck::Zeroable::zeroed()
+            }];
+            return Ok(Plan {
+                entries,
+                slots: Vec::new(),
+                tables: Vec::new(),
+                table_words: 0,
+                variant: Variant {
+                    normal: kind == ChannelKind::Normal,
+                    ..Variant::FLAT
+                },
+            });
+        }
         let mut children: HashMap<Option<LayerId>, Vec<usize>> = HashMap::new();
         for (i, l) in layers.iter().enumerate() {
-            children.entry(l.parent()).or_default().push(i);
+            if Some(l.layer_set()) == output {
+                children.entry(l.parent()).or_default().push(i);
+            }
         }
         let mut builder = Builder {
             layers,
@@ -488,12 +521,10 @@ impl Builder<'_> {
                     }
                     let clip_ops = self.clip_instructions(clips)?;
                     let data = self.data(base);
-                    if l.blend_mode_in(self.channel) == BlendMode::PassThrough
-                        && clip_ops.is_empty()
-                    {
-                        // 不透明度 1・マスクが効かない通過は、中身をそのまま下へ重ねるのと同じ。クリッピングの組に入るのは描かれるレイヤーだけ
-                        // （core の `plan_level` は `make_entry` が None のレイヤーを `clips` に入れない）なので、見えない・不透明度 0 のレイヤーが
-                        // 上に並んでいるだけでは、組を持たない通過のままにする。
+                    // 通過のグループは、すぐ上にクリッピングされたレイヤーが 1 枚でもあれば（描かれるかどうかによらず）分離する
+                    // （core の `Entry::clipped_above`）。描かれないレイヤーは `clip_ops` に入らないが、分離は決める。
+                    if l.blend_mode_in(self.channel) == BlendMode::PassThrough && clips.is_empty() {
+                        // 不透明度 1・マスクが効かない通過は、中身をそのまま下へ重ねるのと同じ。
                         if l.opacity_in(self.channel) == 1.0
                             && l.mask().is_none_or(|m| m.is_neutral())
                         {
@@ -964,6 +995,51 @@ mod tests {
                 op::BLEND
             ]
         );
+    }
+
+    /// 通過のグループにクリッピングされたレイヤーが 1 枚でもあれば、描かれないレイヤー（非表示・不透明度 0・チャンネルを切った）でも
+    /// グループは分離する（`PUSH_ISO`）。クリッピングが無ければ、中身を平らにして下へ重ねる。
+    #[test]
+    fn a_pass_group_with_any_clipped_layer_is_isolated_even_when_that_layer_draws_nothing() {
+        type Hide = fn(&mut Document, LayerId);
+        let hides: [(&str, Option<Hide>); 4] = [
+            ("クリッピング無し", None),
+            (
+                "非表示",
+                Some(|d, c| d.set_layer_visible(c, false).unwrap()),
+            ),
+            (
+                "不透明度 0",
+                Some(|d, c| d.set_layer_opacity(c, 0.0, false).unwrap()),
+            ),
+            (
+                "チャンネルを切った",
+                Some(|d, c| d.set_channel_enabled(c, Channel::Color, false).unwrap()),
+            ),
+        ];
+        for (name, hide) in hides {
+            let mut d = doc();
+            let base = d.add_layer("下地").unwrap();
+            paint_tile(&mut d, base, TileCoord::new(0, 0));
+            let inner = d.add_layer("中").unwrap();
+            paint_tile(&mut d, inner, TileCoord::new(0, 0));
+            let group = d.group_layers(&[inner], "通過").unwrap();
+            d.set_layer_blend_mode(group, BlendMode::PassThrough)
+                .unwrap();
+            if let Some(hide) = hide {
+                let clip = d.add_layer("クリッピング").unwrap();
+                paint_tile(&mut d, clip, TileCoord::new(0, 0));
+                hide(&mut d, clip);
+                d.set_layer_clipping(clip, true).unwrap();
+            }
+            let plan = Plan::build(&d, Channel::Color, false).unwrap();
+            let expected: Vec<u32> = if hide.is_some() {
+                vec![op::LAYER, op::PUSH_ISO, op::LAYER, op::POP_BASE, op::BLEND]
+            } else {
+                vec![op::LAYER, op::LAYER]
+            };
+            assert_eq!(kinds(&plan, &d, TileCoord::new(0, 0)), expected, "{name}");
+        }
     }
 
     #[test]

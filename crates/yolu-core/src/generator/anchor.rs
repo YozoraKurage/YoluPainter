@@ -1,5 +1,6 @@
 //! Anchor は「そこまで」のスナップショット。入力の段は既にフィルター評価済みでなければならない。
 use super::{evaluate::allocate, unit, Error, Kind, Options, Source};
+use crate::Reason;
 use crate::{blend, math::UNIT, AdjustmentSettings, BlendMode, Channel, ChannelKind, Rect, Rgba8};
 use rayon::prelude::*;
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -46,9 +47,7 @@ pub fn validate_points(points: &[Point], layer_count: usize) -> Result<(), Error
                 .iter()
                 .any(|q| p.id == q.id || (p.host == q.host && p.placement == q.placement))
         {
-            return Err(Error::Invalid(
-                "Anchor の ID・レイヤー・配置が不正または重複しています",
-            ));
+            return Err(Error::Invalid(Reason::AnchorPointsInvalid));
         }
     }
     Ok(())
@@ -115,9 +114,7 @@ impl Reference {
     /// Normal は 1 画素 1 値でないので断る。
     pub fn read_for(&self, kind: ChannelKind) -> Result<Read, Error> {
         match (self.read, kind) {
-            (_, ChannelKind::Normal) => {
-                Err(Error::Invalid("Normal チャンネルは Anchor で読めません"))
-            }
+            (_, ChannelKind::Normal) => Err(Error::Invalid(Reason::AnchorCannotReadNormalChannel)),
             (ReadMode::Coverage, _) => Ok(Read::Coverage),
             (ReadMode::Value, ChannelKind::Color) => Ok(Read::Color),
             (ReadMode::Value, ChannelKind::Scalar) => Ok(Read::Scalar),
@@ -183,7 +180,7 @@ pub struct Mask<'a> {
 impl Mask<'_> {
     fn validate(&self, d: (u32, u32)) -> Result<(), Error> {
         if !unit(self.density) || self.source.dimensions() != d {
-            Err(Error::Invalid("マスクの濃度・大きさが不正です"))
+            Err(Error::Invalid(Reason::AnchorMaskInvalid))
         } else {
             Ok(())
         }
@@ -285,6 +282,8 @@ struct Entry {
     layer: usize,
     children: Vec<Entry>,
     clips: Vec<Entry>,
+    /// すぐ上にクリッピングされた兄弟が 1 枚でもある（見えるかどうかによらない）。通過のグループを分離させる（core の `Entry::clipped_above` と同じ）。
+    clipped_above: bool,
 }
 /// 祖先の不透明度・表示・マスクを適用せず、分離グループの境界で透明に戻す合成計画。
 pub struct Plan<'a> {
@@ -306,9 +305,7 @@ impl<'a> Plan<'a> {
             || dimensions.1 == 0
             || kind == ChannelKind::Normal
         {
-            return Err(Error::Invalid(
-                "Anchor のレイヤー・大きさ・チャンネルが不正です",
-            ));
+            return Err(Error::Invalid(Reason::AnchorLayerInvalid));
         }
         for (i, l) in layers.iter().enumerate() {
             if !unit(l.opacity)
@@ -317,11 +314,11 @@ impl<'a> Plan<'a> {
                 })
                 || (!matches!(l.content, Content::Group) && l.blend == BlendMode::PassThrough)
             {
-                return Err(Error::Invalid("Anchor のレイヤーの設定が不正です"));
+                return Err(Error::Invalid(Reason::AnchorLayerSettingsInvalid));
             }
             if let Content::Pixels(s) = l.content {
                 if s.dimensions() != dimensions {
-                    return Err(Error::Invalid("Anchor の画像サイズが違います"));
+                    return Err(Error::Invalid(Reason::AnchorImageSizeMismatch));
                 }
             }
             if let Some(m) = l.mask {
@@ -332,7 +329,7 @@ impl<'a> Plan<'a> {
             while let Some(p) = cur {
                 depth += 1;
                 if depth > 256 || p == i || p >= layers.len() {
-                    return Err(Error::Invalid("グループの循環または深さ超過です"));
+                    return Err(Error::Invalid(Reason::AnchorGroupCycleOrTooDeep));
                 }
                 cur = layers[p].parent;
             }
@@ -353,13 +350,26 @@ impl<'a> Plan<'a> {
         for (depth, i) in path.iter().enumerate() {
             let last = depth == path.len() - 1;
             let (level, clipped) = p.level(layers[*i].parent, Some((*i, last)), kind);
-            if !last && (clipped || layers[*i].blend != BlendMode::PassThrough) {
+            if !last
+                && (clipped
+                    || layers[*i].blend != BlendMode::PassThrough
+                    || p.clipped_above_sibling(*i))
+            {
                 p.entries.clear();
             } else {
                 p.entries.extend(level);
             }
         }
         Ok(p)
+    }
+    /// `i` のすぐ上の兄弟（同じ親の次）がクリッピングされているか。見えるかどうか・中身の種類によらず、通過のグループを分離させる
+    /// （文書の合成の `Entry::clipped_above` を立てる条件と同じ。祖先はグループなので、調整レイヤーが土台の扱いは要らない）。
+    fn clipped_above_sibling(&self, i: usize) -> bool {
+        self.layers
+            .iter()
+            .skip(i + 1)
+            .find(|l| l.parent == self.layers[i].parent)
+            .is_some_and(|l| l.clipping)
     }
     fn entry(&self, i: usize, kind: ChannelKind) -> Option<Entry> {
         let l = &self.layers[i];
@@ -387,6 +397,7 @@ impl<'a> Plan<'a> {
             layer: i,
             children,
             clips: vec![],
+            clipped_above: false,
         })
     }
     fn level(
@@ -416,6 +427,7 @@ impl<'a> Plan<'a> {
             if ordinal > 0 && l.clipping {
                 if takes {
                     if let Some(b) = base {
+                        entries[b].clipped_above = true;
                         if let Some(e) = self.entry(i, kind) {
                             entries[b].clips.push(e);
                         }
@@ -456,7 +468,7 @@ impl<'a> Plan<'a> {
             }
             if matches!(l.content, Content::Group)
                 && l.blend == BlendMode::PassThrough
-                && e.clips.is_empty()
+                && !e.clipped_above
             {
                 below = blend::fade(below, self.composite(&e.children, below, x, y), amount);
                 continue;

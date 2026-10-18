@@ -17,7 +17,7 @@ pub fn shortcut_actions(i: &mut InputState, clip: &mut ClipState) -> Vec<Action>
     let mut push = |a: ClipAction| out.push(Action::Clip(a));
     // キーの割り当ては `keymap::CLIPBOARD_KEYS`（Shift 付きが先。consume_key は書いていない Shift を気にしない）
     for (modifiers, key, action) in crate::keymap::CLIPBOARD_KEYS {
-        if i.consume_key(modifiers, key) {
+        if i.consume_key(modifiers.into(), key.into()) {
             push(action);
             if action == ClipAction::Paste {
                 clip.v_handled = true;
@@ -29,7 +29,7 @@ pub fn shortcut_actions(i: &mut InputState, clip: &mut ClipState) -> Vec<Action>
     let mut modifiers = clip.last_modifiers;
     i.events.retain(|event| match event {
         Event::ModifiersChanged(m) => {
-            modifiers = *m;
+            modifiers = (*m).into();
             true
         }
         Event::Copy => {
@@ -55,7 +55,7 @@ pub fn shortcut_actions(i: &mut InputState, clip: &mut ClipState) -> Vec<Action>
             modifiers: key_modifiers,
             ..
         } => {
-            modifiers = *key_modifiers;
+            modifiers = (*key_modifiers).into();
             if *key == Key::V && !*pressed {
                 if clip.v_handled {
                     clip.v_handled = false;
@@ -67,7 +67,7 @@ pub fn shortcut_actions(i: &mut InputState, clip: &mut ClipState) -> Vec<Action>
         }
         _ => true,
     });
-    clip.last_modifiers = i.modifiers;
+    clip.last_modifiers = i.modifiers.into();
     out
 }
 
@@ -86,5 +86,5 @@ pub fn observe_blocked(i: &InputState, clip: &mut ClipState) {
     }) {
         clip.v_handled = false;
     }
-    clip.last_modifiers = i.modifiers;
+    clip.last_modifiers = i.modifiers.into();
 }

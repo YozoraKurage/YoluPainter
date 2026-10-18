@@ -8,11 +8,11 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use egui::Vec2;
 use yolu_io::brushes::clipstudio as io;
 use yolu_io::brushes::clipstudio::{Missing, Peek, Places};
 use yolu_io::brushes::BrushImportError;
 
+use crate::features::{Feature, PollStage};
 use crate::jobs::{JobSpec, Polled, Worker};
 use crate::notice::Source as NoticeSource;
 use crate::state::{AppState, DialogRequest};
@@ -35,8 +35,8 @@ pub struct Row {
     pub size: u64,
     pub state: RowState,
     pub selected: bool,
-    /// 筆先の見本の絵（描くときに作る。ウィンドウを閉じると捨てる）。
-    pub texture: Option<egui::TextureHandle>,
+    /// 筆先の見本のテクスチャの印（描くときに作る。ウィンドウを閉じる・探し直すと、一覧ごと捨てる）。
+    pub texture: Option<crate::state::UiSlot>,
 }
 
 /// 探した結果。
@@ -85,8 +85,7 @@ enum Msg {
 #[derive(Default)]
 pub struct CspState {
     pub open: bool,
-    /// ウィンドウの位置（見出しのドラッグでずれた量）と、一覧のずらした量。
-    pub offset: Vec2,
+    /// 一覧のずらした量（ウィンドウの位置は `UiState::brushes_csp_offset`）。
     pub scroll: f32,
     /// 手で選んだフォルダ（None は既定の場所）。
     pub folder: Option<PathBuf>,
@@ -203,10 +202,7 @@ impl AppState {
                 self.fail(
                     NoticeSource::Brush,
                     lang.with_reason(
-                        lang.pick(
-                            "CLIP STUDIO のブラシを探せません",
-                            "Cannot search for the CLIP STUDIO brushes",
-                        ),
+                        lang.t("brushes-cannot-search-for-the-clip"),
                         lang.thread_error(&e),
                     ),
                 );
@@ -315,6 +311,12 @@ impl AppState {
 
     /// フォルダを手で選ぶウィンドウを頼む。
     pub(super) fn brush_csp_pick_folder(&mut self) {
-        self.dialog_request = Some(DialogRequest::ClipStudioFolder);
+        self.outbox.dialog_request = Some(DialogRequest::ClipStudioFolder);
     }
 }
+
+/// 機能の表の行（毎フレーム、ブラシの読み込みの仕事の終わりを受ける）。
+pub(crate) const FEATURE: Feature = Feature {
+    poll: Some((PollStage::BeforeTextColor, AppState::poll_brush_csp)),
+    ..Feature::new("brushes.csp")
+};

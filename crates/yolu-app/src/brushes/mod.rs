@@ -13,6 +13,7 @@ pub mod gaps;
 pub mod images;
 pub mod import;
 pub mod krita;
+pub mod rows;
 pub mod sample;
 pub mod store;
 
@@ -20,10 +21,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use egui::{Rect, Vec2};
-
 use crate::engine::{
-    Brush, BrushEffect, BrushSettings, CanvasSymmetry, ColorDynamics, ColorMix, StrokeAssist,
+    Brush, BrushEffect, BrushSettings, CanvasSymmetry, ColorDynamics, ColorMix, Influence,
+    StrokeAssist, StrokeColorChange, TipColorChange,
 };
 use crate::lang::Lang;
 use crate::m2;
@@ -31,6 +31,7 @@ use crate::state::{AppState, BrushState, Tool};
 use crate::toolset::{GroupId, SlotId};
 
 pub use gaps::Gap;
+pub use rows::{Category, Row};
 use yolu_io::brushes::SutMapped;
 
 /// 利用者のブラシの数の上限（ファイルとメモリを抑える。起動のときに読むファイルの数の上限と同じ。ABR 1 本のプリセットが
@@ -94,26 +95,26 @@ impl Group {
 
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            Group::Pen => lang.pick("ペン", "Pen"),
-            Group::Brush => lang.pick("筆", "Brush"),
-            Group::Airbrush => lang.pick("エアブラシ", "Airbrush"),
-            Group::Eraser => lang.pick("消しゴム", "Eraser"),
-            Group::Effect => lang.pick("効果", "Effects"),
-            Group::Special => lang.pick("特殊", "Special"),
-            Group::Imported => lang.pick("取り込み", "Imported"),
+            Group::Pen => lang.t("brushes-pen"),
+            Group::Brush => lang.t("brushes-brush"),
+            Group::Airbrush => lang.t("brushes-airbrush"),
+            Group::Eraser => lang.t("brushes-eraser"),
+            Group::Effect => lang.t("brushes-effects"),
+            Group::Special => lang.t("brushes-special"),
+            Group::Imported => lang.t("brushes-imported"),
         }
     }
 
     /// タブに書く短い名前（全名はツールチップ）。
     pub fn short(self, lang: Lang) -> &'static str {
         match self {
-            Group::Pen => lang.pick("ペン", "Pen"),
-            Group::Brush => lang.pick("筆", "Brush"),
-            Group::Airbrush => lang.pick("エア", "Air"),
-            Group::Eraser => lang.pick("消し", "Erase"),
-            Group::Effect => lang.pick("効果", "FX"),
-            Group::Special => lang.pick("特殊", "Misc"),
-            Group::Imported => lang.pick("取込", "Import"),
+            Group::Pen => lang.t("brushes-pen"),
+            Group::Brush => lang.t("brushes-brush"),
+            Group::Airbrush => lang.t("brushes-air"),
+            Group::Eraser => lang.t("brushes-erase"),
+            Group::Effect => lang.t("brushes-fx"),
+            Group::Special => lang.t("brushes-misc"),
+            Group::Imported => lang.t("brushes-import"),
         }
     }
 
@@ -184,8 +185,17 @@ pub fn canonical(brush: &Brush) -> Brush {
             ..base
         },
         seed: 0,
-        pressure: brush.pressure.rounded_to_f32(),
-        // 混ぜ方が切のブラシは、混ぜの値を持たない（書かないので、読み戻しても同じ形）
+        // 混ぜ方が切のブラシは、混ぜの値と絵の具の量・濃さの影響元を持たない（書かないので、読み戻しても同じ形）
+        influences: {
+            let mut i = tilt_max_only(brush.influences.rounded_to_f32());
+            if !brush.mix.is_active() {
+                i.mix_paint = Influence::OFF;
+                i.mix_density = Influence::OFF;
+            }
+            i
+        },
+        // ツールプロパティに出す行の目の印: 知らない名前を落として行の並びにし、初めの形（前のツールプロパティの行）なら持たない
+        shown_rows: rows::normalize(brush.shown_rows.as_deref()),
         mix: if brush.mix.is_active() {
             brush.mix.rounded_to_f32()
         } else {
@@ -193,24 +203,119 @@ pub fn canonical(brush: &Brush) -> Brush {
         },
         color: ColorDynamics {
             secondary: ColorDynamics::default().secondary,
+            // 色の変化は保存と同じ f32 の精度に丸める
+            tip: brush.color.tip.map(|t| TipColorChange {
+                hue: f(t.hue),
+                saturation: f(t.saturation),
+                value: f(t.value),
+            }),
+            sub_mix: f(brush.color.sub_mix),
+            stroke: brush.color.stroke.map(|s| StrokeColorChange {
+                hue: f(s.hue),
+                saturation: f(s.saturation),
+                value: f(s.value),
+                sub_mix: f(s.sub_mix),
+            }),
             ..brush.color
         },
         assist: StrokeAssist::default(),
         stencil: None,
         symmetry: CanvasSymmetry::default(),
         model_symmetry: None,
+        // 散布効果は保存と同じ f32 の精度に丸める
+        spray: brush.spray.map(spray_f32),
+        // 水彩境界も保存と同じ f32 の精度に丸める
+        water_edge: brush.water_edge.map(|e| yolu_core::WaterEdge {
+            width: f(e.width),
+            opacity: f(e.opacity),
+            darkness: f(e.darkness),
+            blur: f(e.blur),
+            ..e
+        }),
+        // デュアルブラシのバージョン 8 の値は保存と同じ f32 の精度に丸める（今までの値は f64 のまま書く）
+        dual: brush.dual.clone().map(|d| yolu_core::DualBrush {
+            flow: f(d.flow),
+            angle_random: f(d.angle_random),
+            texture: d.texture.clone().map(|t| yolu_core::PaperTexture {
+                depth: f(t.depth),
+                scale: f(t.scale),
+                angle: f(t.angle),
+                ..t
+            }),
+            spray: d.spray.map(spray_f32),
+            ..d
+        }),
+        // はみ出し防止が切のブラシは、その値を持たない（書かないので、読み戻しても同じ形）。入っていれば保存と同じ f32 の精度に丸める
+        reference_lines: if brush.reference_lines.enabled {
+            yolu_core::ReferenceLines {
+                margin: f(brush.reference_lines.margin),
+                amount: f(brush.reference_lines.amount),
+                ..brush.reference_lines
+            }
+        } else {
+            yolu_core::ReferenceLines::default()
+        },
         ..brush.clone()
     }
 }
 
-/// ブラシが持てる入り抜き・手ぶれ補正（曲線は持たない）。何も無ければ（全部 0）None。範囲は呼ぶ側が検査済みのものを渡す。
+/// 最大値を持てるのは傾きの入力だけ（保存は傾きの最大値だけを書く）。ほかの入力の最大値は 1 にそろえる。
+fn tilt_max_only(mut influences: yolu_core::Influences) -> yolu_core::Influences {
+    use yolu_core::brush::Input;
+    let fix = |influence: &mut Influence| {
+        for input in [Input::Pressure, Input::Speed, Input::Random] {
+            let use_ = influence.input_mut(input);
+            if use_.response.max() != 1.0 {
+                if let Ok(response) = use_.response.with_max(1.0) {
+                    use_.response = response;
+                }
+            }
+        }
+    };
+    for item in yolu_core::brush::Item::ALL {
+        fix(influences.get_mut(item));
+    }
+    for item in yolu_core::ColorItem::ALL {
+        fix(influences.color_mut(item));
+    }
+    for item in yolu_core::SprayItem::ALL {
+        fix(influences.spray_mut(item));
+    }
+    for item in yolu_core::DualItem::ALL {
+        fix(influences.dual_mut(item));
+    }
+    influences
+}
+
+/// 散布効果を保存と同じ f32 の精度に丸める（主と 2 つ目の散布）。
+fn spray_f32(s: yolu_core::Spray) -> yolu_core::Spray {
+    let f = |v: f64| v as f32 as f64;
+    yolu_core::Spray {
+        size: f(s.size),
+        density: f(s.density),
+        bias: f(s.bias),
+        angle: f(s.angle),
+        random_angle: s.random_angle.map(f),
+        ..s
+    }
+}
+
+/// ブラシが持てる入り抜き・手ぶれ補正・速度による調整・はらい・後補正（曲線は持たない）。何も無ければ（全部既定）None。範囲は呼ぶ側が検査済みのものを渡す。
 pub fn carried_assist(assist: Option<StrokeAssist>) -> Option<StrokeAssist> {
     let a = assist?;
     let carried = StrokeAssist {
         stabilizer: a.stabilizer,
         taper_in: a.taper_in,
         taper_out: a.taper_out,
+        taper_targets: a.taper_targets,
         curve: false,
+        stabilizer_speed: a.stabilizer_speed,
+        sweep: a.sweep,
+        // 表示倍率はストロークの始めの値で、ブラシの設定ではない
+        post: yolu_core::PostCorrection {
+            view_scale: 1.0,
+            ..a.post
+        },
     };
     (carried != StrokeAssist::default()).then_some(carried)
 }
@@ -480,90 +585,30 @@ pub fn clean_name(name: &str) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-/// 詳細のウィンドウのカテゴリ（今の `brush_props` の全部の欄をこの 11 に分ける）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Category {
-    Shape,
-    Stroke,
-    /// 筆圧（大きさ・不透明度・流量・硬さの、切り替え・最小値・曲線）。
-    Pressure,
-    /// 入り抜き・フェード・ペンの傾き・回転・速さ。
-    Dynamics,
-    Jitter,
-    Texture,
-    Dual,
-    Color,
-    /// 色の混ぜ（厚塗り。混ぜ方・絵の具の量と濃さ・色延び・下地・筆圧）。
-    Mix,
-    Effect,
-}
-
-impl Category {
-    pub const ALL: [Category; 10] = [
-        Category::Shape,
-        Category::Stroke,
-        Category::Pressure,
-        Category::Dynamics,
-        Category::Jitter,
-        Category::Texture,
-        Category::Dual,
-        Category::Color,
-        Category::Mix,
-        Category::Effect,
-    ];
-
-    pub fn name(self, lang: Lang) -> &'static str {
-        match self {
-            Category::Shape => lang.pick("形状", "Shape"),
-            Category::Stroke => lang.pick("ストローク", "Stroke"),
-            Category::Pressure => lang.pick("筆圧", "Pen Pressure"),
-            Category::Dynamics => lang.pick("入り抜きとペン", "Taper & Pen"),
-            Category::Jitter => lang.pick("ゆらぎ", "Jitter"),
-            Category::Texture => lang.pick("テクスチャ", "Texture"),
-            Category::Dual => lang.pick("デュアルブラシ", "Dual Brush"),
-            Category::Color => lang.pick("色の揺らぎ", "Color Dynamics"),
-            Category::Mix => lang.pick("色の混ぜ", "Color Mixing"),
-            Category::Effect => lang.pick("効果", "Effect"),
-        }
-    }
-
-    pub fn icon(self) -> &'static str {
-        match self {
-            Category::Shape => "shapes",
-            Category::Stroke => "ink_stroke",
-            Category::Pressure => "stylus",
-            Category::Dynamics => "tune",
-            Category::Jitter => "data_scatter",
-            Category::Texture => "texture",
-            Category::Dual => "content_copy",
-            Category::Color => "palette",
-            Category::Mix => "paint_brush",
-            Category::Effect => "blur_on",
-        }
-    }
-}
-
-/// ブラシの詳細のウィンドウの状態（開いているか・カテゴリ・位置・スクロール）。
+/// ブラシの詳細のウィンドウの状態（開いているか・カテゴリ・スクロール。位置は `UiState::brushes_detail_offset`）。
 pub struct DetailWindow {
     pub open: bool,
     pub category: Category,
-    /// 見出しのドラッグで動いた量（画面の真ん中からの）。
-    pub offset: Vec2,
     /// 開いたとき、キャンバスの邪魔にならない初めの位置へ置いたか。
     pub placed: bool,
     pub scroll: f32,
     pub content: f32,
+    /// 影響元設定のウィンドウを開いている行（開いていなければ None。行が影響元を持つとき、行の右のボタンで開く）。
+    pub dynamics: Option<Row>,
+    /// 影響元設定のウィンドウの初めの位置を決めたか。
+    pub dynamics_placed: bool,
 }
 
 impl Default for DetailWindow {
     fn default() -> Self {
         DetailWindow {
             open: false,
-            category: Category::Shape,
-            offset: Vec2::ZERO,
+            category: Category::Size,
             placed: false,
             scroll: 0.0,
             content: 0.0,
+            dynamics: None,
+            dynamics_placed: false,
         }
     }
 }
@@ -580,8 +625,6 @@ pub struct BrushUi {
     /// 右クリックのメニューの対象。
     pub context: Option<BrushKey>,
     pub detail: DetailWindow,
-    /// 前のフレームに一覧を描いた範囲（描かなかったフレームでは消える。ファイルを落とした所が一覧の上かを見る）。
-    pub list_rect: Option<Rect>,
 }
 
 impl Default for BrushUi {
@@ -594,7 +637,6 @@ impl Default for BrushUi {
             rename_started: false,
             context: None,
             detail: DetailWindow::default(),
-            list_rect: None,
         }
     }
 }
@@ -610,7 +652,6 @@ pub struct BrushesState {
     /// 起動のとき、フォルダにあるのに読み込まなかった利用者のブラシのファイルの番号（ツールの並びが、その札を消さずに覚える）。
     pub unloaded: std::collections::HashSet<u32>,
     pub ui: BrushUi,
-    pub samples: sample::SampleCache,
     /// ファイルの取り込み（裏のスレッドの仕事）。
     pub import: import::ImportState,
     /// 詳細のウィンドウの筆先の格子に出す Krita の筆先（読み込みと見本は別のスレッド）。
@@ -630,7 +671,6 @@ impl Default for BrushesState {
             loaded_through: 0,
             unloaded: std::collections::HashSet::new(),
             ui: BrushUi::default(),
-            samples: sample::SampleCache::default(),
             import: import::ImportState::default(),
             krita: krita::KritaTips::default(),
             csp: clipstudio::CspState::default(),
@@ -715,6 +755,7 @@ impl AppState {
     pub fn brush_live(&self) -> Brush {
         let mut brush = self.m2.brush.clone();
         brush.base = self.brush.settings([1.0; 4], false);
+        brush.influences.set_pressure_switches(self.brush.pressure);
         // クローンの元から決めた offset は、ブラシの設定でなく、作業の位置: 比べる・覚えるときは、入れる前のブラシの offset と見なす
         // （「変えた」の印を付けない。変えたままの設定にも登録にも入れない）
         if let BrushEffect::Clone { offset } = &mut brush.effect {
@@ -734,9 +775,7 @@ impl AppState {
             spacing: base.spacing as f32,
             opacity: base.opacity as f32,
             flow: base.flow as f32,
-            pressure_size: base.pressure_size,
-            pressure_opacity: base.pressure_opacity,
-            pressure_flow: base.pressure_flow,
+            pressure: brush.influences.pressure_switches(),
             anti_alias: base.anti_alias,
         };
         let assist = self.m2.brush.assist;
@@ -800,14 +839,12 @@ impl AppState {
         }
         self.refuse(
             crate::notice::Source::Brush,
-            self.lang
-                .pick("ブラシを取り込み中です。", "Importing brushes."),
+            self.lang.t("brushes-importing-brushes-3"),
         );
         true
     }
 
-    fn brush_notice(&mut self, kind: crate::notice::Kind, ja: String, en: String) {
-        let text = self.lang.pick(ja, en);
+    fn brush_notice(&mut self, kind: crate::notice::Kind, text: String) {
         self.notify(kind, crate::notice::Source::Brush, text);
     }
 
@@ -850,18 +887,15 @@ impl AppState {
         let lang = self.lang;
         let file = lang.quote(&first.file);
         let one = lang.with_reason(
-            lang.pick(
-                format!("ブラシのファイル{file}を読めません"),
-                format!("Cannot read the brush file {file}"),
-            ),
+            lang.f("brushes-cannot-read-the-brush-file", &[("file", &file)]),
             first.describe(lang),
         );
         Some(if problems.len() == 1 {
             one
         } else {
-            lang.pick(
-                format!("ブラシを {} 件読めません。{one}", problems.len()),
-                format!("Cannot read {} brushes. {one}", problems.len()),
+            lang.f(
+                "brushes-cannot-read-brushes",
+                &[("problems", &problems.len()), ("one", &one)],
             )
         })
     }
@@ -890,8 +924,8 @@ impl AppState {
                 let reason = e.describe(self.lang);
                 self.brush_notice(
                     crate::notice::Kind::Error,
-                    Lang::Ja.with_reason("ブラシを保存できません", &reason),
-                    Lang::En.with_reason("Cannot save the brush", &reason),
+                    self.lang
+                        .with_reason(self.lang.t("brushes-cannot-save-the-brush"), &reason),
                 );
                 false
             }
@@ -977,7 +1011,7 @@ impl AppState {
             // （入るツールはブラシか消しゴムで、サブツールの一覧は一覧自体がブラシのものなので、入るほうの写しは要らない）
             self.subtool_leave(self.tool);
             self.sel_tool_changed();
-            self.tool = tool;
+            self.put_tool(tool);
         }
         self.toolset.set.set_active(Some(slot));
     }
@@ -1045,21 +1079,22 @@ impl AppState {
         if self.brushes.lib.user_count() >= MAX_USER_BRUSHES {
             self.brush_notice(
                 crate::notice::Kind::Refusal,
-                format!("ブラシは {MAX_USER_BRUSHES} 個までです。"),
-                format!("At most {MAX_USER_BRUSHES} brushes."),
+                self.lang.f(
+                    "brushes-at-most-brushes",
+                    &[("max_user_brushes", &MAX_USER_BRUSHES)],
+                ),
             );
             return None;
         }
         let lang = self.lang;
-        let base = clean_name(&new.name).unwrap_or_else(|| lang.pick("ブラシ", "Brush").into());
+        let base = clean_name(&new.name).unwrap_or_else(|| lang.t("brushes-brush-2").into());
         let store = self.brushes.store.as_ref();
         let lib = &mut self.brushes.lib;
         // 番号は読んだファイルの続き。起動のあとに別の所で置かれたファイルの番号は飛ばす（保存は置換なので、当たると上書きする）
         let Some(id) = lib.take_id(|id| store.is_some_and(|s| s.is_taken(id))) else {
             self.brush_notice(
                 crate::notice::Kind::Refusal,
-                "ブラシの番号を使い切りました。".into(),
-                "Out of brush numbers.".into(),
+                self.lang.t("brushes-out-of-brush-numbers").into(),
             );
             return None;
         };
@@ -1145,11 +1180,8 @@ impl AppState {
             return;
         }
         let name = match from {
-            None => lang.pick("ブラシ", "Brush").to_owned(),
-            Some(_) => lang.pick(
-                format!("{} のコピー", source.name_in(lang)),
-                format!("{} copy", source.name_in(lang)),
-            ),
+            None => lang.t("brushes-brush-2").to_owned(),
+            Some(_) => lang.f("brushes-copy", &[("name_in", &source.name_in(lang))]),
         };
         let key = match from {
             Some(_) => self.brush_copy_of(source_key, name.clone(), group, false),
@@ -1192,8 +1224,7 @@ impl AppState {
         // 知らせを先に（保存できなければ、その理由が知らせを上書きする）
         self.brush_notice(
             crate::notice::Kind::Info,
-            format!("ブラシを追加しました: {name}"),
-            format!("Brush added: {name}"),
+            self.lang.f("brushes-brush-added", &[("name", &name)]),
         );
         // ブラシのファイルを書けなかったなら、並びは書かない（同じ理由で書けず、知らせを上書きするだけ）
         if self.brush_persist(key) {
@@ -1296,14 +1327,13 @@ impl AppState {
         if source.brushes.len() > room {
             return self.brush_notice(
                 crate::notice::Kind::Refusal,
-                format!("ブラシは {MAX_USER_BRUSHES} 個までです。"),
-                format!("At most {MAX_USER_BRUSHES} brushes."),
+                lang.f(
+                    "brushes-at-most-brushes",
+                    &[("max_user_brushes", &MAX_USER_BRUSHES)],
+                ),
             );
         }
-        let name = lang.pick(
-            format!("{} のコピー", source.name_in(lang)),
-            format!("{} copy", source.name_in(lang)),
-        );
+        let name = lang.f("brushes-copy", &[("name_in", &source.name_in(lang))]);
         let before = self.toolset.set.slot(slot).and_then(|s| {
             let at = s.groups.iter().position(|g| g.id == group)?;
             s.groups.get(at + 1).map(|g| g.id)
@@ -1341,8 +1371,7 @@ impl AppState {
                 .unwrap_or_default();
             self.brush_notice(
                 crate::notice::Kind::Info,
-                format!("グループを複製しました: {name}"),
-                format!("Group duplicated: {name}"),
+                lang.f("brushes-group-duplicated", &[("name", &name)]),
             );
         }
         self.toolset_persist();
@@ -1450,15 +1479,13 @@ impl AppState {
                     .unwrap_or_default();
                 self.brush_notice(
                     crate::notice::Kind::Info,
-                    format!("ブラシを追加しました: {name}"),
-                    format!("Brush added: {name}"),
+                    lang.f("brushes-brush-added", &[("name", &name)]),
                 );
             } else {
                 let n = added.len();
                 self.brush_notice(
                     crate::notice::Kind::Info,
-                    format!("ブラシを {n} 個追加しました。"),
-                    format!("{n} brushes added."),
+                    lang.f("brushes-brushes-added", &[("n", &n)]),
                 );
             }
         }
@@ -1539,8 +1566,7 @@ impl AppState {
                 }
                 self.brush_notice(
                     crate::notice::Kind::Info,
-                    format!("ブラシを削除しました: {name}"),
-                    format!("Brush deleted: {name}"),
+                    lang.f("brushes-brush-deleted", &[("name", &name)]),
                 );
                 self.toolset_persist();
             }
@@ -1555,7 +1581,7 @@ impl AppState {
                     return;
                 }
                 self.toolset.catalog.pending_delete = Some(key);
-                self.dialog_request = Some(crate::state::DialogRequest::BrushFileDelete);
+                self.outbox.dialog_request = Some(crate::state::DialogRequest::BrushFileDelete);
             }
             BrushAction::DeleteFile(key) => {
                 if self.is_stroking() {
@@ -1580,8 +1606,7 @@ impl AppState {
                         let reason = e.describe(lang);
                         return self.brush_notice(
                             crate::notice::Kind::Error,
-                            Lang::Ja.with_reason("ブラシを消せません", &reason),
-                            Lang::En.with_reason("Cannot delete the brush", &reason),
+                            lang.with_reason(lang.t("brushes-cannot-delete-the-brush"), &reason),
                         );
                     }
                 }
@@ -1603,8 +1628,7 @@ impl AppState {
                 let name = entry.name;
                 self.brush_notice(
                     crate::notice::Kind::Info,
-                    format!("ブラシのファイルを削除しました: {name}"),
-                    format!("Brush file deleted: {name}"),
+                    lang.f("brushes-brush-file-deleted", &[("name", &name)]),
                 );
                 if placed {
                     self.toolset_persist();
@@ -1686,7 +1710,7 @@ impl AppState {
                     let Some(source) = self.brushes.lib.entry(key).map(|e| e.name_in(lang)) else {
                         return;
                     };
-                    let name = lang.pick(format!("{source} のコピー"), format!("{source} copy"));
+                    let name = lang.f("brushes-copy-2", &[("source", &source)]);
                     let Some(new) = self.brush_copy_of(key, name, group, false) else {
                         return;
                     };

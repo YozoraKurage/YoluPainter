@@ -8,7 +8,7 @@ use yolu_io::{MaterialRef, NativeDocument, Note, Project, SetSpec, WriterInfo};
 
 fn writer() -> WriterInfo {
     WriterInfo {
-        app: "試験の書き手".into(),
+        app: "テストの書き手".into(),
         version: "0.0.1".into(),
         unity: "standalone".into(),
     }
@@ -22,10 +22,10 @@ fn spec(id: &str, name: &str) -> SetSpec {
     SetSpec {
         id: id.into(),
         name: name.into(),
-        material: MaterialRef::Material {
+        materials: vec![MaterialRef::Material {
             name: name.into(),
             asset: None,
-        },
+        }],
         document: Some(NativeDocument::from_core(&doc).unwrap().into()),
         composites: Vec::new(),
     }

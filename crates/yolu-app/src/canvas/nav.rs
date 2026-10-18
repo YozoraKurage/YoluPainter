@@ -6,7 +6,7 @@
 //! 右ボタン）が同じ関数を通る。回すのは 15° 刻みが既定で、Shift を押していれば自由。回すドラッグは、押した所から `gesture::CLICK_MOVE` を
 //! 超えて動くまで回さない。
 
-use egui::{Modifiers, PointerButton, Pos2, Rect};
+use egui::{Pos2, Rect};
 
 use super::{delta_angle, pointer_angle, ROTATE_DEAD_ZONE};
 use crate::canvas::view::ROTATE_STEP;
@@ -14,6 +14,7 @@ use crate::engine::SelectionCombine;
 use crate::gesture::{self, ZoomDrag};
 use crate::keymap::Operation;
 use crate::notice::Source;
+use crate::state::key::{Modifiers, PointerButton};
 use crate::state::{AppState, RotateDrag};
 
 /// 押しで始める物。
@@ -45,7 +46,7 @@ pub fn start_of(app: &AppState, button: PointerButton, m: &Modifiers) -> Start {
         if app.canvas.rotate_key_held {
             return Start::Rotate;
         }
-        if gesture::zoom_chord(m, app.canvas.space_held) {
+        if gesture::zoom_chord(&(*m).into(), app.canvas.space_held) {
             return Start::Zoom;
         }
         if app.canvas.space_held {
@@ -212,25 +213,23 @@ pub fn cancel(app: &mut AppState) {
 pub fn pen_driven(app: &AppState) -> bool {
     app.canvas
         .pen_press
-        .is_some_and(|p| p.kind == crate::pen::PressKind::View)
+        .is_some_and(|p| p.owner == crate::input::Owner::View)
 }
 
 /// 押した点（画面の点）の下の文書の点を、クローンの元にする（キャンバスの外は断る）。
 fn set_clone_source(app: &mut AppState, rect: Rect, at: Pos2) {
-    let view = app.view.view(rect, app.doc.width(), app.doc.height());
+    let view = app
+        .view
+        .view(rect, app.session.doc.width(), app.session.doc.height());
     let (x, y) = view.to_canvas(at);
-    let (w, h) = (app.doc.width() as f64, app.doc.height() as f64);
+    let (w, h) = (
+        app.session.doc.width() as f64,
+        app.session.doc.height() as f64,
+    );
     if !(0.0..w).contains(&x) || !(0.0..h).contains(&y) {
-        app.refuse(
-            Source::Canvas,
-            app.lang.pick("キャンバスの外です。", "Outside the canvas."),
-        );
+        app.refuse(Source::Canvas, app.lang.t("canvas-outside-the-canvas"));
         return;
     }
-    app.clone.set_canvas_source(app.doc.id(), (x, y));
-    app.info(
-        Source::Canvas,
-        app.lang
-            .pick("クローンの元を決めました。", "Clone source set."),
-    );
+    app.clone.set_canvas_source(app.session.doc.id(), (x, y));
+    app.info(Source::Canvas, app.lang.t("canvas-clone-source-set"));
 }

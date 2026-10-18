@@ -1,5 +1,6 @@
 //! UV の表示専用の入口と、日英の設定のウィンドウのショートカットの区分。
 use crate::common;
+use crate::common::drive::Drive;
 use egui::{vec2, Color32, Rect};
 use egui_kittest::kittest::Queryable;
 use yolu_app::{
@@ -13,8 +14,8 @@ use yolu_app::{
 fn uv_corner_toggles_without_starting_a_stroke_in_both_languages() {
     for lang in Lang::ALL {
         let mut app = AppState::new(64, 64);
-        app.lang = lang;
-        app.apply(Action::LoadDemoModel);
+        app.set_lang(lang);
+        app.act(Action::LoadDemoModel);
         app.sync_view3d();
         let mut display = CanvasDisplay::default();
         let mut ready = false;
@@ -36,13 +37,13 @@ fn uv_corner_toggles_without_starting_a_stroke_in_both_languages() {
         let label = lang.pick("UV ワイヤーフレーム", "UV Wireframe");
         h.get_by_label(label).click();
         h.run();
-        assert!(!h.state().prefs.settings.uv_wireframe);
-        assert!(!h.state().is_stroking());
-        assert!(!h.state().can_undo());
+        assert!(!h.prefs().settings.uv_wireframe);
+        assert!(!h.app().is_stroking());
+        assert!(!h.app().can_undo());
         h.get_by_label(label).click();
         h.run();
-        assert!(h.state().prefs.settings.uv_wireframe);
-        assert!(!h.state().can_undo());
+        assert!(h.prefs().settings.uv_wireframe);
+        assert!(!h.app().can_undo());
     }
 }
 
@@ -50,8 +51,8 @@ fn uv_corner_toggles_without_starting_a_stroke_in_both_languages() {
 fn shortcut_category_is_localized_and_closes_without_document_changes() {
     for lang in Lang::ALL {
         let mut app = AppState::new(32, 32);
-        app.lang = lang;
-        app.apply(Action::ShowShortcuts);
+        app.set_lang(lang);
+        app.act(Action::ShowShortcuts);
         let mut ready = false;
         let mut h = common::gpu_thread::builder()
             .with_size(vec2(850.0, 600.0))
@@ -69,31 +70,31 @@ fn shortcut_category_is_localized_and_closes_without_document_changes() {
             );
         h.run();
         assert!(yolu_app::prefs::last_rect(&h.ctx).is_some());
-        assert!(h.state().prefs.shows(yolu_app::prefs::Category::Shortcuts));
+        assert!(h.prefs().shows(yolu_app::prefs::Category::Shortcuts));
         // 閉じるは見出しの印
         h.get_by_label(lang.pick("閉じる", "Close")).click();
         h.run();
-        assert!(!h.state().prefs.open);
-        assert!(!h.state().can_undo());
+        assert!(!h.prefs().open);
+        assert!(!h.app().can_undo());
     }
 }
 
 #[test]
 fn uv_draws_only_lines_in_the_canvas_clip_and_respects_color_alpha() {
     let mut app = AppState::new(64, 32);
-    app.apply(Action::LoadDemoModel);
+    app.act(Action::LoadDemoModel);
     app.sync_view3d();
-    app.view.angle = 37.0;
-    app.view.flip = true;
-    app.view.zoom = 2.0;
-    app.prefs.settings.uv_wireframe_color = [11, 123, 231, 77];
+    app.view_mut().angle = 37.0;
+    app.view_mut().flip = true;
+    app.view_mut().zoom = 2.0;
+    app.prefs_mut().settings.uv_wireframe_color = [11, 123, 231, 77];
     let color = Color32::from_rgba_unmultiplied(11, 123, 231, 77);
     let ctx = egui::Context::default();
     YoluApp::setup(&ctx);
     let rect = Rect::from_min_size(egui::pos2(20.0, 30.0), vec2(400.0, 300.0));
     let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
-        let view = app.view.view(rect, 64, 32);
+        let view = app.view().view(rect, 64, 32);
         yolu_app::uv_wireframe::show(&mut child, &mut app, &view);
     });
     output.textures_delta.clear();

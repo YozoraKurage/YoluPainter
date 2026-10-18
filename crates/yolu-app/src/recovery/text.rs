@@ -5,11 +5,11 @@ use std::time::Duration;
 use yolu_io::StoreError;
 
 use super::{RecoveryError, Usage};
-use crate::lang::Lang;
+use crate::lang::{Count, Lang};
 
 /// 復旧から開いたプロジェクトの名前（保存していない）。
 pub fn recovered_name(lang: Lang) -> &'static str {
-    lang.pick("名称未設定（復旧）", "Untitled (Recovered)")
+    lang.t("recovery-untitled-recovered")
 }
 
 impl Lang {
@@ -20,31 +20,24 @@ impl Lang {
             RecoveryError::Project(e) => self.io_error(e),
             RecoveryError::Io(e) => self.file_error(e),
             RecoveryError::Text(text) => text.clone(),
-            RecoveryError::Panicked => self
-                .pick("書き込みの内部の失敗", "Internal error while writing")
-                .into(),
-            RecoveryError::NotPool => self
-                .pick(
-                    "復旧の置き場の中の世代ではありません",
-                    "Not a generation in the recovery folder",
-                )
-                .into(),
+            RecoveryError::Panicked => self.t("recovery-internal-error-while-writing").into(),
+            RecoveryError::NotPool => self.t("recovery-not-a-generation-in-the").into(),
         }
     }
 
     pub fn store_error(self, error: &StoreError) -> String {
         match error {
             StoreError::Io(e) => self.file_error(e),
-            StoreError::LowSpace(_) => self.pick("ディスクの空きが少ない", "Low disk space").into(),
+            StoreError::LowSpace(_) => self.t("recovery-low-disk-space").into(),
             _ if self == Self::Ja => error.to_string(),
             StoreError::NoGeneration => "No generation".into(),
             StoreError::AlreadyExists => "The folder already has a generation".into(),
             StoreError::Changed(_) => "The recovery folder was changed outside".into(),
             StoreError::Busy => "Another writer is using the recovery folder".into(),
             StoreError::Corrupt(_) => "Damaged generation".into(),
-            StoreError::Budget(why) => crate::lang::budget_text(why)
-                .unwrap_or("Size limit exceeded")
-                .into(),
+            StoreError::Budget(why) => self
+                .budget_reason(why)
+                .unwrap_or_else(|| "Size limit exceeded".into()),
             StoreError::InvalidArgument(_) => "Invalid setting".into(),
         }
     }
@@ -53,32 +46,23 @@ impl Lang {
     pub fn recovery_failed(self, error: &RecoveryError) -> String {
         if matches!(error, RecoveryError::Store(StoreError::LowSpace(_))) {
             return self.with_reason(
-                self.pick(
-                    "復旧用の書き置きを見送りました",
-                    "Recovery checkpoint skipped",
-                ),
+                self.t("recovery-recovery-checkpoint-skipped"),
                 self.recovery_error(error),
             );
         }
         self.with_reason(
-            self.pick(
-                "復旧用の書き置きに失敗しました",
-                "Recovery checkpoint failed",
-            ),
+            self.t("recovery-recovery-checkpoint-failed"),
             self.recovery_error(error),
         )
     }
 
     pub fn recovery_working_again(self) -> &'static str {
-        self.pick(
-            "復旧用の書き置きが戻りました",
-            "Recovery checkpoints are working again",
-        )
+        self.t("recovery-recovery-checkpoints-are-working-again")
     }
 
     pub fn recovery_cannot_open(self, error: &RecoveryError) -> String {
         self.with_reason(
-            self.pick("復旧を開けません", "Cannot open the recovery"),
+            self.t("recovery-cannot-open-the-recovery"),
             self.recovery_error(error),
         )
     }
@@ -87,36 +71,29 @@ impl Lang {
     pub fn recovery_settings_problem(self, problem: &super::settings::Problem) -> String {
         use super::settings::Problem;
         match problem {
-            Problem::OutOfRange { key, value, range } => self.pick(
-                format!(
-                    "復旧の設定 {key}={value} は範囲外（{}〜{}）。既定を使います",
-                    range.0, range.1
-                ),
-                format!(
-                    "Recovery setting {key}={value} is out of range ({}–{}); using the default",
-                    range.0, range.1
-                ),
+            Problem::OutOfRange { key, value, range } => self.f(
+                "recovery-recovery-setting-is-out-of",
+                &[
+                    ("key", &key),
+                    ("value", &value),
+                    ("range", &range.0),
+                    ("range_2", &range.1),
+                ],
             ),
-            Problem::RelativeDirectory(dir) => self.pick(
-                format!("復旧の置き場 {dir} は絶対パスではありません。既定を使います"),
-                format!("Recovery folder {dir} is not absolute; using the default"),
-            ),
+            Problem::RelativeDirectory(dir) => {
+                self.f("recovery-recovery-folder-is-not-absolute", &[("dir", &dir)])
+            }
             Problem::Unreadable(reason) => {
                 let reason = self.file_error(&reason.to_error());
-                self.pick(
-                    format!("復旧の設定を読めないので、世代は整理しません（{reason}）"),
-                    format!(
-                        "Generations are not trimmed because the recovery settings cannot be read ({reason})"
-                    ),
+                self.f(
+                    "recovery-generations-are-not-trimmed-because",
+                    &[("reason", &reason)],
                 )
             }
             Problem::PreviousRun(reason) => {
                 let reason = self.file_error(&reason.to_error());
                 self.with_reason(
-                    self.pick(
-                        "前回の復旧の印を片付けられません",
-                        "Cannot settle the previous recovery marker",
-                    ),
+                    self.t("recovery-cannot-settle-the-previous-recovery"),
                     reason,
                 )
             }
@@ -125,7 +102,7 @@ impl Lang {
 
     pub fn recovery_unavailable(self, error: &RecoveryError) -> String {
         self.with_reason(
-            self.pick("復旧を使えません", "Recovery is unavailable"),
+            self.t("recovery-recovery-is-unavailable"),
             self.recovery_error(error),
         )
     }
@@ -133,49 +110,46 @@ impl Lang {
     /// ウィンドウの下の帯に出す、復旧が使っている量（短く。内訳はツールチップ）。
     pub fn recovery_usage_text(self, usage: &Usage) -> String {
         let used = bytes_text(usage.total());
-        self.pick(format!("使用中 {used}"), format!("{used} in use"))
+        self.f("recovery-in-use", &[("used", &used)])
     }
 
     /// 使っている量の内訳（ツールチップ）。`cap` は上限、`free` はディスクの空き（分からなければ None）。
     pub fn recovery_usage_tip(self, usage: &Usage, cap: u64, free: Option<u64>) -> String {
         let mut lines = vec![
-            self.pick(
-                "復旧が使っているディスクの量",
-                "Disk space used by recovery",
-            )
-            .to_owned(),
+            self.t("recovery-disk-space-used-by-recovery-tip")
+                .to_owned(),
             format!(
                 "{}  {}",
-                self.pick("この実行", "This session"),
+                self.t("recovery-this-session-tip"),
                 bytes_text(usage.own)
             ),
             format!(
                 "{}  {}",
-                self.pick("落ちた実行", "Crashed sessions"),
+                self.t("recovery-crashed-sessions-tip"),
                 bytes_text(usage.crashed)
             ),
             format!(
                 "{}  {}",
-                self.pick("閉じた実行", "Closed sessions"),
+                self.t("recovery-closed-sessions-tip"),
                 bytes_text(usage.closed)
             ),
         ];
         if usage.others > 0 {
             lines.push(format!(
                 "{}  {}",
-                self.pick("ほかのウィンドウ", "Other windows"),
+                self.t("recovery-other-windows-tip"),
                 bytes_text(usage.others)
             ));
         }
         lines.push(format!(
             "{}  {}",
-            self.pick("上限", "Limit"),
+            self.t("recovery-limit-tip"),
             bytes_text(cap)
         ));
         if let Some(free) = free {
             lines.push(format!(
                 "{}  {}",
-                self.pick("ディスクの空き", "Free on disk"),
+                self.t("recovery-free-on-disk-tip"),
                 bytes_text(free)
             ));
         }
@@ -186,29 +160,16 @@ impl Lang {
     pub fn age_text(self, age: Duration) -> String {
         let s = age.as_secs();
         match s {
-            0..=9 => self.pick("たった今", "just now").into(),
-            10..=59 => self.pick(format!("{s} 秒前"), format!("{s} s ago")),
-            60..=3599 => self.pick(format!("{} 分前", s / 60), format!("{} min ago", s / 60)),
-            3600..=86399 => self.pick(
-                format!("{} 時間前", s / 3600),
-                format!("{} h ago", s / 3600),
-            ),
-            _ => self.pick(
-                format!("{} 日前", s / 86400),
-                format!("{} d ago", s / 86400),
-            ),
+            0..=9 => self.t("recovery-just-now").into(),
+            10..=59 => self.f("recovery-s-ago", &[("s", &s)]),
+            60..=3599 => self.f("recovery-min-ago", &[("s", &(s / 60))]),
+            3600..=86399 => self.f("recovery-h-ago", &[("s", &(s / 3600))]),
+            _ => self.f("recovery-d-ago", &[("s", &(s / 86400))]),
         }
     }
 
     pub fn sets_text(self, count: usize) -> String {
-        self.pick(
-            format!("{count} セット"),
-            if count == 1 {
-                "1 set".to_owned()
-            } else {
-                format!("{count} sets")
-            },
-        )
+        self.f("recovery-sets-count", &[("count", &Count(count))])
     }
 }
 
@@ -234,18 +195,9 @@ pub fn bytes_text(bytes: u64) -> String {
 /// 設定の名前のツールチップ（`key` は "interval"・"keep"・"disk"）。いま選んでいる値は帯に出ているので、繰り返さない。
 pub fn settings_tip(lang: Lang, key: &str) -> &'static str {
     match key {
-        "interval" => lang.pick(
-            "変更があってから書き置くまでの時間",
-            "Time from a change to its checkpoint",
-        ),
-        "disk" => lang.pick(
-            "復旧の世代がディスクに使ってよい量。超えたぶんは古い世代から消します（この実行の最新と、落ちた実行ごとの最新は残します）。自動は 2 GB と、復旧が使えるディスクの 10% の小さいほうです。空きが少ないときは、量に関わらず書き置きを見送ります",
-            "How much disk space the recovery generations may use. Beyond it, the oldest generations are removed (the newest of this session and of each crashed session stay). Automatic is 2 GB or 10% of the disk recovery can use, whichever is smaller. When the disk is nearly full, checkpoints are skipped whatever the limit",
-        ),
-        _ => lang.pick(
-            "残しておく世代の数（超えた分は古いものから整理）",
-            "Number of generations to keep (older ones are trimmed)",
-        ),
+        "interval" => lang.t("recovery-time-from-a-change-to-tip"),
+        "disk" => lang.t("recovery-how-much-disk-space-the-tip"),
+        _ => lang.t("recovery-number-of-generations-to-keep-tip"),
     }
 }
 

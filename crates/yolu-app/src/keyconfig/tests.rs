@@ -1,7 +1,7 @@
 //! キー・マウス・パイの設定（keymap.json）の試験: 文字の往復、置き換えと既定に戻す、ぶつかりと保存の断り、書き出しと読み込みの往復（知らない物の数）、
 //! 壊れたファイル、メニューの文字とキーの処理が変更に付いてくる、利用者のパイとそのキー、マウスの組み合わせ。
 
-use egui::{Event, Key, Modifiers, PointerButton};
+use egui::Event;
 
 use super::*;
 use crate::mode::EditorMode;
@@ -44,11 +44,11 @@ fn dispatched(app: &AppState, k: Key, modifiers: Modifiers) -> Vec<Action> {
     let mut got = Vec::new();
     let input = egui::RawInput {
         events: vec![Event::Key {
-            key: k,
+            key: k.into(),
             physical_key: None,
             pressed: true,
             repeat: false,
-            modifiers,
+            modifiers: modifiers.into(),
         }],
         ..Default::default()
     };
@@ -474,6 +474,115 @@ fn a_changed_mouse_combination_takes_effect_can_be_turned_off_and_conflicts_are_
 }
 
 #[test]
+fn the_snap_orbit_default_is_alt_right_and_a_saved_assignment_stays_as_saved() {
+    let mut app = AppState::new(32, 32);
+    let snap = GESTURES
+        .iter()
+        .find(|g| g.operation == keymap::Operation::SnapOrbit)
+        .unwrap();
+    // 既定: Alt + 右。Alt + 左は何も始めない。修飾なしの右は今までどおり回転で、ぶつからない
+    assert_eq!(
+        Combo::of(snap),
+        Combo {
+            button: PointerButton::Secondary,
+            alt: true,
+            shift: false,
+            ctrl: false,
+        }
+    );
+    assert!(app.keys.is_default());
+    assert!(!app.keys.has_conflicts());
+    assert_eq!(
+        keymap::gesture("view3d", PointerButton::Secondary, &Modifiers::ALT, false),
+        Some(keymap::Operation::SnapOrbit)
+    );
+    assert_eq!(
+        keymap::gesture("view3d", PointerButton::Primary, &Modifiers::ALT, false),
+        None
+    );
+    assert_eq!(
+        keymap::gesture("view3d", PointerButton::Secondary, &Modifiers::NONE, false),
+        Some(keymap::Operation::Orbit)
+    );
+    // スナップ回転を変えていない設定のファイル: 新しい既定が効く
+    let text = r#"{"format":"yolupainter-keymap","version":1,"mouse":[
+        {"scope":"view3d","operation":"pan","click":false,"index":0,"combo":"Alt+Middle"}
+    ]}"#;
+    let parsed = parse(text, Lang::Ja).unwrap();
+    assert_eq!(parsed.skipped, 0);
+    app.keys.apply(&parsed);
+    assert_eq!(
+        keymap::gesture("view3d", PointerButton::Secondary, &Modifiers::ALT, false),
+        Some(keymap::Operation::SnapOrbit)
+    );
+    // スナップ回転を Alt + 左に割り当てていた設定のファイル: その割り当てのまま（Alt + 右は回転）
+    let text = r#"{"format":"yolupainter-keymap","version":1,"mouse":[
+        {"scope":"view3d","operation":"snap_orbit","click":false,"index":0,"combo":"Alt+Left"}
+    ]}"#;
+    let parsed = parse(text, Lang::Ja).unwrap();
+    assert_eq!(parsed.skipped, 0);
+    app.keys.apply(&parsed);
+    assert_eq!(
+        keymap::gesture("view3d", PointerButton::Primary, &Modifiers::ALT, false),
+        Some(keymap::Operation::SnapOrbit)
+    );
+    assert_eq!(
+        keymap::gesture("view3d", PointerButton::Secondary, &Modifiers::ALT, false),
+        Some(keymap::Operation::Orbit)
+    );
+    // 既定に戻す
+    app.keys.reset_all();
+    assert!(app.keys.is_default());
+    assert_eq!(
+        keymap::gesture("view3d", PointerButton::Secondary, &Modifiers::ALT, false),
+        Some(keymap::Operation::SnapOrbit)
+    );
+    assert_eq!(
+        keymap::gesture("view3d", PointerButton::Primary, &Modifiers::ALT, false),
+        None
+    );
+}
+
+#[test]
+fn another_3d_operation_moved_to_alt_right_is_not_hidden_by_the_default_snap_orbit() {
+    let mut app = AppState::new(32, 32);
+    let pan = GESTURES
+        .iter()
+        .find(|g| g.scope == "view3d" && g.operation == keymap::Operation::Pan && g.starts)
+        .unwrap()
+        .index;
+    assert_eq!(
+        keymap::gesture("view3d", PointerButton::Secondary, &Modifiers::ALT, false),
+        Some(keymap::Operation::SnapOrbit)
+    );
+    // 3D のパン（中ボタン）を Alt + 右に: 修飾の数が同じ既定のスナップ回転より先に当たる
+    app.keys.set_combo(
+        pan,
+        Some(Combo {
+            button: PointerButton::Secondary,
+            alt: true,
+            shift: false,
+            ctrl: false,
+        }),
+    );
+    assert_eq!(
+        keymap::gesture("view3d", PointerButton::Secondary, &Modifiers::ALT, false),
+        Some(keymap::Operation::Pan)
+    );
+    assert!(app.keys.has_conflicts(), "ぶつかりとして出る");
+    // 修飾なしの右は回転のまま。既定に戻せばスナップ回転
+    assert_eq!(
+        keymap::gesture("view3d", PointerButton::Secondary, &Modifiers::NONE, false),
+        Some(keymap::Operation::Orbit)
+    );
+    app.keys.reset_all();
+    assert_eq!(
+        keymap::gesture("view3d", PointerButton::Secondary, &Modifiers::ALT, false),
+        Some(keymap::Operation::SnapOrbit)
+    );
+}
+
+#[test]
 fn locked_commands_cannot_be_read_from_a_file() {
     let text = r#"{"format":"yolupainter-keymap","version":1,"keys":[{"command":"clip.paste","scope":"paint","keys":["Ctrl+B"]}]}"#;
     let parsed = parse(text, Lang::Ja).unwrap();
@@ -640,11 +749,11 @@ fn fired(app: &AppState, k: Key, repeat: bool) -> Vec<keymap::Fired> {
     let press = |ctx: &egui::Context, got: &mut Vec<keymap::Fired>, repeat: bool| {
         let input = egui::RawInput {
             events: vec![Event::Key {
-                key: k,
+                key: k.into(),
                 physical_key: None,
                 pressed: true,
                 repeat,
-                modifiers: Modifiers::NONE,
+                modifiers: Modifiers::NONE.into(),
             }],
             ..Default::default()
         };
@@ -687,7 +796,7 @@ fn tool_key_modes_are_written_only_when_changed_and_come_back_from_the_file() {
         v["tool_keys"],
         json!({"tool.eraser": "hold", "tool.fill": "tap_or_hold"})
     );
-    assert_eq!(v["version"], 1, "形式の版は上げない");
+    assert_eq!(v["version"], 1, "形式のバージョンは上げない");
     // 次の起動で読み直す
     let mut again = AppState::new(32, 32);
     let mut pies = again.pie.menus.clone();

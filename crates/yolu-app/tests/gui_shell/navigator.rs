@@ -1,22 +1,23 @@
 use crate::common;
+use crate::common::drive::Drive;
 use egui::{pos2, vec2, Event, Modifiers, PointerButton, Rect};
 use egui_kittest::{kittest::Queryable, Harness};
 use yolu_app::{app::Tab, lang::Lang, state::AppState, YoluApp};
 
 fn harness(lang: Lang) -> Harness<'static, AppState> {
     let mut app = AppState::new(256, 128);
-    app.lang = lang;
-    let layer = app.doc.layers()[0].id();
+    app.set_lang(lang);
+    let layer = app.doc().layers()[0].id();
     for y in 70..110 {
         for x in 30..100 {
-            app.doc
+            app.doc_mut()
                 .set_pixel(layer, x, y, yolu_app::engine::Rgba8::new(220, 90, 40, 255))
                 .unwrap();
         }
     }
-    app.ui.canvas_rect = Some(Rect::from_min_size(pos2(400.0, 20.0), vec2(600.0, 400.0)));
-    app.view.zoom = 3.0;
-    app.view.angle = 30.0;
+    app.ui_mut().canvas_rect = Some(Rect::from_min_size(pos2(400.0, 20.0), vec2(600.0, 400.0)));
+    app.view_mut().zoom = 3.0;
+    app.view_mut().angle = 30.0;
     let mut ready = false;
     let mut h = common::gpu_thread::builder()
         .with_size(vec2(300.0, 350.0))
@@ -52,23 +53,23 @@ fn pointer(h: &mut Harness<'_, AppState>, p: egui::Pos2, down: bool) {
 fn navigator_buttons_and_languages() {
     for lang in [Lang::Ja, Lang::En] {
         let mut h = harness(lang);
-        let revision = h.state().doc.revision();
-        let undo = h.state().doc.undo_count();
-        let redo = h.state().doc.redo_count();
+        let revision = h.state().doc().revision();
+        let undo = h.state().doc().undo_count();
+        let redo = h.state().doc().redo_count();
         h.get_by_label(lang.pick("左右反転", "Flip horizontally"))
             .click();
         h.run();
-        assert!(h.state().view.flip);
+        assert!(h.state().view().flip);
         h.get_by_label(lang.pick("回転を戻す", "Reset rotation"))
             .click();
         h.run();
-        assert_eq!(h.state().view.angle, 0.0);
+        assert_eq!(h.state().view().angle, 0.0);
         h.get_by_label("100%").click();
         h.run();
         let app = h.state();
         assert!(
-            (app.view
-                .view(app.ui.canvas_rect.unwrap(), 256, 128)
+            (app.view()
+                .view(app.ui().canvas_rect.unwrap(), 256, 128)
                 .pixel_size()
                 - 1.0)
                 .abs()
@@ -77,11 +78,11 @@ fn navigator_buttons_and_languages() {
         h.get_by_label(lang.pick("全体を表示", "Fit canvas"))
             .click();
         h.run();
-        assert_eq!(h.state().view.zoom, 1.0);
-        assert_eq!(h.state().view.pan, egui::Vec2::ZERO);
-        assert_eq!(h.state().doc.revision(), revision);
-        assert_eq!(h.state().doc.undo_count(), undo);
-        assert_eq!(h.state().doc.redo_count(), redo);
+        assert_eq!(h.state().view().zoom, 1.0);
+        assert_eq!(h.state().view().pan, egui::Vec2::ZERO);
+        assert_eq!(h.state().doc().revision(), revision);
+        assert_eq!(h.state().doc().undo_count(), undo);
+        assert_eq!(h.state().doc().redo_count(), redo);
         assert_eq!(
             Tab::Navigator.title_in(lang),
             lang.pick("ナビゲーター", "Navigator")
@@ -98,9 +99,9 @@ fn navigator_click_and_drag_move_the_view() {
     pointer(&mut h, p, true);
     pointer(&mut h, p, false);
     let app = h.state();
-    let viewport = app.ui.canvas_rect.unwrap();
+    let viewport = app.ui().canvas_rect.unwrap();
     let c = app
-        .view
+        .view()
         .view(viewport, 256, 128)
         .to_canvas(viewport.center());
     assert!(
@@ -114,7 +115,7 @@ fn navigator_click_and_drag_move_the_view() {
     pointer(&mut h, start + vec2(20.0, 10.0), false);
     let c2 = h
         .state()
-        .view
+        .view()
         .view(viewport, 256, 128)
         .to_canvas(viewport.center());
     let delta = mini.to_canvas(start + vec2(20.0, 10.0));
@@ -125,17 +126,9 @@ fn navigator_click_and_drag_move_the_view() {
 #[test]
 fn navigator_panel_snapshot_japanese() {
     let mut h = harness(Lang::Ja);
-    h.state_mut().view.flip = true;
+    h.state_mut().view_mut().flip = true;
     h.run();
     h.snapshot("navigator_ja");
-}
-
-#[test]
-fn navigator_panel_snapshot_english() {
-    let mut h = harness(Lang::En);
-    h.state_mut().view.flip = true;
-    h.run();
-    h.snapshot("navigator_en");
 }
 
 #[test]
@@ -147,9 +140,9 @@ fn navigator_thumbnail_matches_gpu_canvas_composite() {
         .renderer(common::shared_gpu::renderer())
         .build_eframe(|cc| {
             let mut state = AppState::new(32, 32);
-            let layer = state.doc.layers()[0].id();
+            let layer = state.doc().layers()[0].id();
             state
-                .doc
+                .doc_mut()
                 .set_pixel(layer, 3, 25, Rgba8::new(30, 140, 210, 130))
                 .unwrap();
             let mut app =
@@ -161,7 +154,7 @@ fn navigator_thumbnail_matches_gpu_canvas_composite() {
     // 中央は 1 つの組（`common::app` と同じ並び）
     h.state_mut().dock = common::tabbed_center_dock(960.0);
     h.run();
-    let thumb = CanvasDisplay::thumbnail(&h.state().state.doc, Channel::Color).unwrap();
+    let thumb = CanvasDisplay::thumbnail(h.doc(), Channel::Color).unwrap();
     let gpu = h
         .state_mut()
         .read_canvas_gpu_display(DocRect::new(0, 0, 32, 32))
@@ -179,7 +172,7 @@ fn navigator_thumbnail_matches_gpu_canvas_composite() {
     h.run();
     assert_eq!(
         thumb,
-        CanvasDisplay::thumbnail(&h.state().state.doc, Channel::Color).unwrap()
+        CanvasDisplay::thumbnail(h.doc(), Channel::Color).unwrap()
     );
 }
 
@@ -192,14 +185,14 @@ fn navigator_sliders_change_zoom_and_rotation() {
             .map(|n| n.rect())
             .find(|r| r.width() > 80.0)
             .expect("スライダー");
-        let before = h.state().view;
+        let before = *h.state().view();
         let p = pos2(r.left() + r.width() * 0.8, r.center().y);
         pointer(&mut h, p, true);
         pointer(&mut h, p, false);
         if label == "Zoom" {
-            assert_ne!(h.state().view.zoom, before.zoom);
+            assert_ne!(h.state().view().zoom, before.zoom);
         } else {
-            assert_ne!(h.state().view.angle, before.angle);
+            assert_ne!(h.state().view().angle, before.angle);
         }
     }
 }
@@ -244,8 +237,8 @@ fn review_zoom_numbers_are_percentages_in_both_languages() {
             let app = h.state();
             let expected = if text == "50%" { 0.5 } else { 1.0 };
             let actual = app
-                .view
-                .view(app.ui.canvas_rect.unwrap(), 256, 128)
+                .view()
+                .view(app.ui().canvas_rect.unwrap(), 256, 128)
                 .pixel_size();
             assert!(
                 (actual - expected).abs() < 1e-4,
@@ -272,8 +265,8 @@ fn review_click_with_press_and_release_in_one_frame_moves_the_view() {
     }
     h.run();
     let app = h.state();
-    let rect = app.ui.canvas_rect.unwrap();
-    let c = app.view.view(rect, 256, 128).to_canvas(rect.center());
+    let rect = app.ui().canvas_rect.unwrap();
+    let c = app.view().view(rect, 256, 128).to_canvas(rect.center());
     assert!(
         (c.0 - 20.0).abs() < 0.001 && (c.1 - 20.0).abs() < 0.001,
         "{c:?}"

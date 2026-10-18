@@ -1,4 +1,5 @@
 //! 文書非依存の Generator。マップは焼いた u16 画像、Anchor は評価済みのスナップショットを読む。
+use crate::Reason;
 pub mod anchor;
 mod evaluate;
 mod grunge;
@@ -15,6 +16,7 @@ pub use evaluate::{evaluate, BoundGenerator, Generated, Options, Output, Target}
 pub use kinds050::{
     IslandVariation, Light, MaskBuilder, MaskCombine, MaskInput, Pattern, PatternShape,
 };
+pub(crate) use mixing::{to_linear, to_srgb};
 pub use mixing::{LuminanceCorrection, MixMode};
 pub(crate) use noisefn::MAX_OCTAVES;
 pub(crate) use noisefn::{sin_cos_deg, value2_gradient};
@@ -28,7 +30,7 @@ use std::{collections::BTreeMap, fmt};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
-    Invalid(&'static str),
+    Invalid(crate::Reason),
     Budget { needed: u64, budget: u64 },
     Cancelled,
     Allocation,
@@ -36,7 +38,7 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Invalid(s) => f.write_str(s),
+            Self::Invalid(s) => f.write_str(s.ja()),
             Self::Budget { needed, budget } => write!(
                 f,
                 "ジェネレーターの作業メモリが予算を超えます: {needed} > {budget} バイト"
@@ -234,7 +236,7 @@ impl Map<'_> {
                 .zip(self.bounds_max)
                 .any(|(a, b)| !a.is_finite() || !b.is_finite() || b < *a || !(b - *a).is_finite())
         {
-            return Err(Error::Invalid("マップの画像・境界箱・由来が不正です"));
+            return Err(Error::Invalid(Reason::GeneratorMapInvalid));
         }
         Ok(())
     }
@@ -364,18 +366,14 @@ impl Settings {
             || !self.noise_scale.is_finite()
             || !crate::ranges::NOISE_SCALE.contains(&self.noise_scale)
         {
-            return Err(Error::Invalid(
-                "ジェネレーターのレベル・減衰・ノイズが範囲外です",
-            ));
+            return Err(Error::Invalid(Reason::GeneratorLevelsRange));
         }
         if !unit(self.balance)
             || (self.kind != Kind::Dirt && self.balance != 0.5)
             || self.axis > 2
             || (self.kind != Kind::PositionGradient && self.axis != 1)
         {
-            return Err(Error::Invalid(
-                "ジェネレーターの種類に対して割合・軸が不正です",
-            ));
+            return Err(Error::Invalid(Reason::GeneratorRatioOrAxisInvalid));
         }
         let [x, y, z] = self.direction;
         if self
@@ -386,13 +384,13 @@ impl Settings {
             || (self.kind != Kind::Direction
                 && (self.direction != [0., 1., 0.] || self.use_bent_normal))
         {
-            return Err(Error::Invalid("ジェネレーターの方向が不正です"));
+            return Err(Error::Invalid(Reason::GeneratorDirectionInvalid));
         }
         self.volume.validate()?;
         if self.kind != Kind::ShapeGradient
             && (self.volume != Volume::default() || self.ramp.is_some())
         {
-            return Err(Error::Invalid("形とランプは形状グラデーション専用です"));
+            return Err(Error::Invalid(Reason::ShapeAndRampOnlyForShapeGradient));
         }
         if self.id_colors.len() > 32
             || self
@@ -403,16 +401,14 @@ impl Settings {
             || (self.kind != Kind::IdColor
                 && (!self.id_colors.is_empty() || self.id_tolerance != 8))
         {
-            return Err(Error::Invalid("ID 色の数・値・重複・種類が不正です"));
+            return Err(Error::Invalid(Reason::GeneratorIdColorsInvalid));
         }
         if self.kind == Kind::Anchor {
             if self.anchor.channel == crate::Channel::Normal {
-                return Err(Error::Invalid(
-                    "Anchor は Normal チャンネルを読めません。Height を読んでください",
-                ));
+                return Err(Error::Invalid(Reason::AnchorReadsHeightNotNormal));
             }
         } else if self.anchor != anchor::Reference::default_for(self.kind) {
-            return Err(Error::Invalid("Anchor の参照は Anchor 専用です"));
+            return Err(Error::Invalid(Reason::AnchorReferenceOnlyForAnchor));
         }
         let default_overlay = self.noise_amount == 0.
             && self.noise_scale == 0.05
@@ -421,27 +417,21 @@ impl Settings {
         if self.kind == Kind::Image {
             let p = &self.image.projection;
             if p.validate().is_err() || p.mode == crate::fill_image::ProjectionMode::Decal {
-                return Err(Error::Invalid(
-                    "画像の投影が範囲外か、デカールです（画像の段は UV・トライプラナー・平面・球・円柱）",
-                ));
+                return Err(Error::Invalid(Reason::ImageStepProjectionInvalid));
             }
             if !default_overlay {
-                return Err(Error::Invalid("画像の段は重ねるノイズを持ちません"));
+                return Err(Error::Invalid(Reason::ImageStepHasNoNoise));
             }
         } else if self.image != ImageSource::default() {
-            return Err(Error::Invalid("画像の設定は画像の段専用です"));
+            return Err(Error::Invalid(Reason::ImageSettingsOnlyForImageStep));
         }
         if self.kind.is_procedural() {
             self.procedural.validate(self.kind)?;
             if !default_overlay {
-                return Err(Error::Invalid(
-                    "ノイズ・グランジは重ねるノイズを持たず、大きさ・シードは自身の設定で決めます",
-                ));
+                return Err(Error::Invalid(Reason::NoiseStepHasNoExtraNoise));
             }
         } else if self.procedural != Procedural::default() {
-            return Err(Error::Invalid(
-                "ノイズ・グランジの設定はノイズ・グランジ専用です",
-            ));
+            return Err(Error::Invalid(Reason::NoiseSettingsOnlyForNoise));
         }
         // 模様・ライト・マスクの組み立て・アイランドごとのばらつき: 重ねるノイズを持たない。模様・ライトは境目のぼかしを種類の欄で持つ（共通の減衰は 0）
         if self.kind.is_050()
@@ -451,18 +441,14 @@ impl Settings {
                 || self.noise_space != NoiseSpace::Model
                 || (matches!(self.kind, Kind::Pattern | Kind::Light) && self.softness != 0.))
         {
-            return Err(Error::Invalid(
-                "模様・ライト・マスクの組み立て・アイランドごとのばらつきは重ねるノイズを持たず、模様・ライトのぼかしは自身の設定で決めます",
-            ));
+            return Err(Error::Invalid(Reason::PatternStepHasNoExtraNoise));
         }
         if (self.kind != Kind::Pattern && self.pattern != Pattern::default())
             || (self.kind != Kind::Light && self.light != Light::default())
             || (self.kind != Kind::MaskBuilder && self.mask_builder != MaskBuilder::default())
             || (self.kind != Kind::UvIslandVariation && self.island != IslandVariation::default())
         {
-            return Err(Error::Invalid(
-                "模様・ライト・マスクの組み立て・アイランドごとのばらつきの設定はその種類専用です",
-            ));
+            return Err(Error::Invalid(Reason::PatternSettingsOnlyForKind));
         }
         self.pattern.validate()?;
         self.light.validate()?;
@@ -470,9 +456,7 @@ impl Settings {
         self.island.validate()?;
         for (kind, key) in &self.pins {
             if !self.candidate_maps().contains(kind) || !key_valid(key) {
-                return Err(Error::Invalid(
-                    "ピンは対応するマップの小文字16進64桁が必要です",
-                ));
+                return Err(Error::Invalid(Reason::MapPinInvalid));
             }
         }
         Ok(())
@@ -590,7 +574,7 @@ impl<'a> Image<'a> {
                 .and_then(|n| n.checked_mul(4))
                 != Some(data.len() as u64)
         {
-            return Err(Error::Invalid("画像は幅×高さ×4バイト必要です"));
+            return Err(Error::Invalid(Reason::FilterImageSizeMismatch));
         }
         Ok(Self {
             data,

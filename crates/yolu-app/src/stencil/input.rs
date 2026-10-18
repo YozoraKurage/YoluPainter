@@ -4,11 +4,12 @@
 //! ドラッグは今の置き場で終える（離したのを受け取れないので）。ストロークの最中・ポップアップが開いているあいだは始めない。ドラッグの最中は、
 //! ほかのボタンを押しても何も始めない（ストローク・パン・3D のカメラ）。
 
-use egui::{Event, Key, PointerButton, Pos2, Rect};
+use egui::{Event, Key, Pos2, Rect};
 
 use super::frame::{MAX_SIZE, MIN_SIZE, ROTATE_STEP};
 use crate::canvas::view::normalize_angle;
 use crate::notice::Source;
+use crate::state::key::{Modifiers, PointerButton};
 use crate::state::AppState;
 
 /// 回す角度を測らない、ステンシルの中心からの距離（画面の点）。
@@ -142,7 +143,7 @@ impl super::StencilState {
 /// だけ（Ctrl+N は新しいプロジェクト、Ctrl+Shift+N は新しいレイヤー）。押し始めたあとは、離すまで続く（Ctrl を足しても外れない）。
 pub fn update_keys(ctx: &egui::Context, app: &mut AppState) {
     let typing = ctx.egui_wants_keyboard_input();
-    let blocked = app.popup.is_some() || app.ui.popup_was_open;
+    let blocked = app.ui.popup.is_some() || app.ui.popup_was_open;
     let (t, n, modifiers, focus_lost) = ctx.input(|i| {
         (
             crate::keymap::hold_down(i, "stencil.transform_hold"),
@@ -172,7 +173,7 @@ pub fn handle_event(
     event: &Event,
     rect: Rect,
     over: bool,
-    modifiers: &egui::Modifiers,
+    modifiers: &Modifiers,
 ) -> bool {
     if let Some(drag) = app.stencil.drag {
         return match event {
@@ -194,7 +195,7 @@ pub fn handle_event(
                 pressed: false,
                 ..
             } => {
-                if *button == drag.button {
+                if PointerButton::from(*button) == drag.button {
                     app.stencil.end_drag(false);
                     true
                 } else {
@@ -225,30 +226,27 @@ pub fn handle_event(
     else {
         return false;
     };
+    let (button, modifiers) = (PointerButton::from(*button), Modifiers::from(*modifiers));
     if !app.stencil.key_held
         || app.is_stroking()
-        || app.popup.is_some()
+        || app.ui.popup.is_some()
         || app.ui.popup_was_open
         || !over
     {
         return false;
     }
     // 押し方で決まるドラッグの種類は `keymap::GESTURES`（Y を押しながら）
-    let kind = match crate::keymap::gesture("stencil", *button, modifiers, true) {
+    let kind = match crate::keymap::gesture("stencil", button, &modifiers, true) {
         Some(crate::keymap::Operation::MoveStencil) => DragKind::Move,
         Some(crate::keymap::Operation::ScaleStencil) => DragKind::Scale,
         Some(crate::keymap::Operation::RotateStencil) => DragKind::Rotate,
         _ => return false,
     };
     if app.stencil.image.is_none() {
-        app.refuse(
-            Source::Stencil,
-            app.lang
-                .pick("ステンシルの画像がありません。", "No stencil image."),
-        );
+        app.refuse(Source::Stencil, app.lang.t("stencil-no-stencil-image"));
         return true;
     }
-    app.stencil.begin_drag(kind, *button, rect, *pos);
+    app.stencil.begin_drag(kind, button, rect, *pos);
     true
 }
 

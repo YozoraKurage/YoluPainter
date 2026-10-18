@@ -116,10 +116,10 @@ impl LinkView {
     /// ウィンドウの先頭に出す状態の名前（名前だけ）。
     pub fn state_label(&self, lang: Lang) -> &'static str {
         match &self.status {
-            LinkStatus::Off => lang.pick("受け付けていない", "Not accepting"),
-            LinkStatus::Accepting if self.working => lang.pick("読み込み中", "Loading"),
-            LinkStatus::Accepting => lang.pick("受付中", "Accepting"),
-            LinkStatus::Failed(_) => lang.pick("フォルダを使えません", "Folder unavailable"),
+            LinkStatus::Off => lang.t("livelink-not-accepting"),
+            LinkStatus::Accepting if self.working => lang.t("livelink-loading"),
+            LinkStatus::Accepting => lang.t("livelink-accepting"),
+            LinkStatus::Failed(_) => lang.t("livelink-folder-unavailable"),
         }
     }
 
@@ -156,24 +156,16 @@ pub fn reason_text(lang: Lang, reason: &str) -> String {
         return reason.to_owned();
     };
     match r {
-        Reason::MeshNotFromFbx => {
-            lang.pick("FBX のメッシュではありません", "Not a mesh from an FBX")
-        }
-        Reason::BoneNotFound => lang.pick("FBX の中に見つかりません", "Not found in the FBX"),
-        Reason::AmbiguousBone => lang.pick(
-            "同じ名前のボーンがあり、決まりません",
-            "Ambiguous: bones with the same name",
-        ),
-        Reason::UnsupportedImport => lang.pick(
-            "取り込みの設定（軸の変換の焼き込み）に合わせられません",
-            "Unsupported import setting (Bake Axis Conversion)",
-        ),
-        Reason::FbxUnreadable => lang.pick("FBX を読めません", "Cannot read the FBX"),
-        Reason::TextureUnreadable => lang.pick("テクスチャを読めません", "Cannot read the texture"),
-        Reason::TooLarge => lang.pick("大きすぎます", "Too large"),
-        Reason::FormatUnknown => lang.pick("形式が違います", "Unknown format"),
-        Reason::Busy => lang.pick("今は受け付けられません", "Not now"),
-        Reason::Declined => lang.pick("開くのをやめました", "Opening was cancelled"),
+        Reason::MeshNotFromFbx => lang.t("livelink-not-a-mesh-from-an"),
+        Reason::BoneNotFound => lang.t("livelink-not-found-in-the-fbx"),
+        Reason::AmbiguousBone => lang.t("livelink-ambiguous-bones-with-the-same"),
+        Reason::UnsupportedImport => lang.t("livelink-unsupported-import-setting-bake-axis"),
+        Reason::FbxUnreadable => lang.t("livelink-cannot-read-the-fbx"),
+        Reason::TextureUnreadable => lang.t("livelink-cannot-read-the-texture"),
+        Reason::TooLarge => lang.t("livelink-too-large-2"),
+        Reason::FormatUnknown => lang.t("livelink-unknown-format"),
+        Reason::Busy => lang.t("livelink-not-now"),
+        Reason::Declined => lang.t("livelink-opening-was-cancelled"),
     }
     .to_owned()
 }
@@ -210,12 +202,12 @@ impl LinkTarget {
 impl AppState {
     /// 書き出しのウィンドウの置き場の既定（Live Link の相手の文書なら、利用者が選んだ置き場か頼みの `export_dir`）。
     pub fn link_export_dir(&self) -> Option<PathBuf> {
-        self.link_target.as_ref()?.export_folder()
+        self.services.link_target.as_ref()?.export_folder()
     }
 
     /// 書き出しのウィンドウで置き場を選んだ（Live Link の相手の文書なら、次からの既定にする）。
     pub fn note_export_dir(&mut self, dir: &std::path::Path) {
-        if let Some(t) = self.link_target.as_mut() {
+        if let Some(t) = self.services.link_target.as_mut() {
             t.export_dir = Some(dir.to_path_buf());
         }
     }
@@ -244,7 +236,7 @@ struct Taken {
     request: Result<Arc<Request>, Refusal>,
 }
 
-/// 裏の仕事。`epoch` は始めた時のプロジェクト（`AppState::project_epoch`）。替わっていたら、結果は入れずに捨てる。
+/// 裏の仕事。`epoch` は始めた時のプロジェクト（`Session::project_epoch`）。替わっていたら、結果は入れずに捨てる。
 enum Running {
     /// Rig を組み直す（FBX を読む・並べる・絵を読む）。
     Rig {
@@ -469,6 +461,7 @@ impl LiveLink {
             status: self.status.clone(),
             notice: self.notice.clone(),
             target: state
+                .services
                 .link_target
                 .as_ref()
                 .filter(|_| linked(state))
@@ -536,10 +529,7 @@ impl LiveLink {
         let root = self.root.clone().or_else(default_folder);
         let opened = match root {
             Some(root) => Folder::open(root).map_err(|e| e.to_string()),
-            None => Err(state
-                .lang
-                .pick("フォルダの場所が決まりません", "The folder is not known")
-                .to_owned()),
+            None => Err(state.lang.t("livelink-the-folder-is-not-known").to_owned()),
         };
         match opened {
             Ok(f) => {
@@ -554,10 +544,9 @@ impl LiveLink {
                 self.next_inbox = None;
             }
             Err(e) => {
-                let text = state.lang.pick(
-                    format!("Live Link: 受け渡しのフォルダを使えません（{e}）"),
-                    format!("Live Link: Cannot use the exchange folder ({e})"),
-                );
+                let text = state
+                    .lang
+                    .f("livelink-live-link-cannot-use-the", &[("e", &e)]);
                 if self.status != LinkStatus::Failed(text.clone()) {
                     self.notify(NoticeLevel::Error, text.clone(), state);
                 }
@@ -570,14 +559,14 @@ impl LiveLink {
     /// 毎フレームの頭で: 受け付けを合わせ、起きている印を書き、頼みを拾い、裏の仕事の終わりを受け、待っている頼みを当てる。
     pub fn poll(&mut self, state: &mut AppState) {
         let now = Instant::now();
-        if let Some(request) = state.link_reopen.take() {
+        if let Some(request) = state.services.link_reopen.take() {
             self.reopen(request);
         }
         self.sync(state, now);
         self.drop_stale_job(state);
         // 相手の文書でなくなった（別のモデル・新しいプロジェクト・開いた）なら、相手を忘れる
-        if state.link_target.is_some() && !linked(state) && self.job.is_none() {
-            state.link_target = None;
+        if state.services.link_target.is_some() && !linked(state) && self.job.is_none() {
+            state.services.link_target = None;
             self.problems.clear();
         }
         if let Some(folder) = &self.folder {
@@ -610,7 +599,7 @@ impl LiveLink {
         if self
             .job
             .as_ref()
-            .is_none_or(|j| j.epoch() == state.project_epoch)
+            .is_none_or(|j| j.epoch() == state.session.project_epoch())
         {
             return;
         }
@@ -622,10 +611,7 @@ impl LiveLink {
 
     /// 文書が替わったので当てなかった頼みに、`declined` を返す。
     fn decline_replaced(&mut self, taken: &Taken, state: &mut AppState) {
-        let text = state.lang.pick(
-            "Live Link: プロジェクトが替わったので、開きませんでした。",
-            "Live Link: Not opened (the project was replaced).",
-        );
+        let text = state.lang.t("livelink-live-link-not-opened-the");
         self.decline(taken, text, state);
     }
 
@@ -662,10 +648,7 @@ impl LiveLink {
         {
             declined.extend(self.job.take().map(Running::cancel));
         }
-        let text = state.lang.pick(
-            "Live Link: 受け付けをやめたので、開きませんでした。",
-            "Live Link: Not opened (no longer accepting).",
-        );
+        let text = state.lang.t("livelink-live-link-not-opened-no");
         for taken in &declined {
             self.decline(taken, text, state);
         }
@@ -695,10 +678,9 @@ impl LiveLink {
             Err(refusal) => {
                 let refusal = refusal.clone();
                 let why = reason_text(state.lang, refusal.reason.as_str());
-                let text = state.lang.pick(
-                    format!("Live Link: 開きませんでした（{why}）。"),
-                    format!("Live Link: Not opened ({why})."),
-                );
+                let text = state
+                    .lang
+                    .f("livelink-live-link-not-opened", &[("why", &why)]);
                 self.reply(
                     &taken,
                     ReplyKind::Refused,
@@ -730,10 +712,7 @@ impl LiveLink {
                             vec![Problem::new(request.target.name.clone(), Reason::Declined)],
                         );
                         self.finish(&taken);
-                        let text = state.lang.pick(
-                            "Live Link: 保存していない変更があるので、開きませんでした。",
-                            "Live Link: Not opened (unsaved changes).",
-                        );
+                        let text = state.lang.t("livelink-live-link-not-opened-unsaved");
                         self.notify(NoticeLevel::Info, text.into(), state);
                         return;
                     }
@@ -750,7 +729,7 @@ impl LiveLink {
 
     /// 裏の仕事を始める。
     fn start(&mut self, taken: Taken, request: Arc<Request>, same: bool, state: &mut AppState) {
-        let target = state.link_target.clone().filter(|_| same);
+        let target = state.services.link_target.clone().filter(|_| same);
         let keep_rig = target
             .as_ref()
             .is_some_and(|t| rig_unchanged(&t.request, &request));
@@ -773,9 +752,10 @@ impl LiveLink {
             let set = same
                 .then(|| {
                     state
+                        .session
                         .sets
                         .iter()
-                        .position(|s| s.bound.is_some() && s.material == key)
+                        .position(|s| !s.bound.is_empty() && s.materials.contains(&key))
                 })
                 .flatten();
             let Some(index) = set else {
@@ -783,6 +763,7 @@ impl LiveLink {
                 continue;
             };
             let record = state
+                .session
                 .sets
                 .get(index)
                 .and_then(|s| self.set_originals.get(&s.uid));
@@ -802,7 +783,7 @@ impl LiveLink {
             keep_rig,
             psd_budget: state.load_source_bytes(),
         };
-        let epoch = state.project_epoch;
+        let epoch = state.session.project_epoch();
         if keep_rig {
             let (tx, rx) = channel();
             let cancel = Arc::new(AtomicBool::new(false));
@@ -916,9 +897,9 @@ impl LiveLink {
         self.reply(&taken, ReplyKind::Refused, problems.clone());
         self.finish(&taken);
         self.problems = problems;
-        let text = lang.pick(
-            format!("Live Link: 「{name}」を開けません（{why}）。"),
-            format!("Live Link: Cannot open “{name}” ({why})."),
+        let text = lang.f(
+            "livelink-live-link-cannot-open",
+            &[("name", &name), ("why", &why)],
         );
         self.notify(NoticeLevel::Warning, text, state);
     }
@@ -944,7 +925,7 @@ impl LiveLink {
         self.slot_cache.clone_from(&opened.slot_cache);
         let reopening = taken.claimed.is_none();
         // 今の文書が、この頼みと同じ相手のままか。裏の仕事の間に別のモデルを開かれていれば、相手の文書ではない
-        let previous = state.link_target.clone().filter(|_| linked(state));
+        let previous = state.services.link_target.clone().filter(|_| linked(state));
         let resend = previous
             .as_ref()
             .is_some_and(|p| p.request.target.key == request.target.key);
@@ -958,7 +939,7 @@ impl LiveLink {
         let (rig, layout, fresh, pristine_first) = match prepared {
             Some(prepared) => {
                 let pristine_first = (first_install && !reopening && state.is_pristine())
-                    .then(|| state.sets.current().uid);
+                    .then(|| state.session.sets.current().uid);
                 if first_install && !reopening {
                     // 前のモデルのファイルの参照を引きずらない（保存すると view.json・pose.json が、前の FBX と Unity の Rig のポーズを指してしまう）
                     state.np.model_file = None;
@@ -972,7 +953,7 @@ impl LiveLink {
                     .expect("入れたセッション")
                     .rig
                     .clone();
-                state.model = Some(SceneModel::from_live_link(
+                state.session.model = Some(SceneModel::from_live_link(
                     &rig,
                     &request.target.key,
                     &request.target.name,
@@ -983,8 +964,8 @@ impl LiveLink {
                 } else {
                     state.bind_model()
                 };
-                if state.sets.current().bound.is_none() {
-                    if let Some(i) = state.sets.iter().position(|s| s.bound.is_some()) {
+                if state.session.sets.current().bound.is_empty() {
+                    if let Some(i) = state.session.sets.iter().position(|s| !s.bound.is_empty()) {
                         let _ = state.switch_set(i);
                     }
                 }
@@ -1000,7 +981,7 @@ impl LiveLink {
                     self.decline_replaced(&taken, state);
                     return;
                 };
-                if let Some(m) = state.model.as_mut() {
+                if let Some(m) = state.session.model.as_mut() {
                     m.materials = opened.materials.clone();
                 }
                 let report = state.bind_model();
@@ -1017,15 +998,16 @@ impl LiveLink {
         let fresh_uids: Vec<u32> = fresh.clone();
         let mut installed: Vec<Installed> = Vec::new();
         for uid in fresh {
-            let Some(index) = state.sets.index_of(uid) else {
+            let Some(index) = state.session.sets.index_of(uid) else {
                 continue;
             };
-            let Some(m) = state.sets.get(index).and_then(|s| s.bound) else {
+            // 元の画像・身元・受けた見た目は、セットの最初のマテリアル（番号の小さいもの）のものを使う
+            let Some(m) = first_material(state, index) else {
                 continue;
             };
             let m = m as usize;
-            let refit = pristine_first == Some(uid) && !state.resolution_chosen;
-            let keep_size = pristine_first == Some(uid) && state.resolution_chosen;
+            let refit = pristine_first == Some(uid) && !state.session.resolution_chosen;
+            let keep_size = pristine_first == Some(uid) && state.session.resolution_chosen;
             if let Some(original) = opened.originals.remove(&m) {
                 put_original(
                     state, index, &request, m, original, &opened, refit, &mut notes,
@@ -1035,12 +1017,12 @@ impl LiveLink {
         }
         // 送り直し: 元の絵のファイルが変わったセット。入れた直後のままなら入れ直し、触ったセットは変えずに知らせる
         let mut changed: Vec<String> = Vec::new();
-        for index in 0..state.sets.len() {
-            let Some((uid, m, name)) = state
-                .sets
-                .get(index)
-                .and_then(|s| s.bound.map(|m| (s.uid, m as usize, s.name.clone())))
-            else {
+        for index in 0..state.session.sets.len() {
+            let Some((uid, m, name)) = state.session.sets.get(index).and_then(|s| {
+                s.bound
+                    .first()
+                    .map(|m| (s.uid, *m as usize, s.name.clone()))
+            }) else {
                 continue;
             };
             if fresh_uids.contains(&uid) {
@@ -1092,7 +1074,7 @@ impl LiveLink {
                     );
                     installed.push((uid, m, keep_size));
                     // 保存したプロジェクトの中身が変わった
-                    state.modified = true;
+                    state.session.mark_modified();
                 }
                 None => {
                     record.source = source.clone();
@@ -1106,8 +1088,8 @@ impl LiveLink {
             }
         }
         // 受けた見た目（lilToon の値と、スロットの絵）
-        for index in 0..state.sets.len() {
-            let Some(m) = state.sets.get(index).and_then(|s| s.bound) else {
+        for index in 0..state.session.sets.len() {
+            let Some(m) = first_material(state, index) else {
                 continue;
             };
             let Some(material) = request.materials.get(m as usize) else {
@@ -1167,12 +1149,12 @@ impl LiveLink {
         if !first_install {
             pose::sync_modified(state);
             if rebuilt {
-                state.modified = true;
+                state.session.mark_modified();
             }
         }
         // 入れた元の絵を覚える（入れた直後の文書の ID と版。受けた見た目とポーズは文書の版を進めない）。無くなったセットの覚えは捨てる
         for (uid, m, keep_size) in installed {
-            let Some(index) = state.sets.index_of(uid) else {
+            let Some(index) = state.session.sets.index_of(uid) else {
                 continue;
             };
             let doc = state.set_doc(index);
@@ -1186,10 +1168,10 @@ impl LiveLink {
             );
         }
         self.set_originals
-            .retain(|uid, _| state.sets.index_of(*uid).is_some());
+            .retain(|uid, _| state.session.sets.index_of(*uid).is_some());
         problems.splice(0..0, opened.problems.iter().cloned());
         problems.dedup();
-        state.link_target = Some(LinkTarget {
+        state.services.link_target = Some(LinkTarget {
             request: request.clone(),
             layout,
             rig: SceneModel::rig_id(&rig),
@@ -1211,30 +1193,21 @@ impl LiveLink {
         self.problems = shown;
         let name = &request.target.name;
         let mut text = if reopening {
-            lang.pick(
-                format!("Live Link: 「{name}」のモデルを開き直しました。"),
-                format!("Live Link: Reopened the model of “{name}”."),
-            )
+            lang.f("livelink-live-link-reopened-the-model", &[("name", &name)])
         } else if first_install {
-            lang.pick(
-                format!("Live Link: 「{name}」を開きました。"),
-                format!("Live Link: Opened “{name}”."),
-            )
+            lang.f("livelink-live-link-opened", &[("name", &name)])
         } else {
-            lang.pick(
-                format!("Live Link: 「{name}」を送り直しで更新しました。"),
-                format!("Live Link: Updated “{name}”."),
-            )
+            lang.f("livelink-live-link-updated", &[("name", &name)])
         };
         if !self.problems.is_empty() {
-            text += &lang.pick(
-                format!(" 合わない物 {} 件。", self.problems.len()),
-                format!(" {} item(s) did not fit.", self.problems.len()),
+            text += &lang.f(
+                "livelink-item-s-did-not-fit",
+                &[("problems", &self.problems.len())],
             );
         }
         for n in notes.iter().chain(&changed) {
             let n = n.trim_end_matches(['。', '.']);
-            text += &lang.pick(format!(" {n}。"), format!(" {n}."));
+            text += &lang.f("livelink-text", &[("n", &n)]);
         }
         let level = if notes.is_empty() && self.problems.is_empty() {
             NoticeLevel::Info
@@ -1267,13 +1240,14 @@ impl LiveLink {
     }
 
     /// 書き出しが終わった（Live Link の相手の文書なら、書いた PNG のうちマテリアルのプロパティに当たる物を `exported` の返事にする）。
-    /// `files` は（書いたファイル・セットの uid・lilToon のプロパティ）。
+    /// `files` は（書いたファイル・セットの uid・lilToon のプロパティ）。複数のマテリアルを持つセットの画像は、そのマテリアルごとに同じ
+    /// `path` の項目を並べる（マテリアルの番号の順）。
     pub fn exported(
         &mut self,
         state: &mut AppState,
         files: &[(yolu_io::export::WrittenImage, u32, Option<String>)],
     ) {
-        let Some(target) = state.link_target.clone().filter(|_| linked(state)) else {
+        let Some(target) = state.services.link_target.clone().filter(|_| linked(state)) else {
             return;
         };
         let Some(folder) = &self.folder else {
@@ -1282,24 +1256,26 @@ impl LiveLink {
         let mut reply = Reply::new(&target.request.id, ReplyKind::Exported, VERSION);
         for (image, uid, property) in files {
             let Some(property) = property else { continue };
-            let Some(m) = state.sets.by_uid(*uid).and_then(|s| s.bound) else {
+            let Some(set) = state.session.sets.by_uid(*uid) else {
                 continue;
             };
-            let Some(material) = target
-                .request
-                .materials
-                .get(m as usize)
-                .filter(|m| m.key != KEY_NONE)
-            else {
-                continue;
-            };
-            reply.files.push(ExportedFile {
-                material: material.key.clone(),
-                property: property.clone(),
-                path: image.path.to_string_lossy().replace('\\', "/"),
-                srgb: image.srgb,
-                normal_map: image.normal_map,
-            });
+            for m in &set.bound {
+                let Some(material) = target
+                    .request
+                    .materials
+                    .get(*m as usize)
+                    .filter(|m| m.key != KEY_NONE)
+                else {
+                    continue;
+                };
+                reply.files.push(ExportedFile {
+                    material: material.key.clone(),
+                    property: property.clone(),
+                    path: image.path.to_string_lossy().replace('\\', "/"),
+                    srgb: image.srgb,
+                    normal_map: image.normal_map,
+                });
+            }
         }
         if reply.files.is_empty() {
             return;
@@ -1337,6 +1313,7 @@ fn put_original(
         })
         .is_some_and(|t| !t.srgb && t.path.is_some());
     let name = state
+        .session
         .sets
         .get(index)
         .map(|s| s.name.clone())
@@ -1371,6 +1348,16 @@ fn put_original(
 }
 
 /// 頼みを当てずに待つ間か（描いている最中・保存の途中・ほかのモデルの読み込みの間）。
+/// セットの最初のマテリアル（番号の小さいもの。マテリアルを持たないセットは None）。複数のマテリアルを持つセットの元の画像・身元・
+/// 受けた見た目は、これのものを使う。
+fn first_material(state: &AppState, index: usize) -> Option<u32> {
+    state
+        .session
+        .sets
+        .get(index)
+        .and_then(|s| s.bound.first().copied())
+}
+
 fn busy(state: &AppState) -> bool {
     state.is_stroking()
         || state.is_saving()
@@ -1380,10 +1367,11 @@ fn busy(state: &AppState) -> bool {
 
 /// 今の文書が、記録の相手の文書のままか（モデルの記録が Live Link の相手で、ポーズのセッションが同じ Rig）。
 fn linked(state: &AppState) -> bool {
-    let Some(target) = &state.link_target else {
+    let Some(target) = &state.services.link_target else {
         return false;
     };
     let record = state
+        .session
         .model
         .as_ref()
         .and_then(|m| m.link_key().map(|k| (k, m.source.rig())));
@@ -1401,6 +1389,7 @@ fn linked(state: &AppState) -> bool {
 fn same_target(state: &AppState, request: &Request) -> bool {
     linked(state)
         && state
+            .services
             .link_target
             .as_ref()
             .is_some_and(|t| t.request.target.key == request.target.key)

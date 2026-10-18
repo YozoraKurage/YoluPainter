@@ -9,11 +9,17 @@ targets = [
     "aarch64-unknown-linux-gnu",
     "aarch64-apple-darwin",
 ]
+# 開発用のモック（yolu-mock。配らない・publish = false）は、依存ごと調べない。撮るのに egui_kittest を通常の依存で持つので、テストだけで
+# 使う物（画像の比べの dify が使う colored、MPL-2.0）が配る物と同じ扱いで当たる。配る物は `cargo xtask preflight` が正
+exclude = ["yolu-mock"]
 
 [advisories]
 yanked = "deny"
 ignore = [
     { id = "RUSTSEC-2024-0436", reason = "paste（保守の終わり）は egui_dock がビルドの時だけ使うマクロ。脆弱性ではなく、上流の更新待ち" },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant（単独のクレートの保守の終わり。zbus 6 の wire に入った）は Linux のアクセシビリティ（accesskit_unix → eframe）が引く。脆弱性ではなく、上流の更新待ち" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names（単独のクレートの保守の終わり。zbus 6 の names に入った）は Linux のアクセシビリティ（accesskit_unix → eframe）が引く。脆弱性ではなく、上流の更新待ち" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive（単独のクレートの保守の終わり。zbus 6 が derive のマクロを持つ）は Linux のアクセシビリティ（accesskit_unix → eframe）が引く。脆弱性ではなく、上流の更新待ち" },
 ]
 
 [licenses]
@@ -21,6 +27,7 @@ ignore = [
 allow = [
     "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "Zlib", "BSD-2-Clause", "BSD-3-Clause",
     "BSL-1.0", "OFL-1.1", "Ubuntu-font-1.0", "Bitstream-Vera", "ISC", "Unicode-3.0", "Unicode-DFS-2016",
+    "NCSA",   # D3D12 のシェーダーのコンパイラー DXC（Windows の msvc の配布だけ。mach-dxcompiler-rs が静的にリンクする）
 ]
 confidence-threshold = 0.9
 unused-allowed-license = "allow"

@@ -27,7 +27,7 @@ fn gpu_with(options: ResidentOptions) -> Option<ResidentCompositor> {
         Ok(g) => g,
         Err(e) => {
             assert!(e.to_string().starts_with("GPU 利用不可:"), "{e}");
-            require_gpu::skipped("キャンバスの GPU 試験", &e.to_string());
+            require_gpu::skipped("キャンバスの GPU テスト", &e.to_string());
             return None;
         }
     };
@@ -792,12 +792,11 @@ fn premultiplied_display_is_the_cpu_conversion_of_the_straight_display() {
 #[test]
 fn shared_device_and_limited_devices() {
     gpu_lease::lease();
-    let instance =
-        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let instance = wgpu::Instance::new(yolu_gpu::instance_descriptor());
     let Ok(adapter) =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
     else {
-        require_gpu::skipped("共有デバイスの試験", "アダプターなし");
+        require_gpu::skipped("共有デバイスのテスト", "アダプターなし");
         return;
     };
     let info = adapter.get_info();
@@ -861,7 +860,7 @@ fn shared_device_and_limited_devices() {
             ..Default::default()
         }))
     else {
-        eprintln!("上限の低いデバイスを作れないので、断りの試験をスキップ");
+        eprintln!("上限の低いデバイスを作れないので、断りのテストをスキップ");
         return;
     };
     let refused = GpuPainter::from_device(info, small_device, small_queue, Options::default());

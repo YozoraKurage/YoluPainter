@@ -186,10 +186,7 @@ fn row_view(ui: &mut Ui, app: &mut AppState, row: Rect, r: &Row) {
     response
         .widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, true, selected, &r.name));
     let tip = if r.placed {
-        lang.pick(
-            format!("{}（並びにあります。追加すると写しを作ります）", r.name),
-            format!("{} (already in a group; adding makes a copy)", r.name),
-        )
+        lang.f("panels-already-in-a-group-adding-tip", &[("name", &r.name)])
     } else {
         r.name.clone()
     };
@@ -201,7 +198,7 @@ fn content(ui: &mut Ui, app: &mut AppState, pane: Rect) {
     let ctx = ui.ctx().clone();
     // 同梱の Krita は、種類を開いたときに読む（別のスレッド。できたら描き直す）
     if app.toolset.catalog.kind == Kind::Krita {
-        app.brushes.krita.poll(&ctx);
+        app.brushes.krita.poll(&super::assets::repaint_waker(&ctx));
     }
     let search = Rect::from_min_size(
         pos2(pane.left() + 10.0, pane.top() + 6.0),
@@ -212,7 +209,7 @@ fn content(ui: &mut Ui, app: &mut AppState, pane: Rect) {
         search,
         "brush.catalog.search",
         &mut app.toolset.catalog.search,
-        lang.pick("検索", "Search"),
+        lang.t("panels-search-tip"),
     ) {
         app.toolset.catalog.scroll = 0.0;
     }
@@ -255,9 +252,9 @@ fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect) -> bool {
         vec2(110.0, bar.height() - 16.0),
     );
     let label = if count > 1 {
-        lang.pick(format!("{count} 個を追加"), format!("Add {count}"))
+        lang.f("panels-add", &[("value", &count)])
     } else {
-        lang.pick("追加", "Add").to_owned()
+        lang.t("panels-add-2").to_owned()
     };
     w::button(
         ui,
@@ -277,7 +274,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     if !app.toolset.catalog.open {
         return;
     }
-    app.brushes.samples.begin_frame(ctx.cumulative_pass_nr());
+    app.ui.samples.begin_frame(ctx.cumulative_pass_nr());
     let lang = app.lang;
     if !app.toolset.catalog.placed {
         // 初めは、左のドックの右に置く（キャンバスの真ん中を空ける）
@@ -288,18 +285,18 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         };
         let min = pos2(dock_right + 24.0, screen.top() + 96.0);
         let center = min + vec2(WIDTH, HEIGHT) / 2.0;
-        app.toolset.catalog.offset = center - screen.center();
+        app.ui.toolset_catalog_offset = center - screen.center();
         app.toolset.catalog.placed = true;
     }
-    let title = lang.pick("ブラシを追加", "Add Brushes");
+    let title = lang.t("panels-add-brushes");
     let spec = Spec {
         title,
         icon: Some("add"),
         size: vec2(WIDTH, HEIGHT),
         modal: false,
-        close_label: lang.pick("閉じる", "Close"),
+        close_label: lang.t("panels-close"),
     };
-    let mut offset: Vec2 = app.toolset.catalog.offset;
+    let mut offset: Vec2 = app.ui.toolset_catalog_offset;
     let mut add = false;
     let closed = window::show(ctx, id(), &spec, &mut offset, false, |ui, frame| {
         let body = frame.body;
@@ -313,7 +310,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         let bar = Rect::from_min_max(pos2(body.left(), body.bottom() - FOOTER), body.max);
         add = footer(ui, app, bar);
     });
-    app.toolset.catalog.offset = offset;
+    app.ui.toolset_catalog_offset = offset;
     if add {
         let items = std::mem::take(&mut app.toolset.catalog.selected);
         app.apply(Action::Brush(BrushAction::AddFrom(items)));
@@ -331,7 +328,7 @@ pub fn context_menu(app: &AppState) -> Vec<Entry<Action>> {
     };
     let free = !app.is_stroking() && !app.brushes.import.is_busy();
     vec![Entry::item(
-        lang.pick("ファイルを削除…", "Delete File…"),
+        lang.t("panels-delete-file"),
         Action::Brush(BrushAction::DeleteFileDialog(
             crate::brushes::BrushKey::User(id),
         )),

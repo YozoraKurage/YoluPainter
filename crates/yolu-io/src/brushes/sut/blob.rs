@@ -17,12 +17,21 @@ const MAX_CURVES: usize = 4;
 pub(super) struct Effector {
     /// 使う入力の旗: 0x10 筆圧・0x20 傾き・0x40 速さ・0x80 ランダム。
     pub flags: u32,
-    /// 筆圧 0 のときの係数（0〜1）。
-    pub pressure_min: f64,
+    /// 入力ごとの最小値（0〜1。筆圧・傾き・速さ・ランダムの順。ヘッダーの 4〜7 番目の整数の %。ヘッダーに無ければ 0）。
+    pub minimums: [f64; 4],
+    /// 入力ごとの最小値を符号つきの整数として読んだもの（−1〜1。色相・彩度・明度の影響元は −100 まで取る。`minimums` は負の数を 0〜1 に
+    /// 丸めた値で、読み方を変えない）。
+    pub signed_minimums: [f64; 4],
+    /// 傾きの最大値（ヘッダーの 11 番目の整数の %。1 = 100%。100% を超える値もそのまま。ヘッダーが 11 個の整数に満たなければ None）。
+    /// 0 は、ヘッダーの 0 埋めと見分けられない。実物の .sut では、ブラシサイズが 150（傾きの最大値を 100 に替えると 100 になる）、
+    /// 不透明度は 500、ブラシ濃度は 100 のまま。
+    pub tilt_max: Option<f64>,
+    /// ヘッダーと読めた曲線のあとに残ったバイト数（速さ・ランダムの曲線が付くと 44 バイト伸びる。0 なら曲線は付いていない）。
+    pub trailing: usize,
     /// 曲線の点（x・y とも 0〜1 を期待するが、ここでは丸めない）。並びはファイルのまま。どの曲線がどの入力のものかは
     /// [`Effector::pressure_curve`]・[`Effector::tilt_curve`]。
     pub curves: Vec<Vec<(f64, f64)>>,
-    /// ヘッダー（長さ 44）の 9・10 番目の整数: 筆圧の曲線と、筆圧でない 2 つ目の曲線の、バイト数（0 は曲線が無い）。ヘッダーが 44 でないと
+    /// ヘッダー（長さ 44 か 48）の 9・10 番目の整数: 筆圧の曲線と、傾きの曲線の、バイト数（0 は曲線が無い）。ヘッダーがそのどちらでもないと
     /// `None`。実物の .sut では、曲線の大きさ（12 + 16 × 点の数）とちょうど合い、傾きだけを使う設定には 2 つ目の枠だけに曲線が付く。
     slots: Option<[usize; 2]>,
 }
@@ -65,14 +74,15 @@ impl Effector {
         }
     }
 
-    /// 2 つ目の枠の曲線（傾きの曲線）。枠が読めて曲線と合っているときだけ。
-    pub fn tilt_curve(&self) -> Option<&[(f64, f64)]> {
-        self.assigned()?[1].map(|i| self.curves[i].as_slice())
+    /// 2 つ目の枠の曲線（傾きの曲線）。枠が読めて曲線と合っているときだけ Some（中の None は、枠が読めて傾きの曲線が無い）。
+    pub fn tilt_curve(&self) -> Option<Option<&[(f64, f64)]>> {
+        Some(self.assigned()?[1].map(|i| self.curves[i].as_slice()))
     }
 }
 
-/// 影響元の BLOB を読む。頭のヘッダー（長さ 40 か 44。先頭の 4 バイトがその長さ）が読めなければ None。
-/// ヘッダーの 3 番目の整数が旗、4 番目が筆圧の最小値（%）。続く曲線は (12, 点の数, 16) の 3 つの整数と、点ごとに x・y の f64。
+/// 影響元の BLOB を読む。頭のヘッダー（長さ 40・44・48。先頭の 4 バイトがその長さ）が読めなければ None。
+/// ヘッダーの 3 番目の整数が旗、4〜7 番目が筆圧・傾き・速さ・ランダムの最小値（%）。続く曲線は (12, 点の数, 16) の 3 つの整数と、点ごとに
+/// x・y の f64。速さ・ランダムを使うと全体が 44 バイト伸びる（中身の形が分からないので、その分は読まない）。
 pub(super) fn parse_effector(bytes: &[u8]) -> Option<Effector> {
     let mut r = Reader::new(bytes);
     let header = r.u32().ok()? as usize;
@@ -84,9 +94,21 @@ pub(super) fn parse_effector(bytes: &[u8]) -> Option<Effector> {
         ints.push(r.u32().ok()?);
     }
     let flags = ints[2];
-    let pressure_min = (ints[3] as f64 / 100.0).clamp(0.0, 1.0);
-    let slots = (header == 44).then(|| [ints[8] as usize, ints[9] as usize]);
+    let percent = |i: usize| {
+        ints.get(i)
+            .map_or(0.0, |&v| (v as f64 / 100.0).clamp(0.0, 1.0))
+    };
+    let minimums = [percent(3), percent(4), percent(5), percent(6)];
+    let signed = |i: usize| {
+        ints.get(i)
+            .map_or(0.0, |&v| (v as i32 as f64 / 100.0).clamp(-1.0, 1.0))
+    };
+    let signed_minimums = [signed(3), signed(4), signed(5), signed(6)];
+    let tilt_max = ints.get(10).map(|&v| v as f64 / 100.0);
+    let slots = (header == 44 || header == 48).then(|| [ints[8] as usize, ints[9] as usize]);
     let mut curves = Vec::new();
+    // ヘッダーと、最後まで読めた曲線のあとに残ったバイト数
+    let mut rest = r.remaining();
     while curves.len() < MAX_CURVES && r.remaining() >= 12 {
         let (Ok(_), Ok(count), Ok(_)) = (r.u32(), r.u32(), r.u32()) else {
             break;
@@ -100,7 +122,10 @@ pub(super) fn parse_effector(bytes: &[u8]) -> Option<Effector> {
             let (Ok(x), Ok(y)) = (r.f64(), r.f64()) else {
                 return Some(Effector {
                     flags,
-                    pressure_min,
+                    minimums,
+                    signed_minimums,
+                    tilt_max,
+                    trailing: rest,
                     curves,
                     slots,
                 });
@@ -114,10 +139,14 @@ pub(super) fn parse_effector(bytes: &[u8]) -> Option<Effector> {
             break;
         }
         curves.push(points);
+        rest = r.remaining();
     }
     Some(Effector {
         flags,
-        pressure_min,
+        minimums,
+        signed_minimums,
+        tilt_max,
+        trailing: rest,
         curves,
         slots,
     })
@@ -279,7 +308,7 @@ mod tests {
             let blob = effector(header, 0x10, 25, &[pts, &[(0.0, 1.0), (1.0, 0.0)]]);
             let e = parse_effector(&blob).unwrap();
             assert_eq!(e.flags, Effector::PRESSURE);
-            assert_eq!(e.pressure_min, 0.25);
+            assert_eq!(e.minimums, [0.25, 0.0, 0.0, 0.0]);
             assert_eq!(e.curves.len(), 2);
             assert_eq!(e.curves[0], pts);
         }
@@ -287,6 +316,26 @@ mod tests {
         let e = parse_effector(&blob).unwrap();
         assert_eq!(e.flags, 0xB0);
         assert!(e.curves.is_empty());
+    }
+
+    #[test]
+    fn effector_reads_a_negative_minimum_as_signed_and_keeps_the_unsigned_one() {
+        let mut blob = effector(48, 0x80, 0, &[]);
+        // 7 番目の整数（ランダムの最小値）に −100、4 番目（筆圧）に 50
+        blob[24..28].copy_from_slice(&(-100i32).to_be_bytes());
+        blob[12..16].copy_from_slice(&50u32.to_be_bytes());
+        let e = parse_effector(&blob).unwrap();
+        assert_eq!(e.signed_minimums, [0.5, 0.0, 0.0, -1.0]);
+        // 今の読み方（負の数は大きな正の数になり 1 に丸まる）は変えない
+        assert_eq!(e.minimums, [0.5, 0.0, 0.0, 1.0]);
+        assert_eq!(e.trailing, 0);
+        // 範囲を超える値は丸める
+        blob[24..28].copy_from_slice(&(-250i32).to_be_bytes());
+        assert_eq!(parse_effector(&blob).unwrap().signed_minimums[3], -1.0);
+        // 曲線の後ろに残ったバイトを数える
+        let mut longer = effector(44, 0x10, 0, &[&[(0.0, 0.0), (1.0, 1.0)]]);
+        longer.extend_from_slice(&[0; 44]);
+        assert_eq!(parse_effector(&longer).unwrap().trailing, 44);
     }
 
     #[test]

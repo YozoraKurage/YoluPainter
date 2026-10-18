@@ -1,5 +1,5 @@
-//! 画面の書体（同梱の BIZ UDPGothic）: 文字が欄の縦の真ん中に来る。Windows の游ゴシックは縦の寸法の癖で文字が上に寄り、かなが
-//! 広がって見えたので、全 OS で同じ書体を同梱した。描いた画素の字面の縦の中心を測って、行の矩形の真ん中との差を確かめる
+//! 画面のフォント（同梱の BIZ UDPGothic）: 文字が欄の縦の真ん中に来る。Windows の游ゴシックは縦の寸法の癖で文字が上に寄り、かなが
+//! 広がって見えたので、全 OS で同じフォントを同梱した。描いた画素の字面の縦の中心を測って、行の矩形の真ん中との差を確かめる
 //! （日本語・英字の大文字・数字、普通と太字、いくつかの大きさ、画面の拡大 1.0・1.5・2.0）。
 use crate::common;
 
@@ -30,7 +30,7 @@ fn sample_harness(
         .build_ui_state(
             |ui, s: &mut Sample| {
                 if !s.ready {
-                    // 書体は次のフレームから効く
+                    // フォントは次のフレームから効く
                     YoluApp::setup(ui.ctx());
                     s.ready = true;
                     ui.ctx().request_repaint();
@@ -138,7 +138,7 @@ fn bold(size: f32) -> TextStyle {
     }
 }
 
-/// 日本語（漢字とかな。字面の上下は書体の中の位置で少し違うので、複数の字で）。
+/// 日本語（漢字とかな。字面の上下はフォントの中の位置で少し違うので、複数の字で）。
 const JAPANESE: [&str; 4] = ["漢字", "ブラシ", "あいう", "選択範囲"];
 /// 英字の大文字と数字。
 const CAPITALS_AND_DIGITS: [&str; 4] = ["HEX", "ABC", "100", "0123"];
@@ -171,7 +171,7 @@ fn english_capitals_and_digits_sit_in_the_vertical_middle_of_the_row() {
 
 #[test]
 fn lowercase_english_sits_a_little_below_the_middle_like_any_typeface_but_not_far() {
-    // 小文字だけの語は、x の高さの分だけ字面が下に寄る（どの書体も同じ）。それでも 2 点以内
+    // 小文字だけの語は、x の高さの分だけ字面が下に寄る（どのフォントも同じ）。それでも 2 点以内
     for ppp in [1.0, 2.0] {
         for size in [11.0, 12.0] {
             let offset = center_offsets(&["xaecnomu"], regular(size), ppp)[0];
@@ -185,7 +185,7 @@ fn lowercase_english_sits_a_little_below_the_middle_like_any_typeface_but_not_fa
 
 #[test]
 fn japanese_and_english_text_share_one_line_height() {
-    // 英字だけの行と日本語だけの行の高さが同じ（同じ書体なので、混ぜても行がばらつかない）
+    // 英字だけの行と日本語だけの行の高さが同じ（同じフォントなので、混ぜても行がばらつかない）
     #[derive(Default)]
     struct Heights {
         ready: bool,

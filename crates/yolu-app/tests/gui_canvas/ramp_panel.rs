@@ -53,7 +53,7 @@ struct Panel {
 
 fn draw(ui: &mut Ui, p: &mut Panel) {
     if !p.ready {
-        // 書体は次のフレームから効くので、初めのフレームは準備だけ
+        // フォントは次のフレームから効くので、初めのフレームは準備だけ
         YoluApp::setup(ui.ctx());
         p.ready = true;
         ui.ctx().request_repaint();

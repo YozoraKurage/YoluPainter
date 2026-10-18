@@ -5,8 +5,8 @@
 use super::*;
 use crate::math::simd::forced;
 use crate::{
-    builtin_tip, Channel, ColorMix, Document, DualBrush, DualBrushMode, LayerLocks, MixMode,
-    PaperTexture, SelectionMask, TextureMode,
+    builtin_tip, Channel, ColorMix, Document, DualBrush, DualBrushMode, LayerLocks, MixBlur,
+    MixMode, MixSpace, PaperTexture, SelectionMask, TextureMode,
 };
 use glam::DVec2;
 
@@ -72,30 +72,69 @@ struct Case {
     seed: u64,
 }
 
+/// 最後に引く項目（前の項目の乱数の列を変えない）: アンチエイリアスの段、比較暗・質感の回転・筆先の並びの繰り返し方法と反転のしかた。
+fn draw_late_options(case: &mut Case, r: &mut Rng) {
+    case.brush.base.anti_alias = r.pick(&AntiAlias::ALL);
+    case.brush.tip.darken_overlap = r.chance(0.3);
+    if let Some(t) = case.brush.texture.as_mut() {
+        if r.chance(0.4) {
+            t.angle = r.pick(&[30.0, 90.0, 143.0, -20.0]);
+        }
+    }
+    if r.chance(0.25) {
+        case.brush.tip.images = ["grain", "dots", "rim"]
+            .iter()
+            .filter_map(|n| builtin_tip(n))
+            .collect();
+        case.brush.tip.selection = r.pick(&[
+            crate::TipSelection::Random,
+            crate::TipSelection::Sequential,
+            crate::TipSelection::PingPong,
+            crate::TipSelection::Hold,
+            crate::TipSelection::Once,
+            crate::TipSelection::Shuffle,
+        ]);
+        let rule = |r: &mut Rng| {
+            r.pick(&[
+                crate::FlipRule::Off,
+                crate::FlipRule::On,
+                crate::FlipRule::Random,
+                crate::FlipRule::OnFold,
+            ])
+        };
+        case.brush.tip.flip_x = rule(r);
+        case.brush.tip.flip_y = rule(r);
+    }
+}
+
 fn random_case(seed: u64) -> Case {
     let mut r = Rng(seed.wrapping_mul(0x2545F4914F6CDD1D) | 1);
     // 300 は行が STACK_ROW（256）より長いタイル（置き場がヒープの道）
     let tile = r.pick(&[8u32, 16, 24, 32, 37, 64, 300]);
     let size = (r.pick(&[40u32, 77, 96, 330]), r.pick(&[33u32, 64, 90]));
     let radius = r.pick(&[0.6, 1.0, 2.5, 5.0, 9.0, 17.0, 31.0]);
-    let mut b = Brush::from(BrushSettings {
-        radius,
-        hardness: r.pick(&[0.0, 0.25, 0.8, 1.0]),
-        spacing: r.pick(&[0.05, 0.15, 0.5, 1.0]),
-        opacity: r.pick(&[1.0, 0.6, 0.3]),
-        flow: r.pick(&[1.0, 0.5, 0.1]),
-        color: Rgba8::new(
-            r.channel(),
-            r.channel(),
-            r.channel(),
-            r.pick(&[255, 255, 200, 90]),
-        ),
-        pressure_size: r.chance(0.5),
-        pressure_opacity: r.chance(0.5),
-        pressure_flow: r.chance(0.5),
-        erase: r.chance(0.2),
-        anti_alias: AntiAlias::None,
-    });
+    let mut b = Brush::simple(
+        BrushSettings {
+            radius,
+            hardness: r.pick(&[0.0, 0.25, 0.8, 1.0]),
+            spacing: r.pick(&[0.05, 0.15, 0.5, 1.0]),
+            opacity: r.pick(&[1.0, 0.6, 0.3]),
+            flow: r.pick(&[1.0, 0.5, 0.1]),
+            color: Rgba8::new(
+                r.channel(),
+                r.channel(),
+                r.channel(),
+                r.pick(&[255, 255, 200, 90]),
+            ),
+            erase: r.chance(0.2),
+            anti_alias: AntiAlias::None,
+        },
+        crate::PressureSwitches {
+            size: r.chance(0.5),
+            opacity: r.chance(0.5),
+            flow: r.chance(0.5),
+        },
+    );
     b.seed = r.next() as i32;
     if r.chance(0.4) {
         b.tip.angle = r.pick(&[0.0, 30.0, 90.0, 200.0]);
@@ -111,8 +150,15 @@ fn random_case(seed: u64) -> Case {
             "rim",
             "rounded-square",
         ]));
-        b.tip.flip_x = r.chance(0.3);
-        b.tip.flip_y = r.chance(0.3);
+        let flip = |on: bool| {
+            if on {
+                crate::FlipRule::On
+            } else {
+                crate::FlipRule::Off
+            }
+        };
+        b.tip.flip_x = flip(r.chance(0.3));
+        b.tip.flip_y = flip(r.chance(0.3));
     }
     if r.chance(0.3) {
         b.jitter.size = 0.3;
@@ -153,6 +199,7 @@ fn random_case(seed: u64) -> Case {
                 DualBrushMode::Darken,
                 DualBrushMode::Overlay,
             ]),
+            ..DualBrush::default()
         });
     }
     // 効果のブラシ（塗らず、読み元の枠から読んだ色を混ぜる）。消しゴムとは組まない
@@ -189,6 +236,22 @@ fn random_case(seed: u64) -> Case {
                 stretch: r.pick(&[0.0, 0.5, 1.0]),
                 ..ColorMix::default()
             };
+            // 下地混色の拡張: 重ねる・知覚的な混ぜ（輝度の補正 0〜4）・にじむ強さの固定値・筆の初めの絵の具の量
+            if r.chance(0.5) {
+                if r.chance(0.3) {
+                    b.mix.mode = MixMode::Layer;
+                }
+                if r.chance(0.5) {
+                    b.mix.space = MixSpace::Perceptual;
+                    b.mix.correction = r.pick(&[0u8, 1, 2, 3, 4]);
+                }
+                if r.chance(0.4) {
+                    b.mix.blur = MixBlur::Fixed(r.pick(&[0.0, 1.0, 2.5, 5.0, 8.0]));
+                }
+                if r.chance(0.4) {
+                    b.mix.load = r.pick(&[0.0, 0.25, 0.6]);
+                }
+            }
         }
     }
     if r.chance(0.15) {
@@ -221,8 +284,7 @@ fn random_case(seed: u64) -> Case {
         tight_budget: r.chance(0.1),
         seed,
     };
-    // アンチエイリアスの段は最後に引く（前の項目の乱数の列を変えない）
-    case.brush.base.anti_alias = r.pick(&AntiAlias::ALL);
+    draw_late_options(&mut case, &mut r);
     case
 }
 
@@ -578,4 +640,98 @@ fn to_i32_follows_the_truncating_conversion_on_every_level() {
         }
     }
     on_each_level32!(check);
+}
+
+/// 大きな有限の角度（`f64::MAX` など）は、360 度で割った余りの角度と同じ読みになり、NaN を返さない（行の核の `Grain` も、画素ごとの `grain_at` も）。
+#[test]
+fn a_huge_finite_texture_angle_reads_like_its_remainder_of_a_full_turn() {
+    let image = builtin_tip("grain").expect("grain");
+    for angle in [f64::MAX, -f64::MAX, 1e300, 360.0 * 7.0 + 143.0] {
+        let remainder = angle % 360.0;
+        let (mut huge, mut small) = (
+            PaperTexture::new(image.clone(), 1.0),
+            PaperTexture::new(image.clone(), 1.0),
+        );
+        (huge.angle, small.angle) = (angle, remainder);
+        for (x, y) in [(3.5, 4.5), (40.5, 17.5), (100.5, 99.5)] {
+            let got = huge.grain_at(x, y);
+            assert!(got.is_finite(), "{angle}: {got}");
+            assert_eq!(got, small.grain_at(x, y), "{angle}");
+        }
+        let (a, b) = (Grain::new(&huge, 5), Grain::new(&small, 5));
+        for px in [0, 7, 63, 200] {
+            let got = grain_one(&a, px);
+            assert!(got.is_finite(), "{angle}: {got}");
+            assert_eq!(got.to_bits(), grain_one(&b, px).to_bits(), "{angle}: {px}");
+        }
+    }
+}
+
+/// リボンの帯（範囲・画像の位置・横の端を延ばす読み）を、まっすぐな線・曲がった線・反転・潰し・複数の筆先・アンチエイリアスで、どの道でも
+/// 画素ごとの式と同じバイトで描く。
+#[test]
+fn ribbon_cuts_paint_the_same_bytes_on_every_level() {
+    let levels = forced::supported();
+    let base = |radius: f64| {
+        let mut b = Brush::from(BrushSettings {
+            radius,
+            hardness: 1.0,
+            spacing: 0.15,
+            color: Rgba8::new(30, 90, 200, 255),
+            ..BrushSettings::default()
+        });
+        b.tip.ribbon = true;
+        b.tip.images = ["grain", "dots", "rim"]
+            .iter()
+            .filter_map(|n| builtin_tip(n))
+            .collect();
+        b.tip.selection = crate::TipSelection::PingPong;
+        b
+    };
+    let mut flipped = base(7.0);
+    flipped.tip.flip_x = crate::FlipRule::OnFold;
+    flipped.tip.flip_y = crate::FlipRule::On;
+    flipped.tip.roundness = 0.6;
+    let mut single = base(12.0);
+    single.tip.images.clear();
+    single.tip.image = builtin_tip("charcoal");
+    let mut tiny = base(1.5);
+    tiny.base.anti_alias = AntiAlias::ALL[AntiAlias::ALL.len() - 1];
+    let mut soft = base(9.0);
+    soft.base.flow = 0.4;
+    soft.base.opacity = 0.7;
+    for (i, brush) in [base(5.0), flipped, single, tiny, soft]
+        .into_iter()
+        .enumerate()
+    {
+        for points in [
+            vec![(4.3, 30.1, 1.0), (72.7, 31.2, 1.0)],
+            vec![
+                (5.3, 7.1, 0.3),
+                (40.7, 33.2, 1.0),
+                (70.25, 12.5, 0.6),
+                (30.0, 58.0, 0.1),
+            ],
+        ] {
+            let case = Case {
+                brush: brush.clone(),
+                size: (77, 64),
+                tile: 16,
+                ground: Ground::Noise,
+                points,
+                selection: i == 1,
+                locked: false,
+                parallel: i % 2 == 0,
+                tight_budget: false,
+                seed: i as u64,
+            };
+            let reference =
+                forced::with_level(Level::Scalar, || per_pixel(|| run(&case))).expect("始められる");
+            assert!(reference.changed, "{i}");
+            for &l in &levels {
+                let got = forced::with_level(l, || run(&case)).expect("始められる");
+                assert_eq!(got.pixels, reference.pixels, "リボン {i} 道 {l:?}");
+            }
+        }
+    }
 }

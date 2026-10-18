@@ -4,7 +4,7 @@
 `Image` は連続した画像用。タイル入力は `Source` を実装してキャンバス座標で画素を返す。領域の切り方・Rayon のプールの並列度で計算結果は変わらない。
 入力と設定は借用するため、評価中のスナップショットは変更できない。成功した画像だけを呼び出し側で採用する。
 
-対応する種類は EdgeWear、Dirt、PositionGradient、Thickness、Direction（ワールド／ベント法線）、ShapeGradient、IdColor、Anchor に、Rust 版だけの Noise（64）・Grunge（65）・Image（70）と、下の 0.5.0 の種類（66〜69）。
+対応する種類は EdgeWear、Dirt、PositionGradient、Thickness、Direction（ワールド／ベント法線）、ShapeGradient、IdColor、Anchor に、Rust 実装だけの Noise（64）・Grunge（65）・Image（70）と、下の 0.5.0 の種類（66〜69）。
 ノイズは各種類に重ねる4オクターブの値ノイズで、UV またはモデル空間を使う。ShapeGradient は箱・球・平面、ルートの位置と回転、形の中心・回転・大きさ・減衰を持つ。
 `Ramp` は独立した RGB と不透明度の分岐点、中点、PCHIP の値カーブ、5種類のプリセットを持つ。色は保存された sRGB 値のまま補間し、透明な画素の RGB を保つ。
 色の分岐点の α は評価に使わず、C# の `GradientStop` と同じく `Ramp::new` が 255 にそろえる（不透明度は独立した分岐点が持つ）。α の違う入力から作ったランプは `==` で等しい。
@@ -22,7 +22,7 @@
 フィルターなど別の評価器に渡す場合は、スカラー／マスクの対象で `scalar = true` を指定する。`evaluate` の `Target::Mask` は A を隠す量として読み、出力は RGB=0・A=隠す量。色の完全透明画素は RGB も変更しない。
 接空間法線は対象に含めない。`Settings::algorithm_version` はランプなし1、ランプ付き2。
 
-`Settings::anchor`（`anchor::Reference`）が C# の `GeneratorSettings` の AnchorId・AnchorChannel・AnchorRead（正本の版 20）を持つ。
+`Settings::anchor`（`anchor::Reference`）が C# の `GeneratorSettings` の AnchorId・AnchorChannel・AnchorRead（正本のバージョン 20）を持つ。
 `id` は `Point::id` で 0 が未選択、`channel` は読むチャンネル、`read` は `ReadMode::Value`（値×被覆）か `Coverage`（被覆）。
 Anchor の既定は Height、他の種類は Color（C# と同じ）。`Settings::validate` は C# と同じく、Anchor 以外の種類が既定値以外を持つこと、
 Anchor が Normal チャンネルを読むことを断る（種類が Normal のユーザーチャンネルは `Plan::new` が断る）。マスクの Anchor は `channel` と `read` を無視する。
@@ -32,14 +32,14 @@ Anchor が Normal チャンネルを読むことを断る（種類が Normal の
 `anchor::resolve` は未選択・欠損・同じレイヤー／上のレイヤーを拒否する。すべての参照が小さいレイヤー番号を向くため、循環を作れない。
 点の一覧を受け取る時点で `validate_points` を呼び、ID と配置の重複を断る。レイヤーの並びが変わった場合は再解決する。
 `anchor::Plan` は1チャンネルの評価済みレイヤー画像を受け、そのレイヤーまでのスタックを合成する。グループ・マスク・クリッピング・調整レイヤーに対応する。
-通過グループでは下から続け、分離グループでは透明から始める。Anchor より上のクリッピングと、祖先自身の不透明度・マスク・表示は含めない。
+通過グループでは下から続け、分離グループでは透明から始める。Anchor が host の祖先をたどるときも、文書の合成と同じく、すぐ上の兄弟がクリッピングされている祖先のグループは（その兄弟が見えるか・中身の種類によらず）分離として扱い、グループの外の下の物を読まない。祖先自身の不透明度・マスク・表示を使わない決まりは今までどおり。Anchor より上のクリッピングと、祖先自身の不透明度・マスク・表示は含めない。
 レイヤーのフィルターは入力画像に評価しておく。グループ自身のフィルターや投影は呼び出し側で画像に評価して渡す。
 レイヤーの結果を `LayerSample` に渡すと値×被覆・色の輝度×被覆・被覆を読める。`MaskSample` はフィルター評価済みの隠す量に有効状態・反転・濃度を適用する。
 文書の編集、保存、履歴、キャッシュ、Anchor の連鎖のスナップショット作成順は呼び出し側が管理する。
 
 作業予算は返却する RGBA8 の `幅×高さ×4` バイト。別の画素バッファは作らない（行の作業領域 = 幅 × 8 バイトの値の行と格子の覚えをスレッドごとに持つが、画素のバッファではないので予算に含めない）。外部の入力、設定・合成計画などのメタデータ、スレッドスタックも含めない。
 C# FilterEngine はブロック用の作業バッファを数えるため、同じ数値の予算での拒否境界は一致しない。
-取消は行の境界と返却直前に検査し、失敗時は途中画像を返さない（`evaluate` と `Plan::evaluate` のどちらも、並列度 1 で読んだ画素の数を数えて行ごとの確認と最後の確認を別々に試験している）。C# FilterEngine には取消トークンがなく、Rust の追加契約である。
+取消は行の境界と返却直前に検査し、失敗時は途中画像を返さない（`evaluate` と `Plan::evaluate` のどちらも、並列度 1 で読んだ画素の数を数えて行ごとの確認と最後の確認を別々にテストしている）。C# FilterEngine には取消トークンがなく、Rust の追加契約である。
 
 ## 行ごとの評価と SIMD
 
@@ -56,24 +56,23 @@ SSE4.1・NEON は 2）を 1 組にして計算する。N 画素が同じ格子�
 リニア・知覚的の式は + − × ÷ と sqrt だけで書いてある（`mixing.rs`: 分岐点の線形の光は 256 値の表、立方根は [1/8, 1] へ寄せてからのニュートン法 4 回、
 `c^(1/2.4)` は `r·√√r`。OS の `powf`・`cbrt`・`hypot` を使わない）ので、レーンと 1 画素の式が同じ演算になり、OS の数学の関数の違いにも左右されない。
 分岐点ごとの線形の光・Oklab・彩度は `Ramp` が作るときに 1 度だけ求める。前の式（OS の数学の関数）との差は、色の組 3,081 × 重み 513 × 混色 2 × 補正 3 の
-約 2,845 万の値で 0（glibc。`mixing.rs` の試験）。混合率曲線のある区間は、N 画素が同じ区間ならその曲線のレーンの式、またがる組は 1 画素ずつの曲線の式で重みを出す。
+約 2,845 万の値で 0（glibc。`mixing.rs` のテスト）。混合率曲線のある区間は、N 画素が同じ区間ならその曲線のレーンの式、またがる組は 1 画素ずつの曲線の式で重みを出す。
 
 `cargo run --release -p yolu-core --example generator_perf` は種類 × 大きさ（256²・1024²・4096²）× スレッド数（1・8）の表（環境変数 `GEN_SIZES`・`GEN_THREADS`・`GEN_ROWS`・`GEN_RUNS` で絞る）で、
 出力は全画素の SHA-256 で毎回同じ。`GEN_BREAKDOWN=1` は 4096²・スレッド 1 の段ごとの内訳（入力の取り込み・値・ノイズ・行・全体）。`GEN_FUZZ=件数` は計測の代わりに、固定のシードの乱数で作った設定・マップ・入力・領域の組を評価して出力のハッシュを 1 件ずつ出す。前後のコミットでビルドした例の出力（`YOLU_SIMD` を変えても）を `diff` すれば、設定をばらまいた入力でバイトが変わっていないことを確かめられる。
-入力は C# との一致試験と同じ合成入力（`rand`。マップの値が画素ごとに飛ぶので格子の覚えが
+入力は C# との一致テストと同じ合成入力（`rand`。マップの値が画素ごとに飛ぶので格子の覚えが
 当たらない）と、メッシュのマップに近いなめらかな入力（`smooth`）の 2 通り。
 
-`bash tools/csharp-golden/run-generator.sh` は Unity に同梱の Roslyn/Mono で正本の Core（Unity ブリッジのタグ `0.4.0` の `Runtime/Core`。場所は環境変数 `YOLUPAINTER_UNITY_SOURCE`）をそのままビルドし、合成した入力を実評価する。
-出力は `target/csharp-generator/golden/`。試験は全画素の SHA-256 を `tests/generator-index.txt` と比較する。
-`GEN_THREADS=1` と `4` で並列度を指定できる。`run-generator.sh bench` と
+正解 `tests/generator-index.txt` は、0.4.x までの Unity ブリッジの C# Core（タグ `0.4.0` の `Runtime/Core`）で合成した入力を評価した出力を引き継いだ物で、作り直すときは Rust の出力から作る。テストは全画素の SHA-256 をこれと比較する。
+`GEN_THREADS=1` と `4` で並列度を指定できる。
 `cargo run --release -p yolu-core --example generator_bench` は4096²、ウォームアップ1回・計測1回。入力画像と設定の作成は時間に含めず、束縛と返却画像の確保は含める。
 
-`YOLU_GENERATOR_GOLDEN` に生成先を指定して試験を実行すると、338事例を C# 出力の各バイトとも直接比較する。
+`YOLU_GENERATOR_GOLDEN` に C# の出力（`<事例名>.rgba`）を置いたフォルダを指定してテストを実行すると、338事例を C# 出力の各バイトとも直接比較する。ただし上の分離の規則を意図して C# から変えたので、`anchor-16`・`20`・`28`・`32`・`40`・`44` の 6 事例は C# の出力と一致しない（`tests/generator-index.txt` の値は変えた後のもの）。
 
-## ノイズ・グランジ（Rust 版だけの種類）
+## ノイズ・グランジ（Rust 実装だけの種類）
 
 `Kind::Noise`（64）と `Kind::Grunge`（65）は C# に対応が無く、マップを読まずに位置・向き・UV から値を作る（設定は `Settings::procedural`）。C# の種類（0〜7）と重ならない 64 から振り、
-`.ylp` の保存は正本の版 23（`docs/YLP_FORMAT.md` の「Generator」）。レベル（low・high・softness・invert）がしきい値・コントラストで、blend・強さ・マスクの対象は他の種類と同じ。
+`.ylp` の保存は正本のバージョン 23（`docs/YLP_FORMAT.md` の「Generator」）。レベル（low・high・softness・invert）がしきい値・コントラストで、blend・強さ・マスクの対象は他の種類と同じ。
 
 - ノイズ: 基底は値・Perlin（勾配）・Worley（セル。F1・F2・F2−F1）、重ね方は fBm・ridged・turbulence、オクターブ 1〜8・ラクナリティ 1〜4・ゲイン 0〜1・大きさ・シード・回転・にじみ（座標のゆがみ）。
 - グランジ: プリセットは汚れの斑・錆の斑・傷の筋・ほこり・指紋・布目・ひび・飛沫・塗装の剥げ・木目・革のしぼ（`GrungePreset`）。ノイズのレイヤー（`Layer`）としきい値・三角波の組み合わせで、値は 1 が「ある」。
@@ -84,10 +83,10 @@ SSE4.1・NEON は 2）を 1 組にして計算する。N 画素が同じ格子�
 - 決定性: 式は + − × ÷ sqrt floor と整数だけ（libm を使わない。回転は多項式の sin・cos）。画素ごとに位置・座標だけから決まるので、スレッド数・領域の切り方・評価ブロックの大きさで結果は変わらない。
   取消は他の種類と同じく行の境界、予算は返す RGBA8 の大きさ。実装を固定するハッシュは `tests/procedural-index.txt`（回帰の固定で、外部の正解ではない）。
 
-## 画像（Rust 版だけの種類）
+## 画像（Rust 実装だけの種類）
 
 `Kind::Image`（70）はアセットの画像を、塗りつぶしレイヤーの画像と同じ投影（UV・トライプラナー・平面・球・円柱。デカールは除く）で読む（設定は `Settings::image`:
-画像の ID・`fill_image::Projection`・成分）。`.ylp` の保存は正本の版 28。
+画像の ID・`fill_image::Projection`・成分）。`.ylp` の保存は正本のバージョン 28。
 
 - 画像そのものは文書の外の入力（`EffectInputs` の画像）。`BoundGenerator::bind` の後に `with_image(&FillSampler)` で、投影・文書の大きさ・位置と向きのマップ・
   モデルのルートを束縛したサンプラーを渡す（文書の評価は `document/eval.rs` が色の対象には色として、マスク・スカラーには値のままのミップマップを作って渡す）。
@@ -99,7 +98,7 @@ SSE4.1・NEON は 2）を 1 組にして計算する。N 画素が同じ格子�
   8 bit へ丸めてから補間するので、補間がかかる投影では値が少し違う（R・G・B・A の成分は塗りつぶしレイヤーに読み方が無い）。
   行の評価（`sample_row`）も画素ごとに `projected` を呼ぶ（レーンの式にはしていない）。
 
-## 模様・ライト・マスクの組み立て（0.5.0。Rust 版だけの種類）
+## 模様・ライト・マスクの組み立て（0.5.0。Rust 実装だけの種類）
 
 `Kind::Pattern`（66）・`Kind::UvIslandVariation`（67）・`Kind::Light`（68）・`Kind::MaskBuilder`（69）。設定は `Settings::pattern`・`island`・`light`・`mask_builder`
 （その種類以外は既定のまま）。重ねるノイズは持たず、模様・ライトは共通の `softness` を 0 にして自分の `softness` を使う（マスクの組み立ては共通の減衰を使う）。

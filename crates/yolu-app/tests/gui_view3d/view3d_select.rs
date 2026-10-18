@@ -3,6 +3,7 @@
 //! 同じ量になること（透視・正投影）・新規/追加/削除/共通・アンチエイリアス・縦横比の固定・中心から・角の丸め・自動選択（2D と同じ結果）・
 //! Esc とフォーカスの喪失とツールの切り替えと取りこぼした離しと補った離しと確定待ち・ツールのキーの一時の切り替え・取り消し 1 回と保存・
 //! 読むだけのセットと予算の断り・絵（日英）。面の上の計算は core の `tests/surface/surface_screen.rs` が見る。
+use crate::common::drive::Drive;
 use crate::common::*;
 use crate::view3d_brush::{cube_view, press_with, release_with, screen_of};
 use egui::{pos2, Event, Key, Modifiers, PointerButton, Pos2, Rect};
@@ -28,15 +29,15 @@ pub(crate) const N: u32 = 64;
 const SIZE: u32 = 256;
 
 pub(crate) fn st(h: &H) -> &yolu_app::state::AppState {
-    &h.state().state
+    h.app()
 }
 
 pub(crate) fn message(h: &H) -> String {
-    st(h).message.clone()
+    st(h).message().to_owned()
 }
 
 pub(crate) fn tool(h: &mut H, t: Tool) {
-    h.state_mut().state.apply(Action::SelectTool(t));
+    h.act(Action::SelectTool(t));
     h.run();
 }
 
@@ -67,13 +68,13 @@ pub(crate) fn model_view(meshes: Vec<ModelMesh>, ortho: bool, distance: f32) -> 
     click_tab(&mut h, Tab::View3d);
     h.run();
     {
-        let state = &mut h.state_mut().state;
-        let revision = state.view3d.next_revision();
-        state.view3d.material = 0;
+        let state = h.app_mut();
+        let revision = state.view3d_mut().next_revision();
+        state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
         let model =
-            ViewModel::new("試験", meshes, vec![Some("試験".to_string())], revision).unwrap();
-        state.view3d.set_model(model);
-        state.view3d.camera = OrbitCamera {
+            ViewModel::new("テスト", meshes, vec![Some("テスト".to_string())], revision).unwrap();
+        state.view3d_mut().set_model(model);
+        state.view3d_mut().view.camera = OrbitCamera {
             target: Vec3::ZERO,
             yaw: 0.0,
             pitch: 0.0,
@@ -81,7 +82,7 @@ pub(crate) fn model_view(meshes: Vec<ModelMesh>, ortho: bool, distance: f32) -> 
             model_radius: 1.0,
             ..OrbitCamera::default()
         };
-        state.view3d.camera.set_orthographic(ortho);
+        state.view3d_mut().view.camera.set_orthographic(ortho);
     }
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
@@ -99,17 +100,17 @@ pub(crate) fn plate_view(ortho: bool) -> (H, Rect) {
 pub(crate) fn wide_plate_view(width: u32) -> (H, Rect) {
     let (mut h, _) = plate_view(false);
     {
-        let state = &mut h.state_mut().state;
-        state.doc = yolu_core::Document::new(width, N).unwrap();
-        let revision = state.view3d.next_revision();
+        let state = h.app_mut();
+        *state.doc_mut() = yolu_core::Document::new(width, N).unwrap();
+        let revision = state.view3d_mut().next_revision();
         let model = ViewModel::new(
-            "試験",
+            "テスト",
             vec![plate(0.0, 1.0, (0.0, 1.0))],
-            vec![Some("試験".to_string())],
+            vec![Some("テスト".to_string())],
             revision,
         )
         .unwrap();
-        state.view3d.set_model(model);
+        state.view3d_mut().set_model(model);
     }
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
@@ -199,11 +200,11 @@ fn escape(h: &mut H) {
 // ───────── 見る ─────────
 
 pub(crate) fn selection(h: &H) -> Option<SelectionMask> {
-    st(h).doc.selection().cloned()
+    st(h).doc().selection().cloned()
 }
 
 pub(crate) fn amount(h: &H, x: u32, y: u32) -> u8 {
-    st(h).doc.selection().map_or(0, |m| m.amount(x, y))
+    st(h).doc().selection().map_or(0, |m| m.amount(x, y))
 }
 
 /// 板の選択範囲が `want`（文書の全部の画素）と同じか。違う画素の数と、最初の数個を知らせる。
@@ -266,8 +267,8 @@ fn the_four_shapes_seen_straight_on_select_the_same_amounts_as_the_2d_shapes_in_
         let (mut h, rect) = plate_view(ortho);
         tool(&mut h, Tool::SelectRect);
         pull_c(&mut h, rect, RECT.0, RECT.1);
-        assert_eq!(st(&h).doc.undo_count(), 1, "{label} {}", message(&h));
-        let want = SelectionMask::rectangle(&st(&h).doc, 10, 14, 41, 50);
+        assert_eq!(st(&h).doc().undo_count(), 1, "{label} {}", message(&h));
+        let want = SelectionMask::rectangle(st(&h).doc(), 10, 14, 41, 50);
         assert_same(&h, &want, &format!("{label} 長方形"));
         assert_eq!(partial_count(&h), 0, "{label}: 長方形の縁は 0 か 255");
         // 楕円（縁は滑らか）
@@ -276,7 +277,7 @@ fn the_four_shapes_seen_straight_on_select_the_same_amounts_as_the_2d_shapes_in_
         pull_c(&mut h, rect, ELLIPSE.0, ELLIPSE.1);
         let (a, b) = (d(ELLIPSE.0), d(ELLIPSE.1));
         let want = SelectionMask::ellipse(
-            &st(&h).doc,
+            st(&h).doc(),
             (a.x + b.x) / 2.0,
             (a.y + b.y) / 2.0,
             (b.x - a.x) / 2.0,
@@ -296,7 +297,7 @@ fn the_four_shapes_seen_straight_on_select_the_same_amounts_as_the_2d_shapes_in_
             .map(|&c| d(c))
             .chain([d(OUTLINE[0])])
             .collect();
-        let want = SelectionMask::polygon(&st(&h).doc, &points).unwrap();
+        let want = SelectionMask::polygon(st(&h).doc(), &points).unwrap();
         assert_same(&h, &want, &format!("{label} なげなわ"));
         assert!(partial_count(&h) > 30, "{label}: 縁が滑らか");
         // 多角形（クリックで点を打ち、始めの点の近くを押して閉じる）
@@ -304,14 +305,14 @@ fn the_four_shapes_seen_straight_on_select_the_same_amounts_as_the_2d_shapes_in_
         tool(&mut h, Tool::Polygon);
         let ps: Vec<Pos2> = OUTLINE.iter().map(|&c| at(&h, rect, c)).collect();
         clicks(&mut h, &ps);
-        assert_eq!(st(&h).sel.view3d.polygon.len(), OUTLINE.len(), "{label}");
+        assert_eq!(st(&h).sel().view3d.polygon.len(), OUTLINE.len(), "{label}");
         assert!(selection(&h).is_none(), "閉じるまでは選ばない");
         click(&mut h, ps[0] + egui::vec2(3.0, 2.0));
-        assert!(st(&h).sel.view3d.polygon.is_empty(), "{label}: 閉じた");
+        assert!(st(&h).sel().view3d.polygon.is_empty(), "{label}: 閉じた");
         let points: Vec<DVec2> = OUTLINE.iter().map(|&c| d(c)).collect();
-        let want = SelectionMask::polygon(&st(&h).doc, &points).unwrap();
+        let want = SelectionMask::polygon(st(&h).doc(), &points).unwrap();
         assert_same(&h, &want, &format!("{label} 多角形"));
-        assert_eq!(st(&h).doc.undo_count(), 1, "{label}: 取り消し 1 回");
+        assert_eq!(st(&h).doc().undo_count(), 1, "{label}: 取り消し 1 回");
     }
 }
 
@@ -326,7 +327,7 @@ fn a_rectangle_with_fractional_corners_counts_four_by_four_points_like_the_2d_po
         tool(&mut h, Tool::SelectRect);
         pull_c(&mut h, rect, a, b);
         let corners = [d(a), DVec2::new(b.0, a.1), d(b), DVec2::new(a.0, b.1)];
-        let want = SelectionMask::polygon(&st(&h).doc, &corners)
+        let want = SelectionMask::polygon(st(&h).doc(), &corners)
             .unwrap()
             .sharpen();
         assert_same(&h, &want, &format!("ortho={ortho}"));
@@ -337,7 +338,7 @@ fn a_rectangle_with_fractional_corners_counts_four_by_four_points_like_the_2d_po
 #[test]
 fn turning_anti_alias_off_makes_every_edge_all_or_nothing_like_the_2d_shapes() {
     let (mut h, rect) = plate_view(false);
-    h.state_mut().state.sel.antialias = false;
+    h.sel_mut().antialias = false;
     for (t, n) in [
         (Tool::SelectEllipse, 0),
         (Tool::Lasso, 1),
@@ -365,7 +366,7 @@ fn turning_anti_alias_off_makes_every_edge_all_or_nothing_like_the_2d_shapes() {
             0 => {
                 let (a, b) = (d(ELLIPSE.0), d(ELLIPSE.1));
                 SelectionMask::ellipse(
-                    &st(&h).doc,
+                    st(&h).doc(),
                     (a.x + b.x) / 2.0,
                     (a.y + b.y) / 2.0,
                     (b.x - a.x) / 2.0,
@@ -380,13 +381,13 @@ fn turning_anti_alias_off_makes_every_edge_all_or_nothing_like_the_2d_shapes() {
                     .map(|&c| d(c))
                     .chain([d(OUTLINE[0])])
                     .collect();
-                SelectionMask::polygon(&st(&h).doc, &points)
+                SelectionMask::polygon(st(&h).doc(), &points)
                     .unwrap()
                     .sharpen()
             }
             _ => {
                 let points: Vec<DVec2> = OUTLINE.iter().map(|&c| d(c)).collect();
-                SelectionMask::polygon(&st(&h).doc, &points)
+                SelectionMask::polygon(st(&h).doc(), &points)
                     .unwrap()
                     .sharpen()
             }
@@ -437,7 +438,7 @@ pub(crate) fn face_visible(h: &H, face: usize) -> bool {
     let c = corners(face);
     let center = (c[0] + c[3]) * 0.5;
     let normal = (c[1] - c[0]).cross(c[2] - c[0]).normalize();
-    let eye = st(h).view3d.camera.position();
+    let eye = st(h).view3d().view.camera.position();
     let out = if normal.dot(center) > 0.0 {
         normal
     } else {
@@ -467,13 +468,13 @@ fn every_shape_selects_only_the_faces_the_camera_sees_in_perspective_and_orthogr
         ] {
             let (mut h, rect) = cube_view();
             // 立方体を小さく見せる（表示域の隅のアイコンに、囲む多角形の点が重ならないように）
-            h.state_mut().state.view3d.camera.distance *= 1.5;
-            h.state_mut().state.view3d.camera.set_orthographic(ortho);
+            h.view3d_mut().view.camera.distance *= 1.5;
+            h.view3d_mut().view.camera.set_orthographic(ortho);
             h.run();
             // ブラシの「隠れた所も塗る」「裏の面も塗る」を入れていても、選択範囲は見えている面だけ。見える面の量は、面の向きの弱め（カメラにすれすれの
             // 面を薄くする）を切って 255 を見る
             {
-                let projection = &mut h.state_mut().state.view3d.projection;
+                let projection = &mut h.view3d_mut().projection;
                 projection.paint_hidden = true;
                 projection.paint_backfaces = true;
                 projection.angle_falloff = false;
@@ -487,7 +488,7 @@ fn every_shape_selects_only_the_faces_the_camera_sees_in_perspective_and_orthogr
                 Tool::SelectRect => pull(&mut h, big.left_top(), big.right_bottom()),
                 Tool::SelectEllipse => {
                     // 立方体の箱が入る楕円（箱を √2 倍より大きくして外接させる）。中心から広げるので、押すのは箱の真ん中
-                    h.state_mut().state.sel.from_center = true;
+                    h.sel_mut().from_center = true;
                     let c = cube.center();
                     pull(&mut h, c, c + cube.size() * 0.5 * 1.5);
                 }
@@ -511,13 +512,13 @@ fn every_shape_selects_only_the_faces_the_camera_sees_in_perspective_and_orthogr
                             big.left_bottom(),
                         ],
                     );
-                    assert_eq!(st(&h).sel.view3d.polygon.len(), 4, "押した点が全部入った");
+                    assert_eq!(st(&h).sel().view3d.polygon.len(), 4, "押した点が全部入った");
                     enter(&mut h);
                 }
             }
             let label = format!("{t:?} ortho={ortho} {}", message(&h));
             assert!(selection(&h).is_some(), "{label}");
-            assert_eq!(st(&h).doc.undo_count(), 1, "{label}");
+            assert_eq!(st(&h).doc().undo_count(), 1, "{label}");
             let (mut seen_texels, mut hidden_texels) = (0, 0);
             for f in 0..6 {
                 let visible = face_visible(&h, f);
@@ -554,8 +555,8 @@ fn a_front_facing_surface_hidden_behind_another_is_not_selected() {
     for t in [Tool::SelectRect, Tool::Lasso] {
         let (mut h, rect) = two_plates();
         // ブラシの「隠れた所も塗る」を入れておく（選択範囲は、それでも見えている面だけ）
-        h.state_mut().state.view3d.projection.paint_hidden = true;
-        h.state_mut().state.view3d.projection.paint_backfaces = true;
+        h.view3d_mut().projection.paint_hidden = true;
+        h.view3d_mut().projection.paint_backfaces = true;
         tool(&mut h, t);
         let (a, b) = (
             screen_of(&h, rect, Vec3::new(-1.2, 1.2, 0.0)),
@@ -576,7 +577,7 @@ fn a_front_facing_surface_hidden_behind_another_is_not_selected() {
         } else {
             pull(&mut h, a, b);
         }
-        assert_eq!(st(&h).doc.undo_count(), 1, "{t:?} {}", message(&h));
+        assert_eq!(st(&h).doc().undo_count(), 1, "{t:?} {}", message(&h));
         // 手前の板の画面の箱
         let (fa, fb) = (
             screen_of(&h, rect, Vec3::new(-0.35, 0.35, -0.6)),
@@ -620,7 +621,7 @@ fn new_add_subtract_and_intersect_work_by_the_option_and_by_shift_and_ctrl_as_in
     let (a1, a2) = ((8.0, 8.0), (40.0, 40.0));
     let (b1, b2) = ((24.0, 24.0), (56.0, 56.0));
     let rect_mask = |h: &H, (x0, y0): (f64, f64), (x1, y1): (f64, f64)| {
-        SelectionMask::rectangle(&st(h).doc, x0 as i64, y0 as i64, x1 as i64, y1 as i64)
+        SelectionMask::rectangle(st(h).doc(), x0 as i64, y0 as i64, x1 as i64, y1 as i64)
     };
     let (mut h, rect) = plate_view(false);
     tool(&mut h, Tool::SelectRect);
@@ -668,32 +669,30 @@ fn new_add_subtract_and_intersect_work_by_the_option_and_by_shift_and_ctrl_as_in
         ),
     ] {
         // 最初の長方形を置く
-        h.state_mut()
-            .state
-            .apply(Action::Sel(SelAction::Ui(SelUiOp::Combine(
-                SelectionCombine::Replace,
-            ))));
+        h.act(Action::Sel(SelAction::Ui(SelUiOp::Combine(
+            SelectionCombine::Replace,
+        ))));
         pull(&mut h, pa.0, pa.1);
         assert_same(&h, &first, label);
-        let steps = st(&h).doc.undo_count();
+        let steps = st(&h).doc().undo_count();
         if let Some(option) = option {
-            h.state_mut()
-                .state
-                .apply(Action::Sel(SelAction::Ui(SelUiOp::Combine(option))));
+            h.act(Action::Sel(SelAction::Ui(SelUiOp::Combine(option))));
         }
         pull_with(&mut h, pb.0, pb.1, press, Modifiers::NONE);
         let want = first.combine(&second, mode).unwrap();
         assert_same(&h, &want, label);
-        assert_eq!(st(&h).doc.undo_count(), steps + 1, "{label}: 取り消し 1 回");
+        assert_eq!(
+            st(&h).doc().undo_count(),
+            steps + 1,
+            "{label}: 取り消し 1 回"
+        );
         // 取り消しで最初の長方形へ戻る
         key(&h, Key::Z, Modifiers::COMMAND);
         h.run();
         assert_same(&h, &first, &format!("{label}: 取り消し"));
         // 解除して次へ
-        h.state_mut()
-            .state
-            .apply(Action::Sel(SelAction::Edit(SelEdit::Clear)));
-        h.state_mut().state.doc.clear_history().unwrap();
+        h.act(Action::Sel(SelAction::Edit(SelEdit::Clear)));
+        h.doc_mut().clear_history().unwrap();
     }
 }
 
@@ -727,9 +726,9 @@ fn fixed_ratio_from_center_and_the_corner_radius_shape_the_selection_as_in_2d() 
     // 縦横比を固定（設定）: 長い方に合わせた正方形
     let (mut h, rect) = plate_view(false);
     tool(&mut h, Tool::SelectRect);
-    h.state_mut().state.sel.fixed_ratio = true;
+    h.sel_mut().fixed_ratio = true;
     pull_c(&mut h, rect, (10.0, 10.0), (50.0, 30.0));
-    let want = SelectionMask::rectangle(&st(&h).doc, 10, 10, 50, 50);
+    let want = SelectionMask::rectangle(st(&h).doc(), 10, 10, 50, 50);
     assert_same(&h, &want, "縦横比を固定");
     // 設定が切れていても、押し始めたあとの Shift で固定する
     let (mut h, rect) = plate_view(false);
@@ -742,7 +741,7 @@ fn fixed_ratio_from_center_and_the_corner_radius_shape_the_selection_as_in_2d() 
         Modifiers::NONE,
         Modifiers::SHIFT,
     );
-    let want = SelectionMask::ellipse(&st(&h).doc, 28.0, 28.0, 20.0, 20.0).unwrap();
+    let want = SelectionMask::ellipse(st(&h).doc(), 28.0, 28.0, 20.0, 20.0).unwrap();
     assert_same(&h, &want, "押し始めたあとの Shift");
     // 押し始めに押していた Shift は、追加の合図（縦横比は固定しない）
     let (mut h, rect) = plate_view(false);
@@ -755,7 +754,7 @@ fn fixed_ratio_from_center_and_the_corner_radius_shape_the_selection_as_in_2d() 
         Modifiers::SHIFT,
         Modifiers::SHIFT,
     );
-    let want = SelectionMask::rectangle(&st(&h).doc, 10, 10, 50, 30);
+    let want = SelectionMask::rectangle(st(&h).doc(), 10, 10, 50, 30);
     assert_same(&h, &want, "押し始めの Shift は追加");
     // 押し始めたあとの Alt: 押した点が中心（設定が切れていても）
     let (mut h, rect) = plate_view(false);
@@ -768,21 +767,21 @@ fn fixed_ratio_from_center_and_the_corner_radius_shape_the_selection_as_in_2d() 
         Modifiers::NONE,
         Modifiers::ALT,
     );
-    let want = SelectionMask::rectangle(&st(&h).doc, 14, 22, 50, 42);
+    let want = SelectionMask::rectangle(st(&h).doc(), 14, 22, 50, 42);
     assert_same(&h, &want, "押し始めたあとの Alt");
     // 中心から（設定）: 押した点が中心
     let (mut h, rect) = plate_view(false);
     tool(&mut h, Tool::SelectRect);
-    h.state_mut().state.sel.from_center = true;
+    h.sel_mut().from_center = true;
     pull_c(&mut h, rect, (32.0, 32.0), (50.0, 42.0));
-    let want = SelectionMask::rectangle(&st(&h).doc, 14, 22, 50, 42);
+    let want = SelectionMask::rectangle(st(&h).doc(), 14, 22, 50, 42);
     assert_same(&h, &want, "中心から");
     // 角の丸め: 角のテクセルは外れ、縁は滑らか（アンチエイリアスを切ると 0 か 255 だけ）
     for anti_alias in [true, false] {
         let (mut h, rect) = plate_view(false);
         tool(&mut h, Tool::SelectRect);
         {
-            let s = &mut h.state_mut().state.sel;
+            let s = h.sel_mut();
             s.corner_radius = 100; // 画面の点。板は 1 テクセルが約 9 点なので、10 テクセル強
             s.antialias = anti_alias;
         }
@@ -798,14 +797,14 @@ fn fixed_ratio_from_center_and_the_corner_radius_shape_the_selection_as_in_2d() 
 
 /// 板の文書の、長方形 (x0, y0)-(x1, y1) を描画色で塗って、選択範囲を解除し、履歴を空にする。
 pub(crate) fn paint_rect(h: &mut H, (x0, y0, x1, y1): (i64, i64, i64, i64)) {
-    let s = &mut h.state_mut().state;
-    s.color.set_main([1.0, 0.0, 0.0, 1.0]);
-    s.brush.opacity = 1.0;
-    let mask = SelectionMask::rectangle(&s.doc, x0, y0, x1, y1);
-    s.doc.set_selection(Some(mask)).unwrap();
-    s.apply(Action::Sel(SelAction::Edit(SelEdit::Fill)));
-    s.apply(Action::Sel(SelAction::Edit(SelEdit::Clear)));
-    s.doc.clear_history().unwrap();
+    let s = h.app_mut();
+    s.color_mut().set_main([1.0, 0.0, 0.0, 1.0]);
+    s.brush_mut().opacity = 1.0;
+    let mask = SelectionMask::rectangle(s.doc(), x0, y0, x1, y1);
+    s.doc_mut().set_selection(Some(mask)).unwrap();
+    s.act(Action::Sel(SelAction::Edit(SelEdit::Fill)));
+    s.act(Action::Sel(SelAction::Edit(SelEdit::Clear)));
+    s.doc_mut().clear_history().unwrap();
 }
 
 #[test]
@@ -814,18 +813,18 @@ fn the_wand_runs_the_2d_magic_wand_from_the_texel_under_the_click() {
         let (mut h, rect) = plate_view(ortho);
         paint_rect(&mut h, (10, 12, 30, 40));
         tool(&mut h, Tool::Wand);
-        h.state_mut().state.sel.tolerance = 0;
+        h.sel_mut().tolerance = 0;
         // 塗った所の上: 塗った長方形だけ
         click_c(&mut h, rect, (20.5, 25.5));
-        assert_eq!(st(&h).doc.undo_count(), 1, "{}", message(&h));
-        let want = SelectionMask::rectangle(&st(&h).doc, 10, 12, 30, 40);
+        assert_eq!(st(&h).doc().undo_count(), 1, "{}", message(&h));
+        let want = SelectionMask::rectangle(st(&h).doc(), 10, 12, 30, 40);
         assert_same(&h, &want, &format!("ortho={ortho} 塗った所"));
         // 2D と同じ呼び出しの結果
         let s = st(&h);
         let direct = SelectionMask::magic_wand(
-            &s.doc,
-            s.selected_layer,
-            s.m2.paint_channel,
+            s.doc(),
+            s.selected_layer(),
+            s.m2().paint_channel,
             20,
             25,
             0,
@@ -839,7 +838,7 @@ fn the_wand_runs_the_2d_magic_wand_from_the_texel_under_the_click() {
         h.run();
         assert!(selection(&h).is_none());
         click_c(&mut h, rect, (50.5, 55.5));
-        let blank = SelectionMask::rectangle(&st(&h).doc, 10, 12, 30, 40).invert();
+        let blank = SelectionMask::rectangle(st(&h).doc(), 10, 12, 30, 40).invert();
         assert_same(&h, &blank, &format!("ortho={ortho} 塗っていない所"));
     }
 }
@@ -851,14 +850,14 @@ fn the_wand_follows_tolerance_contiguous_and_the_combine_modifiers_and_ignores_c
     paint_rect(&mut h, (10, 12, 30, 40));
     paint_rect(&mut h, (40, 12, 56, 40));
     tool(&mut h, Tool::Wand);
-    h.state_mut().state.sel.tolerance = 0;
+    h.sel_mut().tolerance = 0;
     // 隣接: 押した長方形だけ。隣接を切ると、離れた同じ色の長方形も
     click_c(&mut h, rect, (20.5, 25.5));
     assert_eq!(selected_count(&h, N), 20 * 28);
-    h.state_mut().state.sel.contiguous = false;
+    h.sel_mut().contiguous = false;
     click_c(&mut h, rect, (20.5, 25.5));
     assert_eq!(selected_count(&h, N), 20 * 28 + 16 * 28, "隣接しない");
-    h.state_mut().state.sel.contiguous = true;
+    h.sel_mut().contiguous = true;
     // Shift で追加（もう一方の長方形を選択範囲へ追加）
     click_c(&mut h, rect, (20.5, 25.5));
     press_with(&h, at(&h, rect, (48.5, 25.5)), Modifiers::SHIFT);
@@ -874,11 +873,11 @@ fn the_wand_follows_tolerance_contiguous_and_the_combine_modifiers_and_ignores_c
     assert_eq!(selected_count(&h, N), 16 * 28, "削除");
     // モデルの外（板の外の背景）: 何も変えない
     let before = selection(&h);
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     let off = rect.left_top() + egui::vec2(4.0, 4.0);
     click(&mut h, off);
     assert!(selection(&h) == before, "{}", message(&h));
-    assert_eq!(st(&h).doc.undo_count(), steps);
+    assert_eq!(st(&h).doc().undo_count(), steps);
     assert!(!message(&h).is_empty(), "理由を知らせる");
 }
 
@@ -888,14 +887,14 @@ fn the_wand_in_3d_ignores_the_symmetry_ruler() {
     let (mut h, rect) = plate_view(false);
     paint_rect(&mut h, (10, 12, 30, 40));
     paint_rect(&mut h, (34, 12, 54, 40)); // 縦の軸 x = 32 に対する鏡の側
-    rulers::vertical(&mut h.state_mut().state, 32.0);
+    rulers::vertical(h.app_mut(), 32.0);
     h.run();
     assert!(st(&h).canvas_symmetry().enabled());
     tool(&mut h, Tool::Wand);
-    h.state_mut().state.sel.tolerance = 0;
-    let steps = st(&h).doc.undo_count();
+    h.sel_mut().tolerance = 0;
+    let steps = st(&h).doc().undo_count();
     click_c(&mut h, rect, (20.5, 25.5));
-    assert_eq!(st(&h).doc.undo_count(), steps + 1, "{}", message(&h));
+    assert_eq!(st(&h).doc().undo_count(), steps + 1, "{}", message(&h));
     assert_eq!(
         selected_count(&h, N),
         20 * 28,
@@ -911,7 +910,7 @@ fn the_seam_bleed_of_the_3d_group_reaches_past_the_island_edge_and_zero_does_not
     // UV の左半分だけの板: アイランドの右の縁は x = 32
     for (bleed, reaches) in [(0u32, false), (2, true)] {
         let (mut h, rect) = model_view(vec![plate(0.0, 1.0, (0.0, 0.5))], false, 4.5);
-        h.state_mut().state.view3d.projection.seam_bleed = bleed;
+        h.view3d_mut().projection.seam_bleed = bleed;
         tool(&mut h, Tool::SelectRect);
         let (a, b) = (
             screen_of(&h, rect, Vec3::new(-1.1, 1.1, 0.0)),
@@ -933,8 +932,8 @@ fn a_face_seen_edge_on_is_faded_by_the_angle_setting_and_the_setting_off_selects
     // 板を横へ 82° 回して見る（面の向きの弱めは 80° から）
     let amounts = |falloff: bool| {
         let (mut h, rect) = plate_view(false);
-        h.state_mut().state.view3d.camera.yaw = 82.0;
-        h.state_mut().state.view3d.projection.angle_falloff = falloff;
+        h.view3d_mut().view.camera.yaw = 82.0;
+        h.view3d_mut().projection.angle_falloff = falloff;
         h.run();
         tool(&mut h, Tool::SelectRect);
         // 3D ビューの全体を囲む（幅は並びで変わるので、rect の内側 4 pt から決める）
@@ -970,7 +969,7 @@ fn escape_focus_loss_and_switching_tools_drop_the_drag_and_the_polygon_points_wi
             tool(&mut h, t);
             let (a, b) = (at(&h, rect, (10.0, 10.0)), at(&h, rect, (50.0, 50.0)));
             let c = at(&h, rect, (50.0, 12.0));
-            let live = |h: &H| select::dragging(st(h)) || !st(h).sel.view3d.polygon.is_empty();
+            let live = |h: &H| select::dragging(st(h)) || !st(h).sel().view3d.polygon.is_empty();
             if t == Tool::Polygon {
                 clicks(&mut h, &[a, c, b]);
             } else {
@@ -986,14 +985,14 @@ fn escape_focus_loss_and_switching_tools_drop_the_drag_and_the_polygon_points_wi
                     h.event(Event::WindowFocused(false));
                     h.step();
                 }
-                _ => h.state_mut().state.apply(Action::SelectTool(Tool::Brush)),
+                _ => h.act(Action::SelectTool(Tool::Brush)),
             }
             h.step();
             assert!(!live(&h), "{t:?} {way}: 捨てた");
             release(&h, b, PointerButton::Primary);
             h.run();
             assert!(selection(&h).is_none(), "{t:?} {way}: 何も選ばない");
-            assert_eq!(st(&h).doc.undo_count(), 0, "{t:?} {way}");
+            assert_eq!(st(&h).doc().undo_count(), 0, "{t:?} {way}");
             assert!(!st(&h).is_stroking());
         }
     }
@@ -1006,15 +1005,15 @@ fn a_mouse_release_that_never_arrived_drops_the_drag_without_selecting() {
         tool(&mut h, t);
         let (a, b) = (at(&h, rect, (10.0, 10.0)), at(&h, rect, (50.0, 50.0)));
         // ボタンは押していないのに、ドラッグの途中だけが残った（ウィンドウの外で離したなど）
-        h.state_mut().state.sel.view3d.drag = Some(Drag {
+        h.sel_mut().view3d.drag = Some(Drag {
             tool: t,
             source: StrokeSource::Mouse,
             start: DVec2::new((a.x - rect.left()) as f64, (a.y - rect.top()) as f64),
             current: DVec2::new((b.x - rect.left()) as f64, (b.y - rect.top()) as f64),
             lasso: Vec::new(),
             moved: 100.0,
-            pressed_with: Modifiers::NONE,
-            now: Modifiers::NONE,
+            pressed_with: Modifiers::NONE.into(),
+            now: Modifiers::NONE.into(),
         });
         assert!(select::dragging(st(&h)));
         move_to(&h, b);
@@ -1024,7 +1023,7 @@ fn a_mouse_release_that_never_arrived_drops_the_drag_without_selecting() {
             selection(&h).is_none(),
             "{t:?}: 離した位置が分からないので選ばない"
         );
-        assert_eq!(st(&h).doc.undo_count(), 0, "{t:?}");
+        assert_eq!(st(&h).doc().undo_count(), 0, "{t:?}");
     }
 }
 
@@ -1071,7 +1070,7 @@ fn the_pen_selects_like_the_mouse_and_a_pen_press_taken_by_the_os_selects_nothin
                 pull(&mut h, a, b);
             }
             assert!(!select::dragging(st(&h)), "{t:?} {pen}");
-            (selection(&h), st(&h).doc.undo_count())
+            (selection(&h), st(&h).doc().undo_count())
         };
         let (pen, mouse) = (result(true), result(false));
         assert!(pen.0.is_some() && pen == mouse, "{t:?}: ペンもマウスと同じ");
@@ -1081,15 +1080,15 @@ fn the_pen_selects_like_the_mouse_and_a_pen_press_taken_by_the_os_selects_nothin
         let (a, b) = (at(&h, rect, (10.0, 14.0)), at(&h, rect, (41.0, 50.0)));
         pen_pull(&mut h, a, b, true);
         assert!(!select::dragging(st(&h)), "{t:?}");
-        assert!(st(&h).view3d.input.pen_press.is_none(), "{t:?}");
+        assert!(st(&h).view3d().view.input.pen_press.is_none(), "{t:?}");
         assert!(selection(&h).is_none(), "{t:?}: 補った離しでは選ばない");
-        assert_eq!(st(&h).doc.undo_count(), 0, "{t:?}");
+        assert_eq!(st(&h).doc().undo_count(), 0, "{t:?}");
         pen_pull(&mut h, a, b, false);
         assert!(
             selection(&h).is_some(),
             "{t:?}: 次の押しは本物の離しで決まる"
         );
-        assert_eq!(st(&h).doc.undo_count(), 1, "{t:?}");
+        assert_eq!(st(&h).doc().undo_count(), 1, "{t:?}");
     }
 }
 
@@ -1098,11 +1097,11 @@ fn a_press_during_the_leftover_of_a_released_brush_stroke_finishes_it_before_the
 {
     let (mut h, rect) = cube_view();
     {
-        let s = &mut h.state_mut().state;
-        s.brush.radius = 3.0;
-        s.brush.spacing = 0.2;
-        s.view3d.input.paint_budget = Some(std::time::Duration::ZERO);
-        s.color.set_main([1.0, 0.0, 0.0, 1.0]);
+        let s = h.app_mut();
+        s.brush_mut().radius = 3.0;
+        s.brush_mut().spacing = 0.2;
+        s.view3d_mut().view.input.paint_budget = Some(std::time::Duration::ZERO);
+        s.color_mut().set_main([1.0, 0.0, 0.0, 1.0]);
     }
     let (a, b) = (
         screen_of(&h, rect, Vec3::new(-0.4, -0.35, -0.5)),
@@ -1115,12 +1114,12 @@ fn a_press_during_the_leftover_of_a_released_brush_stroke_finishes_it_before_the
     release_with(&h, b, Modifiers::NONE);
     h.step();
     assert!(
-        st(&h).view3d.input.released && st(&h).is_stroking(),
+        st(&h).view3d().view.input.released && st(&h).is_stroking(),
         "確定待ち"
     );
-    assert_eq!(st(&h).doc.undo_count(), 0);
+    assert_eq!(st(&h).doc().undo_count(), 0);
     // 描き残しがある間に、選択のツールで押す（ツールは直に替えて、押しが先に確定させる）
-    h.state_mut().state.tool = Tool::SelectRect;
+    h.set_tool(Tool::SelectRect);
     let cube = cube_box(&h, rect);
     pull(
         &mut h,
@@ -1129,7 +1128,7 @@ fn a_press_during_the_leftover_of_a_released_brush_stroke_finishes_it_before_the
     );
     assert!(!st(&h).is_stroking(), "{}", message(&h));
     assert_eq!(
-        st(&h).doc.undo_count(),
+        st(&h).doc().undo_count(),
         2,
         "線の確定と選択範囲、それぞれ 1 回: {}",
         message(&h)
@@ -1149,42 +1148,40 @@ fn polygon_points_close_by_enter_double_click_or_the_first_point_and_backspace_a
         .map(|&c| at(&h, rect, c))
         .collect();
     clicks(&mut h, &ps);
-    assert_eq!(st(&h).sel.view3d.polygon.len(), 3);
+    assert_eq!(st(&h).sel().view3d.polygon.len(), 3);
     // Backspace で最後の点を消す
     key(&h, Key::Backspace, Modifiers::NONE);
     h.run();
-    assert_eq!(st(&h).sel.view3d.polygon.len(), 2);
+    assert_eq!(st(&h).sel().view3d.polygon.len(), 2);
     // 取り消し（Ctrl+Z）は、多角形の途中なら文書でなく最後の点
     assert!(st(&h).sel_has_polygon_point());
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
-    assert_eq!(st(&h).sel.view3d.polygon.len(), 1);
-    assert_eq!(st(&h).doc.undo_count(), 0);
+    assert_eq!(st(&h).sel().view3d.polygon.len(), 1);
+    assert_eq!(st(&h).doc().undo_count(), 0);
     // 3 点に満たないまま Enter: 断って捨てる
     click(&mut h, ps[1]);
     enter(&mut h);
-    assert!(st(&h).sel.view3d.polygon.is_empty());
+    assert!(st(&h).sel().view3d.polygon.is_empty());
     assert!(selection(&h).is_none());
     assert!(message(&h).contains("点が足りません"), "{}", message(&h));
     // Enter で閉じる
     clicks(&mut h, &ps);
     enter(&mut h);
     assert!(selection(&h).is_some());
-    assert_eq!(st(&h).doc.undo_count(), 1);
+    assert_eq!(st(&h).doc().undo_count(), 1);
     let want = SelectionMask::polygon(
-        &st(&h).doc,
+        st(&h).doc(),
         &[d((10.0, 10.0)), d((50.0, 12.0)), d((30.0, 52.0))],
     )
     .unwrap();
     assert_same(&h, &want, "Enter で閉じた");
     // ダブルクリックで閉じる（最後の点を 2 度押す）
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Edit(SelEdit::Clear)));
+    h.act(Action::Sel(SelAction::Edit(SelEdit::Clear)));
     clicks(&mut h, &ps);
     click(&mut h, ps[2]);
     assert!(
-        st(&h).sel.view3d.polygon.is_empty(),
+        st(&h).sel().view3d.polygon.is_empty(),
         "ダブルクリックで閉じた"
     );
     assert_same(&h, &want, "ダブルクリックで閉じた");
@@ -1197,7 +1194,7 @@ fn polygon_points_stay_on_the_screen_while_the_view_orbits_and_starting_in_3d_dr
     tool(&mut h, Tool::Polygon);
     let p = at(&h, rect, (20.0, 20.0));
     click(&mut h, p);
-    let before = st(&h).sel.view3d.polygon.clone();
+    let before = st(&h).sel().view3d.polygon.clone();
     // 右ドラッグで回す
     press(&h, rect.center(), PointerButton::Secondary);
     h.step();
@@ -1211,12 +1208,12 @@ fn polygon_points_stay_on_the_screen_while_the_view_orbits_and_starting_in_3d_dr
         PointerButton::Secondary,
     );
     h.run();
-    assert!(st(&h).view3d.camera.yaw != 0.0, "回った");
-    assert_eq!(st(&h).sel.view3d.polygon, before, "画面の同じ所に残る");
+    assert!(st(&h).view3d().view.camera.yaw != 0.0, "回った");
+    assert_eq!(st(&h).sel().view3d.polygon, before, "画面の同じ所に残る");
     // 2D のキャンバスで打っていた点は、3D で打ち始めると捨てる
-    h.state_mut().state.sel.polygon.push((5.0, 5.0));
+    h.sel_mut().polygon.push((5.0, 5.0));
     click(&mut h, p + egui::vec2(60.0, 0.0));
-    assert!(st(&h).sel.polygon.is_empty());
+    assert!(st(&h).sel().polygon.is_empty());
 }
 
 // ───────── ツールのキーの一時の切り替え ─────────
@@ -1229,9 +1226,7 @@ fn releasing_the_hold_key_in_the_middle_of_a_3d_selection_drag_finishes_the_drag
         ("tool.lasso", Key::L, false, Tool::Lasso),
     ] {
         let (mut h, rect) = plate_view(false);
-        h.state_mut()
-            .state
-            .apply(Action::ToolKeyMode(command, ToolKeyMode::Hold));
+        h.act(Action::ToolKeyMode(command, ToolKeyMode::Hold));
         h.run();
         let m = if shift {
             Modifiers::SHIFT
@@ -1248,7 +1243,7 @@ fn releasing_the_hold_key_in_the_middle_of_a_3d_selection_drag_finishes_the_drag
         });
         h.step();
         h.step();
-        assert_eq!(st(&h).tool, tool_);
+        assert_eq!(st(&h).tool(), tool_);
         h.event(Event::ModifiersChanged(Modifiers::NONE));
         h.step();
         let (a, b) = (at(&h, rect, (10.0, 14.0)), at(&h, rect, (41.0, 50.0)));
@@ -1271,7 +1266,7 @@ fn releasing_the_hold_key_in_the_middle_of_a_3d_selection_drag_finishes_the_drag
         for _ in 0..20 {
             h.step();
         }
-        assert_eq!(st(&h).tool, tool_, "{tool_:?}: ドラッグの途中は戻さない");
+        assert_eq!(st(&h).tool(), tool_, "{tool_:?}: ドラッグの途中は戻さない");
         assert!(select::dragging(st(&h)), "{tool_:?}");
         move_to(&h, b);
         h.step();
@@ -1280,15 +1275,15 @@ fn releasing_the_hold_key_in_the_middle_of_a_3d_selection_drag_finishes_the_drag
         h.run();
         assert!(!select::dragging(st(&h)), "{tool_:?}");
         assert!(selection(&h).is_some(), "{tool_:?}: {}", message(&h));
-        assert_eq!(st(&h).doc.undo_count(), 1, "{tool_:?}");
-        assert_eq!(st(&h).tool, Tool::Brush, "{tool_:?}: 選び終えたら戻る");
+        assert_eq!(st(&h).doc().undo_count(), 1, "{tool_:?}");
+        assert_eq!(st(&h).tool(), Tool::Brush, "{tool_:?}: 選び終えたら戻る");
     }
 }
 
 #[test]
 fn a_pen_press_taken_by_the_os_during_a_3d_hold_selection_drag_lets_the_tool_return() {
     let (mut h, rect) = plate_view(false);
-    h.state_mut().state.apply(Action::ToolKeyMode(
+    h.act(Action::ToolKeyMode(
         "tool.select_rectangle",
         ToolKeyMode::Hold,
     ));
@@ -1302,7 +1297,7 @@ fn a_pen_press_taken_by_the_os_during_a_3d_hold_selection_drag_lets_the_tool_ret
     });
     h.step();
     h.step();
-    assert_eq!(st(&h).tool, Tool::SelectRect);
+    assert_eq!(st(&h).tool(), Tool::SelectRect);
     let (a, b) = (at(&h, rect, (10.0, 14.0)), at(&h, rect, (41.0, 50.0)));
     for p in [a, a + (b - a) * 0.5, b] {
         h.state().pen().push(pen_sample(p, true, 0));
@@ -1319,13 +1314,13 @@ fn a_pen_press_taken_by_the_os_during_a_3d_hold_selection_drag_lets_the_tool_ret
     for _ in 0..20 {
         h.step();
     }
-    assert_eq!(st(&h).tool, Tool::SelectRect, "ドラッグの途中は戻さない");
+    assert_eq!(st(&h).tool(), Tool::SelectRect, "ドラッグの途中は戻さない");
     h.state().pen().push_lost(pen_sample(b, false, 50));
     h.step();
     h.run();
     assert!(!select::dragging(st(&h)));
     assert!(selection(&h).is_none(), "補った離しでは選ばない");
-    assert_eq!(st(&h).tool, Tool::Brush, "奪われたあとで戻る");
+    assert_eq!(st(&h).tool(), Tool::Brush, "奪われたあとで戻る");
 }
 
 // ───────── 取り消し・保存・断り ─────────
@@ -1335,7 +1330,7 @@ fn one_undo_removes_the_selection_and_it_survives_save_and_reopen_like_a_2d_sele
     let (mut h, rect) = plate_view(false);
     tool(&mut h, Tool::SelectEllipse);
     pull_c(&mut h, rect, ELLIPSE.0, ELLIPSE.1);
-    assert_eq!(st(&h).doc.undo_count(), 1);
+    assert_eq!(st(&h).doc().undo_count(), 1);
     let selected = selection(&h).unwrap();
     // 取り消し 1 回で選択なしへ、やり直しで戻る
     key(&h, Key::Z, Modifiers::COMMAND);
@@ -1348,15 +1343,11 @@ fn one_undo_removes_the_selection_and_it_survives_save_and_reopen_like_a_2d_sele
     let dir = std::env::temp_dir().join(format!("yolu-3dsel-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("p.ylp");
-    h.state_mut()
-        .state
-        .apply(Action::SaveProjectAs(path.clone()));
+    h.act(Action::SaveProjectAs(path.clone()));
     assert!(message(&h).starts_with("保存しました"), "{}", message(&h));
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Edit(SelEdit::Clear)));
+    h.act(Action::Sel(SelAction::Edit(SelEdit::Clear)));
     assert!(selection(&h).is_none());
-    h.state_mut().state.apply(Action::OpenProject(path.clone()));
+    h.act(Action::OpenProject(path.clone()));
     h.run();
     assert!(
         selection(&h) == Some(selected),
@@ -1378,7 +1369,7 @@ fn a_read_only_set_refuses_at_the_press_and_a_small_budget_leaves_the_selection_
     ] {
         let (mut h, rect) = plate_view(false);
         tool(&mut h, t);
-        h.state_mut().state.sets.get_mut(0).unwrap().read_only = Some("読めない中身".into());
+        h.sets_mut().get_mut(0).unwrap().read_only = Some("読めない中身".into());
         let (a, b) = (at(&h, rect, (10.0, 14.0)), at(&h, rect, (41.0, 50.0)));
         press(&h, a, PointerButton::Primary);
         h.step();
@@ -1392,8 +1383,8 @@ fn a_read_only_set_refuses_at_the_press_and_a_small_budget_leaves_the_selection_
         release(&h, b, PointerButton::Primary);
         h.run();
         assert!(selection(&h).is_none(), "{t:?}");
-        assert!(st(&h).sel.view3d.polygon.is_empty(), "{t:?}");
-        assert_eq!(st(&h).doc.undo_count(), 0, "{t:?}");
+        assert!(st(&h).sel().view3d.polygon.is_empty(), "{t:?}");
+        assert_eq!(st(&h).doc().undo_count(), 0, "{t:?}");
     }
     // 予算が小さい: 選択範囲を変えずに理由を知らせる
     for t in [Tool::SelectRect, Tool::SelectEllipse, Tool::Lasso] {
@@ -1402,12 +1393,8 @@ fn a_read_only_set_refuses_at_the_press_and_a_small_budget_leaves_the_selection_
         let (a, b) = (at(&h, rect, (10.0, 14.0)), at(&h, rect, (41.0, 50.0)));
         pull_c(&mut h, rect, (5.0, 5.0), (8.0, 8.0));
         let before = selection(&h);
-        let steps = st(&h).doc.undo_count();
-        h.state_mut()
-            .state
-            .doc
-            .set_stroke_budget_bytes(4096)
-            .unwrap();
+        let steps = st(&h).doc().undo_count();
+        h.doc_mut().set_stroke_budget_bytes(4096).unwrap();
         if t == Tool::Lasso {
             drag(&mut h, &[a, pos2(b.x, a.y), b, pos2(a.x, b.y)]);
         } else {
@@ -1415,7 +1402,7 @@ fn a_read_only_set_refuses_at_the_press_and_a_small_budget_leaves_the_selection_
         }
         assert!(!message(&h).is_empty(), "{t:?}");
         assert!(selection(&h) == before, "{t:?}");
-        assert_eq!(st(&h).doc.undo_count(), steps, "{t:?}");
+        assert_eq!(st(&h).doc().undo_count(), steps, "{t:?}");
     }
 }
 
@@ -1434,9 +1421,9 @@ fn the_tools_that_work_in_3d_no_longer_say_they_are_2d_only_and_the_others_still
             (Tool::Text, false),
         ] {
             let (mut h, rect) = plate_view(false);
-            h.state_mut().state.lang = lang;
+            h.set_lang(lang);
             tool(&mut h, t);
-            h.state_mut().state.message.clear();
+            h.message_mut().clear();
             let p = at(&h, rect, (20.0, 20.0));
             press(&h, p, PointerButton::Primary);
             h.step();
@@ -1471,10 +1458,10 @@ pub(crate) fn side_by_side(canvas_first: bool) -> (H, Rect) {
         }],
     );
     h.state_mut().dock = dock;
-    h.state_mut().state.sel.animate = false;
+    h.sel_mut().animate = false;
     h.run();
     let rect = h.state().view3d_rect().expect("3D も出ている");
-    assert!(st(&h).ui.canvas_visible, "キャンバスも出ている");
+    assert!(st(&h).ui().canvas_visible, "キャンバスも出ている");
     (h, rect)
 }
 
@@ -1488,22 +1475,22 @@ fn backspace_and_undo_remove_one_polygon_point_each_when_the_canvas_is_beside_th
             .map(|&c| at(&h, rect, c))
             .collect();
         clicks(&mut h, &ps);
-        assert_eq!(st(&h).sel.view3d.polygon.len(), 4, "{canvas_first}");
+        assert_eq!(st(&h).sel().view3d.polygon.len(), 4, "{canvas_first}");
         key(&h, Key::Backspace, Modifiers::NONE);
         h.run();
         assert_eq!(
-            st(&h).sel.view3d.polygon.len(),
+            st(&h).sel().view3d.polygon.len(),
             3,
             "{canvas_first}: Backspace 1 回で点が 1 つだけ消える"
         );
         key(&h, Key::Z, Modifiers::COMMAND);
         h.run();
         assert_eq!(
-            st(&h).sel.view3d.polygon.len(),
+            st(&h).sel().view3d.polygon.len(),
             2,
             "{canvas_first}: Ctrl+Z も 1 つだけ"
         );
-        assert_eq!(st(&h).doc.undo_count(), 0, "{canvas_first}");
+        assert_eq!(st(&h).doc().undo_count(), 0, "{canvas_first}");
     }
 }
 
@@ -1516,11 +1503,11 @@ fn backspace_removes_one_point_of_a_2d_polygon_too_beside_the_3d_view() {
         for dx in [-60.0, 0.0, 60.0] {
             click(&mut h, offset(center(canvas), dx, dx.abs() * 0.5));
         }
-        assert_eq!(st(&h).sel.polygon.len(), 3, "{canvas_first}");
+        assert_eq!(st(&h).sel().polygon.len(), 3, "{canvas_first}");
         key(&h, Key::Backspace, Modifiers::NONE);
         h.run();
-        assert_eq!(st(&h).sel.polygon.len(), 2, "{canvas_first}");
-        assert!(st(&h).sel.view3d.polygon.is_empty());
+        assert_eq!(st(&h).sel().polygon.len(), 2, "{canvas_first}");
+        assert!(st(&h).sel().view3d.polygon.is_empty());
     }
 }
 
@@ -1540,11 +1527,11 @@ fn escape_in_the_middle_of_a_3d_polygon_keeps_the_selection_that_was_there_in_bo
             .map(|&c| at(&h, rect, c))
             .collect();
         clicks(&mut h, &ps);
-        assert_eq!(st(&h).sel.view3d.polygon.len(), 2, "{canvas_first}");
+        assert_eq!(st(&h).sel().view3d.polygon.len(), 2, "{canvas_first}");
         escape(&mut h);
         h.run();
         assert!(
-            st(&h).sel.view3d.polygon.is_empty(),
+            st(&h).sel().view3d.polygon.is_empty(),
             "{canvas_first}: 点を捨てた"
         );
         assert!(
@@ -1576,7 +1563,7 @@ fn the_polygon_double_click_uses_the_same_clock_for_the_mouse_and_the_pen() {
     h.step();
     h.state().pen().push(pen_sample(ps[2], false, 30));
     h.step();
-    assert_eq!(st(&h).sel.view3d.polygon.len(), 4, "閉じない");
+    assert_eq!(st(&h).sel().view3d.polygon.len(), 4, "閉じない");
     assert!(selection(&h).is_none());
     // すぐあとに同じ所をペンでもう一度押せば、ダブルクリックで閉じる
     h.state().pen().push(pen_sample(ps[2], true, 80));
@@ -1585,7 +1572,7 @@ fn the_polygon_double_click_uses_the_same_clock_for_the_mouse_and_the_pen() {
     h.step();
     h.run();
     assert!(
-        st(&h).sel.view3d.polygon.is_empty(),
+        st(&h).sel().view3d.polygon.is_empty(),
         "ダブルクリックで閉じた"
     );
     assert!(selection(&h).is_some());
@@ -1602,20 +1589,18 @@ fn an_open_amount_dialog_blocks_the_3d_polygon_keys_like_it_does_on_the_canvas()
         .map(|&c| at(&h, rect, c))
         .collect();
     clicks(&mut h, &ps);
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Ui(SelUiOp::OpenAmount(
-            yolu_app::selection::ModifyKind::Grow,
-        ))));
+    h.act(Action::Sel(SelAction::Ui(SelUiOp::OpenAmount(
+        yolu_app::selection::ModifyKind::Grow,
+    ))));
     h.run();
-    assert!(st(&h).sel.dialog.is_some(), "量を聞くウィンドウが開いた");
+    assert!(st(&h).sel().dialog.is_some(), "量を聞くウィンドウが開いた");
     // ウィンドウが開いている間の Enter・Backspace は、多角形に使わない（ウィンドウのもの）
     key(&h, Key::Backspace, Modifiers::NONE);
     h.run();
-    assert_eq!(st(&h).sel.view3d.polygon.len(), 3, "点を消さない");
+    assert_eq!(st(&h).sel().view3d.polygon.len(), 3, "点を消さない");
     key(&h, Key::Enter, Modifiers::NONE);
     h.run();
-    assert_eq!(st(&h).sel.view3d.polygon.len(), 3, "閉じない");
+    assert_eq!(st(&h).sel().view3d.polygon.len(), 3, "閉じない");
 }
 
 // ───────── 自動選択の範囲はテクスチャで決まる ─────────
@@ -1627,21 +1612,21 @@ fn the_wand_region_follows_the_texture_not_the_surface_so_it_takes_hidden_faces_
     // 奥の板（UV の左半分）の全部を赤に塗る。手前の板（右半分）は透明のまま
     paint_rect(&mut h, (0, 0, 32, 64));
     tool(&mut h, Tool::Wand);
-    h.state_mut().state.sel.tolerance = 0;
+    h.sel_mut().tolerance = 0;
     // 奥の板の見える所（左の端のほう）を押す
     let p = screen_of(&h, rect, Vec3::new(-0.8, 0.0, 0.0));
     click(&mut h, p);
-    assert_eq!(st(&h).doc.undo_count(), 1, "{}", message(&h));
+    assert_eq!(st(&h).doc().undo_count(), 1, "{}", message(&h));
     // 手前の板に隠れた所も選ぶ
     let (hx, hy) = (16u32, 32u32);
     assert_eq!(amount(&h, hx, hy), 255, "隠れた所も選ぶ");
     // 範囲は、テクスチャの上で色が近くつながる所（赤く塗った左半分）
-    let want = SelectionMask::rectangle(&st(&h).doc, 0, 0, 32, 64);
+    let want = SelectionMask::rectangle(st(&h).doc(), 0, 0, 32, 64);
     assert_same(&h, &want, "赤の範囲");
     // 塗っていないテクスチャでは、押した板から、UV の継ぎ目の向こう（もう一方の板の画素）まで、テクスチャの全部がつながる
     let (mut h, rect) = two_plates();
     tool(&mut h, Tool::Wand);
-    h.state_mut().state.sel.tolerance = 0;
+    h.sel_mut().tolerance = 0;
     let p = screen_of(&h, rect, Vec3::new(-0.8, 0.0, 0.0));
     click(&mut h, p);
     assert_eq!(selected_count(&h, N), (N * N) as usize, "{}", message(&h));
@@ -1652,16 +1637,15 @@ fn the_wand_region_follows_the_texture_not_the_surface_so_it_takes_hidden_faces_
 #[test]
 fn snapshot_selection_in_3d_in_both_languages() {
     use egui_dock::{DockState, NodeIndex};
-    let mut snapshots = egui_kittest::SnapshotResults::new();
     for lang in Lang::ALL {
         let (mut h, rect) = cube_view();
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         // キャンバスと 3D ビューを並べる（選択範囲の縁はキャンバスに出る）
         let mut dock = DockState::new(vec![Tab::Canvas]);
         dock.main_surface_mut()
             .split_right(NodeIndex::root(), 0.5, vec![Tab::View3d]);
         h.state_mut().dock = dock;
-        h.state_mut().state.sel.animate = false;
+        h.sel_mut().animate = false;
         h.run();
         let rect = h.state().view3d_rect().unwrap_or(rect);
         tool(&mut h, Tool::SelectEllipse);
@@ -1676,16 +1660,20 @@ fn snapshot_selection_in_3d_in_both_languages() {
         h.step();
         move_to(&h, b);
         h.step();
-        h.state_mut().state.message.clear();
+        h.message_mut().clear();
         h.run_steps(2);
-        h.snapshot(lang.pick("view3d_select_drag_ja", "view3d_select_drag_en"));
-        snapshots.extend_harness(&mut h);
+        // キャンバスと 3D ビューを並べた中央の範囲。英語の絵は撮らない（選択範囲の絵に文字は無い）
+        let center = crate::common::canvas_rect(&h).union(crate::view3d_area(&h));
+        if lang == Lang::Ja {
+            crate::common::shot::region(&mut h, "view3d_select_drag_ja", center);
+        }
         // 離した結果
         release(&h, b, PointerButton::Primary);
         h.step();
         h.event(Event::PointerGone);
         h.run();
-        h.snapshot(lang.pick("view3d_select_result_ja", "view3d_select_result_en"));
-        snapshots.extend_harness(&mut h);
+        if lang == Lang::Ja {
+            crate::common::shot::region(&mut h, "view3d_select_result_ja", center);
+        }
     }
 }

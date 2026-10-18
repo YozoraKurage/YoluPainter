@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use egui::{Color32, Modifiers, Painter, Pos2, Rect, Shape, Stroke};
+use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke};
 
 use super::outline::Run;
 use super::overlay::Tint;
@@ -18,6 +18,7 @@ use crate::engine::{CanvasSymmetry, SelectionCombine};
 use crate::lang::Lang;
 use crate::notice::Source;
 use crate::rulers::draw::mirrored_points;
+use crate::state::key::{Modifiers, PointerButton};
 use crate::state::{Action, AppState, StrokeSource, Tool};
 use crate::ui::theme as t;
 use crate::ui::widgets as w;
@@ -74,8 +75,14 @@ pub fn press(
     match app.tool {
         Tool::SelectPen => pen::press(app, view, pos, source, modifiers),
         Tool::Wand => {
-            let x = canvas.0.floor().clamp(0.0, (app.doc.width() - 1) as f64) as u32;
-            let y = canvas.1.floor().clamp(0.0, (app.doc.height() - 1) as f64) as u32;
+            let x = canvas
+                .0
+                .floor()
+                .clamp(0.0, (app.session.doc.width() - 1) as f64) as u32;
+            let y = canvas
+                .1
+                .floor()
+                .clamp(0.0, (app.session.doc.height() - 1) as f64) as u32;
             // 押した画素（キャンバスの外は端の画素へ寄せる）の中心から、対称定規の写しの種を作る。左右の写しが画素で揃い、外の写しは捨てる
             let seeds = app
                 .symmetry_seeds((x as f64 + 0.5, y as f64 + 0.5), app.sel.snap_symmetry)
@@ -153,8 +160,7 @@ pub fn finish_polygon(app: &mut AppState, modifiers: Modifiers) {
 pub(crate) fn refuse_too_few_points(app: &mut AppState) {
     app.refuse(
         Source::Selection,
-        app.lang
-            .pick("点が足りません（3 つ以上）。", "Needs at least 3 points."),
+        app.lang.t("selection-needs-at-least-3-points"),
     );
 }
 
@@ -234,7 +240,7 @@ pub fn release(
     let corner_radius = app.sel.corner_radius;
     let edit = match drag.tool {
         _ if click => {
-            if mode == SelectionCombine::Replace && app.doc.selection().is_some() {
+            if mode == SelectionCombine::Replace && app.session.doc.selection().is_some() {
                 Some(SelEdit::Clear)
             } else {
                 None
@@ -278,7 +284,7 @@ pub fn release(
 pub(crate) fn drag_mode(
     base: SelectionCombine,
     tool: Tool,
-    button: egui::PointerButton,
+    button: PointerButton,
     pressed_with: Modifiers,
     now: Modifiers,
 ) -> SelectionCombine {
@@ -334,8 +340,7 @@ pub fn cancel(app: &mut AppState) -> bool {
     if any {
         app.info(
             Source::Selection,
-            app.lang
-                .pick("選択の途中をやめました。", "Selection cancelled."),
+            app.lang.t("selection-selection-cancelled"),
         );
     }
     any
@@ -490,10 +495,7 @@ fn ants_shapes(view: &CanvasView, clip: Rect, runs: &[Run], phase: f32) -> Ants 
 
 /// 縁を一部しか描いていない理由（キャンバスの隅に出す短い状態。使い方の説明ではない）。
 fn partial_edge_note(lang: Lang) -> &'static str {
-    lang.pick(
-        "縁が多いため一部だけ表示",
-        "Edge partly shown: too many segments",
-    )
+    lang.t("selection-edge-partly-shown-too-many")
 }
 
 /// 縁が一部だけの印を、キャンバスの左下に出す。
@@ -522,7 +524,7 @@ fn paint_ants(ctx: &egui::Context, painter: &Painter, view: &CanvasView, app: &m
         app.sel.edge_partial = false;
         return;
     }
-    let Some(mask) = app.doc.selection().cloned() else {
+    let Some(mask) = app.session.doc.selection().cloned() else {
         app.sel.edge_partial = false;
         return;
     };
@@ -686,7 +688,7 @@ pub fn paint_overlay(
     }
     paint_ants(ctx, painter, view, app);
     paint_pen(ctx, painter, view, app);
-    paint_drafts(painter, view, app, ctx.input(|i| i.modifiers));
+    paint_drafts(painter, view, app, ctx.input(|i| i.modifiers.into()));
 }
 
 /// 選択ペンのツール: 動いているストロークの被覆（足す・消すで色を変える）と、ブラシの直径の輪のカーソル。
@@ -758,8 +760,8 @@ pub fn paint_mirrored_cursors(
                 x,
                 y,
                 app.brush.radius as f64,
-                app.doc.width(),
-                app.doc.height(),
+                app.session.doc.width(),
+                app.session.doc.height(),
             )
             .ok()
         })

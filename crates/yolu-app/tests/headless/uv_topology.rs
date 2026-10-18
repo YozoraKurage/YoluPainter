@@ -1,5 +1,6 @@
 //! レイヤーのフィルターが UV の継ぎ目をまたぐのに使う、モデルの UV の位相の持ち方（`fx::inputs` の `refresh_topologies`）: ポーズで位置だけ
 //! 変わったモデルでは前の位相を使い続け、UV の並びが違うモデルでは、前のモデルが解放されて同じ番地に別のモデルが作られても作り直す。
+use crate::common::drive::Drive;
 use std::sync::Arc;
 
 use yolu_app::state::AppState;
@@ -30,7 +31,7 @@ fn plate(name: &str, shift: f32, uv: f32, generation: Option<u32>) -> ViewModel 
 fn topology_of(state: &mut AppState) -> Arc<UvTopology> {
     state.sync_effect_inputs_with(true);
     state
-        .doc
+        .doc()
         .effect_inputs()
         .topology()
         .cloned()
@@ -40,10 +41,10 @@ fn topology_of(state: &mut AppState) -> Arc<UvTopology> {
 #[test]
 fn a_model_with_the_same_layout_keeps_the_topology() {
     let mut s = AppState::new(64, 64);
-    s.view3d.set_model(plate("板", 0.0, 0.3, None));
+    s.view3d_mut().set_model(plate("板", 0.0, 0.3, None));
     let first = topology_of(&mut s);
     // 位置だけが違う（ポーズ）: 同じ位相のまま（アイランド・帯の写しを作り直さない）
-    s.view3d.set_model(plate("板", 5.0, 0.3, None));
+    s.view3d_mut().set_model(plate("板", 5.0, 0.3, None));
     let moved = topology_of(&mut s);
     assert!(Arc::ptr_eq(&first, &moved));
     // 同じモデルを見続けても同じ
@@ -55,12 +56,12 @@ fn another_layout_gets_a_new_topology_even_when_the_old_model_is_gone() {
     // 閉じて（前のモデルを手放して）すぐ別のモデルを読む。同期の前に起きるので、前のモデルの番地が使い回されうる
     for round in 0..8u32 {
         let mut s = AppState::new(64, 64);
-        s.view3d.set_model(plate("板", 0.0, 0.3, Some(round)));
+        s.view3d_mut().set_model(plate("板", 0.0, 0.3, Some(round)));
         let first = topology_of(&mut s);
-        s.view3d.close_live_link(round);
-        s.view3d.set_model(plate("別の板", 0.0, 0.5, None));
+        s.view3d_mut().close_live_link(round);
+        s.view3d_mut().set_model(plate("別の板", 0.0, 0.5, None));
         let second = topology_of(&mut s);
-        let model = s.view3d.full_model().unwrap().clone();
+        let model = s.view3d().full_model().unwrap().clone();
         assert!(!Arc::ptr_eq(&first, &second), "round {round}");
         assert!(
             Arc::ptr_eq(second.geometry(), &model.geometry),

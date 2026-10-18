@@ -6,6 +6,7 @@
 //! - 写し（Undo・ストロークの巻き戻し）は `Arc` を共有し、最初の書き込みでだけ複製する（copy-on-write）。
 //! - アルファ 0 の画素の RGB も、明示して消すまでそのまま保つ。
 
+use crate::Reason;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -288,7 +289,7 @@ impl Surface {
     /// 画素（キャンバスの外は Err）。無いタイルは透明。
     pub fn pixel(&self, x: u32, y: u32) -> Result<Rgba8, CoreError> {
         if x >= self.width || y >= self.height {
-            return Err(CoreError::InvalidArgument("画素がキャンバスの外"));
+            return Err(CoreError::InvalidArgument(Reason::PixelOutsideCanvas));
         }
         let ts = self.tile_size;
         match self.tiles.get(&TileCoord::new(x / ts, y / ts)) {
@@ -323,7 +324,7 @@ impl Surface {
     pub fn copy_tile(&self, coord: TileCoord, destination: &mut [u8]) -> Result<bool, CoreError> {
         self.check_coord(coord)?;
         if destination.len() != self.tile_bytes() {
-            return Err(CoreError::InvalidArgument("タイルのバイト数が違う"));
+            return Err(CoreError::InvalidArgument(Reason::InvalidTileByteCount));
         }
         match self.tiles.get(&coord) {
             None => {
@@ -412,7 +413,9 @@ impl Surface {
         if (coord.x as u64) * (self.tile_size as u64) >= self.width as u64
             || (coord.y as u64) * (self.tile_size as u64) >= self.height as u64
         {
-            Err(CoreError::InvalidArgument("タイルの座標がキャンバスの外"))
+            Err(CoreError::InvalidArgument(
+                Reason::TileCoordinatesOutsideCanvas,
+            ))
         } else {
             Ok(())
         }
@@ -478,7 +481,7 @@ impl Surface {
     fn check_import(&self, coord: TileCoord, bytes: &[u8]) -> Result<(), CoreError> {
         self.check_coord(coord)?;
         if bytes.len() != self.tile_bytes() {
-            return Err(CoreError::InvalidArgument("タイルのバイト数が違う"));
+            return Err(CoreError::InvalidArgument(Reason::InvalidTileByteCount));
         }
         let ts = self.tile_size as usize;
         let (sx, sy) = (coord.x as usize * ts, coord.y as usize * ts);
@@ -495,7 +498,7 @@ impl Surface {
                 let p = (y * ts + x) * 4;
                 if bytes[p..p + 4] != [0, 0, 0, 0] {
                     return Err(CoreError::InvalidArgument(
-                        "キャンバスの外の余白は 0 でなければならない",
+                        Reason::PaddingOutsideCanvasNotZero,
                     ));
                 }
             }
@@ -527,7 +530,7 @@ impl Surface {
         growth: Growth,
     ) -> Result<bool, CoreError> {
         if x >= self.width || y >= self.height {
-            return Err(CoreError::InvalidArgument("画素がキャンバスの外"));
+            return Err(CoreError::InvalidArgument(Reason::PixelOutsideCanvas));
         }
         let ts = self.tile_size;
         let coord = TileCoord::new(x / ts, y / ts);

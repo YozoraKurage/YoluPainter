@@ -30,12 +30,12 @@ pub fn attribute_byte(layer_name: &str) -> usize {
 pub fn as_version(current: &[u8], layer_name: &str, target: i32) -> Vec<u8> {
     assert!(
         (3..CURRENT_VERSION).contains(&target),
-        "版 {target} は作れない"
+        "バージョン {target} は作れない"
     );
     assert_eq!(
         i32::from_le_bytes(current[8..12].try_into().unwrap()),
         CURRENT_VERSION,
-        "今の版から変える"
+        "今のバージョンから変える"
     );
     let mut bytes = current.to_vec();
     if target >= 10 {

@@ -10,7 +10,7 @@ To use the command line and MCP server (`yolupainter-cli`; [usage](CLI.md)) as w
 
 ## Windows
 
-Prepare 64-bit Windows, Visual Studio Build Tools with “Desktop development with C++” (including the Windows SDK), and Rust's MSVC toolchain. Run in PowerShell:
+Prepare 64-bit Windows, Visual Studio Build Tools (2022 version 17.11 or later) with “Desktop development with C++” (including the Windows SDK) and the individual component C++ ATL (ID `Microsoft.VisualStudio.Component.VC.ATL`), and Rust's MSVC toolchain. The shader compiler (DXC) is linked into the executable, so the build downloads its library from GitHub (`curl.exe` and `tar.exe` must be available). Run in PowerShell:
 
 ```powershell
 cargo build --release -p yolu-app --locked --target x86_64-pc-windows-msvc

@@ -3,6 +3,7 @@
 //! ツールプロパティの「塗るチャンネル」（描くツールだけ。マスクに描くあいだはレイヤーマスクの欄）、プロパティのタブ（ステンシル・レイヤー）。
 //! 見た目の試験（日英）はパネルや列の中だけを撮る（ほかのパネルの変更で壊れない）。
 use crate::common;
+use crate::common::drive::Drive;
 
 use std::path::{Path, PathBuf};
 
@@ -27,18 +28,16 @@ type H = Harness<'static, YoluApp>;
 const NEW_TABS: [Tab; 3] = [Tab::ToolProperties, Tab::BrushSize, Tab::Material];
 
 fn st(h: &H) -> &AppState {
-    &h.state().state
+    h.app()
 }
 
 fn language(h: &mut H, lang: Lang) {
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(yolu_app::m2::UiOp::Language(lang)));
+    h.act(Action::M2Ui(yolu_app::m2::UiOp::Language(lang)));
     h.run();
 }
 
 fn pick(h: &mut H, tool: Tool) {
-    h.state_mut().state.apply(Action::SelectTool(tool));
+    h.act(Action::SelectTool(tool));
     h.run();
 }
 
@@ -264,7 +263,7 @@ fn the_default_window_gives_every_panel_the_room_it_needs_at_the_three_sizes_in_
             click_tab(&mut h, Tab::Channels);
             let body = top_right_body(&h);
             for channel in yolu_app::matpaint::CHANNELS {
-                let name = yolu_app::m2::channel_name(lang, &st(&h).doc, channel);
+                let name = yolu_app::m2::channel_name(lang, st(&h).doc(), channel);
                 let row = rect_of(&h, &name, |r| body.contains(r.center()));
                 assert!(
                     row.bottom() <= body.bottom(),
@@ -273,7 +272,7 @@ fn the_default_window_gives_every_panel_the_room_it_needs_at_the_three_sizes_in_
             }
             // アセット: 品が見える（高さの足りない最小のウィンドウは、品の上の部分だけでもよい）
             click_tab(&mut h, Tab::Assets);
-            h.state_mut().state.shelf.wait_inspections();
+            h.shelf_mut().wait_inspections();
             h.run();
             let first = yolu_core::smart_library::entries()
                 .first()
@@ -298,12 +297,15 @@ fn the_default_window_gives_every_panel_the_room_it_needs_at_the_three_sizes_in_
     }
 }
 
-/// 左の列: 1280×800 でブラシサイズの 1 段目の数字が見え、「塗るチャンネル」の見出しが切れない。1280×1000 ではブラシサイズの丸が 2 段とも見える。
+/// 左の列: 1280×800 でブラシサイズの 1 段目（7 つ）の数字が見え、「塗るチャンネル」の見出しが切れない。1280×1600 ではブラシサイズの丸が 4 段とも見える。
 #[test]
 fn the_default_left_column_shows_the_size_numbers_and_the_paint_channels_header() {
     for lang in Lang::ALL {
         let mut h = app(1280.0, 800.0, 128);
         language(&mut h, lang);
+        // 1 段目の丸を見る（選んでいる大きさの段へ送るので、1 段目の大きさ 1 px を選ぶ）
+        h.brush_mut().radius = 0.5;
+        h.run();
         let (props, size, color) = (
             tab_rect(&h, Tab::ToolProperties),
             tab_rect(&h, Tab::BrushSize),
@@ -322,14 +324,16 @@ fn the_default_left_column_shows_the_size_numbers_and_the_paint_channels_header(
         );
         let size_body =
             Rect::from_min_max(size.left_bottom(), pos2(size.left() + 300.0, color.top()));
-        for px in [1u32, 2, 3, 5, 8, 12, 16] {
+        // 1 段目の 7 つ（小数の 1.5・2.5 を含む）
+        for px in [1.0f32, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0] {
             let cell = rect_of(&h, &format!("{px} px"), |r| size_body.contains(r.center()));
             assert!(
                 size_body.contains_rect(cell),
                 "{lang:?}: {px} の丸と数字が見える {cell:?} {size_body:?}"
             );
         }
-        let mut tall = app(1280.0, 1000.0, 128);
+        // （丸が 4 段とも入る高さで）
+        let mut tall = app(1280.0, 1600.0, 128);
         language(&mut tall, lang);
         let (size, color) = (tab_rect(&tall, Tab::BrushSize), tab_rect(&tall, Tab::Color));
         let size_body =
@@ -377,7 +381,7 @@ fn the_color_wheel_fills_the_panel_without_the_marker_leaving_it_and_nothing_is_
             );
             assert!(
                 wheel.width() >= least,
-                "{what}: 円の直径 {} が小さい（前の版以上）",
+                "{what}: 円の直径 {} が小さい（前のバージョン以上）",
                 wheel.width()
             );
             // 選ぶ印の輪（円の真上・真下・真左・真右の外へ出る分）も、欄の中に収まる
@@ -431,7 +435,7 @@ fn the_color_wheel_fills_the_panel_without_the_marker_leaving_it_and_nothing_is_
                 "{what}: 切り替えのボタンが円の外 {toggle:?} {wheel:?}"
             );
             // 使った色が入ると、その行の分だけ円が小さくなり、その行の下も空かない
-            h.state_mut().state.color.remember();
+            h.color_mut().remember();
             h.run();
             let smaller = h.get_by_label(lang.pick("色相の円", "Hue wheel")).rect();
             assert!(
@@ -491,10 +495,10 @@ fn the_window_menu_lists_the_new_panels_and_opens_one_that_is_nowhere() {
         let path = dock.find_tab(&tab).unwrap();
         dock.remove_tab(path);
         h.run();
-        assert!(!h.state().state.ui.panels.open.contains(&tab));
-        h.state_mut().state.apply(Action::Dock(DockOp::Show(tab)));
+        assert!(!h.ui().panels.open.contains(&tab));
+        h.act(Action::Dock(DockOp::Show(tab)));
         h.run();
-        assert!(h.state().state.ui.panels.open.contains(&tab), "{tab:?}");
+        assert!(h.ui().panels.open.contains(&tab), "{tab:?}");
         let dock = &h.state().dock;
         assert!(
             mates(dock, tab).contains(&with),
@@ -681,9 +685,7 @@ fn the_follow_stops_once_the_user_changes_the_arrangement() {
     // 別ウィンドウ
     let dir3 = settings_dir("follow-detached");
     let mut h = app_in_settings(&dir3, 1600.0, 900.0);
-    h.state_mut()
-        .state
-        .apply(Action::Dock(DockOp::Detach(Tab::Log)));
+    h.act(Action::Dock(DockOp::Detach(Tab::Log)));
     h.run();
     let moved = shape(&h.state().dock);
     h.set_size(vec2(1100.0, 900.0));
@@ -697,9 +699,7 @@ fn the_follow_stops_once_the_user_changes_the_arrangement() {
     // ナビゲーターを開いても自動のまま（選んでいるタブも保つ）
     let dir4 = settings_dir("follow-navigator");
     let mut h = app_in_settings(&dir4, 1600.0, 900.0);
-    h.state_mut()
-        .state
-        .apply(Action::Dock(DockOp::Show(Tab::Navigator)));
+    h.act(Action::Dock(DockOp::Show(Tab::Navigator)));
     h.run();
     h.set_size(vec2(1100.0, 900.0));
     h.run();
@@ -792,12 +792,10 @@ fn the_navigator_is_closed_in_the_default_dock_and_opens_into_the_texture_sets_g
         );
     }
     assert!(h.state().dock.find_tab(&Tab::Navigator).is_none());
-    assert!(!h.state().state.ui.panels.open.contains(&Tab::Navigator));
-    h.state_mut()
-        .state
-        .apply(Action::Dock(DockOp::Show(Tab::Navigator)));
+    assert!(!h.ui().panels.open.contains(&Tab::Navigator));
+    h.act(Action::Dock(DockOp::Show(Tab::Navigator)));
     h.run();
-    assert!(h.state().state.ui.panels.open.contains(&Tab::Navigator));
+    assert!(h.ui().panels.open.contains(&Tab::Navigator));
     let dock = &h.state().dock;
     assert!(mates(dock, Tab::Navigator).contains(&Tab::TextureSets));
     let leaf_index = dock.find_main_surface_tab(&Tab::Navigator).unwrap();
@@ -817,7 +815,7 @@ fn each_new_panel_can_go_to_its_own_window_and_come_back_to_where_it_was() {
     for tab in NEW_TABS {
         let mut h = app(1600.0, 900.0, 128);
         let mates_before = mates(&h.state().dock, tab);
-        h.state_mut().state.apply(Action::Dock(DockOp::Detach(tab)));
+        h.act(Action::Dock(DockOp::Detach(tab)));
         h.run();
         h.step();
         let app = h.state();
@@ -827,14 +825,14 @@ fn each_new_panel_can_go_to_its_own_window_and_come_back_to_where_it_was() {
         );
         assert_eq!(app.detached.windows.len(), 1, "{tab:?}");
         assert_eq!(app.detached.windows[0].tabs(), vec![tab]);
-        assert!(app.state.ui.panels.outside.contains(&tab));
+        assert!(app.state.ui().panels.outside.contains(&tab));
         layout::validate_all(&app.dock, &[&app.detached.windows[0].dock])
             .expect("どのタブも 1 つずつ");
         // 別ウィンドウにも、そのパネルの中身が出る（試験では、メインウィンドウの中の egui のウィンドウ）
         let window = h.state().detached.windows[0].tab_rects[&tab];
         let label = match tab {
             Tab::ToolProperties => "硬さ",
-            Tab::BrushSize => "16 px",
+            Tab::BrushSize => "15 px",
             _ => "種類: lilToon",
         };
         assert!(
@@ -844,7 +842,7 @@ fn each_new_panel_can_go_to_its_own_window_and_come_back_to_where_it_was() {
             "{tab:?}: 中身が別ウィンドウに出る"
         );
         // 「ドックに戻す」で、出す前に同じ組にいたタブの組へ。1 つだけの組にいた物は、既定の並びで上にあるサブツールの組へ
-        h.state_mut().state.apply(Action::Dock(DockOp::Return(tab)));
+        h.act(Action::Dock(DockOp::Return(tab)));
         h.run();
         let app = h.state();
         assert!(app.detached.windows.is_empty());
@@ -867,7 +865,7 @@ fn each_new_panel_can_go_to_its_own_window_and_come_back_to_where_it_was() {
 
 /// 「ウィンドウ」のメニューの、タブの項目: チェックが付いているか・押したときの操作。
 fn window_item(h: &H, tab: Tab) -> (bool, Action) {
-    let lang = st(h).lang;
+    let lang = st(h).lang();
     let entries = yolu_app::shell::menu_entries(st(h), yolu_app::shell::WINDOW_MENU);
     for entry in entries {
         if let yolu_app::ui::menu::Entry::Item {
@@ -902,39 +900,39 @@ fn the_window_menu_toggles_the_navigator_and_the_actions_panel() {
         let (checked, action) = window_item(&h, tab);
         assert!(!checked, "{tab:?}: 閉じている");
         assert_eq!(action, Action::Dock(DockOp::Show(tab)));
-        h.state_mut().state.apply(action);
+        h.act(action);
         h.run();
         assert!(mates(&h.state().dock, tab).contains(&with), "{tab:?}");
         let (checked, action) = window_item(&h, tab);
         assert!(checked, "{tab:?}: 開くとチェックが付く");
         assert_eq!(action, Action::Dock(DockOp::Hide(tab)));
-        h.state_mut().state.apply(action);
+        h.act(action);
         h.run();
         assert!(h.state().dock.find_tab(&tab).is_none(), "{tab:?}: 閉じた");
-        assert!(!h.state().state.ui.panels.open.contains(&tab));
+        assert!(!h.ui().panels.open.contains(&tab));
         assert!(!window_item(&h, tab).0, "{tab:?}: チェックが外れる");
         layout::validate(&h.state().dock).expect("閉じても検証を通る");
         // また開くと、同じ組に入る
-        h.state_mut().state.apply(Action::Dock(DockOp::Show(tab)));
+        h.act(Action::Dock(DockOp::Show(tab)));
         h.run();
         assert!(
             mates(&h.state().dock, tab).contains(&with),
             "{tab:?}: また開く"
         );
         // 別ウィンドウに出していても、メニューで閉じるとそのウィンドウごと消える
-        h.state_mut().state.apply(Action::Dock(DockOp::Detach(tab)));
+        h.act(Action::Dock(DockOp::Detach(tab)));
         h.run();
         h.step();
         assert_eq!(h.state().detached.windows.len(), 1, "{tab:?}");
         let (checked, action) = window_item(&h, tab);
         assert!(checked, "{tab:?}: 別ウィンドウでもチェックが付く");
-        h.state_mut().state.apply(action);
+        h.act(action);
         h.run();
         assert!(
             h.state().detached.windows.is_empty(),
             "{tab:?}: ウィンドウが消える"
         );
-        assert!(!h.state().state.ui.panels.open.contains(&tab));
+        assert!(!h.ui().panels.open.contains(&tab));
     }
     // 閉じられないパネルは、開いていても押すと前に出す（Hide にならない）
     let (_, action) = window_item(&h, Tab::Layers);
@@ -952,9 +950,7 @@ fn a_closed_navigator_stays_closed_after_the_arrangement_is_saved_and_read_back(
     use eframe::App;
     let dir = settings_dir("navigator-closed");
     let mut h = app_in_settings(&dir, 1280.0, 800.0);
-    h.state_mut()
-        .state
-        .apply(Action::Dock(DockOp::Show(Tab::Navigator)));
+    h.act(Action::Dock(DockOp::Show(Tab::Navigator)));
     h.run();
     h.state_mut().on_exit();
     drop(h);
@@ -963,9 +959,7 @@ fn a_closed_navigator_stays_closed_after_the_arrangement_is_saved_and_read_back(
         h.state().dock.find_tab(&Tab::Navigator).is_some(),
         "開いたまま閉じれば開いたまま"
     );
-    h.state_mut()
-        .state
-        .apply(Action::Dock(DockOp::Hide(Tab::Navigator)));
+    h.act(Action::Dock(DockOp::Hide(Tab::Navigator)));
     h.run();
     h.state_mut().on_exit();
     drop(h);
@@ -1018,17 +1012,17 @@ fn single_tab_groups_come_back_as_their_own_group_next_to_their_default_neighbor
         // 「ドックに戻す」
         let mut h = app_default(1600.0, 900.0, 128);
         assert_own_group_beside(&h.state().dock, tab, neighbor, side, "出す前");
-        h.state_mut().state.apply(Action::Dock(DockOp::Detach(tab)));
+        h.act(Action::Dock(DockOp::Detach(tab)));
         h.run();
         h.step();
         assert_eq!(h.state().detached.windows.len(), 1, "{tab:?}");
-        h.state_mut().state.apply(Action::Dock(DockOp::Return(tab)));
+        h.act(Action::Dock(DockOp::Return(tab)));
         h.run();
         h.run();
         assert!(h.state().detached.windows.is_empty());
         assert_own_group_beside(&h.state().dock, tab, neighbor, side, "戻す");
         // OS のウィンドウを閉じる道（`close`）
-        h.state_mut().state.apply(Action::Dock(DockOp::Detach(tab)));
+        h.act(Action::Dock(DockOp::Detach(tab)));
         h.run();
         h.step();
         let serial = h.state().detached.windows[0].serial;
@@ -1047,7 +1041,10 @@ fn the_added_material_and_log_follow_properties_and_layers_into_their_windows() 
     let mut main = previous_default();
     let mut older = main.clone();
     for tab in [Tab::Properties, Tab::Layers] {
-        assert!(older.find_tab(&tab).is_some(), "前の版の並びにある {tab:?}");
+        assert!(
+            older.find_tab(&tab).is_some(),
+            "前のバージョンの並びにある {tab:?}"
+        );
     }
     // 前の版には無かったマテリアル・ログを外した並びを作る（無ければそのまま）
     for tab in [Tab::Material, Tab::Log] {
@@ -1377,9 +1374,7 @@ fn an_app_started_with_an_old_layout_file_shows_the_new_panels_and_writes_them_b
         assert!(pair[0].top() < pair[1].top(), "上から順 {column:?}");
     }
     // 並びを変えると（ヒストリーを別ウィンドウへ）、足した 3 つも含めて書かれる
-    h.state_mut()
-        .state
-        .apply(Action::Dock(DockOp::Detach(Tab::History)));
+    h.act(Action::Dock(DockOp::Detach(Tab::History)));
     h.run();
     h.state_mut().on_exit();
     let written = std::fs::read_to_string(dir.join(layout::FILE_NAME)).unwrap();
@@ -1411,12 +1406,10 @@ fn the_properties_have_two_tabs_and_no_material_tab_in_both_languages() {
             "{lang:?}: プロパティの中にマテリアルのタブは無い"
         );
         // マスクに描いても、タブは 2 つのまま（マスクのタブは出ない）
-        let id = st(&h).selected_layer.unwrap();
-        h.state_mut()
-            .state
-            .apply(Action::M2(yolu_app::m2::Edit::AddMask(id)));
+        let id = st(&h).selected_layer().unwrap();
+        h.act(Action::M2(yolu_app::m2::Edit::AddMask(id)));
         h.run();
-        assert!(st(&h).m2.edit_mask);
+        assert!(st(&h).m2().edit_mask);
         assert_eq!(count(&h, lang.pick("マスク", "Mask")), 0, "{lang:?}");
     }
 }
@@ -1467,7 +1460,7 @@ fn the_paint_channels_section_is_only_for_the_tools_that_paint_with_channels() {
 }
 
 fn channel_pixel(s: &AppState, channel: Channel, x: u32, y: u32) -> yolu_app::engine::Rgba8 {
-    let layer = s.doc.layer(s.selected_layer.unwrap()).unwrap();
+    let layer = s.doc().layer(s.selected_layer().unwrap()).unwrap();
     layer
         .surface(channel)
         .and_then(|surface| surface.pixel(x, y).ok())
@@ -1477,9 +1470,9 @@ fn channel_pixel(s: &AppState, channel: Channel, x: u32, y: u32) -> yolu_app::en
 #[test]
 fn the_tool_properties_paint_channels_change_the_state_and_the_stroke_paints_those_channels() {
     let mut h = app(1280.0, 1500.0, 128);
-    h.state_mut().state.color.set_main([1.0, 0.0, 0.0, 1.0]);
+    h.color_mut().set_main([1.0, 0.0, 0.0, 1.0]);
     {
-        let b = &mut h.state_mut().state.brush;
+        let b = h.brush_mut();
         b.radius = 3.0;
         b.hardness = 1.0;
     }
@@ -1489,19 +1482,19 @@ fn the_tool_properties_paint_channels_change_the_state_and_the_stroke_paints_tho
         r.top() > props.bottom() && r.bottom() < size.top() + 2.0 && r.left() < 340.0
     };
     // 初めは閉じている。名前を押して開く
-    assert!(!st(&h).mat.enabled);
+    assert!(!st(&h).mat().enabled);
     assert!(h.query_by_label("複数のチャンネルを一度に塗る").is_none());
     let header = rect_of(&h, "塗るチャンネル", in_props);
     click(&mut h, header.center());
     let toggle = rect_of(&h, "複数のチャンネルを一度に塗る", in_props);
     click(&mut h, toggle.center());
-    assert!(st(&h).mat.enabled);
-    assert_eq!(st(&h).mat.included(), vec![Channel::Color]);
+    assert!(st(&h).mat().enabled);
+    assert_eq!(st(&h).mat().included(), vec![Channel::Color]);
     // チップでラフネスを足す。最後の 1 つは外せない
     let chip = rect_of(&h, "ラフネス", |r| in_props(r) && r.height() < 30.0);
     click(&mut h, chip.center());
     assert_eq!(
-        st(&h).mat.included(),
+        st(&h).mat().included(),
         vec![Channel::Color, Channel::Roughness]
     );
     let chip = rect_of(&h, "カラー", |r| in_props(r) && r.height() < 30.0);
@@ -1509,25 +1502,25 @@ fn the_tool_properties_paint_channels_change_the_state_and_the_stroke_paints_tho
     let chip = rect_of(&h, "ラフネス", |r| in_props(r) && r.height() < 30.0);
     click(&mut h, chip.center());
     assert_eq!(
-        st(&h).mat.included(),
+        st(&h).mat().included(),
         vec![Channel::Roughness],
         "最後の 1 つは外せない"
     );
-    assert!(st(&h).message.contains("1 つ以上"));
+    assert!(st(&h).message().contains("1 つ以上"));
     let chip = rect_of(&h, "カラー", |r| in_props(r) && r.height() < 30.0);
     click(&mut h, chip.center());
     assert_eq!(
-        st(&h).mat.included(),
+        st(&h).mat().included(),
         vec![Channel::Color, Channel::Roughness]
     );
     // 値を変えて描くと、組のチャンネルが 1 回の Undo で塗られる（組に無いチャンネルは塗らない）
-    h.state_mut().state.mat.set_scalar(Channel::Roughness, 0.25);
+    h.mat_mut().set_scalar(Channel::Roughness, 0.25);
     h.run();
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     let c = canvas_rect(&h).center();
     drag(&mut h, &[offset(c, -20.0, 0.0), offset(c, 20.0, 0.0)]);
     assert_eq!(
-        st(&h).doc.undo_count(),
+        st(&h).doc().undo_count(),
         steps + 1,
         "全チャンネルで 1 回の Undo"
     );
@@ -1544,7 +1537,7 @@ fn the_tool_properties_paint_channels_change_the_state_and_the_stroke_paints_tho
         channel_pixel(st(&h), Channel::Metallic, at.0, at.1),
         yolu_app::engine::Rgba8::TRANSPARENT
     );
-    h.state_mut().state.apply(Action::Undo);
+    h.act(Action::Undo);
     for ch in [Channel::Color, Channel::Roughness] {
         assert_eq!(
             channel_pixel(st(&h), ch, at.0, at.1),
@@ -1553,11 +1546,9 @@ fn the_tool_properties_paint_channels_change_the_state_and_the_stroke_paints_tho
         );
     }
     // 取り消しに積まない値（組・値は画面の状態）
-    let steps = st(&h).doc.undo_count();
-    h.state_mut()
-        .state
-        .apply(Action::Mat(MatAction::Channel(Channel::Metallic, true)));
-    assert_eq!(st(&h).doc.undo_count(), steps);
+    let steps = st(&h).doc().undo_count();
+    h.act(Action::Mat(MatAction::Channel(Channel::Metallic, true)));
+    assert_eq!(st(&h).doc().undo_count(), steps);
 }
 
 /// 選択のツールのツールプロパティにも「塗るチャンネル」が出る。入れた組で選択範囲を塗りつぶすと組の全部が塗られ（今の動きのまま）、
@@ -1569,20 +1560,12 @@ fn the_selection_tools_show_the_paint_channels_and_the_fill_paints_the_whole_set
     pick(&mut h, Tool::SelectRect);
     assert_eq!(count(&h, "塗るチャンネル"), 1);
     // 組を入れて、全体を選んで塗りつぶす
-    h.state_mut().state.color.set_main([1.0, 0.0, 0.0, 1.0]);
-    h.state_mut()
-        .state
-        .apply(Action::Mat(MatAction::Enabled(true)));
-    h.state_mut()
-        .state
-        .apply(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
-    h.state_mut().state.mat.set_scalar(Channel::Roughness, 0.25);
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Edit(SelEdit::All)));
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Edit(SelEdit::Fill)));
+    h.color_mut().set_main([1.0, 0.0, 0.0, 1.0]);
+    h.act(Action::Mat(MatAction::Enabled(true)));
+    h.act(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
+    h.mat_mut().set_scalar(Channel::Roughness, 0.25);
+    h.act(Action::Sel(SelAction::Edit(SelEdit::All)));
+    h.act(Action::Sel(SelAction::Edit(SelEdit::Fill)));
     h.run();
     assert_eq!(
         channel_pixel(st(&h), Channel::Color, 64, 64),
@@ -1598,12 +1581,10 @@ fn the_selection_tools_show_the_paint_channels_and_the_fill_paints_the_whole_set
         "組に無いチャンネルは塗らない"
     );
     // マスクに描いているあいだは、区分でなくマスクの欄
-    let id = st(&h).selected_layer.unwrap();
-    h.state_mut()
-        .state
-        .apply(Action::M2(yolu_app::m2::Edit::AddMask(id)));
+    let id = st(&h).selected_layer().unwrap();
+    h.act(Action::M2(yolu_app::m2::Edit::AddMask(id)));
     h.run();
-    assert!(st(&h).m2.edit_mask);
+    assert!(st(&h).m2().edit_mask);
     assert_eq!(count(&h, "塗るチャンネル"), 0);
 }
 
@@ -1612,13 +1593,9 @@ fn the_selection_tools_show_the_paint_channels_and_the_fill_paints_the_whole_set
 fn the_paint_channel_values_follow_the_tool_not_the_brush_effect_of_other_tools() {
     let mut h = app(1280.0, 1800.0, 128);
     open_paint_channels(&mut h);
-    h.state_mut()
-        .state
-        .apply(Action::Mat(MatAction::Enabled(true)));
-    h.state_mut()
-        .state
-        .apply(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
-    h.state_mut().state.m2.brush.effect = yolu_core::brush::BrushEffect::Smudge { strength: 0.5 };
+    h.act(Action::Mat(MatAction::Enabled(true)));
+    h.act(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
+    h.m2_mut().brush.effect = yolu_core::brush::BrushEffect::Smudge { strength: 0.5 };
     // 値の行（ラフネスの値の欄）の数: チップの「ラフネス」のほかに、値の行の名前が出る
     let rows = |h: &H| count(h, "ラフネス");
     pick(&mut h, Tool::Brush);
@@ -1639,7 +1616,7 @@ fn the_paint_channel_values_follow_the_tool_not_the_brush_effect_of_other_tools(
             rows(&h)
         );
     }
-    h.state_mut().state.m2.brush.effect = yolu_core::brush::BrushEffect::Paint;
+    h.m2_mut().brush.effect = yolu_core::brush::BrushEffect::Paint;
     pick(&mut h, Tool::Brush);
     assert!(rows(&h) > brush, "塗りのブラシでは値の行が出る");
 }
@@ -1666,9 +1643,7 @@ fn the_paint_channels_header_carries_a_dot_while_the_setting_is_on() {
     assert!(!st(&h).section_open("paint-channels", false), "閉じている");
     let off = dot_color(&mut h);
     assert_ne!(off[..3], accent[..3], "切っているあいだは点が無い");
-    h.state_mut()
-        .state
-        .apply(Action::Mat(MatAction::Enabled(true)));
+    h.act(Action::Mat(MatAction::Enabled(true)));
     h.run();
     assert!(!st(&h).section_open("paint-channels", false), "閉じたまま");
     let on = dot_color(&mut h);
@@ -1677,9 +1652,7 @@ fn the_paint_channels_header_carries_a_dot_while_the_setting_is_on() {
         accent[..3],
         "入れているあいだは、閉じていても点が出る"
     );
-    h.state_mut()
-        .state
-        .apply(Action::Mat(MatAction::Enabled(false)));
+    h.act(Action::Mat(MatAction::Enabled(false)));
     h.run();
     assert_ne!(dot_color(&mut h)[..3], accent[..3], "切ると消える");
 }
@@ -1698,12 +1671,10 @@ fn while_painting_a_mask_the_tool_properties_show_the_layer_mask_instead_of_the_
     assert!(!h
         .query_all_by_label("レイヤーマスク")
         .any(|n| in_props(n.rect())));
-    let id = st(&h).selected_layer.unwrap();
-    h.state_mut()
-        .state
-        .apply(Action::M2(yolu_app::m2::Edit::AddMask(id)));
+    let id = st(&h).selected_layer().unwrap();
+    h.act(Action::M2(yolu_app::m2::Edit::AddMask(id)));
     h.run();
-    assert!(st(&h).m2.edit_mask);
+    assert!(st(&h).m2().edit_mask);
     assert!(
         h.query_all_by_label("レイヤーマスク")
             .any(|n| in_props(n.rect())),
@@ -1714,22 +1685,20 @@ fn while_painting_a_mask_the_tool_properties_show_the_layer_mask_instead_of_the_
         .any(|n| in_props(n.rect())));
     let density = rect_of(&h, "濃度", in_props);
     // 値を変えると 1 回の Undo（レイヤーの設定）。ドラッグを離したところで区切る
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     drag(
         &mut h,
         &[
-            pos2(density.left() + 20.0, density.center().y),
-            pos2(density.left() + 40.0, density.center().y),
             pos2(density.left() + 60.0, density.center().y),
+            pos2(density.left() + 40.0, density.center().y),
+            pos2(density.left() + 20.0, density.center().y),
         ],
     );
-    assert_eq!(st(&h).doc.undo_count(), steps + 1);
-    h.state_mut().state.apply(Action::Undo);
+    assert_eq!(st(&h).doc().undo_count(), steps + 1);
+    h.act(Action::Undo);
     h.run();
     // マスクをやめると、塗るチャンネルへ戻る
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(yolu_app::m2::UiOp::EditMask(false)));
+    h.act(Action::M2Ui(yolu_app::m2::UiOp::EditMask(false)));
     h.run();
     assert!(h
         .query_all_by_label("塗るチャンネル")
@@ -1741,36 +1710,17 @@ fn while_painting_a_mask_the_tool_properties_show_the_layer_mask_instead_of_the_
 fn shot_rect(h: &mut H, rect: Rect, name: &str) {
     h.event(Event::PointerGone);
     h.step();
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().floor().max(0.0) as u32,
-        rect.top().floor().max(0.0) as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+    common::shot::region(h, name, rect);
 }
 
-/// 左の列の、サブツールのタブからカラーのタブまで（3 つのパネルが縦に並ぶ所）。
+/// 左の列の、サブツールからカラーの手前まで（3 つのパネルが縦に並ぶ所）。
 fn left_stack(h: &H) -> Rect {
-    let (sub, color) = (tab_rect(h, Tab::SubTools), tab_rect(h, Tab::Color));
-    // 左の列の右の端は、キャンバスのタブの左
-    Rect::from_min_max(
-        pos2(sub.left() - 2.0, sub.top()),
-        pos2(tab_rect(h, Tab::Canvas).left() - 2.0, color.top()),
-    )
+    common::shot::group_span(h, Tab::SubTools, Some(Tab::Color))
 }
 
-/// 右の列の、プロパティの組（プロパティのタブから、ウィンドウの右・状態の帯の上まで）。
+/// 右の列の、プロパティの組。
 fn right_bottom(h: &H) -> Rect {
-    let props = tab_rect(h, Tab::Properties);
-    let window = h.ctx.content_rect();
-    Rect::from_min_max(
-        pos2(props.left() - 2.0, props.top()),
-        pos2(window.right(), window.bottom() - 24.0),
-    )
+    common::shot::group(h, Tab::Properties)
 }
 
 #[test]
@@ -1782,119 +1732,178 @@ fn snapshots_of_the_whole_default_dock_in_both_languages() {
         // 直前に押した所のポインタが絵に残らないように
         h.event(Event::PointerGone);
         h.step();
-        h.snapshot(format!("tool_panels_dock_{name}"));
+        common::shot::window(&mut h, &format!("tool_panels_dock_{name}"));
         results.extend_harness(&mut h);
     }
 }
 
 #[test]
-fn snapshots_of_the_default_left_column_and_the_properties_group_in_both_languages() {
-    for (lang, name) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
-        let mut h = app(1280.0, 800.0, 128);
-        language(&mut h, lang);
-        let rect = left_stack(&h);
-        shot_rect(&mut h, rect, &format!("tool_panels_left_{name}"));
-        let rect = right_bottom(&h);
-        shot_rect(&mut h, rect, &format!("tool_panels_properties_{name}"));
-    }
+fn snapshots_of_the_default_left_column_and_the_properties_group() {
+    let (lang, name) = (Lang::Ja, "ja");
+    let mut h = app(1280.0, 800.0, 128);
+    language(&mut h, lang);
+    let rect = left_stack(&h);
+    shot_rect(&mut h, rect, &format!("tool_panels_left_{name}"));
+    let rect = right_bottom(&h);
+    shot_rect(&mut h, rect, &format!("tool_panels_properties_{name}"));
 }
 
 #[test]
-fn snapshots_of_the_tool_properties_with_the_paint_channels_open_and_for_the_mask_in_both_languages(
-) {
-    for (lang, name) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
-        let mut h = app(1280.0, 1500.0, 128);
-        language(&mut h, lang);
-        open_paint_channels(&mut h);
-        h.state_mut()
-            .state
-            .apply(Action::Mat(MatAction::Enabled(true)));
-        h.state_mut()
-            .state
-            .apply(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
-        h.state_mut()
-            .state
-            .apply(Action::Mat(MatAction::Channel(Channel::Emission, true)));
-        h.state_mut().state.mat.emission = [0.2, 0.8, 0.4];
-        h.run();
-        let (props, size) = (
-            tab_rect(&h, Tab::ToolProperties),
-            tab_rect(&h, Tab::BrushSize),
-        );
-        let rect = Rect::from_min_max(
-            pos2(props.left() - 2.0, props.top()),
-            pos2(props.left() + 300.0, size.top()),
-        );
-        shot_rect(&mut h, rect, &format!("tool_panels_paint_channels_{name}"));
-        // マスクに描くあいだ
-        let id = st(&h).selected_layer.unwrap();
-        h.state_mut()
-            .state
-            .apply(Action::M2(yolu_app::m2::Edit::AddMask(id)));
-        h.run();
-        shot_rect(&mut h, rect, &format!("tool_panels_mask_{name}"));
-    }
+fn snapshots_of_the_tool_properties_with_the_paint_channels_open_and_for_the_mask() {
+    let (lang, name) = (Lang::Ja, "ja");
+    let mut h = app(1280.0, 1500.0, 128);
+    language(&mut h, lang);
+    open_paint_channels(&mut h);
+    h.act(Action::Mat(MatAction::Enabled(true)));
+    h.act(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
+    h.act(Action::Mat(MatAction::Channel(Channel::Emission, true)));
+    h.mat_mut().emission = [0.2, 0.8, 0.4];
+    h.run();
+    let rect = common::shot::group(&h, Tab::ToolProperties);
+    shot_rect(&mut h, rect, &format!("tool_panels_paint_channels_{name}"));
+    // マスクに描くあいだ
+    let id = st(&h).selected_layer().unwrap();
+    h.act(Action::M2(yolu_app::m2::Edit::AddMask(id)));
+    h.run();
+    shot_rect(&mut h, rect, &format!("tool_panels_mask_{name}"));
 }
 
 #[test]
-fn snapshots_of_the_material_panel_with_the_standard_and_liltoon_looks_in_both_languages() {
-    for (lang, name) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
-        let mut h = app(1500.0, 1300.0, 64);
-        language(&mut h, lang);
-        open_material(&mut h);
-        // マテリアルの組の全体（同じ組のプロパティのタブの左から、ウィンドウの右・状態の帯の上まで）
-        let group = tab_rect(&h, Tab::Properties);
-        let window = h.ctx.content_rect();
-        let rect = Rect::from_min_max(
-            pos2(group.left() - 2.0, group.top()),
-            pos2(window.right(), window.bottom() - 24.0),
-        );
-        // 標準
-        h.state_mut()
-            .state
-            .apply(Action::Look(yolu_app::look::LookOp::Kind(
-                yolu_core::look::LookKind::Standard,
-            )));
-        h.run();
-        shot_rect(
-            &mut h,
-            rect,
-            &format!("tool_panels_material_standard_{name}"),
-        );
-        // lilToon（ひな形つき）
-        h.state_mut()
-            .state
-            .apply(Action::Look(yolu_app::look::LookOp::Kind(
-                yolu_core::look::LookKind::LilToon,
-            )));
-        h.state_mut()
-            .state
-            .apply(Action::Look(yolu_app::look::LookOp::Template));
-        h.run();
-        shot_rect(
-            &mut h,
-            rect,
-            &format!("tool_panels_material_liltoon_{name}"),
-        );
-    }
+fn snapshots_of_the_material_panel_with_the_standard_and_liltoon_looks() {
+    let (lang, name) = (Lang::Ja, "ja");
+    let mut h = app(1500.0, 1300.0, 64);
+    language(&mut h, lang);
+    open_material(&mut h);
+    // マテリアルの組の全体（プロパティの組）
+    let rect = common::shot::group(&h, Tab::Properties);
+    // 標準
+    h.act(Action::Look(yolu_app::look::LookOp::Kind(
+        yolu_core::look::LookKind::Standard,
+    )));
+    h.run();
+    shot_rect(
+        &mut h,
+        rect,
+        &format!("tool_panels_material_standard_{name}"),
+    );
+    // lilToon（ひな形つき）
+    h.act(Action::Look(yolu_app::look::LookOp::Kind(
+        yolu_core::look::LookKind::LilToon,
+    )));
+    h.act(Action::Look(yolu_app::look::LookOp::Template));
+    h.run();
+    shot_rect(
+        &mut h,
+        rect,
+        &format!("tool_panels_material_liltoon_{name}"),
+    );
 }
 
 #[test]
 fn snapshots_of_the_tool_properties_in_its_own_window() {
-    for (lang, name) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
-        let mut h = app(1280.0, 900.0, 128);
-        language(&mut h, lang);
-        h.state_mut()
-            .state
-            .apply(Action::Dock(DockOp::Detach(Tab::ToolProperties)));
-        h.run();
-        h.step();
-        // 試験では、別ウィンドウはメインウィンドウの中の egui のウィンドウ（その矩形だけを撮る）
-        let window = h.state().detached.windows[0].tab_rects[&Tab::ToolProperties];
-        let rect = Rect::from_min_max(
-            pos2(window.left() - 8.0, window.top() - 30.0),
-            pos2(window.left() + 360.0, (window.top() + 380.0).min(890.0)),
-        );
-        shot_rect(&mut h, rect, &format!("tool_panels_detached_{name}"));
+    let (lang, name) = (Lang::Ja, "ja");
+    let mut h = app(1280.0, 900.0, 128);
+    language(&mut h, lang);
+    h.act(Action::Dock(DockOp::Detach(Tab::ToolProperties)));
+    h.run();
+    h.step();
+    // 試験では、別ウィンドウはメインウィンドウの中の egui のウィンドウ（その矩形だけを撮る）
+    let window = h.state().detached.windows[0].tab_rects[&Tab::ToolProperties];
+    let rect = Rect::from_min_max(
+        pos2(window.left() - 8.0, window.top() - 30.0),
+        pos2(window.left() + 360.0, (window.top() + 380.0).min(890.0)),
+    );
+    shot_rect(&mut h, rect, &format!("tool_panels_detached_{name}"));
+}
+
+/// Tab で UI を隠す・戻す: メニューの帯と状態の帯のほかの、ツールの列・オプションバー・ビューでないパネルと、ビューの中の部品（キャンバスの右上の
+/// ボタン・3D ビューのアイコン）を出さず、ビュー（キャンバスと 3D ビュー）が広がる。隠している間は状態の帯の左端に、隠していることと戻すキーを出す。
+/// もう一度で元の並びと広さに戻り、並びは変わらない。
+#[test]
+fn tab_hides_all_the_ui_but_the_views_and_tab_brings_it_back_without_changing_the_layout() {
+    let mut h = app_default(1280.0, 800.0, 128);
+    h.act(Action::LoadDemoModel);
+    h.run();
+    let tool = "モデル全体が見える位置へ戻す";
+    let canvas = canvas_rect(&h);
+    let dock_before = shape(&h.state().dock);
+    assert!(!h.ui().hide_ui);
+    assert!(h.state().tab_rects.contains_key(&Tab::Layers));
+    assert!(count(&h, tool) > 0, "3D ビューの右上のアイコン");
+    assert!(count(&h, "ブラシ") > 0 || count(&h, "ブラシ（B）") > 0);
+    // Tab で隠す
+    key(&h, egui::Key::Tab, egui::Modifiers::NONE);
+    h.run();
+    assert!(h.ui().hide_ui);
+    let hidden = canvas_rect(&h);
+    assert!(
+        hidden.width() > canvas.width() && hidden.right() > 1270.0,
+        "{hidden:?} ← {canvas:?}"
+    );
+    assert_eq!(hidden.bottom(), canvas.bottom(), "状態の帯は残す");
+    assert_eq!(count(&h, "UI を非表示中です、Tab キーで復帰できます。"), 1);
+    for tab in [Tab::Layers, Tab::ToolProperties, Tab::Color, Tab::History] {
+        assert!(!h.state().tab_rects.contains_key(&tab), "{tab:?}");
     }
+    assert_eq!(count(&h, tool), 0, "3D ビューのアイコンも隠す");
+    assert_eq!(count(&h, "ブラシ（B）"), 0, "ツールの列も隠す");
+    assert_eq!(shape(&h.state().dock), dock_before, "並びは変えない");
+    // メニューの帯は残る
+    let _ = menu_title(&h, "ファイル");
+    common::shot::window(&mut h, "ui_hidden");
+    // 隠したままツールを替えても、キーは効く（B でブラシ）。もう一度 Tab で戻る
+    key(&h, egui::Key::Tab, egui::Modifiers::NONE);
+    h.run();
+    assert!(!h.ui().hide_ui);
+    assert_eq!(canvas_rect(&h), canvas);
+    assert_eq!(count(&h, "UI を非表示中です、Tab キーで復帰できます。"), 0);
+    assert!(h.state().tab_rects.contains_key(&Tab::Layers));
+    assert!(count(&h, tool) > 0);
+    assert_eq!(shape(&h.state().dock), dock_before);
+}
+
+/// 文字を打っている間の Tab は UI を隠さない。ショートカットの設定で替えると、替えたキーで隠れ、Tab では隠れない。
+#[test]
+fn tab_does_not_hide_the_ui_while_typing_and_the_key_can_be_reassigned() {
+    use yolu_app::keymap::Scope;
+    let mut h = app_default(1280.0, 800.0, 128);
+    // レイヤーの名前を打っている間
+    let id = st(&h).selected_layer().unwrap();
+    h.act(Action::StartRename(id));
+    h.run();
+    key(&h, egui::Key::Tab, egui::Modifiers::NONE);
+    h.run();
+    assert!(!h.ui().hide_ui, "文字を打っている間は取らない");
+    key(&h, egui::Key::Escape, egui::Modifiers::NONE);
+    h.run();
+    h.run();
+    assert!(h.ui().renaming.is_none());
+    // 設定で F9 に替える
+    let group: yolu_app::keyconfig::GroupKey = ("view.toggle_ui", Scope::Everywhere);
+    assert!(yolu_app::shortcuts::editor::all_groups(h.app()).contains(&group));
+    let trigger = yolu_app::keyconfig::parse_trigger("F9").unwrap();
+    h.keys_mut().set(group, vec![trigger]);
+    h.app_mut().keys_changed();
+    h.run();
+    key(&h, egui::Key::Tab, egui::Modifiers::NONE);
+    h.run();
+    assert!(!h.ui().hide_ui, "Tab は割り当てから外れた");
+    key(&h, egui::Key::F9, egui::Modifiers::NONE);
+    h.run();
+    assert!(h.ui().hide_ui);
+    assert_eq!(
+        count(&h, "UI を非表示中です、F9 キーで復帰できます。"),
+        1,
+        "戻すキーは割り当てのとおり"
+    );
+    // 描いている間は切り替えない
+    key(&h, egui::Key::F9, egui::Modifiers::NONE);
+    h.run();
+    assert!(!h.ui().hide_ui);
+    let layer = st(&h).selected_layer().unwrap();
+    let stroke = h.app_mut().begin_paint_stroke(layer, false).unwrap();
+    h.act(Action::ToggleUi);
+    assert!(!h.ui().hide_ui);
+    assert!(st(&h).message().contains("描いている間"));
+    h.doc_mut().cancel_stroke(stroke);
 }

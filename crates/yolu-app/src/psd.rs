@@ -24,20 +24,21 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use egui::Vec2;
 use yolu_core::{Channel, Document};
 use yolu_io::psd::{
     self, CopyOptions, CopyOutcome, CopyRefusal, ExportControl, ExportError, ExportMode,
     ExportNote, ExportOptions, ExportPlan, ImportNote, Overrun,
 };
 
+use crate::features::{Feature, PollStage};
+use crate::jobs::CloseJob;
 use crate::jobs::{JobCard, JobSpec, Polled, Worker};
 use crate::lang::Lang;
 use crate::notice::{Kind as NoticeKind, Source};
 use crate::psd_export::blocker_text;
 use crate::sets::{guid_string, unique_name, MaterialRef};
 use crate::state::{Action, AppState, DialogRequest};
-use crate::windows::CloseJob;
+use crate::userfiles::same_file;
 
 /// 取り込み・書き出しの計画・書き込みのスレッドのスタック。グループの入れ子（文書は `MAX_GROUP_DEPTH` 段まで。取り込みは統合画像と
 /// 照らすために合成し、書き出しは計画で再帰する）の再帰に足りる大きさ（合成の実測は `MAX_GROUP_DEPTH` の説明: 64 段は Linux で 320KB。
@@ -163,45 +164,31 @@ enum Failure {
 }
 
 impl Failure {
-    fn message(ja: impl Into<String>, en: impl Into<String>) -> Self {
+    /// 言語ごとの文（呼ぶ側が言語ごとに .ftl の文から作る）。
+    fn keyed(text: impl Fn(Lang) -> String) -> Self {
         Self::Message {
-            ja: ja.into(),
-            en: en.into(),
+            ja: text(Lang::Ja),
+            en: text(Lang::En),
         }
     }
 
     /// ウィンドウと状態の帯に出す理由。`importing` は取消のとき「何も書いていません」を付けるかの違いだけ。
     fn text(&self, lang: Lang, importing: bool) -> String {
         match self {
-            Self::Canceled if importing => lang.pick("取り消しました", "Cancelled").into(),
-            Self::Canceled => lang
-                .pick(
-                    "取り消しました（何も書いていません）",
-                    "Cancelled (nothing was written)",
-                )
-                .into(),
-            Self::Stopped => lang
-                .pick("PSD の処理が止まりました", "The PSD job stopped")
-                .into(),
+            Self::Canceled if importing => lang.t("psd-cancelled").into(),
+            Self::Canceled => lang.t("psd-cancelled-nothing-was-written").into(),
+            Self::Stopped => lang.t("psd-the-psd-job-stopped").into(),
             Self::File(e) => lang.file_error(e),
             Self::Export(e) => lang.io_error(e),
-            Self::Unreadable(e) => lang.with_reason(
-                lang.pick(
-                    "書く PSD を読み戻せません",
-                    "Cannot read back the PSD to write",
-                ),
-                lang.io_error(e),
-            ),
+            Self::Unreadable(e) => {
+                lang.with_reason(lang.t("psd-cannot-read-back-the-psd"), lang.io_error(e))
+            }
             Self::Overrun(over) => overrun_text(lang, over),
             Self::PartlyReplaced { done, cause } => {
                 let cause = lang.file_error(cause);
-                lang.pick(
-                    format!(
-                        "置き換えの途中で失敗しました（{cause}）。先の {done} 個は置き換わっています。"
-                    ),
-                    format!(
-                        "Failed partway through replacing ({cause}). {done} earlier file(s) already replaced."
-                    ),
+                lang.f(
+                    "psd-failed-partway-through-replacing-earlier",
+                    &[("cause", &cause), ("done", &done)],
                 )
             }
             Self::Message { ja, en } => lang.pick(ja.clone(), en.clone()),
@@ -220,64 +207,43 @@ impl Failure {
 /// 予算・形式の上限で書けない理由（レイヤーの名前つき。取り込みの断りと同じ言い回し）。
 fn overrun_text(lang: Lang, over: &Overrun) -> String {
     match over {
-        Overrun::Canvas { width, height } => lang.pick(
-            format!("キャンバスが大きすぎます（{width}×{height}）"),
-            format!("Canvas too large ({width}×{height})"),
+        Overrun::Canvas { width, height } => lang.f(
+            "psd-canvas-too-large",
+            &[("width", &width), ("height", &height)],
         ),
         Overrun::Side {
             width,
             height,
             limit,
-        } => lang.pick(
-            format!("キャンバスの辺が長すぎます（{width}×{height}・1 辺 {limit} まで）"),
-            format!("Canvas side too long ({width}×{height}; up to {limit} per side)"),
+        } => lang.f(
+            "psd-canvas-side-too-long-up",
+            &[("width", &width), ("height", &height), ("limit", &limit)],
         ),
-        Overrun::Layers { count, limit } => lang.pick(
-            format!("レイヤーが多すぎます（{count} 件・上限 {limit} 件）"),
-            format!("Too many layers ({count}; limit {limit})"),
+        Overrun::Layers { count, limit } => lang.f(
+            "psd-too-many-layers-limit",
+            &[("value", &count), ("limit", &limit)],
         ),
-        Overrun::Memory { layer } if layer.is_empty() => lang.pick(
-            "画素の予算を超えました".into(),
-            "Pixel budget exceeded".into(),
-        ),
-        Overrun::Memory { layer } => lang.pick(
-            format!("「{layer}」でレイヤーのメモリの予算を超えました"),
-            format!("Layer memory budget exceeded at \"{layer}\""),
-        ),
-        Overrun::Extra => lang.pick(
-            "レイヤーの付加情報が予算を超えました".into(),
-            "Layer extra data exceeds the budget".into(),
-        ),
-        Overrun::FileSize { layer } if layer.is_empty() => lang.pick(
-            "PSD が 2 GiB を超えます".into(),
-            "The PSD would exceed 2 GiB".into(),
-        ),
-        Overrun::FileSize { layer } => lang.pick(
-            format!("「{layer}」を書くと PSD が 2 GiB を超えます"),
-            format!("Writing \"{layer}\" would make the PSD exceed 2 GiB"),
-        ),
+        Overrun::Memory { layer } if layer.is_empty() => lang.t("psd-pixel-budget-exceeded").into(),
+        Overrun::Memory { layer } => {
+            lang.f("psd-layer-memory-budget-exceeded-at", &[("layer", &layer)])
+        }
+        Overrun::Extra => lang.t("psd-layer-extra-data-exceeds-the").into(),
+        Overrun::FileSize { layer } if layer.is_empty() => {
+            lang.t("psd-the-psd-would-exceed-2").into()
+        }
+        Overrun::FileSize { layer } => {
+            lang.f("psd-writing-would-make-the-psd", &[("layer", &layer)])
+        }
     }
 }
 
 /// 上限の理由のツールチップ: 予算で断ったものは設定で上げられること、PSD の 2 GiB・辺 30000 は形式の上限であること。
 fn overrun_tooltip(lang: Lang, over: &Overrun) -> &'static str {
     match over {
-        Overrun::FileSize { .. } => lang.pick(
-            "PSD は 1 ファイル 2 GiB までです",
-            "A PSD file is limited to 2 GiB",
-        ),
-        Overrun::Side { .. } if !over.raised_by_budget() => lang.pick(
-            "PSD は 1 辺 30000 までです",
-            "A PSD side is limited to 30000 pixels",
-        ),
-        Overrun::Layers { .. } => lang.pick(
-            "上限は設定の「レイヤーのメモリ」から決まります（グループは区切りの記録も数えます）。上げると書き出せることがあります",
-            "The limit follows Layer memory in Settings (each group also takes a divider record). Raising it may let this export succeed",
-        ),
-        _ => lang.pick(
-            "上限は設定の「レイヤーのメモリ」から決まります。上げると書き出せることがあります",
-            "The limit follows Layer memory in Settings. Raising it may let this export succeed",
-        ),
+        Overrun::FileSize { .. } => lang.t("psd-a-psd-file-is-limited-tip"),
+        Overrun::Side { .. } if !over.raised_by_budget() => lang.t("psd-a-psd-side-is-limited-tip"),
+        Overrun::Layers { .. } => lang.t("psd-the-limit-follows-layer-memory-tip"),
+        _ => lang.t("psd-the-limit-follows-layer-memory-2-tip"),
     }
 }
 
@@ -365,23 +331,18 @@ impl NotesConfirm {
 #[derive(Default)]
 pub struct PsdState {
     pub report: Option<Report>,
-    pub report_offset: Vec2,
     /// 取り込んだ PSD の場所（同じファイルへ書き出すときに確かめる）。
     imported: Vec<PathBuf>,
     /// 置き換えるかの確かめ。
     pub confirm: Option<Replace>,
-    pub confirm_offset: Vec2,
     /// 取り込みの確かめ（無視・落とす・変わるもの）の待ち。読んだ文書をここに持ち、「取り込む」で入れる。
     pub import_check: Option<crate::psd_import::ImportCheck>,
-    pub import_window: crate::psd_import::CheckWindow,
     /// 書き出しの設定と、そのウィンドウ。
     pub export: ExportSettings,
     pub options_open: bool,
-    pub options_offset: Vec2,
     pub options_scroll: f32,
     /// 書く前の確かめ（焼く・丸める・落とす）の待ち。
     pub notes_confirm: Option<NotesConfirm>,
-    pub notes_offset: Vec2,
     job: Option<Job>,
     /// 試験用: 次の仕事を、取消が来るまで始めずに止めておく（始めるときに下ろす）。
     #[doc(hidden)]
@@ -429,9 +390,9 @@ pub(crate) const JOB: JobSpec = JobSpec {
             text: format!(
                 "{} — {}",
                 if p.importing {
-                    lang.pick("PSD を読み込み中", "Reading PSD")
+                    lang.t("psd-reading-psd")
                 } else {
-                    lang.pick("PSD を書き出し中", "Writing PSD")
+                    lang.t("psd-writing-psd")
                 },
                 p.file
             ),
@@ -479,13 +440,6 @@ fn set_name_from(file: &str) -> String {
         "PSD".into()
     } else {
         stem.trim().to_owned()
-    }
-}
-
-fn same_file(a: &Path, b: &Path) -> bool {
-    match (a.canonicalize(), b.canonicalize()) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => a == b,
     }
 }
 
@@ -549,16 +503,16 @@ fn export_channels(doc: &Document, settings: &ExportSettings) -> Vec<Channel> {
 /// 書き出す先を選ぶウィンドウに出す初めのファイル名（1 つのチャンネルが Color 以外なら末尾にチャンネルの名前）。
 pub fn default_export_name(state: &AppState) -> String {
     let stem = crate::export::stem(state);
-    let base = if state.sets.len() > 1 {
-        format!("{stem}_{}", state.sets.current().name)
+    let base = if state.session.sets.len() > 1 {
+        format!("{stem}_{}", state.session.sets.current().name)
     } else {
         stem
     };
-    match export_channels(&state.doc, &state.psd.export).as_slice() {
+    match export_channels(&state.session.doc, &state.psd.export).as_slice() {
         [only] if *only != Channel::Color => {
             format!(
                 "{base}_{}.psd",
-                crate::export::channel_suffix(&state.doc, *only)
+                crate::export::channel_suffix(&state.session.doc, *only)
             )
         }
         _ => format!("{base}.psd"),
@@ -585,7 +539,7 @@ impl AppState {
                         return;
                     }
                 }
-                self.dialog_request = Some(DialogRequest::PsdImport(target));
+                self.outbox.dialog_request = Some(DialogRequest::PsdImport(target));
             }
             PsdAction::Import { path, target } => {
                 if stroking {
@@ -605,7 +559,7 @@ impl AppState {
                     return;
                 }
                 // 文書にあるチャンネルだけを残す（消したユーザーチャンネルを選んだままにしない）
-                self.psd.export.channels = export_channels(&self.doc, &self.psd.export);
+                self.psd.export.channels = export_channels(&self.session.doc, &self.psd.export);
                 self.psd.options_scroll = 0.0;
                 self.psd.options_open = true;
             }
@@ -628,7 +582,7 @@ impl AppState {
                     return refuse(self);
                 }
                 self.psd.options_open = false;
-                self.dialog_request = Some(DialogRequest::PsdExport);
+                self.outbox.dialog_request = Some(DialogRequest::PsdExport);
             }
             PsdAction::Export(path) => {
                 if stroking {
@@ -651,10 +605,7 @@ impl AppState {
             PsdAction::CancelImport => {
                 if self.psd.import_check.take().is_some() {
                     self.psd.imported.pop();
-                    self.info(
-                        Source::Psd,
-                        lang.pick("PSD の取り込みをやめました。", "PSD import canceled."),
-                    );
+                    self.info(Source::Psd, lang.t("psd-psd-import-canceled"));
                 }
             }
             PsdAction::ConfirmReplace => {
@@ -664,10 +615,7 @@ impl AppState {
             }
             PsdAction::CancelConfirm => {
                 if self.psd.confirm.take().is_some() {
-                    self.info(
-                        Source::Psd,
-                        lang.pick("PSD の書き出しをやめました。", "PSD export canceled."),
-                    );
+                    self.info(Source::Psd, lang.t("psd-psd-export-canceled"));
                 }
             }
             PsdAction::ConfirmWrite => {
@@ -677,19 +625,13 @@ impl AppState {
             }
             PsdAction::CancelWrite => {
                 if self.psd.notes_confirm.take().is_some() {
-                    self.info(
-                        Source::Psd,
-                        lang.pick("PSD の書き出しをやめました。", "PSD export canceled."),
-                    );
+                    self.info(Source::Psd, lang.t("psd-psd-export-canceled"));
                 }
             }
             PsdAction::Cancel => {
                 if let Some(job) = &self.psd.job {
                     job.worker.cancel();
-                    self.info(
-                        Source::Psd,
-                        lang.pick("PSD の処理を取り消しています…", "Canceling the PSD job…"),
-                    );
+                    self.info(Source::Psd, lang.t("psd-canceling-the-psd-job"));
                 }
             }
             PsdAction::DismissReport => self.psd.report = None,
@@ -699,10 +641,7 @@ impl AppState {
     fn start_psd_import(&mut self, path: &Path, target: PsdTarget) {
         let lang = self.lang;
         if self.psd.job.is_some() || self.psd.import_check.is_some() {
-            self.refuse(
-                Source::Psd,
-                lang.pick("PSD を処理中です。", "A PSD job is running."),
-            );
+            self.refuse(Source::Psd, lang.t("psd-a-psd-job-is-running"));
             return;
         }
         if target == PsdTarget::CurrentSet {
@@ -715,7 +654,7 @@ impl AppState {
             }
         }
         // 新しいセットとして足す PSD は、セットの数の上限に当たっているなら、読み始める前に断る
-        if target == PsdTarget::NewSet && self.sets.len() >= crate::newproject::MAX_SETS {
+        if target == PsdTarget::NewSet && self.session.sets.len() >= crate::newproject::MAX_SETS {
             self.refuse(Source::Psd, crate::lang::refusals::set_limit(lang));
             return;
         }
@@ -738,24 +677,20 @@ impl AppState {
             Err(e) => {
                 self.fail(
                     Source::Psd,
-                    lang.with_reason(
-                        lang.pick("PSD を読み込めません", "Cannot read the PSD"),
-                        lang.thread_error(&e),
-                    ),
+                    lang.with_reason(lang.t("psd-cannot-read-the-psd"), lang.thread_error(&e)),
                 );
                 return;
             }
         };
         let file = file_name(path);
-        self.info(
-            Source::Psd,
-            lang.pick(
-                format!("PSD を読み込み中: {file}"),
-                format!("Reading PSD: {file}"),
-            ),
-        );
-        let guard = (target == PsdTarget::CurrentSet)
-            .then(|| (self.sets.current().uid, self.doc.id(), self.doc.revision()));
+        self.info(Source::Psd, lang.f("psd-reading-psd-2", &[("file", &file)]));
+        let guard = (target == PsdTarget::CurrentSet).then(|| {
+            (
+                self.session.sets.current().uid,
+                self.session.doc.id(),
+                self.session.doc.revision(),
+            )
+        });
         self.psd.job = Some(Job {
             kind: Kind::Import(target),
             file,
@@ -777,7 +712,7 @@ impl AppState {
     fn refuse_psd_export_lines(&mut self, kind: NoticeKind, file: &str, lines: Vec<Line>) {
         let lang = self.lang;
         let text = lang.with_reason(
-            lang.pick("PSD に書き出せません", "Cannot export PSD"),
+            lang.t("psd-cannot-export-psd"),
             lines.first().map(|l| l.text.clone()).unwrap_or_default(),
         );
         self.notify(kind, Source::Psd, text);
@@ -785,12 +720,7 @@ impl AppState {
             importing: false,
             file: file.to_owned(),
             ok: false,
-            summary: lang
-                .pick(
-                    "書き出せません。何も書いていません",
-                    "Cannot export. Nothing was written",
-                )
-                .into(),
+            summary: lang.t("psd-cannot-export-nothing-was-written").into(),
             lines,
         });
     }
@@ -798,10 +728,7 @@ impl AppState {
     fn start_psd_export(&mut self, path: &Path, confirmed: bool) {
         let lang = self.lang;
         if self.psd.job.is_some() {
-            self.refuse(
-                Source::Psd,
-                lang.pick("PSD を処理中です。", "A PSD job is running."),
-            );
+            self.refuse(Source::Psd, lang.t("psd-a-psd-job-is-running"));
             return;
         }
         let file = file_name(path);
@@ -809,14 +736,14 @@ impl AppState {
             let why = vec![crate::lang::refusals::read_only_set(lang, reason)];
             return self.refuse_psd_export(NoticeKind::Refusal, &file, why);
         }
-        let channels = export_channels(&self.doc, &self.psd.export);
+        let channels = export_channels(&self.session.doc, &self.psd.export);
         let mode = self.psd.export.mode;
-        let targets = match export_targets(&self.doc, path, &channels) {
+        let targets = match export_targets(&self.session.doc, path, &channels) {
             Ok(t) => t,
             Err(name) => {
-                let why = vec![lang.pick(
-                    format!("チャンネルのファイル名{}が重なります", lang.quote(&name)),
-                    format!("The channel file name {} clashes", lang.quote(&name)),
+                let why = vec![lang.f(
+                    "psd-the-channel-file-name-clashes",
+                    &[("name", &lang.quote(&name))],
                 )];
                 return self.refuse_psd_export(NoticeKind::Error, &file, why);
             }
@@ -828,7 +755,7 @@ impl AppState {
             ..ExportControl::default()
         };
         for (channel, _) in &targets {
-            if let Err(e) = psd::check_exportable(&self.doc, *channel, &ctl) {
+            if let Err(e) = psd::check_exportable(&self.session.doc, *channel, &ctl) {
                 let failure = export_failure(e);
                 let line = Line {
                     warning: true,
@@ -862,7 +789,7 @@ impl AppState {
             }
         }
         // 文書の写し（履歴の無い、タイルを共有する写し。文書は変えず、描き続けてよい）
-        let snapshot = match self.doc.capture_snapshot() {
+        let snapshot = match self.session.doc.capture_snapshot() {
             Ok(d) => Arc::new(d),
             Err(e) => {
                 return self.refuse_psd_export(NoticeKind::Error, &file, vec![lang.core_error(&e)])
@@ -893,21 +820,12 @@ impl AppState {
             Err(e) => {
                 self.fail(
                     Source::Psd,
-                    lang.with_reason(
-                        lang.pick("PSD に書き出せません", "Cannot export PSD"),
-                        lang.thread_error(&e),
-                    ),
+                    lang.with_reason(lang.t("psd-cannot-export-psd"), lang.thread_error(&e)),
                 );
                 return;
             }
         };
-        self.info(
-            Source::Psd,
-            lang.pick(
-                format!("PSD に書き出し中: {file}"),
-                format!("Writing PSD: {file}"),
-            ),
-        );
+        self.info(Source::Psd, lang.f("psd-writing-psd-2", &[("file", &file)]));
         self.psd.job = Some(Job {
             kind: Kind::Export,
             file,
@@ -936,21 +854,12 @@ impl AppState {
             Err(e) => {
                 self.fail(
                     Source::Psd,
-                    lang.with_reason(
-                        lang.pick("PSD に書き出せません", "Cannot export PSD"),
-                        lang.thread_error(&e),
-                    ),
+                    lang.with_reason(lang.t("psd-cannot-export-psd"), lang.thread_error(&e)),
                 );
                 return;
             }
         };
-        self.info(
-            Source::Psd,
-            lang.pick(
-                format!("PSD に書き出し中: {file}"),
-                format!("Writing PSD: {file}"),
-            ),
-        );
+        self.info(Source::Psd, lang.f("psd-writing-psd-2", &[("file", &file)]));
         self.psd.job = Some(Job {
             kind: Kind::Export,
             file,
@@ -1009,10 +918,7 @@ impl AppState {
                 if canceled {
                     self.info(Source::Psd, text);
                 } else if importing {
-                    let message = lang.with_reason(
-                        lang.pick("PSD を読み込めません", "Cannot read the PSD"),
-                        text,
-                    );
+                    let message = lang.with_reason(lang.t("psd-cannot-read-the-psd"), text);
                     self.fail(Source::Psd, message);
                 } else {
                     // 書き出せなかった理由（予算の超過・書けない場所など）は結果のウィンドウにも出す（知らせは `refuse_psd_export_lines` の 1 回）。
@@ -1033,21 +939,13 @@ impl AppState {
                 let reason = crate::lang::psd_copy_refusal(lang, &why);
                 self.fail(
                     Source::Psd,
-                    lang.with_reason(
-                        lang.pick("PSD を読み込めません", "Cannot import the PSD"),
-                        &reason,
-                    ),
+                    lang.with_reason(lang.t("psd-cannot-import-the-psd"), &reason),
                 );
                 self.psd.report = Some(Report {
                     importing: true,
                     file: job.file,
                     ok: false,
-                    summary: lang
-                        .pick(
-                            "読み込めません。ファイルは変えていません",
-                            "Cannot import. The file was not modified",
-                        )
-                        .into(),
+                    summary: lang.t("psd-cannot-import-the-file-was").into(),
                     lines: vec![Line {
                         warning: true,
                         text: reason,
@@ -1066,10 +964,7 @@ impl AppState {
                     // 無視・落とす・変わるものがある: 利用者が確かめるまで、何も入れない
                     self.info(
                         Source::Psd,
-                        lang.pick(
-                            format!("PSD を読みました: {}（取り込みの確かめ待ち）", job.file),
-                            format!("Read {} (waiting for the import check)", job.file),
-                        ),
+                        lang.f("psd-read-waiting-for-the-import", &[("file", &job.file)]),
                     );
                     self.psd.import_check = Some(crate::psd_import::ImportCheck {
                         doc,
@@ -1085,13 +980,9 @@ impl AppState {
                 self.info(
                     Source::Psd,
                     match files.as_slice() {
-                        [(path, bytes)] => lang.pick(
-                            format!(
-                                "PSD に書き出しました: {}（{} バイト）。",
-                                path.display(),
-                                bytes
-                            ),
-                            format!("Wrote PSD: {} ({} bytes).", path.display(), bytes),
+                        [(path, bytes)] => lang.f(
+                            "psd-wrote-psd-bytes",
+                            &[("path", &path.display()), ("bytes", &bytes)],
                         ),
                         many => {
                             let dir = many[0]
@@ -1099,10 +990,7 @@ impl AppState {
                                 .parent()
                                 .map(|d| d.display().to_string())
                                 .unwrap_or_default();
-                            lang.pick(
-                                format!("PSD を {} 個書き出しました: {dir}", many.len()),
-                                format!("Wrote {} PSDs: {dir}", many.len()),
-                            )
+                            lang.f("psd-wrote-psds", &[("many", &many.len()), ("dir", &dir)])
                         }
                     },
                 );
@@ -1126,52 +1014,39 @@ impl AppState {
                 self.psd.imported.pop();
                 self.warn(
                     Source::Psd,
-                    lang.pick(
-                        format!("描いている間に読み終わったので、{file} は入れませんでした。"),
-                        format!("{file} finished reading while drawing, so it was not imported."),
-                    ),
+                    lang.f("psd-finished-reading-while-drawing-so", &[("file", &file)]),
                 );
                 return;
             }
-            if self.sets.current().uid != uid
-                || self.doc.id() != id
-                || self.doc.revision() != revision
+            if self.session.sets.current().uid != uid
+                || self.session.doc.id() != id
+                || self.session.doc.revision() != revision
             {
                 self.psd.imported.pop();
                 self.warn(
                     Source::Psd,
-                    lang.pick(
-                        format!(
-                            "読み込んでいる間にプロジェクトが変わったので、{file} は入れませんでした。"
-                        ),
-                        format!("The project changed while reading, so {file} was not imported."),
-                    ),
+                    lang.f("psd-the-project-changed-while-reading", &[("file", &file)]),
                 );
                 return;
             }
         }
         // 読んでいる間にセットが増えて上限に当たったら、入れない（読み始める前の確かめと同じ理由）
-        if target == PsdTarget::NewSet && self.sets.len() >= crate::newproject::MAX_SETS {
+        if target == PsdTarget::NewSet && self.session.sets.len() >= crate::newproject::MAX_SETS {
             self.psd.imported.pop();
             self.warn(Source::Psd, crate::lang::refusals::set_limit(lang));
             return;
         }
         let layers = doc.layers().len();
         let switched = self.install_psd(doc, target, file);
-        let mut text = lang.pick(
-            format!(
-                "PSD を読み込みました（{file}・レイヤー {layers}）。PSD 自体は書き換えません。"
-            ),
-            format!("Imported {file} ({layers} layers). The PSD itself is never rewritten."),
+        let mut text = lang.f(
+            "psd-imported-layers-the-psd-itself",
+            &[("file", &file), ("layers", &layers)],
         );
         if switched {
             self.info(Source::Psd, text);
         } else {
             // 入れたが、描いている間なので足したセットへは切り替えていない（気をつけること）
-            text += lang.pick(
-                " 描いている間なので、切り替えていません。",
-                " Not switched to it while drawing.",
-            );
+            text += lang.t("psd-not-switched-to-it-while");
             self.warn(Source::Psd, text);
         }
     }
@@ -1184,17 +1059,18 @@ impl AppState {
                 let stem = set_name_from(file);
                 let name = unique_name(
                     &stem,
-                    self.sets
+                    self.session
+                        .sets
                         .iter()
                         .map(|s| s.name.as_str())
                         .collect::<Vec<_>>()
                         .into_iter(),
                 );
-                let index = self.sets.push(
+                let index = self.session.sets.push(
                     guid_string(doc.id()),
                     name.clone(),
                     false,
-                    MaterialRef::Material { name, asset: None },
+                    vec![MaterialRef::Material { name, asset: None }],
                     None,
                     doc,
                 );
@@ -1202,14 +1078,14 @@ impl AppState {
                 switched = self.switch_set(index).is_ok();
             }
             PsdTarget::CurrentSet => {
-                if let Some(set) = self.sets.get_mut(self.sets.current_index()) {
+                if let Some(set) = self.session.sets.get_mut(self.session.sets.current_index()) {
                     set.saved = None;
                 }
                 // 大きさが変わりうるので、表示は既定に戻す
                 self.install_document(doc, crate::sets::Keep::reset());
             }
         }
-        self.modified = true;
+        self.session.mark_modified();
         switched
     }
 
@@ -1387,18 +1263,14 @@ fn write_failure(path: &Path, e: psd::WriteError) -> Failure {
     use psd::WriteError as W;
     match e {
         W::NotAFile if path.file_name().is_none() => {
-            Failure::message("ファイル名がありません", "The file has no name")
+            Failure::keyed(|l| l.t("psd-the-file-has-no-name").into())
         }
-        W::NotAFile => Failure::message(
-            format!(
-                "{}は通常のファイルではありません",
-                Lang::Ja.quote(&path.display().to_string())
-            ),
-            format!(
-                "{} is not a regular file",
-                Lang::En.quote(&path.display().to_string())
-            ),
-        ),
+        W::NotAFile => Failure::keyed(|l| {
+            l.f(
+                "psd-is-not-a-regular-file",
+                &[("path", &l.quote(&path.display().to_string()))],
+            )
+        }),
         W::CreateTemp { source, .. } | W::Sync { source, .. } | W::Rewind { source, .. } => {
             Failure::File(source)
         }
@@ -1406,10 +1278,7 @@ fn write_failure(path: &Path, e: psd::WriteError) -> Failure {
         W::ReadBack(e) if is_cancel(&e) => Failure::Canceled,
         W::ReadBack(e) => Failure::Unreadable(e),
         W::Compare(e) => read_failure(e),
-        W::Mismatch => Failure::message(
-            "書いたファイルの読み戻しが一致しません",
-            "The written file does not read back identically",
-        ),
+        W::Mismatch => Failure::keyed(|l| l.t("psd-the-written-file-does-not").into()),
         W::Commit(e) => Failure::File(e),
         W::Exists => Failure::File(std::io::ErrorKind::AlreadyExists.into()),
     }
@@ -1423,6 +1292,12 @@ fn read_failure(e: yolu_io::Error) -> Failure {
         e => Failure::Unreadable(e),
     }
 }
+
+/// 機能の表の行（毎フレーム、PSD の仕事の終わりを受ける）。
+pub(crate) const FEATURE: Feature = Feature {
+    poll: Some((PollStage::BeforeDroppedPsds, AppState::poll_psd)),
+    ..Feature::new("psd")
+};
 
 /// 同じフォルダの一時ファイルへ `fill` で書き、`check` で確かめる（試験用: PSD でない中身で、一時ファイルの後始末と置き換えを確かめる）。
 #[cfg(test)]
@@ -1460,10 +1335,9 @@ fn stage_bytes(path: &Path, bytes: &[u8]) -> Result<psd::Staged, Failure> {
         |out| out.write_all(bytes).map_err(Failure::File),
         |temp| {
             if std::fs::read(temp).map_err(Failure::File)? != bytes {
-                return Err(Failure::message(
-                    "書いたファイルの読み戻しが一致しません",
-                    "The written file does not read back identically",
-                ));
+                return Err(Failure::keyed(|l| {
+                    l.t("psd-the-written-file-does-not").into()
+                }));
             }
             Ok(())
         },
@@ -1553,20 +1427,21 @@ mod tests {
     /// 2 枚のレイヤー（赤の下地・半透明の青）を持つ 64 × 64 の状態。
     fn painted() -> AppState {
         let mut s = AppState::new(64, 64);
-        let first = s.selected_layer.unwrap();
-        paint(&mut s.doc, first, 64, 64, [255, 0, 0, 255]);
+        let first = s.session.selected_layer.unwrap();
+        paint(&mut s.session.doc, first, 64, 64, [255, 0, 0, 255]);
         s.apply(Action::NewLayer);
-        let second = s.selected_layer.unwrap();
-        paint(&mut s.doc, second, 32, 32, [0, 0, 255, 255]);
+        let second = s.session.selected_layer.unwrap();
+        paint(&mut s.session.doc, second, 32, 32, [0, 0, 255, 255]);
         // PSD は不透明度を 1/255 の刻みで持つので、その刻みの値にしておく
-        s.doc
+        s.session
+            .doc
             .set_layer_opacity(second, 128.0 / 255.0, false)
             .unwrap();
         s
     }
 
     fn composite(s: &AppState) -> Vec<u8> {
-        s.doc.composite(s.doc.bounds()).unwrap()
+        s.session.doc.composite(s.session.doc.bounds()).unwrap()
     }
 
     #[test]
@@ -1582,22 +1457,26 @@ mod tests {
         let before = composite(&a);
 
         let mut b = AppState::new(32, 32);
-        b.modified = false;
+        b.session.clear_modified();
         b.apply(Action::Psd(PsdAction::Import {
             path: path.clone(),
             target: PsdTarget::NewSet,
         }));
         assert!(b.psd.is_busy());
-        assert_eq!(b.sets.len(), 1, "読み終わるまでセットは増えない");
+        assert_eq!(b.session.sets.len(), 1, "読み終わるまでセットは増えない");
         b.wait_psd();
-        assert_eq!(b.sets.len(), 2);
-        assert_eq!(b.sets.current().name, "Body", "セットの名前はファイル名");
-        assert_eq!(b.sets.current_index(), 1, "追加したセットへ替える");
-        assert_eq!((b.doc.width(), b.doc.height()), (64, 64));
-        assert_eq!(b.doc.layers().len(), 2);
+        assert_eq!(b.session.sets.len(), 2);
+        assert_eq!(
+            b.session.sets.current().name,
+            "Body",
+            "セットの名前はファイル名"
+        );
+        assert_eq!(b.session.sets.current_index(), 1, "追加したセットへ替える");
+        assert_eq!((b.session.doc.width(), b.session.doc.height()), (64, 64));
+        assert_eq!(b.session.doc.layers().len(), 2);
         assert!(composite(&b) == before, "合成は同じ");
-        assert!(b.modified);
-        assert!(!b.doc.can_undo(), "読み込みは Undo の段に入らない");
+        assert!(b.session.is_modified());
+        assert!(!b.session.doc.can_undo(), "読み込みは Undo の段に入らない");
         assert!(b.message.contains("PSD を読み込みました"), "{}", b.message);
         // 同じ名前なら番号を付ける
         b.apply(Action::Psd(PsdAction::Import {
@@ -1605,7 +1484,7 @@ mod tests {
             target: PsdTarget::NewSet,
         }));
         b.wait_psd();
-        assert_eq!(b.sets.current().name, "Body 2");
+        assert_eq!(b.session.sets.current().name, "Body 2");
         // 元の（描いていなかった）セットはそのまま
         assert_eq!((b.set_doc(0).width(), b.set_doc(0).layers().len()), (32, 1));
     }
@@ -1616,11 +1495,15 @@ mod tests {
         use yolu_core::LayerLocks;
         let dir = Dir::new("locks");
         let mut a = painted();
-        let layers: Vec<LayerId> = a.doc.layers().iter().map(|l| l.id()).collect();
-        a.doc
+        let layers: Vec<LayerId> = a.session.doc.layers().iter().map(|l| l.id()).collect();
+        a.session
+            .doc
             .set_layer_locks(layers[0], LayerLocks::TRANSPARENCY | LayerLocks::POSITION)
             .unwrap();
-        a.doc.set_layer_locks(layers[1], LayerLocks::ALL).unwrap();
+        a.session
+            .doc
+            .set_layer_locks(layers[1], LayerLocks::ALL)
+            .unwrap();
         let path = dir.0.join("Locked.psd");
         a.apply(Action::Psd(PsdAction::Export(path.clone())));
         a.wait_psd();
@@ -1632,18 +1515,21 @@ mod tests {
         }));
         b.wait_psd();
         assert!(b.message.contains("PSD を読み込みました"), "{}", b.message);
-        assert_eq!(b.doc.layers().len(), 2);
-        let [low, top] = [b.doc.layers()[0].id(), b.doc.layers()[1].id()];
+        assert_eq!(b.session.doc.layers().len(), 2);
+        let [low, top] = [
+            b.session.doc.layers()[0].id(),
+            b.session.doc.layers()[1].id(),
+        ];
         assert_eq!(
-            b.doc.layer(low).unwrap().locks(),
+            b.session.doc.layer(low).unwrap().locks(),
             LayerLocks::TRANSPARENCY | LayerLocks::POSITION
         );
         assert_eq!(
-            b.doc.effective_locks(top).unwrap(),
+            b.session.doc.effective_locks(top).unwrap(),
             LayerLocks::from_bits(15).unwrap(),
             "すべては個別を含んで効く"
         );
-        assert!(!b.doc.can_undo(), "読み込みは Undo の段に入らない");
+        assert!(!b.session.doc.can_undo(), "読み込みは Undo の段に入らない");
         assert!(composite(&b) == composite(&a), "ロックは合成を変えない");
     }
 
@@ -1657,22 +1543,28 @@ mod tests {
         let expected = composite(&a);
 
         let mut b = AppState::new(32, 32);
-        let old_id = b.doc.id();
+        let old_id = b.session.doc.id();
         b.apply(Action::Psd(PsdAction::Import {
             path,
             target: PsdTarget::CurrentSet,
         }));
         b.wait_psd();
-        assert_eq!(b.sets.len(), 1, "セットは増えない");
-        assert_ne!(b.doc.id(), old_id);
-        assert_eq!((b.doc.width(), b.doc.layers().len()), (64, 2));
+        assert_eq!(b.session.sets.len(), 1, "セットは増えない");
+        assert_ne!(b.session.doc.id(), old_id);
+        assert_eq!(
+            (b.session.doc.width(), b.session.doc.layers().len()),
+            (64, 2)
+        );
         assert!(composite(&b) == expected, "合成は同じ");
-        assert!(b.selected_layer.is_some_and(|id| b.doc.layer(id).is_some()));
-        assert!(b.modified);
+        assert!(b
+            .session
+            .selected_layer
+            .is_some_and(|id| b.session.doc.layer(id).is_some()));
+        assert!(b.session.is_modified());
         // 読むだけのセットには入れない
-        b.sets.get_mut(0).unwrap().read_only = Some("試験".into());
+        b.session.sets.get_mut(0).unwrap().read_only = Some("テスト".into());
         b.apply(Action::Psd(PsdAction::ImportDialog(PsdTarget::CurrentSet)));
-        assert_eq!(b.dialog_request, None);
+        assert_eq!(b.outbox.dialog_request, None);
         assert!(b.message.contains("読むだけ"), "{}", b.message);
     }
 
@@ -1685,15 +1577,15 @@ mod tests {
         a.wait_psd();
         // 読んでいる間に描いた（レイヤーを足した）: 入れずに知らせる
         let mut b = AppState::new(32, 32);
-        let id = b.doc.id();
+        let id = b.session.doc.id();
         b.apply(Action::Psd(PsdAction::Import {
             path: path.clone(),
             target: PsdTarget::CurrentSet,
         }));
         b.apply(Action::NewLayer);
         b.wait_psd();
-        assert_eq!(b.doc.id(), id, "文書は替えない");
-        assert_eq!(b.doc.layers().len(), 2, "描いたものは残る");
+        assert_eq!(b.session.doc.id(), id, "文書は替えない");
+        assert_eq!(b.session.doc.layers().len(), 2, "描いたものは残る");
         assert!(
             b.message.contains("プロジェクトが変わった"),
             "{}",
@@ -1708,7 +1600,11 @@ mod tests {
         }));
         crate::project::new_into(&mut c);
         c.wait_psd();
-        assert_eq!(c.doc.width(), 2048, "新しいプロジェクトの文書のまま");
+        assert_eq!(
+            c.session.doc.width(),
+            2048,
+            "新しいプロジェクトの文書のまま"
+        );
         assert!(
             c.message.contains("プロジェクトが変わった"),
             "{}",
@@ -1722,7 +1618,7 @@ mod tests {
         }));
         d.apply(Action::NewLayer);
         d.wait_psd();
-        assert_eq!(d.sets.len(), 2);
+        assert_eq!(d.session.sets.len(), 2);
     }
 
     #[test]
@@ -1761,21 +1657,21 @@ mod tests {
         let mut s = AppState::new(32, 32);
         s.apply(Action::Psd(PsdAction::ImportDialog(PsdTarget::NewSet)));
         assert_eq!(
-            s.dialog_request,
+            s.outbox.dialog_request,
             Some(DialogRequest::PsdImport(PsdTarget::NewSet))
         );
-        s.dialog_request = None;
+        s.outbox.dialog_request = None;
         s.apply(Action::Psd(PsdAction::ExportDialog));
         assert!(s.psd.options_open);
-        assert_eq!(s.dialog_request, None);
+        assert_eq!(s.outbox.dialog_request, None);
         s.apply(Action::Psd(PsdAction::ChooseExportFile));
         assert!(!s.psd.options_open);
-        assert_eq!(s.dialog_request, Some(DialogRequest::PsdExport));
+        assert_eq!(s.outbox.dialog_request, Some(DialogRequest::PsdExport));
         // やめる
-        s.dialog_request = None;
+        s.outbox.dialog_request = None;
         s.apply(Action::Psd(PsdAction::ExportDialog));
         s.apply(Action::Psd(PsdAction::CancelExportOptions));
-        assert!(!s.psd.options_open && s.dialog_request.is_none());
+        assert!(!s.psd.options_open && s.outbox.dialog_request.is_none());
     }
 
     #[test]
@@ -1783,7 +1679,7 @@ mod tests {
         let dir = Dir::new("refuse");
         let good = {
             let s = painted();
-            let projected = psd::Document::from_core(&s.doc).unwrap();
+            let projected = psd::Document::from_core(&s.session.doc).unwrap();
             psd::write(&projected, &Limits::default()).unwrap()
         };
         // PSB（版 2）・16 bit・壊れたファイルは取り込めない
@@ -1796,7 +1692,11 @@ mod tests {
         std::fs::write(dir.0.join("broken.psd"), b"8BPS-not-a-psd").unwrap();
 
         let mut s = AppState::new(32, 32);
-        let before = (s.sets.len(), s.doc.id(), s.modified);
+        let before = (
+            s.session.sets.len(),
+            s.session.doc.id(),
+            s.session.is_modified(),
+        );
         for (file, expect_text) in [
             ("big.psb.psd", "PSB"),
             ("deep.psd", "8 bit"),
@@ -1808,7 +1708,11 @@ mod tests {
             }));
             s.wait_psd();
             assert_eq!(
-                (s.sets.len(), s.doc.id(), s.modified),
+                (
+                    s.session.sets.len(),
+                    s.session.doc.id(),
+                    s.session.is_modified()
+                ),
                 before,
                 "{file}: 何も変えない"
             );
@@ -1848,7 +1752,7 @@ mod tests {
         }));
         s.wait_psd();
         assert!(s.message.starts_with("Cannot read"), "{}", s.message);
-        assert_eq!(s.sets.len(), 1);
+        assert_eq!(s.session.sets.len(), 1);
     }
 
     /// レイヤー ID を持たない 2 レイヤーの PSD（原本を保つ読みは編集できない内容として断る。写しとしては、新しい ID を振って取り込める）。
@@ -1905,8 +1809,8 @@ mod tests {
         }));
         s.wait_psd();
         assert!(s.psd.import_check.is_none(), "確認のウィンドウを出さない");
-        assert_eq!(s.sets.len(), 2);
-        let names: Vec<&str> = s.doc.layers().iter().map(|l| l.name()).collect();
+        assert_eq!(s.session.sets.len(), 2);
+        let names: Vec<&str> = s.session.doc.layers().iter().map(|l| l.name()).collect();
         assert_eq!(names, ["下", "上"]);
     }
 
@@ -1922,14 +1826,22 @@ mod tests {
         );
         std::fs::write(&path, &bytes).unwrap();
         let mut s = AppState::new(32, 32);
-        let before = (s.sets.len(), s.doc.id(), s.modified);
+        let before = (
+            s.session.sets.len(),
+            s.session.doc.id(),
+            s.session.is_modified(),
+        );
         s.apply(Action::Psd(PsdAction::Import {
             path: path.clone(),
             target: PsdTarget::NewSet,
         }));
         s.wait_psd();
         assert_eq!(
-            (s.sets.len(), s.doc.id(), s.modified),
+            (
+                s.session.sets.len(),
+                s.session.doc.id(),
+                s.session.is_modified()
+            ),
             before,
             "確かめるまで入れない"
         );
@@ -1962,7 +1874,14 @@ mod tests {
         // やめる: 何も変えず、取り込んだ場所も覚えない
         s.apply(Action::Psd(PsdAction::CancelImport));
         assert!(s.psd.import_check.is_none());
-        assert_eq!((s.sets.len(), s.doc.id(), s.modified), before);
+        assert_eq!(
+            (
+                s.session.sets.len(),
+                s.session.doc.id(),
+                s.session.is_modified()
+            ),
+            before
+        );
         assert!(s.psd.imported.is_empty());
         assert!(s.message.contains("やめました"), "{}", s.message);
         // もう一度読んで、取り込む
@@ -1973,25 +1892,31 @@ mod tests {
         s.wait_psd();
         s.apply(Action::Psd(PsdAction::ConfirmImport));
         assert!(s.psd.import_check.is_none());
-        assert_eq!(s.sets.len(), 2);
-        assert_eq!(s.sets.current().name, "Ids");
-        let names: Vec<&str> = s.doc.layers().iter().map(|l| l.name()).collect();
+        assert_eq!(s.session.sets.len(), 2);
+        assert_eq!(s.session.sets.current().name, "Ids");
+        let names: Vec<&str> = s.session.doc.layers().iter().map(|l| l.name()).collect();
         assert_eq!(names, ["下", "上"]);
-        let ids: Vec<u128> = s.doc.layers().iter().map(|l| l.id().0 >> 96).collect();
+        let ids: Vec<u128> = s
+            .session
+            .doc
+            .layers()
+            .iter()
+            .map(|l| l.id().0 >> 96)
+            .collect();
         assert!(ids.iter().all(|i| *i > 0) && ids[0] != ids[1], "{ids:?}");
         assert!(s.message.contains("PSD を読み込みました"), "{}", s.message);
-        assert!(!s.doc.can_undo(), "読み込みは Undo の段に入らない");
+        assert!(!s.session.doc.can_undo(), "読み込みは Undo の段に入らない");
         // 今のセットへの取り込みも、確かめ → 取り込むで文書が替わる
         s.apply(Action::Psd(PsdAction::Import {
             path,
             target: PsdTarget::CurrentSet,
         }));
         s.wait_psd();
-        let old = s.doc.id();
+        let old = s.session.doc.id();
         assert!(s.psd.import_check.is_some());
         s.apply(Action::Psd(PsdAction::ConfirmImport));
-        assert_ne!(s.doc.id(), old);
-        assert_eq!(s.doc.layers().len(), 2);
+        assert_ne!(s.session.doc.id(), old);
+        assert_eq!(s.session.doc.layers().len(), 2);
     }
 
     /// 確かめを待つ間に文書が変わったら、今のセットへの取り込みは入れない（描いたものを黙って捨てない）。
@@ -2007,11 +1932,11 @@ mod tests {
         }));
         s.wait_psd();
         assert!(s.psd.import_check.is_some());
-        let drawn = s.selected_layer.unwrap();
-        paint(&mut s.doc, drawn, 8, 8, [1, 2, 3, 255]);
-        let id = s.doc.id();
+        let drawn = s.session.selected_layer.unwrap();
+        paint(&mut s.session.doc, drawn, 8, 8, [1, 2, 3, 255]);
+        let id = s.session.doc.id();
         s.apply(Action::Psd(PsdAction::ConfirmImport));
-        assert_eq!(s.doc.id(), id, "文書は替わらない");
+        assert_eq!(s.session.doc.id(), id, "文書は替わらない");
         assert!(
             s.message.contains("プロジェクトが変わった"),
             "{}",
@@ -2036,7 +1961,7 @@ mod tests {
         s.apply(Action::Psd(PsdAction::Cancel));
         s.wait_psd();
         assert!(s.psd.import_check.is_none());
-        assert_eq!(s.sets.len(), 1);
+        assert_eq!(s.session.sets.len(), 1);
         assert!(s.message.contains("取り消しました"), "{}", s.message);
         assert!(s.psd.imported.is_empty());
     }
@@ -2045,7 +1970,7 @@ mod tests {
     #[test]
     fn pixels_outside_the_canvas_are_cut_and_told_as_dropped() {
         let dir = Dir::new("outside");
-        let mut wide = psd::Document::from_core(&painted().doc).unwrap();
+        let mut wide = psd::Document::from_core(&painted().session.doc).unwrap();
         // 一番下のレイヤー（キャンバスいっぱいの赤）を右へずらして、キャンバスの外へ画素を出す
         wide.layers.last_mut().unwrap().left = 20;
         wide.composite_rgba = None;
@@ -2068,7 +1993,7 @@ mod tests {
             .expect("キャンバス外の画素");
         assert_eq!(note.action, yolu_io::psd::ImportAction::Dropped);
         s.apply(Action::Psd(PsdAction::ConfirmImport));
-        assert_eq!(s.sets.len(), 2);
+        assert_eq!(s.session.sets.len(), 2);
     }
 
     /// 書き出しの確認のウィンドウの注記（機能と結果）を、チャンネルごとに日本語で。
@@ -2093,22 +2018,22 @@ mod tests {
         let path = dir.0.join("out.psd");
         let mut s = painted();
         // 反転したマスク（PSD に非破壊の反転が無い）。マスクそのものは書ける
-        let layer = s.selected_layer.unwrap();
+        let layer = s.session.selected_layer.unwrap();
         s.apply(Action::M2(crate::m2::Edit::AddMask(layer)));
-        s.doc.set_mask_pixel(layer, 4, 4, 200).unwrap();
+        s.session.doc.set_mask_pixel(layer, 4, 4, 200).unwrap();
         s.apply(Action::Psd(PsdAction::Export(path.clone())));
         s.wait_psd();
         assert!(s.psd.notes_confirm.is_none(), "マスクは書ける");
         assert!(path.exists());
         std::fs::remove_file(&path).unwrap();
-        s.doc.set_layer_mask_inverted(layer, true).unwrap();
-        let (revision, undo) = (s.doc.revision(), s.doc.undo_count());
+        s.session.doc.set_layer_mask_inverted(layer, true).unwrap();
+        let (revision, undo) = (s.session.doc.revision(), s.session.doc.undo_count());
         s.apply(Action::Psd(PsdAction::Export(path.clone())));
         assert!(s.psd.is_busy(), "計画は別のスレッド");
         s.wait_psd();
         assert!(!s.psd.is_busy());
         assert!(dir.files().is_empty(), "確かめるまで何も書かない");
-        let name = s.doc.layer(layer).unwrap().name().to_owned();
+        let name = s.session.doc.layer(layer).unwrap().name().to_owned();
         assert_eq!(
             lines(&s),
             [(
@@ -2147,20 +2072,37 @@ mod tests {
         }));
         t.wait_psd();
         assert_eq!(composite(&t), expected);
-        let imported = t.doc.layers().iter().find(|l| l.mask().is_some()).unwrap();
+        let imported = t
+            .session
+            .doc
+            .layers()
+            .iter()
+            .find(|l| l.mask().is_some())
+            .unwrap();
         assert!(!imported.mask().unwrap().inverted(), "反転は画素になった");
         // 文書は変わらない（反転も残る。書き出しは写し）
-        assert_eq!((s.doc.revision(), s.doc.undo_count()), (revision, undo));
-        assert!(s.doc.layer(layer).unwrap().mask().unwrap().inverted());
+        assert_eq!(
+            (s.session.doc.revision(), s.session.doc.undo_count()),
+            (revision, undo)
+        );
+        assert!(s
+            .session
+            .doc
+            .layer(layer)
+            .unwrap()
+            .mask()
+            .unwrap()
+            .inverted());
 
         // クリッピングされたグループ・半透明の塗りつぶし
         let mut u = painted();
         u.apply(Action::M2(crate::m2::Edit::NewGroup));
-        let group = u.selected_layer.unwrap();
-        u.doc.set_layer_clipping(group, true).unwrap();
+        let group = u.session.selected_layer.unwrap();
+        u.session.doc.set_layer_clipping(group, true).unwrap();
         u.apply(Action::M2(crate::m2::Edit::NewFill));
-        let fill = u.selected_layer.unwrap();
-        u.doc
+        let fill = u.session.selected_layer.unwrap();
+        u.session
+            .doc
             .set_fill_value(
                 fill,
                 Channel::Color,
@@ -2171,14 +2113,15 @@ mod tests {
         u.apply(Action::Psd(PsdAction::Export(dir.0.join("u.psd"))));
         u.wait_psd();
         let kinds: Vec<String> = lines(&u).into_iter().map(|l| l.1).collect();
-        assert_eq!(kinds, ["半透明の塗りつぶし", "クリッピングされたグループ"]);
+        // 単色は選んでいたグループのすぐ下に作るので、グループが先に並ぶ
+        assert_eq!(kinds, ["クリッピングされたグループ", "半透明の塗りつぶし"]);
         u.lang = Lang::En;
         let kinds: Vec<String> = lines(&u).into_iter().map(|l| l.1).collect();
-        assert_eq!(kinds, ["Translucent fill", "Clipped group"]);
+        assert_eq!(kinds, ["Clipped group", "Translucent fill"]);
         assert!(!dir.0.join("u.psd").exists());
         // 読むだけのセットは書かない
         let mut v = painted();
-        v.sets.get_mut(0).unwrap().read_only = Some("試験".into());
+        v.session.sets.get_mut(0).unwrap().read_only = Some("テスト".into());
         v.apply(Action::Psd(PsdAction::Export(dir.0.join("v.psd"))));
         assert!(!v.psd.is_busy());
         assert!(v.psd.report.as_ref().unwrap().lines[0]
@@ -2193,21 +2136,22 @@ mod tests {
         let dir = Dir::new("m2-round-trip");
         let path = dir.0.join("m2.psd");
         let mut s = painted();
-        let base = s.selected_layer.unwrap();
+        let base = s.session.selected_layer.unwrap();
         s.apply(Action::M2(crate::m2::Edit::AddMask(base)));
-        s.doc.set_mask_pixel(base, 3, 3, 200).unwrap();
+        s.session.doc.set_mask_pixel(base, 3, 3, 200).unwrap();
         s.apply(Action::M2(crate::m2::Edit::NewFill));
         s.apply(Action::M2(crate::m2::Edit::NewAdjustment(
             crate::m2::AdjustmentKind::Invert,
         )));
         s.apply(Action::M2(crate::m2::Edit::NewGroup));
         let expected: Vec<_> = s
+            .session
             .doc
             .layers()
             .iter()
             .map(|l| (l.name().to_string(), l.kind(), l.mask().is_some()))
             .collect();
-        let composite = s.doc.composite(s.doc.bounds()).unwrap();
+        let composite = s.session.doc.composite(s.session.doc.bounds()).unwrap();
         s.apply(Action::Psd(PsdAction::Export(path.clone())));
         s.wait_psd();
         assert!(s.psd.notes_confirm.is_none(), "焼くものは無い");
@@ -2224,13 +2168,17 @@ mod tests {
         }));
         t.wait_psd();
         let got: Vec<_> = t
+            .session
             .doc
             .layers()
             .iter()
             .map(|l| (l.name().to_string(), l.kind(), l.mask().is_some()))
             .collect();
         assert_eq!(got, expected);
-        assert_eq!(t.doc.composite(t.doc.bounds()).unwrap(), composite);
+        assert_eq!(
+            t.session.doc.composite(t.session.doc.bounds()).unwrap(),
+            composite
+        );
     }
 
     /// 厳密な `from_core` は PSD に形が無い中身を黙って落とさず、機能ごとの理由で断る（焼き込みの書き出しは別）。レイヤーのロックは PSD に書けるので断らない。
@@ -2239,16 +2187,19 @@ mod tests {
     fn from_core_refuses_what_it_cannot_write_as_it_is_and_writes_the_locks() {
         use yolu_core::{BlendMode, ChannelBlend, LayerLocks};
         let mut s = painted();
-        let layer = s.selected_layer.unwrap();
+        let layer = s.session.selected_layer.unwrap();
         s.apply(Action::M2(crate::m2::Edit::AddMask(layer)));
-        s.doc.set_layer_mask_inverted(layer, true).unwrap();
-        let err = psd::Document::from_core(&s.doc).unwrap_err().to_string();
+        s.session.doc.set_layer_mask_inverted(layer, true).unwrap();
+        let err = psd::Document::from_core(&s.session.doc)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("反転"), "{err}");
-        assert_eq!(psd::export_blockers(&s.doc).len(), 1);
+        assert_eq!(psd::export_blockers(&s.session.doc).len(), 1);
         // Color と違う、ほかのチャンネルの合成（Color の合成は PSD のレイヤーの合成として書け、ほかのチャンネルはそのチャンネルの PSD の値になる）
         let mut t = painted();
-        let layer = t.selected_layer.unwrap();
-        t.doc
+        let layer = t.session.selected_layer.unwrap();
+        t.session
+            .doc
             .set_channel_blend(
                 layer,
                 Channel::Color,
@@ -2256,7 +2207,8 @@ mod tests {
                 false,
             )
             .unwrap();
-        t.doc
+        t.session
+            .doc
             .set_channel_blend(
                 layer,
                 Channel::Roughness,
@@ -2264,14 +2216,17 @@ mod tests {
                 false,
             )
             .unwrap();
-        assert!(psd::Document::from_core(&t.doc).is_ok());
-        assert!(psd::export_blockers(&t.doc).is_empty());
+        assert!(psd::Document::from_core(&t.session.doc).is_ok());
+        assert!(psd::export_blockers(&t.session.doc).is_empty());
         // レイヤーのロック: from_core は lspf のビットで書く
         let mut v = painted();
-        let layer = v.selected_layer.unwrap();
-        v.doc.set_layer_locks(layer, LayerLocks::PIXELS).unwrap();
-        assert!(psd::export_blockers(&v.doc).is_empty());
-        let projected = psd::Document::from_core(&v.doc).expect("ロックは書ける");
+        let layer = v.session.selected_layer.unwrap();
+        v.session
+            .doc
+            .set_layer_locks(layer, LayerLocks::PIXELS)
+            .unwrap();
+        assert!(psd::export_blockers(&v.session.doc).is_empty());
+        let projected = psd::Document::from_core(&v.session.doc).expect("ロックは書ける");
         assert!(projected.layers.iter().any(|l| l.locks == 2));
     }
 
@@ -2291,8 +2246,8 @@ mod tests {
         }));
         s.wait_psd();
         // 絵を変えて、取り込んだファイルへ書き出す: 確かめる（まだ書かない）
-        let layer = s.selected_layer.unwrap();
-        paint(&mut s.doc, layer, 8, 8, [0, 255, 0, 255]);
+        let layer = s.session.selected_layer.unwrap();
+        paint(&mut s.session.doc, layer, 8, 8, [0, 255, 0, 255]);
         s.apply(Action::Psd(PsdAction::Export(path.clone())));
         assert!(!s.psd.is_busy());
         let replace = s.psd.confirm.as_ref().expect("確かめ");
@@ -2351,9 +2306,9 @@ mod tests {
         let dir = Dir::new("idle-mark");
         let path = dir.0.join("out.psd");
         let mut s = painted();
-        let all: Vec<LayerId> = s.doc.layers().iter().map(|l| l.id()).collect();
-        let group = s.doc.group_layers(&all, "組").unwrap();
-        s.doc.set_layer_clipping(group, true).unwrap();
+        let all: Vec<LayerId> = s.session.doc.layers().iter().map(|l| l.id()).collect();
+        let group = s.session.doc.group_layers(&all, "組").unwrap();
+        s.session.doc.set_layer_clipping(group, true).unwrap();
         s.apply(Action::Psd(PsdAction::Export(path.clone())));
         s.wait_psd();
         assert!(dir.files().is_empty(), "確かめるまで何も書かない");
@@ -2389,10 +2344,13 @@ mod tests {
             target: PsdTarget::CurrentSet,
         }));
         t.wait_psd();
-        assert!(t.doc.layers().iter().all(|l| !l.clipping()), "印は書かない");
+        assert!(
+            t.session.doc.layers().iter().all(|l| !l.clipping()),
+            "印は書かない"
+        );
         assert_eq!(composite(&t), composite(&s), "見た目は同じ");
         // 文書の印は残る（書き出しは写し）
-        assert!(s.doc.layer(group).unwrap().clipping());
+        assert!(s.session.doc.layer(group).unwrap().clipping());
     }
 
     /// 刻みの間のトーンカーブは最寄りの刻みへ丸め、グラデーションマップの値のカーブは停止点へ展開する。確認のウィンドウの注記に、レイヤーの名前つきで丸めた値
@@ -2411,7 +2369,8 @@ mod tests {
                 .to_vec(),
         )
         .unwrap();
-        s.doc
+        s.session
+            .doc
             .add_adjustment_layer(
                 "曲線",
                 AdjustmentSettings::tone_curve(
@@ -2441,7 +2400,8 @@ mod tests {
             ),
         )
         .unwrap();
-        s.doc
+        s.session
+            .doc
             .add_adjustment_layer(
                 "マップ",
                 AdjustmentSettings::gradient_map(GradientMap::new(ramp, false)),
@@ -2601,7 +2561,7 @@ mod tests {
         // 書き終えてから、確かめで失敗する（確かめの途中の取消も同じ）
         for failure in [
             Failure::Canceled,
-            Failure::message("読み戻せません", "Cannot read back"),
+            Failure::keyed(|_| "Cannot read back".into()),
         ] {
             let mut failure = Some(failure);
             let err = stage(
@@ -2725,7 +2685,7 @@ mod tests {
             ..ExportControl::default()
         };
         let plan = psd::plan_export(
-            &s.doc,
+            &s.session.doc,
             &ExportOptions::new(Channel::Color, ExportMode::Bake),
             &ctl,
         )
@@ -2734,9 +2694,14 @@ mod tests {
             &path,
             |out| {
                 assert!(dir.files().len() == 2, "書いている間は一時ファイルがある");
-                plan.write_psd(&s.doc, &ctl, &mut Trip(out, &cancel), Compression::Rle)
-                    .map(|_| ())
-                    .map_err(export_failure)
+                plan.write_psd(
+                    &s.session.doc,
+                    &ctl,
+                    &mut Trip(out, &cancel),
+                    Compression::Rle,
+                )
+                .map(|_| ())
+                .map_err(export_failure)
             },
             |_| panic!("取消のあとは確かめない"),
         )
@@ -2754,7 +2719,7 @@ mod tests {
         let s = painted();
         let ctl = ExportControl::default();
         let plan = psd::plan_export(
-            &s.doc,
+            &s.session.doc,
             &ExportOptions::new(Channel::Color, ExportMode::Bake),
             &ctl,
         )
@@ -2762,7 +2727,7 @@ mod tests {
         let path = dir.0.join("v.psd");
         let mut file = std::fs::File::create(&path).unwrap();
         let written = plan
-            .write_psd(&s.doc, &ctl, &mut file, Compression::Rle)
+            .write_psd(&s.session.doc, &ctl, &mut file, Compression::Rle)
             .unwrap();
         drop(file);
         let calm = AtomicBool::new(false);
@@ -2933,9 +2898,9 @@ mod tests {
         a.wait_psd();
         assert!(big.exists());
         let mut s = AppState::new(32, 32);
-        let layer = s.selected_layer.unwrap();
+        let layer = s.session.selected_layer.unwrap();
         let brush = s.stroke_settings(false);
-        let stroke = s.doc.begin_stroke(layer, &brush).unwrap();
+        let stroke = s.session.doc.begin_stroke(layer, &brush).unwrap();
         s.apply(Action::Psd(PsdAction::Import {
             path: big.clone(),
             target: PsdTarget::NewSet,
@@ -2945,8 +2910,8 @@ mod tests {
         s.apply(Action::Psd(PsdAction::Export(dir.0.join("never.psd"))));
         assert!(!s.psd.is_busy());
         s.apply(Action::Psd(PsdAction::ExportDialog));
-        assert_eq!(s.dialog_request, None);
-        s.doc.end_stroke(stroke).unwrap();
+        assert_eq!(s.outbox.dialog_request, None);
+        s.session.doc.end_stroke(stroke).unwrap();
         assert_eq!(dir.files(), ["big.psd"]);
         // 描き終えれば始められる
         s.apply(Action::Psd(PsdAction::Import {
@@ -2955,7 +2920,7 @@ mod tests {
         }));
         assert!(s.psd.is_busy());
         s.wait_psd();
-        assert_eq!(s.sets.len(), 2);
+        assert_eq!(s.session.sets.len(), 2);
     }
 
     #[test]
@@ -2969,7 +2934,11 @@ mod tests {
         // 読み込み（新しいセット・今のセット）: 取消が来るまで始めない仕事で、取消が効いたことを必ず確かめる
         for target in [PsdTarget::NewSet, PsdTarget::CurrentSet] {
             let mut s = AppState::new(32, 32);
-            let before = (s.sets.len(), s.doc.id(), s.modified);
+            let before = (
+                s.session.sets.len(),
+                s.session.doc.id(),
+                s.session.is_modified(),
+            );
             s.psd.park_next = true;
             s.apply(Action::Psd(PsdAction::Import {
                 path: path.clone(),
@@ -2980,7 +2949,15 @@ mod tests {
             assert!(s.psd.progress().unwrap().canceling);
             s.wait_psd();
             assert!(s.message.contains("取り消しました"), "{}", s.message);
-            assert_eq!((s.sets.len(), s.doc.id(), s.modified), before, "{target:?}");
+            assert_eq!(
+                (
+                    s.session.sets.len(),
+                    s.session.doc.id(),
+                    s.session.is_modified()
+                ),
+                before,
+                "{target:?}"
+            );
             assert!(s.psd.report.is_none());
             // 取り消した読み込みは覚えない（同じファイルへ書き出すとき確かめない）
             s.apply(Action::Psd(PsdAction::Export(path.clone())));
@@ -3010,27 +2987,30 @@ mod tests {
         a.wait_psd();
         // 今のセットの文書を替える読み込み: 読んでいる間に描き始めて、まだ離していない
         let mut b = AppState::new(32, 32);
-        let id = b.doc.id();
-        b.modified = false;
+        let id = b.session.doc.id();
+        b.session.clear_modified();
         b.apply(Action::Psd(PsdAction::Import {
             path: path.clone(),
             target: PsdTarget::CurrentSet,
         }));
         assert!(b.psd.is_busy());
-        let layer = b.selected_layer.unwrap();
+        let layer = b.session.selected_layer.unwrap();
         let brush = b.stroke_settings(false);
-        let stroke = b.doc.begin_stroke(layer, &brush).unwrap();
+        let stroke = b.session.doc.begin_stroke(layer, &brush).unwrap();
         b.wait_psd();
-        assert_eq!(b.doc.id(), id, "文書は替えない");
+        assert_eq!(b.session.doc.id(), id, "文書は替えない");
         assert!(
             b.is_stroking(),
             "描きかけのストロークは取り残さず、そのまま"
         );
-        assert!(!b.modified);
+        assert!(!b.session.is_modified());
         assert!(b.message.contains("描いている間"), "{}", b.message);
         assert!(b.psd.report.is_none());
-        b.doc.end_stroke(stroke).unwrap();
-        assert_eq!((b.doc.width(), b.doc.layers().len()), (32, 1));
+        b.session.doc.end_stroke(stroke).unwrap();
+        assert_eq!(
+            (b.session.doc.width(), b.session.doc.layers().len()),
+            (32, 1)
+        );
         // 取り込めなかったので、同じファイルへ書き出すとき確かめない（取り込んだ記録を残さない）
         b.apply(Action::Psd(PsdAction::Export(path.clone())));
         assert!(b.psd.confirm.is_none());
@@ -3042,7 +3022,7 @@ mod tests {
         }));
         b.wait_psd();
         assert_eq!(
-            (b.doc.width(), b.doc.layers().len()),
+            (b.session.doc.width(), b.session.doc.layers().len()),
             (32, 1),
             "書き出した 1 レイヤーの文書"
         );
@@ -3053,39 +3033,44 @@ mod tests {
             path: path.clone(),
             target: PsdTarget::CurrentSet,
         }));
-        let layer = c.selected_layer.unwrap();
+        let layer = c.session.selected_layer.unwrap();
         let brush = c.stroke_settings(false);
-        let stroke = c.doc.begin_stroke(layer, &brush).unwrap();
+        let stroke = c.session.doc.begin_stroke(layer, &brush).unwrap();
         c.wait_psd();
         assert!(c.message.contains("while drawing"), "{}", c.message);
-        c.doc.end_stroke(stroke).unwrap();
+        c.session.doc.end_stroke(stroke).unwrap();
         // 新しいセットとして足す読み込みは足すが、描いている間は切り替えない
         let mut d = AppState::new(32, 32);
         d.apply(Action::Psd(PsdAction::Import {
             path,
             target: PsdTarget::NewSet,
         }));
-        let layer = d.selected_layer.unwrap();
+        let layer = d.session.selected_layer.unwrap();
         let brush = d.stroke_settings(false);
-        let stroke = d.doc.begin_stroke(layer, &brush).unwrap();
+        let stroke = d.session.doc.begin_stroke(layer, &brush).unwrap();
         d.wait_psd();
-        assert_eq!(d.sets.len(), 2);
-        assert_eq!(d.sets.current_index(), 0, "描いている間は切り替えない");
+        assert_eq!(d.session.sets.len(), 2);
+        assert_eq!(
+            d.session.sets.current_index(),
+            0,
+            "描いている間は切り替えない"
+        );
         assert!(d.is_stroking());
         assert!(d.message.contains("切り替えていません"), "{}", d.message);
-        d.doc.end_stroke(stroke).unwrap();
+        d.session.doc.end_stroke(stroke).unwrap();
     }
 
     /// Roughness にも描いた 64 × 64 の状態（2 枚のレイヤー）。
     fn painted_in_two_channels() -> AppState {
         let mut s = painted();
-        let layers: Vec<LayerId> = s.doc.layers().iter().map(|l| l.id()).collect();
+        let layers: Vec<LayerId> = s.session.doc.layers().iter().map(|l| l.id()).collect();
         for (i, id) in layers.iter().enumerate() {
-            s.doc
+            s.session
+                .doc
                 .set_channel_enabled(*id, Channel::Roughness, true)
                 .unwrap();
             paint_channel(
-                &mut s.doc,
+                &mut s.session.doc,
                 *id,
                 Channel::Roughness,
                 48,
@@ -3126,12 +3111,13 @@ mod tests {
         let dir = Dir::new("channels");
         let mut s = painted_in_two_channels();
         let rough = s
+            .session
             .doc
-            .composite_channel(Channel::Roughness, s.doc.bounds())
+            .composite_channel(Channel::Roughness, s.session.doc.bounds())
             .unwrap();
         let color = composite(&s);
         s.psd.export.channels = vec![Channel::Color, Channel::Roughness, Channel::Height];
-        let before = yolu_io::NativeDocument::from_core(&s.doc)
+        let before = yolu_io::NativeDocument::from_core(&s.session.doc)
             .unwrap()
             .to_bytes();
         s.apply(Action::Psd(PsdAction::Export(dir.0.join("Body.psd"))));
@@ -3152,7 +3138,7 @@ mod tests {
             assert_eq!(&composite(&t), expected, "{name}");
         }
         assert_eq!(
-            yolu_io::NativeDocument::from_core(&s.doc)
+            yolu_io::NativeDocument::from_core(&s.session.doc)
                 .unwrap()
                 .to_bytes(),
             before,
@@ -3161,8 +3147,8 @@ mod tests {
         // もうあるファイル: 確かめる（複数のチャンネルは、選んだ名前でなく書き分けた名前を書く）
         let original = std::fs::read(dir.0.join("Body_Roughness.psd")).unwrap();
         paint_channel(
-            &mut s.doc,
-            s.selected_layer.unwrap(),
+            &mut s.session.doc,
+            s.session.selected_layer.unwrap(),
             Channel::Roughness,
             8,
             8,
@@ -3203,8 +3189,8 @@ mod tests {
             color_space: yolu_core::ColorSpace::Linear,
             default: yolu_core::Rgba8::new(0, 0, 0, 255),
         };
-        let a = s.doc.add_channel(info("Same")).unwrap();
-        let b = s.doc.add_channel(info("same")).unwrap();
+        let a = s.session.doc.add_channel(info("Same")).unwrap();
+        let b = s.session.doc.add_channel(info("same")).unwrap();
         s.psd.export.channels = vec![a, b];
         s.apply(Action::Psd(PsdAction::Export(dir.0.join("clash.psd"))));
         assert!(!s.psd.is_busy());
@@ -3238,7 +3224,7 @@ mod tests {
         s.apply(Action::Psd(PsdAction::SetExportMode(ExportMode::Flat)));
         assert_eq!(s.psd.export.mode, ExportMode::Flat);
         // 消したユーザーチャンネルは、開くときに外れる（空なら Color）
-        let user = s.doc.add_channel(yolu_core::ChannelInfo {
+        let user = s.session.doc.add_channel(yolu_core::ChannelInfo {
             name: "X".into(),
             kind: yolu_core::ChannelKind::Scalar,
             color_space: yolu_core::ColorSpace::Linear,
@@ -3246,15 +3232,15 @@ mod tests {
         });
         let user = user.unwrap();
         s.psd.export.channels = vec![user];
-        s.doc.remove_channel(user).unwrap();
+        s.session.doc.remove_channel(user).unwrap();
         s.apply(Action::Psd(PsdAction::ExportDialog));
         assert_eq!(s.psd.export.channels, [Channel::Color]);
         // 平らに 1 枚: 確かめは出ず、1 枚のレイヤーの PSD
         s.psd.options_open = false;
         s.psd.export.channels = vec![Channel::Color, Channel::Roughness];
-        let layer = s.selected_layer.unwrap();
+        let layer = s.session.selected_layer.unwrap();
         s.apply(Action::M2(crate::m2::Edit::AddMask(layer)));
-        s.doc.set_layer_mask_inverted(layer, true).unwrap();
+        s.session.doc.set_layer_mask_inverted(layer, true).unwrap();
         s.apply(Action::Psd(PsdAction::Export(dir.0.join("flat.psd"))));
         s.wait_psd();
         assert!(s.psd.notes_confirm.is_none());
@@ -3264,7 +3250,7 @@ mod tests {
             target: PsdTarget::CurrentSet,
         }));
         t.wait_psd();
-        assert_eq!(t.doc.layers().len(), 1);
+        assert_eq!(t.session.doc.layers().len(), 1);
         // 焼き込み: 反転したマスクが 2 つのチャンネルの確かめに並ぶ
         s.apply(Action::Psd(PsdAction::SetExportMode(ExportMode::Bake)));
         s.apply(Action::Psd(PsdAction::Export(dir.0.join("both.psd"))));
@@ -3289,9 +3275,9 @@ mod tests {
         let path = dir.0.join("w.psd");
         std::fs::write(&path, b"old").unwrap();
         let mut s = painted();
-        let layer = s.selected_layer.unwrap();
+        let layer = s.session.selected_layer.unwrap();
         s.apply(Action::M2(crate::m2::Edit::AddMask(layer)));
-        s.doc.set_layer_mask_inverted(layer, true).unwrap();
+        s.session.doc.set_layer_mask_inverted(layer, true).unwrap();
         s.apply(Action::Psd(PsdAction::Export(path.clone())));
         s.wait_psd();
         assert!(s.psd.notes_confirm.is_some());
@@ -3313,7 +3299,8 @@ mod tests {
         let dir = Dir::new("bake-budget");
         let mut s = AppState::new(4096, 4096);
         for n in 0..3 {
-            s.doc
+            s.session
+                .doc
                 .add_fill_layer(
                     &format!("ガラス{n}"),
                     &[(
@@ -3331,7 +3318,7 @@ mod tests {
             s.psd.notes_confirm.as_ref().unwrap().sections()[0].1.len(),
             3
         );
-        let layers = s.doc.layers().len();
+        let layers = s.session.doc.layers().len();
         s.apply(Action::Psd(PsdAction::ConfirmWrite));
         s.wait_psd();
         assert!(s.message.contains("PSD に書き出しました"), "{}", s.message);
@@ -3347,12 +3334,12 @@ mod tests {
             target: PsdTarget::NewSet,
         }));
         back.wait_psd();
-        assert_eq!(back.sets.len(), 2, "{}", back.message);
-        assert_eq!(back.doc.layers().len(), layers);
+        assert_eq!(back.session.sets.len(), 2, "{}", back.message);
+        assert_eq!(back.session.doc.layers().len(), layers);
         let rect = yolu_core::Rect::new(0, 0, 4096, 8);
         assert_eq!(
-            back.doc.composite(rect).unwrap(),
-            s.doc.composite(rect).unwrap()
+            back.session.doc.composite(rect).unwrap(),
+            s.session.doc.composite(rect).unwrap()
         );
     }
 
@@ -3366,7 +3353,10 @@ mod tests {
         // 設定の予算 256 MiB のレイヤーの記録は 256 件まで。初めのレイヤー 1 枚とグループ 130 個は、区切りの記録も数えて 261 件になる
         s.prefs.settings.source_budget = crate::settings::Budget::Mib(256);
         for n in 0..130 {
-            s.doc.add_group(&format!("グループ{n}"), None).unwrap();
+            s.session
+                .doc
+                .add_group(&format!("グループ{n}"), None)
+                .unwrap();
         }
         s.apply(Action::Psd(PsdAction::Export(dir.0.join("g.psd"))));
         s.wait_psd();
@@ -3420,13 +3410,15 @@ mod tests {
         use yolu_core::{AdjustmentSettings, NormalSettings, NormalYDirection};
         let dir = Dir::new("hard");
         let mut s = painted();
-        s.doc
+        s.session
+            .doc
             .set_normal_settings(
                 NormalSettings::default().with_file_direction(NormalYDirection::DirectX),
                 false,
             )
             .unwrap();
-        s.doc
+        s.session
+            .doc
             .add_adjustment_layer(
                 "レベル",
                 AdjustmentSettings::levels(20.0 / 255.0, 230.0 / 255.0, 1.37, 0.0, 1.0).unwrap(),
@@ -3497,7 +3489,11 @@ mod tests {
         let mut s = AppState::new(32, 32);
         // レイヤーの画素の予算（設定の「レイヤーのメモリ」）を下げる。読み込みは 256 MiB を下回らない
         s.prefs.settings.source_budget = crate::settings::Budget::Mib(16);
-        let before = (s.sets.len(), s.doc.id(), s.modified);
+        let before = (
+            s.session.sets.len(),
+            s.session.doc.id(),
+            s.session.is_modified(),
+        );
         // ファイルの大きさだけでは断らない（原本を保たないので、保持の上限は掛けない）。PSD でなければ、その理由で断る
         let huge = dir.0.join("huge.psd");
         let limit = Limits::default().max_source_bytes as u64;
@@ -3514,7 +3510,7 @@ mod tests {
         assert!(s.psd.report.take().is_some_and(|r| !r.ok));
         // 読み込みのキャンバスが .ylp の辺の上限を超える（幅・高さを書き換えたファイル）
         let mut wide = {
-            let projected = psd::Document::from_core(&painted().doc).unwrap();
+            let projected = psd::Document::from_core(&painted().session.doc).unwrap();
             psd::write(&projected, &Limits::default()).unwrap()
         };
         wide[14..18].copy_from_slice(&9000u32.to_be_bytes());
@@ -3544,7 +3540,14 @@ mod tests {
             "{:?}",
             report.lines[0].tooltip
         );
-        assert_eq!((s.sets.len(), s.doc.id(), s.modified), before);
+        assert_eq!(
+            (
+                s.session.sets.len(),
+                s.session.doc.id(),
+                s.session.is_modified()
+            ),
+            before
+        );
         // 英語
         s.lang = Lang::En;
         s.apply(Action::Psd(PsdAction::Import {
@@ -3605,7 +3608,7 @@ mod tests {
         assert_settled(&s, "PSD を今のセットへ");
         assert_eq!(s.view, crate::canvas::view::ViewState::default());
         assert_eq!(s.ui.layer_scroll, 0.0);
-        assert!(s.selected_layer.is_some());
-        assert!(s.modified);
+        assert!(s.session.selected_layer.is_some());
+        assert!(s.session.is_modified());
     }
 }

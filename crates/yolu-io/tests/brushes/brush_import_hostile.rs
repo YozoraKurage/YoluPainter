@@ -255,7 +255,11 @@ fn sut_files_survive_every_corruption() {
     let base = sut_base();
     let set = import_bytes(FileKind::Sut, &base, Some("F")).expect("土台は取り込める");
     let b = &set.brushes[0];
-    assert!(b.brush.tip.image.is_some() && b.brush.texture.is_some() && b.brush.base.pressure_size);
+    assert!(
+        b.brush.tip.image.is_some()
+            && b.brush.texture.is_some()
+            && b.brush.influences.size.pressure.on
+    );
     assert!(base.len() < 12 * 1024, "土台は小さい: {}", base.len());
     // 取り込めた・断った の数は、壊し方の網羅の中の割合の目安（SQLite は使っていないページの書き換えでは変わらない）
     let (before_ok, before_err) = (

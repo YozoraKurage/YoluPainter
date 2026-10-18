@@ -133,7 +133,7 @@ fn paint_handles(painter: &Painter, view: &CanvasView, r: &Ruler, selected: bool
 
 /// 線を伸ばす長さ（文書の画素）。
 fn reach(app: &AppState) -> f64 {
-    app.doc.width().max(app.doc.height()) as f64 * 8.0
+    app.session.doc.width().max(app.session.doc.height()) as f64 * 8.0
 }
 
 /// キャンバスの上に、見えている 2D の定規と、ドラッグの途中の形を描く。

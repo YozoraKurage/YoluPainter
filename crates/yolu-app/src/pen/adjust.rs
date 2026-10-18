@@ -13,8 +13,9 @@
 //! 中央値が 0.5 になるよう曲げる（点は (0,0)・(t50, 0.5)・(1,1) の 3 つで、間隔は 0.1 以上）。曲線を足すと p10・p90 の写り先は
 //! 0.1・0.9 でなくなる（中央値を 0.5 に合わせるほうを優先する）。w が 0.08 未満（筆圧がほぼ一定）か、筆圧のある点が 24 未満なら決めない。
 
-use crate::engine::{CoreError, PressureResponse};
+use crate::engine::{CoreError, InputResponse};
 use yolu_core::curve::{Curve, CurvePoint};
+use yolu_core::Reason;
 
 /// 上限 − 下限の最小。これより狭いと、わずかな筆圧の違いで 0 と 1 を行き来する。
 pub const MIN_SPAN: f32 = 0.1;
@@ -30,7 +31,7 @@ pub struct PressureAdjust {
     low: f32,
     high: f32,
     /// 最小値 0 の応え（曲線だけを使う）。
-    curve: PressureResponse,
+    curve: InputResponse,
 }
 
 impl Default for PressureAdjust {
@@ -39,7 +40,7 @@ impl Default for PressureAdjust {
         PressureAdjust {
             low: 0.0,
             high: 1.0,
-            curve: PressureResponse::default(),
+            curve: InputResponse::default(),
         }
     }
 }
@@ -53,12 +54,12 @@ impl PressureAdjust {
             || high > 1.0
             || high - low < MIN_SPAN - 1e-6
         {
-            return Err(CoreError::InvalidArgument("筆圧の下限・上限"));
+            return Err(CoreError::InvalidArgument(Reason::PenPressureRange));
         }
         Ok(PressureAdjust {
             low,
             high,
-            curve: PressureResponse::new(0.0, curve)?.rounded_to_f32(),
+            curve: InputResponse::new(0.0, curve)?.rounded_to_f32(),
         })
     }
 
@@ -115,7 +116,7 @@ impl PressureAdjust {
         Ok(PressureAdjust {
             low: self.low,
             high: self.high,
-            curve: PressureResponse::from_curve(0.0, curve)?.rounded_to_f32(),
+            curve: InputResponse::from_curve(0.0, curve)?.rounded_to_f32(),
         })
     }
 

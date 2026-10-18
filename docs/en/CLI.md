@@ -164,6 +164,7 @@ The list of error `code`s is in [the command reference](https://github.com/Yozor
 
 Field types, ranges and descriptions are printed by `yolupainter-cli schema <command>`. The effect kinds and the ranges of their values are returned by `effect.list_kinds`.
 Painting operations (strokes, fills, selections) are not commands yet.
+Nor are adding layer sets (the named bundles of layers inside a texture set), renaming them or changing the output routing. A document with several layer sets can still be opened and edited, but `set.info` lists the layers of all layer sets together without saying which layer set each is in. `layer.add` without `above` adds to the first layer set, and moving across layer sets or into a group of another layer set is refused. Previews and exports are the final result that the per-channel output routing points to.
 
 ## Safety
 

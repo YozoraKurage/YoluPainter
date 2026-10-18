@@ -15,7 +15,7 @@
 //!
 //! ③ Unity のプロジェクト（Live Link でつないでいる間だけ並ぶ置き場）を足すときの差し込み口:
 //! - 置き場: `Source` に 1 つ足し（`ALL`・`name`・`tooltip`）、`panels::assets` の `cards` / `footer` / `menu_entries` の振り分けに
-//!   同じ形の枝を足す（`library_cards` と同じく、一覧から `Card` を作る）。一覧は Live Link の「アセットの一覧（種類・名前・GUID・大きさ）」の
+//!   同じ形の分岐を足す（`library_cards` と同じく、一覧から `Card` を作る）。一覧は Live Link の「アセットの一覧（種類・名前・GUID・大きさ）」の
 //!   答えを、このモジュールの `LibraryState` と同じ形（項目の並び・選び・見た結果の `HashMap`）の状態に受ける。
 //! - サムネイル: 見えている項目だけ `service::Service` に頼む（札は GUID と内容の札）。仕事の中で Live Link の「サムネイル」を呼び、
 //!   `shelf::Picture` にして返す。同じ内容の札の絵は `cache::Cache`（`Cache::key("unity", 内容の札)`）に覚える。仕事は `Cancel` を見て切り上げる。
@@ -42,13 +42,13 @@ use yolu_io::shelf::Shelf;
 use self::cache::Cache;
 use self::probe::{Limits, Target};
 use self::service::{Service, Work};
+use crate::jobs::CloseJob;
 use crate::jobs::JobSpec;
 use crate::lang::Lang;
 use crate::shelf::{
     Attempt, Inspected, ItemKind, Unreadable, IMAGE_THUMB_PIXELS, IMPORT_LIMIT, PREVIEW_BUDGET,
 };
-use crate::state::AppState;
-use crate::windows::CloseJob;
+use crate::state::{AppState, Waker};
 
 /// ライブラリのファイルの項目の ID の前置き（プロジェクトの棚の ID は UUID、組み込みは `builtin:` なので重ならない）。
 pub const LIBRARY_PREFIX: &str = "library:";
@@ -69,7 +69,7 @@ pub const REFUSAL_PNG_SIZE: &str = "画像の 1 辺は 1〜8192 です";
 
 /// 16 ビットの PNG を 8 ビットへ丸めて使ったときの知らせ（使う・置くの知らせに足す）。
 pub fn rounded_note(lang: Lang) -> &'static str {
-    lang.pick("16 bit を 8 bit にしました", "Reduced from 16 to 8 bits")
+    lang.t("library-reduced-from-16-to-8")
 }
 
 pub fn library_id(rel: &str) -> String {
@@ -100,21 +100,15 @@ impl Source {
 
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            Source::Project => lang.pick("プロジェクト", "Project"),
-            Source::Library => lang.pick("ライブラリ", "Library"),
+            Source::Project => lang.t("library-project"),
+            Source::Library => lang.t("library-library"),
         }
     }
 
     pub fn tooltip(self, lang: Lang) -> &'static str {
         match self {
-            Source::Project => lang.pick(
-                "このプロジェクトのアセット（.ylp に保存される）",
-                "This project's assets (saved in the .ylp)",
-            ),
-            Source::Library => lang.pick(
-                "個人のライブラリ（フォルダ。ほかのプロジェクトからも使える）",
-                "Your library (a folder, shared by your projects)",
-            ),
+            Source::Project => lang.t("library-this-project-s-assets-saved-tip"),
+            Source::Library => lang.t("library-your-library-a-folder-shared-tip"),
         }
     }
 }
@@ -253,15 +247,12 @@ pub struct LibraryState {
     /// 選んでいる項目の ID（`library:` + 相対パス、または `brush:` + ブラシの札）。
     pub selected: Option<String>,
     pub scroll: f32,
-    /// ライブラリの格子の範囲（このフレームで描いたときだけ入る。ウィンドウに落としたファイルが格子の上かを見る。
-    /// 棚・チャンネルのタブを開いている間は入らない）。
-    pub grid_rect: Option<egui::Rect>,
     /// 消してよいか確かめている相対パス（確認のウィンドウは `YoluApp` が出す）。
     pub pending_remove: Option<String>,
     /// 項目を見るときの上限（試験で小さくする）。
     pub limits: Limits,
     cache: Option<Arc<Cache>>,
-    context: Option<egui::Context>,
+    waker: Option<Waker>,
     /// いま一覧にしているフォルダ（設定が変わったら一覧を捨てる）。
     folder: Option<PathBuf>,
     listed: bool,
@@ -290,7 +281,6 @@ impl Default for LibraryState {
             source: Source::Project,
             selected: None,
             scroll: 0.0,
-            grid_rect: None,
             pending_remove: None,
             limits: Limits {
                 read: IMPORT_LIMIT,
@@ -298,7 +288,7 @@ impl Default for LibraryState {
                 thumb_pixels: IMAGE_THUMB_PIXELS,
             },
             cache: None,
-            context: None,
+            waker: None,
             folder: None,
             listed: false,
             problem: None,
@@ -330,9 +320,9 @@ impl LibraryState {
     }
 
     /// できたときに画面を描き直させる口を覚える。
-    pub fn set_context(&mut self, ctx: &egui::Context) {
-        self.inspector.set_context(ctx.clone());
-        self.context = Some(ctx.clone());
+    pub fn set_waker(&mut self, waker: Waker) {
+        self.inspector.set_waker(waker.clone());
+        self.waker = Some(waker);
     }
 
     /// 新しいフレームの始まり（見えている項目を `request_probes` で頼む前に 1 度）。
@@ -343,15 +333,9 @@ impl LibraryState {
     /// 次の書き込みを始められない理由（書き込みが走っている間。やめた書き込みのスレッドが終わるまでも）。
     pub fn busy_reason(&self, lang: Lang) -> Option<&'static str> {
         if self.write.is_some() {
-            Some(lang.pick(
-                "ライブラリへ書き込み中です",
-                "Already writing to the library",
-            ))
+            Some(lang.t("library-already-writing-to-the-library"))
         } else if self.running.load(Ordering::SeqCst) > 0 {
-            Some(lang.pick(
-                "やめた書き込みを終えています",
-                "Finishing the cancelled write",
-            ))
+            Some(lang.t("library-finishing-the-cancelled-write"))
         } else {
             None
         }
@@ -416,17 +400,14 @@ impl LibraryState {
         let Some(folder) = self.folder.clone() else {
             self.stale = false;
             self.listed = true;
-            self.problem = Some(Unreadable::pair(
-                "ライブラリの場所がありません",
-                "No library location",
-            ));
+            self.problem = Some(Unreadable::keyed(|l| l.t("library-no-library-location")));
             return;
         };
         self.stale = false;
         let (tx, rx) = std::sync::mpsc::channel();
         let cancel = Arc::new(AtomicBool::new(false));
         let flag = cancel.clone();
-        let repaint = self.context.clone();
+        let repaint = self.waker.clone();
         let root = folder.clone();
         let spawned = std::thread::Builder::new()
             .name("yolu-library-list".into())
@@ -438,13 +419,13 @@ impl LibraryState {
                     )
                 });
                 let _ = tx.send(result);
-                if let Some(ctx) = repaint {
-                    ctx.request_repaint();
+                if let Some(waker) = repaint {
+                    waker.wake();
                 }
             });
         if spawned.is_err() {
             self.listed = true;
-            self.problem = Some(Unreadable::pair("一覧を読めません", "Cannot read the list"));
+            self.problem = Some(Unreadable::keyed(|l| l.t("library-cannot-read-the-list")));
             return;
         }
         self.run = Some(ListingRun { folder, rx, cancel });
@@ -457,7 +438,7 @@ impl LibraryState {
             Ok(r) => r,
             Err(std::sync::mpsc::TryRecvError::Empty) => return false,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                Err(Unreadable::pair("一覧を読めません", "Cannot read the list"))
+                Err(Unreadable::keyed(|l| l.t("library-cannot-read-the-list")))
             }
         };
         let run = self.run.take().expect("上で確かめた");

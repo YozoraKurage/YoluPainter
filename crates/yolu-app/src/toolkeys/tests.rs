@@ -1,7 +1,8 @@
 use super::*;
-use egui::{Event, Modifiers, RawInput};
+use egui::{Event, RawInput};
 
 use crate::mode::EditorMode;
+use crate::state::key::Modifiers;
 use crate::state::{OpenPopup, PopupKind};
 use crate::ui::menu::PopupState;
 
@@ -40,11 +41,11 @@ impl Rig {
 
     fn key(key: Key, pressed: bool, repeat: bool, modifiers: Modifiers) -> Event {
         Event::Key {
-            key,
+            key: key.into(),
             physical_key: None,
             pressed,
             repeat,
-            modifiers,
+            modifiers: modifiers.into(),
         }
     }
 
@@ -73,16 +74,16 @@ impl Rig {
 
     /// ブラシのストロークが始まった状態にする（実際のドラッグは gui_canvas の試験）。
     fn begin_stroke(&mut self) {
-        let layer = self.app.selected_layer.unwrap();
+        let layer = self.app.session.selected_layer.unwrap();
         let settings = self.app.stroke_settings(false);
-        let stroke = self.app.doc.begin_stroke(layer, &settings).unwrap();
-        self.app.stroke = Some(stroke);
+        let stroke = self.app.session.doc.begin_stroke(layer, &settings).unwrap();
+        self.app.session.stroke = Some(stroke);
         self.app.canvas.stroke = Some(crate::state::StrokeSource::Mouse);
     }
 
     fn end_stroke(&mut self) {
-        let stroke = self.app.stroke.take().unwrap();
-        self.app.doc.cancel_stroke(stroke);
+        let stroke = self.app.session.stroke.take().unwrap();
+        self.app.session.doc.cancel_stroke(stroke);
         self.app.canvas.stroke = None;
     }
 }
@@ -320,7 +321,7 @@ fn a_popup_opening_counts_as_a_release() {
     rig.mode("tool.eraser", ToolKeyMode::Hold);
     rig.down(Key::E);
     let anchor = egui::Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(10.0, 10.0));
-    rig.app.popup = Some(OpenPopup {
+    rig.app.ui.popup = Some(OpenPopup {
         kind: PopupKind::Mode,
         state: PopupState::new(&rig.ctx, anchor),
     });
@@ -356,11 +357,11 @@ fn a_modifier_released_first_does_not_end_the_hold() {
     rig.mode("tool.gradient", ToolKeyMode::Hold);
     // Shift+G（グラデーション）
     rig.frame(vec![
-        Event::ModifiersChanged(Modifiers::SHIFT),
+        Event::ModifiersChanged(Modifiers::SHIFT.into()),
         Rig::key(Key::G, true, false, Modifiers::SHIFT),
     ]);
     assert_eq!(rig.tool(), Tool::Gradient);
-    rig.frame(vec![Event::ModifiersChanged(Modifiers::NONE)]);
+    rig.frame(vec![Event::ModifiersChanged(Modifiers::NONE.into())]);
     rig.idle(0.1);
     assert_eq!(
         rig.tool(),
@@ -723,7 +724,7 @@ fn every_canvas_tool_drag_and_press_makes_the_release_wait() {
     );
     waits_for(
         |app| {
-            let layer = app.selected_layer.unwrap();
+            let layer = app.session.selected_layer.unwrap();
             app.text.move_press = Some((layer, a, Mouse));
         },
         |app| app.text.move_press = None,

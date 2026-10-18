@@ -41,7 +41,7 @@ struct Panel {
 
 fn draw(ui: &mut Ui, p: &mut Panel) {
     if !p.ready {
-        // 書体は次のフレームから効く（このフレームで太字の書体を使うと egui が止まる）ので、初めのフレームは準備だけ
+        // フォントは次のフレームから効く（このフレームで太字のフォントを使うと egui が止まる）ので、初めのフレームは準備だけ
         YoluApp::setup(ui.ctx());
         p.ready = true;
         ui.ctx().request_repaint();

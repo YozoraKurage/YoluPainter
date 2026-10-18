@@ -39,18 +39,20 @@ pub use yolu_gpu::{BakeAdapter, BakeBackend, BakeRun, FallbackKind, GpuBakeMetho
 pub use maps::MeshMapSet;
 pub use overlay::{MeshMapView, Overlay};
 use yolu_core::export::occlusion_byte;
+use yolu_core::geometry::MaterialSet;
 use yolu_core::mesh_maps::{
     material_identity, MeshBakeBudget, MeshBakeInput, MeshBakeReport, MeshBakeResult,
     MeshBakeSettings, MeshBakeStatus, MeshIdSource, MeshMapCheck, MeshMapExpectation, MeshMapKind,
     MeshMapState,
 };
 
+use crate::features::{Feature, PollStage};
+use crate::jobs::CloseJob;
 use crate::jobs::{JobCard, JobSpec, Polled, Worker};
 use crate::lang::Lang;
 use crate::notice::Source;
 use crate::state::{Action, AppState};
 use crate::view3d::model::ViewModel;
-use crate::windows::CloseJob;
 
 /// ベイクの操作（`Action::Bake`）。
 #[derive(Clone, Debug, PartialEq)]
@@ -364,7 +366,7 @@ fn card(app: &AppState, lang: Lang) -> Option<JobCard> {
     let set = if p.total > 1 {
         format!(
             "{} {}/{}: {} · ",
-            lang.pick("セット", "Set"),
+            lang.t("bake-set"),
             p.index,
             p.total,
             p.set
@@ -375,9 +377,9 @@ fn card(app: &AppState, lang: Lang) -> Option<JobCard> {
     Some(JobCard {
         text: format!(
             "{} — {set}{}… {}%",
-            lang.pick("メッシュマップをベイク", "Baking mesh maps"),
+            lang.t("bake-baking-mesh-maps"),
             if p.canceling {
-                lang.pick("取り消し中", "Canceling").to_owned()
+                lang.t("bake-canceling").to_owned()
             } else {
                 phase_label(lang, &p.phase)
             },
@@ -396,47 +398,36 @@ fn card(app: &AppState, lang: Lang) -> Option<JobCard> {
 pub fn uv_warning(lang: Lang, report: &MeshBakeReport) -> Option<String> {
     let mut parts: Vec<&str> = Vec::new();
     if report.zero_uv_area_triangles > 0 {
-        parts.push(lang.pick(
-            "UV の面積が 0 の三角形があり、その面は焼けません。",
-            "Some triangles have no UV area; those faces are not baked.",
-        ));
+        parts.push(lang.t("bake-some-triangles-have-no-uv"));
     }
     if report.degenerate_triangles > 0 {
-        parts.push(lang.pick(
-            "縮退した三角形があり、その面は焼けません。",
-            "Some triangles are degenerate; those faces are not baked.",
-        ));
+        parts.push(lang.t("bake-some-triangles-are-degenerate-those"));
     }
     if report.overlap_texels > 0 {
-        parts.push(lang.pick(
-            "UV が重なる所があり、重なったテクセルにはどちらか一方の面だけが焼かれます。",
-            "Some UVs overlap; an overlapping texel takes only one of the faces.",
-        ));
+        parts.push(lang.t("bake-some-uvs-overlap-an-overlapping"));
     }
     (!parts.is_empty()).then(|| crate::crash::problem(parts.join(" ")))
 }
 
 pub fn kind_label(lang: Lang, kind: MeshMapKind) -> &'static str {
     match kind {
-        MeshMapKind::WorldNormal => lang.pick("ワールド法線", "World Normal"),
-        MeshMapKind::Position => lang.pick("位置", "Position"),
-        MeshMapKind::AmbientOcclusion => {
-            lang.pick("アンビエントオクルージョン", "Ambient Occlusion")
-        }
-        MeshMapKind::Curvature => lang.pick("曲率", "Curvature"),
-        MeshMapKind::Thickness => lang.pick("厚み", "Thickness"),
-        MeshMapKind::TangentNormal => lang.pick("接空間法線", "Tangent Normal"),
-        MeshMapKind::Height => lang.pick("ハイト", "Height"),
-        MeshMapKind::Id => lang.pick("ID", "ID"),
-        MeshMapKind::BentNormal => lang.pick("ベントノーマル", "Bent Normal"),
-        MeshMapKind::Opacity => lang.pick("不透明度", "Opacity"),
+        MeshMapKind::WorldNormal => lang.t("bake-world-normal"),
+        MeshMapKind::Position => lang.t("bake-position"),
+        MeshMapKind::AmbientOcclusion => lang.t("bake-ambient-occlusion"),
+        MeshMapKind::Curvature => lang.t("bake-curvature"),
+        MeshMapKind::Thickness => lang.t("bake-thickness"),
+        MeshMapKind::TangentNormal => lang.t("bake-tangent-normal"),
+        MeshMapKind::Height => lang.t("bake-height"),
+        MeshMapKind::Id => lang.t("bake-id"),
+        MeshMapKind::BentNormal => lang.t("bake-bent-normal"),
+        MeshMapKind::Opacity => lang.t("bake-opacity"),
     }
 }
 
 /// 短い名前（一覧の幅に収める。長い名前はツールチップ）。
 pub fn kind_short(lang: Lang, kind: MeshMapKind) -> &'static str {
     match kind {
-        MeshMapKind::AmbientOcclusion => lang.pick("AO", "AO"),
+        MeshMapKind::AmbientOcclusion => lang.t("bake-ao"),
         other => kind_label(lang, other),
     }
 }
@@ -452,7 +443,7 @@ pub fn needs_reference(kind: MeshMapKind) -> bool {
 /// 焼く場所の名前（切り替えのボタン）。
 pub fn backend_label(lang: Lang, backend: BakeBackend) -> &'static str {
     match backend {
-        BakeBackend::Auto => lang.pick("自動", "Auto"),
+        BakeBackend::Auto => lang.t("bake-auto"),
         BakeBackend::Gpu => "GPU",
         BakeBackend::Cpu => "CPU",
     }
@@ -461,22 +452,16 @@ pub fn backend_label(lang: Lang, backend: BakeBackend) -> &'static str {
 /// 焼く場所の意味（ツールチップ）。
 pub fn backend_help(lang: Lang, backend: BakeBackend) -> &'static str {
     match backend {
-        BakeBackend::Auto => lang.pick(
-            "使えるハードウェアの GPU があれば GPU、なければ CPU で焼く",
-            "Bake on a hardware GPU when there is one, otherwise on the CPU",
-        ),
-        BakeBackend::Gpu => lang.pick(
-            "GPU で焼く（ソフトウェアの描画も使う）。使えなければ理由つきで CPU",
-            "Bake on the GPU (software rendering counts too); falls back to the CPU with a reason",
-        ),
-        BakeBackend::Cpu => lang.pick("CPU で焼く", "Bake on the CPU"),
+        BakeBackend::Auto => lang.t("bake-bake-on-a-hardware-gpu-tip"),
+        BakeBackend::Gpu => lang.t("bake-bake-on-the-gpu-software-tip"),
+        BakeBackend::Cpu => lang.t("bake-bake-on-the-cpu-tip"),
     }
 }
 
 /// アダプターの名前（ウィンドウの状態・結果の一文）。
 fn adapter_text(lang: Lang, a: &BakeAdapter) -> String {
     let software = if a.software {
-        lang.pick("ソフトウェア", "software")
+        lang.t("bake-software")
     } else {
         ""
     };
@@ -486,21 +471,21 @@ fn adapter_text(lang: Lang, a: &BakeAdapter) -> String {
         .filter(|s| !s.is_empty())
         .copied()
         .collect::<Vec<_>>()
-        .join(lang.pick("・", " · "));
+        .join(lang.t("bake-text"));
     format!("{}{}", a.name, paren(lang, &extra))
 }
 
 /// 補足のかっこ（日本語は全角で詰め、英語は半角で前に空白）。
 fn paren(lang: Lang, inner: &str) -> String {
-    lang.pick(format!("（{inner}）"), format!(" ({inner})"))
+    lang.f("bake-text-2", &[("inner", &inner)])
 }
 
 /// GPU で焼けなかった理由の短い文（詳細の文はツールチップに出す）。
 pub fn fallback_text(lang: Lang, kind: FallbackKind) -> &'static str {
     match kind {
-        FallbackKind::Unavailable => lang.pick("GPU を使えません", "No usable GPU"),
-        FallbackKind::Budget => lang.pick("GPU の予算を超えました", "Over the GPU budget"),
-        FallbackKind::Failed => lang.pick("GPU の処理に失敗しました", "The GPU run failed"),
+        FallbackKind::Unavailable => lang.t("bake-no-usable-gpu"),
+        FallbackKind::Budget => lang.t("bake-over-the-gpu-budget"),
+        FallbackKind::Failed => lang.t("bake-the-gpu-run-failed"),
     }
 }
 
@@ -509,47 +494,24 @@ pub fn fallback_text(lang: Lang, kind: FallbackKind) -> &'static str {
 pub fn ray_query_why_text(lang: Lang, why: RayQueryWhy, env_off: bool) -> String {
     let (head, reason) = match why {
         RayQueryWhy::Disabled if env_off => (
-            lang.pick("RT コアは使いません", "RT cores are off"),
-            lang.pick(
-                "環境変数で切っています",
-                "turned off by an environment variable",
-            ),
+            lang.t("bake-rt-cores-are-off"),
+            lang.t("bake-turned-off-by-an-environment"),
         ),
         RayQueryWhy::Disabled => (
-            lang.pick("RT コアは使いません", "RT cores are off"),
-            lang.pick("設定で切っています", "turned off in the settings"),
+            lang.t("bake-rt-cores-are-off"),
+            lang.t("bake-turned-off-in-the-settings"),
         ),
         other => (
-            lang.pick("RT コアを使えませんでした", "RT cores were not used"),
+            lang.t("bake-rt-cores-were-not-used"),
             match other {
-                RayQueryWhy::NotSupported => {
-                    lang.pick("この GPU は対応していません", "not supported by this GPU")
-                }
-                RayQueryWhy::NotApplicable => {
-                    lang.pick("このベイクは対象外です", "not available for this bake")
-                }
-                RayQueryWhy::Device => lang.pick(
-                    "デバイスを作れませんでした",
-                    "the GPU device could not be created",
-                ),
-                RayQueryWhy::Shader => lang.pick(
-                    "シェーダーを作れませんでした",
-                    "the shader could not be built",
-                ),
-                RayQueryWhy::Accel => lang.pick(
-                    "加速構造を作れませんでした",
-                    "the acceleration structure could not be built",
-                ),
-                RayQueryWhy::CheckRun => {
-                    lang.pick("照合を回せませんでした", "the check could not be run")
-                }
-                RayQueryWhy::CheckFailed => {
-                    lang.pick("照合に通りませんでした", "it did not pass the check")
-                }
-                RayQueryWhy::RunFailed => lang.pick(
-                    "焼いている途中で失敗したので止めました",
-                    "it failed while baking, so it was turned off",
-                ),
+                RayQueryWhy::NotSupported => lang.t("bake-not-supported-by-this-gpu"),
+                RayQueryWhy::NotApplicable => lang.t("bake-not-available-for-this-bake"),
+                RayQueryWhy::Device => lang.t("bake-the-gpu-device-could-not"),
+                RayQueryWhy::Shader => lang.t("bake-the-shader-could-not-be"),
+                RayQueryWhy::Accel => lang.t("bake-the-acceleration-structure-could-not"),
+                RayQueryWhy::CheckRun => lang.t("bake-the-check-could-not-be"),
+                RayQueryWhy::CheckFailed => lang.t("bake-it-did-not-pass-the"),
+                RayQueryWhy::RunFailed => lang.t("bake-it-failed-while-baking-so"),
                 RayQueryWhy::Disabled => unreachable!("上で扱った"),
             },
         ),
@@ -588,7 +550,7 @@ pub fn probe_line(lang: Lang, backend: BakeBackend, probe: &GpuProbe) -> Option<
             Err(detail) => PlaceLine {
                 text: format!(
                     "{}{}",
-                    lang.pick("CPU で焼く", "Bakes on the CPU"),
+                    lang.t("bake-bakes-on-the-cpu"),
                     paren(lang, fallback_text(lang, FallbackKind::Unavailable))
                 ),
                 warn: true,
@@ -596,7 +558,7 @@ pub fn probe_line(lang: Lang, backend: BakeBackend, probe: &GpuProbe) -> Option<
             },
         },
         _ => PlaceLine {
-            text: lang.pick("GPU を確認中", "Checking the GPU").to_owned(),
+            text: lang.t("bake-checking-the-gpu").to_owned(),
             warn: false,
             detail: None,
         },
@@ -612,7 +574,7 @@ pub fn run_line(lang: Lang, run: &BakeRun) -> PlaceLine {
                 GpuBakeMethod::RayQuery => "ray query",
             };
             let software = if adapter.software {
-                lang.pick("ソフトウェア・", "software · ")
+                lang.t("bake-software-2")
             } else {
                 ""
             };
@@ -646,10 +608,10 @@ pub fn run_line(lang: Lang, run: &BakeRun) -> PlaceLine {
 
 pub fn phase_label(lang: Lang, phase: &str) -> String {
     match phase {
-        "Preparing" => lang.pick("準備中", "Preparing"),
-        "Baking" => lang.pick("ベイク中", "Baking"),
-        "Padding" => lang.pick("余白", "Padding"),
-        "Done" => lang.pick("完了", "Done"),
+        "Preparing" => lang.t("bake-preparing"),
+        "Baking" => lang.t("bake-baking"),
+        "Padding" => lang.t("bake-padding"),
+        "Done" => lang.t("bake-done"),
         other => other,
     }
     .to_owned()
@@ -657,12 +619,12 @@ pub fn phase_label(lang: Lang, phase: &str) -> String {
 
 pub fn id_source_label(lang: Lang, source: MeshIdSource) -> &'static str {
     match source {
-        MeshIdSource::MaterialSlot => lang.pick("スロット", "Slot"),
-        MeshIdSource::Mesh => lang.pick("メッシュ", "Mesh"),
-        MeshIdSource::UvIsland => lang.pick("UV アイランド", "UV Island"),
-        MeshIdSource::MeshPart => lang.pick("メッシュの部品", "Mesh Part"),
-        MeshIdSource::VertexColor => lang.pick("頂点カラー", "Vertex Color"),
-        MeshIdSource::MaterialAsset => lang.pick("マテリアル", "Material"),
+        MeshIdSource::MaterialSlot => lang.t("bake-slot"),
+        MeshIdSource::Mesh => lang.t("bake-mesh"),
+        MeshIdSource::UvIsland => lang.t("bake-uv-island"),
+        MeshIdSource::MeshPart => lang.t("bake-mesh-part"),
+        MeshIdSource::VertexColor => lang.t("bake-vertex-color"),
+        MeshIdSource::MaterialAsset => lang.t("bake-material"),
     }
 }
 
@@ -677,10 +639,10 @@ pub const ID_SOURCES: [MeshIdSource; 4] = [
 /// 状態の名前（一覧の右端）。
 pub fn state_label(lang: Lang, state: Option<MeshMapState>) -> &'static str {
     match state {
-        None => lang.pick("未", "Not baked"),
-        Some(MeshMapState::Current) => lang.pick("最新", "Current"),
-        Some(MeshMapState::Stale) => lang.pick("古い", "Stale"),
-        Some(MeshMapState::Unverified) => lang.pick("未確認", "Unchecked"),
+        None => lang.t("bake-not-baked"),
+        Some(MeshMapState::Current) => lang.t("bake-current"),
+        Some(MeshMapState::Stale) => lang.t("bake-stale"),
+        Some(MeshMapState::Unverified) => lang.t("bake-unchecked"),
     }
 }
 
@@ -736,26 +698,26 @@ impl AppState {
     }
 
     /// セットが付いているモデルのマテリアルの番号（モデルの記録の無い立方体は、今のセットがマテリアル 0）。
-    pub(crate) fn set_material(&self, index: usize) -> Option<i32> {
+    pub(crate) fn set_material(&self, index: usize) -> Option<MaterialSet> {
         let model = self.view3d.full_model()?;
-        let set = self.sets.get(index)?;
-        match &self.model {
+        let set = self.session.sets.get(index)?;
+        match &self.session.model {
             Some(record) => {
                 // 3D が指しているモデルが記録と同じものか（形ごと渡されたメッシュの世代）
                 if record.is_mesh() && self.view3d.link_generation() != Some(record.generation) {
                     return None;
                 }
                 let _ = model;
-                set.bound.map(|m| m as i32)
+                (!set.bound.is_empty()).then(|| set.bound_set())
             }
-            None => (index == self.sets.current_index()).then_some(0),
+            None => (index == self.session.sets.current_index()).then(|| MaterialSet::one(0)),
         }
     }
 
-    /// セットが受け持つスロット（モデルに無ければ None）。
+    /// セットが受け持つスロット（組のマテリアルのスロットの和。昇順・重なり無し。モデルに無ければ None）。
     pub fn set_slots(&self, index: usize) -> Option<Vec<i32>> {
         let material = self.set_material(index)?;
-        let slots = input::slots_of_material(self.bake_model()?, material);
+        let slots = input::slots_of_material(self.bake_model()?, &material);
         (!slots.is_empty()).then_some(slots)
     }
 
@@ -764,17 +726,16 @@ impl AppState {
     pub fn bake_input(&mut self) -> Result<Arc<MeshBakeInput>, String> {
         let lang = self.lang;
         let Some(model) = self.view3d.full_model().cloned() else {
-            return Err(lang.pick("モデルがありません", "No model").into());
+            return Err(lang.t("bake-no-model").into());
         };
         if let Some(cached) = self.bake.input.as_ref().filter(|c| c.model.is(&model)) {
             return cached.input.clone();
         }
         let built = match self.bake.pending.take() {
-            Some(p) if p.model.is(&model) => p.rx.recv().unwrap_or_else(|_| {
-                Err(lang
-                    .pick("入力を作れませんでした", "The input was not built")
-                    .into())
-            }),
+            Some(p) if p.model.is(&model) => {
+                p.rx.recv()
+                    .unwrap_or_else(|_| Err(lang.t("bake-the-input-was-not-built").into()))
+            }
             // 別のモデルのものは使わない（作り終えても捨てられる）
             _ => input::build_input(&model),
         };
@@ -788,16 +749,14 @@ impl AppState {
         let lang = self.lang;
         let Some(model) = self.view3d.full_model().cloned() else {
             self.bake.pending = None;
-            return Some(Err(lang.pick("モデルがありません", "No model").into()));
+            return Some(Err(lang.t("bake-no-model").into()));
         };
         if let Some(cached) = self.bake.input.as_ref().filter(|c| c.model.is(&model)) {
             return Some(cached.input.clone());
         }
         if let Some(p) = self.bake.pending.take() {
             let lost = || -> Result<MeshBakeInput, String> {
-                Err(lang
-                    .pick("入力を作れませんでした", "The input was not built")
-                    .into())
+                Err(lang.t("bake-the-input-was-not-built").into())
             };
             match p.rx.try_recv() {
                 Ok(built) if p.model.is(&model) => return Some(self.cache_input(&model, built)),
@@ -868,20 +827,12 @@ impl AppState {
     fn bake_target(&self, index: usize) -> Result<(MeshBakeSettings, Vec<i32>), String> {
         let lang = self.lang;
         let set = self
+            .session
             .sets
             .get(index)
-            .ok_or_else(|| lang.pick("テクスチャセットがありません", "No such texture set"))?;
+            .ok_or_else(|| lang.t("bake-no-such-texture-set"))?;
         let Some(slots) = self.set_slots(index) else {
-            return Err(lang.pick(
-                format!(
-                    "テクスチャセット「{}」のマテリアルは、読み込んだモデルにありません",
-                    set.name
-                ),
-                format!(
-                    "The material of texture set \"{}\" is not in the loaded model",
-                    set.name
-                ),
-            ));
+            return Err(lang.f("bake-the-material-of-texture-set", &[("name", &set.name)]));
         };
         let doc = self.set_doc(index);
         let mut settings = self.bake.settings.clone();
@@ -932,7 +883,7 @@ impl AppState {
 
     /// セットのマップ 1 枚の今の状態（焼いていなければ None）。入力を作る必要があればここで作る。
     pub fn mesh_map_check(&mut self, index: usize, kind: MeshMapKind) -> Option<MeshMapCheck> {
-        self.sets.get(index)?.mesh_maps.get(kind)?;
+        self.session.sets.get(index)?.mesh_maps.get(kind)?;
         let input = self.bake_input().ok();
         self.mesh_map_check_with(index, kind, input.as_deref())
     }
@@ -944,16 +895,17 @@ impl AppState {
         kind: MeshMapKind,
         input: Option<&MeshBakeInput>,
     ) -> Option<MeshMapCheck> {
-        let map = self.sets.get(index)?.mesh_maps.get(kind)?;
+        let map = self.session.sets.get(index)?.mesh_maps.get(kind)?;
         let expected = self.mesh_map_expectation(index, input);
         Some(map.provenance().check(&expected))
     }
 
     /// 焼けるテクスチャセット（チェックしていて、モデルにマテリアルがあるもの。並びの順）。
     pub fn bakeable_sets(&self) -> Vec<usize> {
-        (0..self.sets.len())
+        (0..self.session.sets.len())
             .filter(|&i| {
-                self.sets
+                self.session
+                    .sets
                     .get(i)
                     .is_some_and(|s| !self.bake.skipped.contains(&s.uid))
                     && self.set_slots(i).is_some()
@@ -978,36 +930,24 @@ impl AppState {
             return Some(crate::lang::refusals::during_stroke(lang).into());
         }
         if self.bake.job.is_some() {
-            return Some(lang.pick("ベイク中です", "Already baking").into());
+            return Some(lang.t("bake-already-baking").into());
         }
         if self.view3d.pose.drag.is_some() {
-            return Some(
-                lang.pick("ポーズを変えている間はできません", "Not while posing")
-                    .into(),
-            );
+            return Some(lang.t("bake-not-while-posing").into());
         }
         if self.view3d.full_model().is_none() {
-            return Some(lang.pick("モデルがありません", "No model").into());
+            return Some(lang.t("bake-no-model").into());
         }
         if self.bake.settings.maps.is_empty() {
-            return Some(
-                lang.pick("チェックしたマップがありません", "No map is checked")
-                    .into(),
-            );
+            return Some(lang.t("bake-no-map-is-checked").into());
         }
         if self.bakeable_sets().is_empty() {
-            let any_in_model = (0..self.sets.len()).any(|i| self.set_slots(i).is_some());
+            let any_in_model = (0..self.session.sets.len()).any(|i| self.set_slots(i).is_some());
             return Some(
                 if any_in_model {
-                    lang.pick(
-                        "チェックしたテクスチャセットがありません",
-                        "No texture set is checked",
-                    )
+                    lang.t("bake-no-texture-set-is-checked")
                 } else {
-                    lang.pick(
-                        "モデルに付いたテクスチャセットがありません",
-                        "No texture set is on the model",
-                    )
+                    lang.t("bake-no-texture-set-is-on")
                 }
                 .into(),
             );
@@ -1018,14 +958,15 @@ impl AppState {
             self.bake_input_nowait()
         };
         match input {
-            Some(Err(e)) => Some(lang.with_reason(lang.pick("ベイクできません", "Cannot bake"), e)),
+            Some(Err(e)) => Some(lang.with_reason(lang.t("bake-cannot-bake"), e)),
             Some(Ok(_)) | None => None,
         }
     }
 
     /// セットに AO のマップが焼いてあるか（今の条件のものかは [`AppState::occlusion_state`]）。
     pub fn has_baked_occlusion(&self, index: usize) -> bool {
-        self.sets
+        self.session
+            .sets
             .get(index)
             .is_some_and(|s| s.mesh_maps.get(MeshMapKind::AmbientOcclusion).is_some())
     }
@@ -1034,6 +975,7 @@ impl AppState {
     pub fn occlusion_state(&self, index: usize, input: Option<&MeshBakeInput>) -> OcclusionState {
         let lang = self.lang;
         let Some(map) = self
+            .session
             .sets
             .get(index)
             .and_then(|s| s.mesh_maps.get(MeshMapKind::AmbientOcclusion))
@@ -1042,19 +984,15 @@ impl AppState {
         };
         let doc = self.set_doc(index);
         if (map.width(), map.height()) != (doc.width() as usize, doc.height() as usize) {
-            return OcclusionState::Stale(
-                lang.pick("焼いた大きさがキャンバスと違う", "baked size differs")
-                    .into(),
-            );
+            return OcclusionState::Stale(lang.t("bake-baked-size-differs").into());
         }
         let expected = self.mesh_map_expectation(index, input);
         let check = map.provenance().check(&expected);
         match check.state {
             MeshMapState::Current => OcclusionState::Current,
-            MeshMapState::Unverified => OcclusionState::Stale(
-                lang.pick("モデルが無く照合できない", "no model to check against")
-                    .into(),
-            ),
+            MeshMapState::Unverified => {
+                OcclusionState::Stale(lang.t("bake-no-model-to-check-against").into())
+            }
             MeshMapState::Stale => OcclusionState::Stale(stale_reasons(&check)),
         }
     }
@@ -1070,6 +1008,7 @@ impl AppState {
             OcclusionState::Stale(why) => Occlusion::Stale(why),
             OcclusionState::Current => {
                 let map = self
+                    .session
                     .sets
                     .get(index)
                     .and_then(|s| s.mesh_maps.get(MeshMapKind::AmbientOcclusion))
@@ -1113,17 +1052,18 @@ impl AppState {
         self.bake.window.is_some()
             || self.tool == crate::state::Tool::IdSelect
             || self.island_menu_open()
-            || self.sets.iter().any(|s| s.waiting_inputs)
+            || self.session.sets.iter().any(|s| s.waiting_inputs)
             || self.reopen_check_waiting()
             || self.export_window_follows_input()
-            || (self.bake.input.is_none() && self.sets.iter().any(|s| !s.mesh_maps.is_empty()))
+            || (self.bake.input.is_none()
+                && self.session.sets.iter().any(|s| !s.mesh_maps.is_empty()))
     }
 
     /// アイランドのメニュー（ポリゴン塗りつぶしの右クリック）を開いている間も、アイランドの強調と選んだ項目が入力を使う
     /// （右クリックを押してから離すまで・離したメニューがアイランドの索引を待っている間も同じ。押したまま離さなかったときは、少しで手放す）。
     fn island_menu_open(&self) -> bool {
         matches!(
-            self.popup.as_ref().map(|p| p.kind),
+            self.ui.popup.as_ref().map(|p| p.kind),
             Some(crate::state::PopupKind::BakeIsland { .. })
         ) || self.bake.menu_wait.is_some()
             || self.bake.menu_press.is_some()
@@ -1135,7 +1075,7 @@ impl AppState {
         let Some(check) = self.bake.reopen_check.as_ref() else {
             return false;
         };
-        let maps = self.sets.iter().any(|s| !s.mesh_maps.is_empty());
+        let maps = self.session.sets.iter().any(|s| !s.mesh_maps.is_empty());
         // 照合するモデル（描いている最中なら、入れ替わりを待っているモデル）のままで、その入力がまだできていない。できた入力は、焼いたマップが
         // あるあいだ手放さず、毎フレームの同期が効果の入力へ渡す
         let waiting = check.generation == self.np.generation
@@ -1162,7 +1102,7 @@ impl AppState {
             && self.bake.window.is_none()
             && !island_menu
             && self.bake.job.is_none()
-            && self.sets.iter().all(|s| s.mesh_maps.is_empty())
+            && self.session.sets.iter().all(|s| s.mesh_maps.is_empty())
         {
             self.bake.input = None;
         }
@@ -1237,13 +1177,7 @@ impl AppState {
                 } else if maps.len() > 1 {
                     maps.retain(|k| *k != kind);
                 } else {
-                    self.refuse(
-                        Source::Bake,
-                        lang.pick(
-                            "マップを 1 つは残します。",
-                            "At least one map stays checked.",
-                        ),
-                    );
+                    self.refuse(Source::Bake, lang.t("bake-at-least-one-map-stays"));
                 }
             }
             BakeAction::Set(uid, on) => {
@@ -1252,15 +1186,13 @@ impl AppState {
                 } else {
                     let checked = self.bakeable_sets();
                     let last = checked.len() == 1
-                        && self.sets.get(checked[0]).is_some_and(|s| s.uid == uid);
+                        && self
+                            .session
+                            .sets
+                            .get(checked[0])
+                            .is_some_and(|s| s.uid == uid);
                     if last {
-                        self.refuse(
-                            Source::Bake,
-                            lang.pick(
-                                "テクスチャセットを 1 つは残します。",
-                                "At least one texture set stays checked.",
-                            ),
-                        );
+                        self.refuse(Source::Bake, lang.t("bake-at-least-one-texture-set"));
                     } else {
                         self.bake.skipped.insert(uid);
                     }
@@ -1275,7 +1207,7 @@ impl AppState {
 
     /// 見ているマップが今のセットに無ければ、重ね表示をやめる。
     pub fn sync_mesh_map_view(&mut self) {
-        let maps = &self.sets.current().mesh_maps;
+        let maps = &self.session.sets.current().mesh_maps;
         let valid = match self.bake.view {
             MeshMapView::None => true,
             MeshMapView::Coverage => !maps.is_empty(),
@@ -1295,7 +1227,7 @@ impl AppState {
         let queue: VecDeque<u32> = self
             .bakeable_sets()
             .into_iter()
-            .filter_map(|i| self.sets.get(i).map(|s| s.uid))
+            .filter_map(|i| self.session.sets.get(i).map(|s| s.uid))
             .collect();
         self.bake.total = queue.len();
         self.bake.finished = 0;
@@ -1309,16 +1241,13 @@ impl AppState {
     fn start_next_bake(&mut self) -> bool {
         let lang = self.lang;
         while let Some(uid) = self.bake.queue.pop_front() {
-            let Some(index) = self.sets.index_of(uid) else {
+            let Some(index) = self.session.sets.index_of(uid) else {
                 self.bake.finished += 1;
                 continue;
             };
             match self.prepare_bake(index) {
                 Ok(job) => {
-                    self.info(
-                        Source::Bake,
-                        lang.pick("メッシュマップをベイク中…", "Baking mesh maps…"),
-                    );
+                    self.info(Source::Bake, lang.t("bake-baking-mesh-maps-2"));
                     self.bake.job = Some(job);
                     return true;
                 }
@@ -1326,7 +1255,7 @@ impl AppState {
                     self.bake.queue.clear();
                     self.bake_ended(
                         crate::notice::Kind::Error,
-                        lang.with_reason(lang.pick("ベイクできません", "Cannot bake"), reason),
+                        lang.with_reason(lang.t("bake-cannot-bake"), reason),
                         false,
                     );
                     return false;
@@ -1344,8 +1273,8 @@ impl AppState {
             .view3d
             .full_model()
             .map(ModelId::of)
-            .ok_or_else(|| lang.pick("モデルがありません", "No model").to_owned())?;
-        let set = self.sets.get(index).expect("確かめた");
+            .ok_or_else(|| lang.t("bake-no-model").to_owned())?;
+        let set = self.session.sets.get(index).expect("確かめた");
         let (uid, name) = (set.uid, set.name.clone());
         let doc = self.set_doc(index);
         let (doc_id, size) = (doc.id(), (doc.width(), doc.height()));
@@ -1408,13 +1337,7 @@ impl AppState {
         if let Some(job) = &self.bake.job {
             self.bake.queue.clear();
             job.worker.cancel();
-            self.info(
-                Source::Bake,
-                lang.pick(
-                    "メッシュマップのベイクを取り消しています…",
-                    "Canceling the mesh-map bake…",
-                ),
-            );
+            self.info(Source::Bake, lang.t("bake-canceling-the-mesh-map-bake"));
         }
     }
 
@@ -1427,7 +1350,7 @@ impl AppState {
         let result = match job.worker.poll() {
             Polled::Message(r) => r,
             Polled::Empty => return,
-            Polled::Lost => Err(lang.pick("ベイクが止まりました", "The bake stopped").into()),
+            Polled::Lost => Err(lang.t("bake-the-bake-stopped").into()),
         };
         let job = self.bake.job.take().expect("上で見た");
         self.finish_bake(job, result);
@@ -1436,18 +1359,18 @@ impl AppState {
     /// 始めたときから、結果の意味を変えるものが変わったか。変わったものの名前。
     fn bake_changed(&self, job: &Job) -> Option<&'static str> {
         let lang = self.lang;
-        let Some(index) = self.sets.index_of(job.uid) else {
-            return Some(lang.pick("テクスチャセット", "the texture set"));
+        let Some(index) = self.session.sets.index_of(job.uid) else {
+            return Some(lang.t("bake-the-texture-set"));
         };
         let doc = self.set_doc(index);
         if doc.id() != job.doc_id || (doc.width(), doc.height()) != job.size {
-            return Some(lang.pick("キャンバス", "the canvas"));
+            return Some(lang.t("bake-the-canvas"));
         }
         if self.set_slots(index).as_deref() != Some(&job.slots[..]) {
-            return Some(lang.pick("マテリアルのスロット", "the material slots"));
+            return Some(lang.t("bake-the-material-slots"));
         }
         if !self.view3d.full_model().is_some_and(|m| job.model.is(m)) {
-            return Some(lang.pick("モデルかそのポーズ", "the model or its pose"));
+            return Some(lang.t("bake-the-model-or-its-pose"));
         }
         None
     }
@@ -1461,13 +1384,7 @@ impl AppState {
                 self.bake.queue.clear();
                 return self.bake_ended(
                     crate::notice::Kind::Error,
-                    lang.with_reason(
-                        lang.pick(
-                            "メッシュマップをベイクできません",
-                            "Cannot bake the mesh maps",
-                        ),
-                        e,
-                    ),
+                    lang.with_reason(lang.t("bake-cannot-bake-the-mesh-maps"), e),
                     false,
                 );
             }
@@ -1479,18 +1396,12 @@ impl AppState {
                 let (kind, text) = if result.status == MeshBakeStatus::TimedOut {
                     (
                         crate::notice::Kind::Error,
-                        lang.pick(
-                            "ベイクが時間切れになりました（前のマップはそのまま）",
-                            "The bake hit its time limit; the previous maps are unchanged",
-                        ),
+                        lang.t("bake-the-bake-hit-its-time"),
                     )
                 } else {
                     (
                         crate::notice::Kind::Info,
-                        lang.pick(
-                            "ベイクを取り消しました（前のマップはそのまま）",
-                            "The bake was canceled; the previous maps are unchanged",
-                        ),
+                        lang.t("bake-the-bake-was-canceled-the"),
                     )
                 };
                 return self.bake_ended(kind, text.into(), false);
@@ -1501,49 +1412,46 @@ impl AppState {
             self.bake.queue.clear();
             return self.bake_ended(
                 crate::notice::Kind::Warning,
-                lang.pick(
-                    format!("{what}が変わったので、焼いた結果を捨てました（前のマップはそのまま）"),
-                    format!("Discarded the bake because {what} changed; the previous maps are unchanged"),
+                lang.f(
+                    "bake-discarded-the-bake-because-changed",
+                    &[("what", &what)],
                 ),
                 false,
             );
         }
-        let index = self.sets.index_of(job.uid).expect("上で確かめた");
+        let index = self.session.sets.index_of(job.uid).expect("上で確かめた");
         let kinds = result
             .maps
             .iter()
             .map(|m| kind_short(lang, m.kind()))
             .collect::<Vec<_>>()
-            .join(lang.pick("・", ", "));
+            .join(lang.t("bake-text-3"));
         let count = result.maps.len();
-        if let Some(set) = self.sets.get_mut(index) {
+        if let Some(set) = self.session.sets.get_mut(index) {
             // 記録と場所は、今のマップを焼いたベイクのもの。取消・時間切れ・捨てた結果では変えない（前のマップが残るので、それを
             // 焼いた記録も残す。準備の途中で止めた GPU を「GPU で焼いた」と見せない）
             set.mesh_maps.set_report(result.report.clone());
             set.mesh_maps.set_run(run.clone());
             set.mesh_maps.put(result.maps);
         }
-        self.modified = true;
-        if self.bake.view == MeshMapView::None && index == self.sets.current_index() {
+        self.session.mark_modified();
+        if self.bake.view == MeshMapView::None && index == self.session.sets.current_index() {
             self.bake.view = MeshMapView::Coverage;
         }
         let secs = result.report.total_seconds;
         let place = run_line(lang, &run).text;
-        let mut text = lang.pick(
-            format!(
-                "{}の {}×{} のメッシュマップ {count} 枚（{kinds}）を {secs:.2} 秒で焼きました（スロット {}・{place}）。",
-                lang.quote(&job.name),
-                job.settings.width,
-                job.settings.height,
-                slot_list(&job.slots)
-            ),
-            format!(
-                "Baked {count} map(s) of {} at {}×{} ({kinds}) in {secs:.2} s (slot {}, {place}).",
-                lang.quote(&job.name),
-                job.settings.width,
-                job.settings.height,
-                slot_list(&job.slots)
-            ),
+        let mut text = lang.f(
+            "bake-baked-map-s-of-at",
+            &[
+                ("name", &lang.quote(&job.name)),
+                ("width", &job.settings.width),
+                ("height", &job.settings.height),
+                ("value", &count),
+                ("kinds", &kinds),
+                ("secs", &format!("{:.2}", secs)),
+                ("slots", &slot_list(&job.slots)),
+                ("place", &place),
+            ],
         );
         // 焼けたが、UV の面積が 0 の三角形・縮退した三角形・UV が重なるテクセルがあれば、1 つの注意にする（数は書かない。数は記録に残る）
         let kind = match uv_warning(lang, &result.report) {
@@ -1562,12 +1470,9 @@ impl AppState {
             // 次のセット（始められなかった理由は `start_next_bake` が知らせる）
             self.start_next_bake();
         } else if self.bake.total > 1 {
-            let mut text = lang.pick(
-                format!(
-                    "{} 個のテクスチャセットのメッシュマップを焼きました。",
-                    self.bake.total
-                ),
-                format!("Baked the mesh maps of {} texture sets.", self.bake.total),
+            let mut text = lang.f(
+                "bake-baked-the-mesh-maps-of",
+                &[("total", &self.bake.total)],
             );
             // どれかのセットに UV の注意があれば、まとめも注意（種類は重いほう）。まとめで、そのセットの注意の文を上書きして消さない
             let mut kind = crate::notice::Kind::Info;
@@ -1596,6 +1501,12 @@ impl AppState {
         );
     }
 }
+
+/// 機能の表の行（毎フレーム、ベイクの仕事の終わりを受ける）。
+pub(crate) const FEATURE: Feature = Feature {
+    poll: Some((PollStage::BeforeDroppedPsds, AppState::poll_bake)),
+    ..Feature::new("bake")
+};
 
 #[cfg(test)]
 mod tests;

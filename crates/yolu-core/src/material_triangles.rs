@@ -1,4 +1,5 @@
 //! 三角形の和集合。4×4 サンプルを OR し、共有辺を一方だけへ割り当てる。
+use crate::Reason;
 use crate::{glam::DVec2, CoreError, Document, SelectionMask, TileCoord};
 use rayon::prelude::*;
 use std::collections::BTreeMap;
@@ -10,7 +11,7 @@ struct Prepared {
 }
 fn prepare(ts: &[PixelTriangle], w: u32, h: u32) -> Result<Vec<Prepared>, CoreError> {
     if ts.iter().flatten().any(|p| !p.is_finite()) {
-        return Err(CoreError::InvalidArgument("三角形の座標"));
+        return Err(CoreError::InvalidArgument(Reason::TriangleCoordinates));
     }
     let mut out = Vec::new();
     for &t in ts {
@@ -190,7 +191,7 @@ pub fn surface_triangles(
     kind: crate::geometry::SurfaceRegionKind,
 ) -> Result<Vec<PixelTriangle>, CoreError> {
     if start as usize >= geometry.triangles().len() {
-        return Err(CoreError::InvalidArgument("三角形番号"));
+        return Err(CoreError::InvalidArgument(Reason::TriangleIndex));
     }
     Ok(crate::geometry::region(geometry, start, kind)
         .iter()

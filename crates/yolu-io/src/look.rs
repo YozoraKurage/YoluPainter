@@ -151,7 +151,7 @@ fn root_object(bytes: &[u8]) -> Result<Map<String, Value>> {
     check(format >= 1, "look.json の format が範囲外です")?;
     if format > FORMAT {
         return Err(Error::InvalidData(format!(
-            "look.json の形式 {format} はこの版では読めません（{FORMAT} まで）"
+            "look.json の形式 {format} はこのバージョンでは読めません（{FORMAT} まで）"
         )));
     }
     Ok(obj)

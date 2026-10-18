@@ -1,6 +1,7 @@
 //! 複数操作を準備用の文書で実行し、成功した状態だけを 1 段で交換する。
 use super::{Command, Document};
 use crate::surface::{Surface, Tile};
+use crate::Reason;
 use crate::{CoreError, Layer, LayerId, NormalSettings, TileCoord};
 
 /// 交換が合成を変え得る範囲。変化の記録（`changed_tiles`）の印を、交換の前後の両方で付ける範囲を決める。
@@ -39,6 +40,9 @@ impl State {
             normal_settings,
             selection,
             saved_selections,
+            // 交換しない: レイヤーセットの一覧と出力の割り当ては専用の段で変える（準備の操作は変えない。レイヤーの所属は `layers` が持つ）
+            layer_sets: _,
+            route: _,
             // 交換しない: 同じ文書の同じ値（準備用の文書は書き換えない）
             id: _,
             tile_size: _,
@@ -79,6 +83,7 @@ impl State {
             coalesce: _,
             trim_count: _,
             trimmed_bytes: _,
+            saved: _,
             // 交換しない: `batch` の編集の中かの印は本物の文書のもの（準備用の文書は自分の履歴を作るだけ）
             batching: _,
             // 交換しない: 継ぎ目の設定は専用の段で変える（準備の操作は変えない）
@@ -106,6 +111,9 @@ impl Document {
             height,
             tile_size,
             layers,
+            // 写す: 準備の中のレイヤーを足す操作・合成の比べが、本物と同じレイヤーセットと割り当てを読む
+            layer_sets,
+            route,
             channels,
             normal_settings,
             selection,
@@ -146,6 +154,7 @@ impl Document {
             coalesce: _,
             trim_count: _,
             trimmed_bytes: _,
+            saved: _,
             // 写さない: 準備用の文書は `batch` の外（本物の文書が `batch` の中でも、準備用の文書は自分の履歴を作ってよい。
             // 本物へは 1 段で交換し、それがまとめの中の 1 段になる）
             batching: _,
@@ -153,6 +162,8 @@ impl Document {
         let mut d = Document::with_tile_size(*width, *height, *tile_size)?;
         d.id = *id;
         d.layers = layers.clone();
+        d.layer_sets = layer_sets.clone();
+        d.route = *route;
         d.channels = channels.clone();
         d.normal_settings = *normal_settings;
         d.selection = selection.clone();
@@ -414,12 +425,23 @@ impl Document {
         if members.is_empty() {
             return Ok(());
         }
+        // 動かせるのは同じレイヤーセットの中だけ（並べ替えでほかのレイヤーセットへは移さない）
+        let set = self.layer(members[0]).expect("対象").set;
+        if members
+            .iter()
+            .any(|&m| self.layer(m).expect("対象").set != set)
+        {
+            return Err(CoreError::InvalidArgument(Reason::MoveAcrossLayerSets));
+        }
         if let Some(p) = parent {
             let i = self.index_of(p)?;
             if !self.layers[i].is_group()
                 || members.iter().any(|&m| m == p || self.is_descendant(i, m))
             {
-                return Err(CoreError::InvalidArgument("移動先のグループ"));
+                return Err(CoreError::InvalidArgument(Reason::DestinationGroup));
+            }
+            if self.layers[i].set != set {
+                return Err(CoreError::InvalidArgument(Reason::IntoGroupOfOtherLayerSet));
             }
         }
         let mut tree = self.tree();
@@ -429,14 +451,12 @@ impl Document {
             blocks.extend(tree.block(m));
         }
         tree.order.retain(|e| !blocks.contains(&e.0));
-        let siblings: Vec<_> = tree
-            .order
-            .iter()
-            .filter(|e| e.1 == parent)
-            .map(|e| e.0)
+        let siblings: Vec<_> = (0..tree.order.len())
+            .filter(|&i| tree.is_sibling(i, parent, set))
+            .map(|i| tree.order[i].0)
             .collect();
         if position > siblings.len() {
-            return Err(CoreError::InvalidArgument("position"));
+            return Err(CoreError::InvalidArgument(Reason::Position));
         }
         let at = if position < siblings.len() {
             tree.subtree_start(tree.index(siblings[position]))
@@ -472,11 +492,12 @@ impl Document {
         let moved = self.batch_layers_cost(Some(64), |d| {
             let mut moved = Vec::new();
             for id in members {
-                let p = d.layer(id).expect("対象").parent;
+                let me = d.layer(id).expect("対象");
+                let p = me.parent;
                 let siblings: Vec<_> = d
                     .layers
                     .iter()
-                    .filter(|l| l.parent == p)
+                    .filter(|l| l.is_sibling_of(me))
                     .map(|l| l.id)
                     .collect();
                 let at = siblings.iter().position(|&l| l == id).expect("兄弟");

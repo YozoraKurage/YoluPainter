@@ -188,6 +188,71 @@ impl SetDraw {
     }
 }
 
+/// 「チャンネルだけ」の表示で同時に見せられるユーザーチャンネルの数（全部のビューで違うチャンネルを見るときの上限。セットの束ねの
+/// パラメータに、この数だけ「どのレイヤーか」を入れる）。
+pub const SHOWN_USERS: usize = 4;
+
+/// 名前でユーザーチャンネルを引く（ビューが「チャンネルだけ」で見るチャンネルは名前で決める。セットごとに文書が別で、同じ名前の
+/// チャンネルでも番号が違うことがある）。
+pub fn user_channel_named(doc: &Document, name: &str) -> Option<Channel> {
+    (Channel::STANDARD_COUNT..Channel::MAX)
+        .filter_map(Channel::from_index)
+        .find(|c| doc.channel_info(*c).is_some_and(|i| i.name == name))
+}
+
+/// 配列に持つユーザーチャンネル: スロットが読むもの（lilToon の見た目のときだけ。[`wanted_users`] と同じ順）と、どれかのビューが
+/// 「チャンネルだけ」で見ているもの（`shown` の名前の順。スロットのものと重なれば足さない）。[`MAX_LAYERS`] まで、スロットのものが先。
+pub fn array_users(doc: &Document, look: &MaterialLook, shown: &[String]) -> Vec<Channel> {
+    let mut out = all_users(doc, look);
+    for name in shown {
+        if let Some(c) = user_channel_named(doc, name) {
+            if !out.contains(&c) {
+                out.push(c);
+            }
+        }
+    }
+    out.truncate(MAX_LAYERS);
+    out
+}
+
+/// 「チャンネルだけ」で見るユーザーチャンネルの、このセットの配列での引き方（`shown` の順に、配列のレイヤーの番号（無ければ −1）と、
+/// 何も描いていない所の値（チャンネルの既定。0〜1））。シェーダーの `SetParams` の `user_layer`・`user_default`。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShownTable {
+    pub layers: [i32; SHOWN_USERS],
+    pub defaults: [[f32; 4]; SHOWN_USERS],
+}
+
+impl Default for ShownTable {
+    fn default() -> Self {
+        ShownTable {
+            layers: [-1; SHOWN_USERS],
+            defaults: [[0.0; 4]; SHOWN_USERS],
+        }
+    }
+}
+
+impl ShownTable {
+    /// `users` は配列のレイヤーの並び（`UserLayers::channels`）。
+    pub fn of(doc: &Document, users: &[Channel], shown: &[String]) -> ShownTable {
+        let mut table = ShownTable::default();
+        for (k, name) in shown.iter().take(SHOWN_USERS).enumerate() {
+            let Some(c) = user_channel_named(doc, name) else {
+                continue;
+            };
+            let Some(layer) = users.iter().position(|u| *u == c) else {
+                continue;
+            };
+            table.layers[k] = layer as i32;
+            if let Some(info) = doc.channel_info(c) {
+                let d = info.default;
+                table.defaults[k] = [d.r, d.g, d.b, d.a].map(|v| f32::from(v) / 255.0);
+            }
+        }
+        table
+    }
+}
+
 /// スロットが読むユーザーチャンネル（文書にあるもの。スロットの並びで最初に出てきた順、[`MAX_LAYERS`] まで）。
 pub fn wanted_users(doc: &Document, look: &MaterialLook) -> Vec<Channel> {
     let mut all = all_users(doc, look);
@@ -296,10 +361,16 @@ pub fn planned_received_bytes(doc: &Document, limit: u32, budget: u64) -> u64 {
     received_layers::plan(&received_layered(doc, doc.drawn_look()), limit, budget).1
 }
 
-/// この文書の見た目が持つユーザーチャンネルの配列のバイト数（ミップ込み。`paint_shift` は標準のチャンネルの縮め）。3D ビューの
-/// 全体の予算の計画に使う（[`super::user_layers::plan`]）。
-pub fn planned_user_bytes(doc: &Document, paint_shift: u32, limit: u32, budget: u64) -> u64 {
-    let count = wanted_users(doc, doc.drawn_look()).len();
+/// この文書の見た目が持つユーザーチャンネルの配列のバイト数（ミップ込み。`paint_shift` は標準のチャンネルの縮め、`shown` はビューが
+/// 「チャンネルだけ」で見ているユーザーチャンネルの名前）。3D ビューの全体の予算の計画に使う（[`super::user_layers::plan`]）。
+pub fn planned_user_bytes(
+    doc: &Document,
+    shown: &[String],
+    paint_shift: u32,
+    limit: u32,
+    budget: u64,
+) -> u64 {
+    let count = array_users(doc, doc.drawn_look(), shown).len();
     super::user_layers::plan(
         [doc.width(), doc.height()],
         count,
@@ -932,6 +1003,9 @@ pub struct LookGpu {
     version: u64,
     /// 画像を入れ替えるたびに増える（束ねの鍵）。
     image_version: u64,
+    /// 「チャンネルだけ」で見るユーザーチャンネルの引き方（束ねのパラメータ）と、替わるたびに増える番号（束ねの鍵）。
+    pub shown: ShownTable,
+    shown_version: u64,
     pub draw: SetDraw,
     /// 法線マップを使う（lilToon のノーマルマップが入）。接線を作るかの決めに使う。
     pub wants_tangents: bool,
@@ -979,6 +1053,8 @@ impl LookGpu {
             written: Vec::new(),
             version: 0,
             image_version: 0,
+            shown: ShownTable::default(),
+            shown_version: 0,
             draw: SetDraw::STANDARD,
             wants_tangents: false,
             params_key: None,
@@ -1008,7 +1084,11 @@ impl LookGpu {
     /// 束ねを作り直す鍵（配列の作り直し・画像の入れ替え）。
     pub fn bind_key(&self) -> (u64, u64, u64) {
         let (uid, layout) = self.users.bind_key();
-        (uid, layout, self.image_version)
+        (
+            uid,
+            layout,
+            self.image_version ^ self.shown_version.rotate_left(32),
+        )
     }
 
     /// マットキャップの絵の見え方（持っていなければ None。束ねは既定の白を使う）。
@@ -1021,14 +1101,42 @@ impl LookGpu {
         self.users.bytes() + self.received.bytes()
     }
 
+    /// ユーザーチャンネルの配列を文書に合わせ（スロットが読むもの + `shown`）、「チャンネルだけ」の引き方を入れる。
+    fn sync_users(
+        &mut self,
+        doc: &Document,
+        shown: &[String],
+        paint_level: u32,
+        limit: u32,
+        budget: u64,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        let users = array_users(doc, doc.drawn_look(), shown);
+        self.users
+            .sync(doc, &users, paint_level, limit, budget, encoder);
+        self.set_shown(ShownTable::of(doc, self.users.channels(), shown));
+    }
+
+    /// 「チャンネルだけ」の引き方を入れる（替わったら束ねを作り直す）。
+    fn set_shown(&mut self, table: ShownTable) {
+        if self.shown != table {
+            self.shown = table;
+            self.shown_version += 1;
+            self.version += 1;
+        }
+    }
+
     /// 文書の見た目の設定に合わせる（値・ユーザーチャンネルの配列・画像・受けた絵の配列）。`paint` はそのセットの標準のチャンネルの絵（縮めと
     /// 画像の作り方）、`budget` は配列の辺の上限とバイトの予算。標準の見た目のセットは、持ち物を手放すだけで値を作らない
     /// （描き方は PBR で、値を読まない）。lilToon のセットも、文書・版・設定が前と同じなら値を作り直さない（描くたびに回るので）。
+    /// `shown` はビューが「チャンネルだけ」で見ているユーザーチャンネルの名前（標準の見た目のセットでも、そのチャンネルだけを配列に持つ）。
+    #[allow(clippy::too_many_arguments)]
     pub fn sync(
         &mut self,
         doc: &Document,
         paint: &Paint,
         budget: LookBudget,
+        shown: &[String],
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
     ) {
@@ -1050,7 +1158,7 @@ impl LookGpu {
             }
             self.wants_tangents = false;
             self.params_key = None;
-            self.users.sync(doc, &[], 0, limit, budget, encoder);
+            self.sync_users(doc, shown, paint.level(), limit, budget, encoder);
             if self.images.iter_mut().any(|i| i.take().is_some()) {
                 self.image_version += 1;
             }
@@ -1078,9 +1186,7 @@ impl LookGpu {
             || (liltoon::on(look, "_UseMatCap2nd") && liltoon::on(look, "_MatCap2ndCustomNormal"))
             || decal_sides("Main2nd")
             || decal_sides("Main3rd");
-        let users = wanted_users(doc, look);
-        self.users
-            .sync(doc, &users, paint.level(), limit, budget, encoder);
+        self.sync_users(doc, shown, paint.level(), limit, budget, encoder);
         // マットキャップの絵（プロジェクトの画像。文書の効果の入力にある画像を使う）
         let mut spaces: [Option<ImageColorSpace>; 2] = [None, None];
         for (which, name) in ["_MatCapTex", "_MatCap2ndTex"].iter().enumerate() {

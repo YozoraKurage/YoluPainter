@@ -526,7 +526,15 @@ mod tests {
         let dir = Dir::new();
         let loose = Cache::with_limits(dir.0.clone(), 1000, MAX_BYTES);
         for i in 0..20 {
-            loose.put(&Cache::key("image", &format!("old{i}")), &sample(i as u8));
+            let key = Cache::key("image", &format!("old{i}"));
+            loose.put(&key, &sample(i as u8));
+            // 更新時刻の粗さで fresh と同じ時刻にならないよう、古い物を明示して古くする
+            let file = std::fs::OpenOptions::new()
+                .write(true)
+                .open(dir.0.join(format!("{key}.thumb")))
+                .unwrap();
+            let when = SystemTime::now() - Duration::from_secs(1000 - i as u64 * 10);
+            file.set_modified(when).unwrap();
         }
         let tight = Cache::with_limits(dir.0.clone(), 5, MAX_BYTES);
         tight.put(&Cache::key("image", "fresh"), &sample(99));

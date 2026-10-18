@@ -157,6 +157,14 @@ pub fn unused_name(base: &str, taken: impl Fn(&str) -> bool) -> String {
         .expect("名前は尽きない")
 }
 
+/// 同じファイルを指すパスか（実体のパスで比べる。実体が取れないときは見かけのパスで比べる）。
+pub fn same_file(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
 /// 一覧の項目が元と違うか。今の項目（`current`）は今の設定（`live`）と元（`baseline`）を比べ、ほかの項目は覚えている変更（`edited`）で
 /// 見る。項目が無ければ false。
 pub fn is_modified<T: PartialEq>(entry: Option<(&T, bool)>, current: bool, live: &T) -> bool {

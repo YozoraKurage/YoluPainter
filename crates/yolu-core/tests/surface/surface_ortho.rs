@@ -98,7 +98,7 @@ fn an_axis_view_dab_lands_in_uv_at_the_screen_circles_size_at_any_depth() {
         let mut p = SurfaceProjector::new(
             g.clone(),
             &view,
-            Some(0),
+            Some(&yolu_core::geometry::MaterialSet::one(0)),
             64,
             64,
             60.0,
@@ -142,7 +142,7 @@ fn an_axis_view_dab_lands_in_uv_at_the_screen_circles_size_at_any_depth() {
             let mut p = SurfaceProjector::new(
                 geometry(t),
                 &view,
-                Some(0),
+                Some(&yolu_core::geometry::MaterialSet::one(0)),
                 64,
                 64,
                 60.0,
@@ -176,7 +176,16 @@ fn parallel_sight_lines_hide_exactly_what_the_nearer_plate_covers() {
             paint_hidden: hidden,
             ..ProjectionSettings::default()
         };
-        let mut p = SurfaceProjector::new(g.clone(), &view, Some(0), 64, 64, radius, s).unwrap();
+        let mut p = SurfaceProjector::new(
+            g.clone(),
+            &view,
+            Some(&yolu_core::geometry::MaterialSet::one(0)),
+            64,
+            64,
+            radius,
+            s,
+        )
+        .unwrap();
         let got = painted(&p.dab(center, radius, 1.0, u64::MAX).pixels);
         let (mut seen, mut behind) = (0, 0);
         for y in 0..64 {
@@ -218,7 +227,7 @@ fn faces_away_from_the_view_are_painted_only_when_asked() {
     let mut p = SurfaceProjector::new(
         g.clone(),
         &view,
-        Some(0),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
         32,
         32,
         80.0,
@@ -230,7 +239,16 @@ fn faces_away_from_the_view_are_painted_only_when_asked() {
         paint_backfaces: true,
         ..ProjectionSettings::default()
     };
-    let mut p = SurfaceProjector::new(g, &view, Some(0), 32, 32, 80.0, s).unwrap();
+    let mut p = SurfaceProjector::new(
+        g,
+        &view,
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
+        32,
+        32,
+        80.0,
+        s,
+    )
+    .unwrap();
     let dab = p.dab(center, 80.0, 1.0, u64::MAX);
     assert!(dab.pixels.len() > 100, "{}", dab.pixels.len());
     assert!(dab.pixels.iter().all(|p| p.coverage == 1.0));
@@ -252,7 +270,7 @@ fn the_angle_falloff_uses_the_view_direction_and_is_even_over_a_flat_face() {
         let mut p = SurfaceProjector::new(
             g,
             &view,
-            Some(0),
+            Some(&yolu_core::geometry::MaterialSet::one(0)),
             64,
             64,
             150.0,
@@ -319,7 +337,7 @@ fn stroke_through(
         g.clone(),
         view,
         brush,
-        Some(0),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
         screen[0],
         1.0,
         options,
@@ -516,7 +534,7 @@ fn an_orthographic_height_that_is_not_a_positive_number_is_refused() {
         let err = SurfaceProjector::new(
             g.clone(),
             &view,
-            Some(0),
+            Some(&yolu_core::geometry::MaterialSet::one(0)),
             64,
             64,
             30.0,

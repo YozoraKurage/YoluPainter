@@ -1,10 +1,10 @@
-//! PSD の写しを、実 C# Core の `PsdBridge.Export`・`Import` と `PsdCodec` に通した正解（`tests/golden/psd/`、`tools/csharp-golden/run.sh psd` で作る）と照らす。
+//! PSD の写しを、実 C# Core の `PsdBridge.Export`・`Import` と `PsdCodec` に通した正解（`tests/golden/psd/`。前の Unity 版の出力を引き継いだ物で、作り直すときは Rust の出力から作る）と照らす。
 //! - 書き出し事例: 同じ台本の文書を core で組み、`from_core` → `write` のバイト列が C# の書き出しと全バイト一致する。
 //! - その PSD を読み、core にした文書の中身（レイヤーの並び・属性・マスク・調整・塗りつぶし・画素・合成）が C# の取り込みと同じ。
 //! - 取り込み事例: C# が組んだ PSD（マスクの既定 0・キャンバスからはみ出す矩形・区切りの ID の無いグループ・入れ子）を core にした中身が C# の取り込みと同じ。
 //! - 断る事例: C# が断る書き出しを Rust も断る。
 //!
-//! 台本は `tools/csharp-golden/PsdBridgeGolden.cs` と同じ（レイヤーの ID は作った順に 100 + n、区切りの ID は 300 + n）。
+//! 台本の中身は C# の台本と同じ（レイヤーの ID は作った順に 100 + n、区切りの ID は 300 + n）。
 use std::fmt::Write as _;
 use std::path::PathBuf;
 use yolu_core::{
@@ -569,7 +569,7 @@ fn index_lists_exactly_the_cases_this_test_checks() {
         .chain(IMPORT_CASES)
         .chain(refused_cases().iter().map(|c| c.name))
         .collect();
-    assert_eq!(listed, checked, "index.txt の事例と、この試験が回す事例");
+    assert_eq!(listed, checked, "index.txt の事例と、このテストが回す事例");
     assert_eq!(
         index.lines().filter(|l| l.starts_with("case ")).count(),
         checked.len(),

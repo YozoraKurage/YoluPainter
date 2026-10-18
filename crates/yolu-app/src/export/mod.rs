@@ -28,7 +28,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use egui::Vec2;
 use yolu_core::export::{
     build, channel_image, ExportError as CalcError, ExportImage, ExportImageKind, ExportScalar,
     ExportTemplate,
@@ -42,10 +41,11 @@ use yolu_io::export::{
 };
 
 use crate::bake::Occlusion;
+use crate::features::{Feature, PollStage};
+use crate::jobs::CloseJob;
 use crate::jobs::{Cancel, JobCard, JobSpec, Polled, Worker};
 use crate::notice::Source;
 use crate::state::{Action, AppState};
-use crate::windows::CloseJob;
 
 /// 書き出しの操作（`Action::Export`）。
 #[derive(Clone, Debug, PartialEq)]
@@ -64,6 +64,9 @@ pub enum ExportAction {
     Destination(PathBuf),
     /// ウィンドウの「書き出す」: 今の出力テンプレートと出力先・チェックしたセットで、下の書き出しの操作へ渡す。
     Run,
+    /// ウィンドウを開かずに、このプロジェクトで最後に「書き出す」を押したときの出力テンプレート・出力先・セットで書き出す
+    /// （まだ書き出していなければ、ウィンドウを開く）。
+    Again,
     /// テンプレート（ID）の出力先のフォルダが決まった。`sets` は書き出すセット（uid。None は全部）。もうあるファイルがあれば、確認のウィンドウを出す。
     TemplateTo {
         id: String,
@@ -157,8 +160,6 @@ pub struct ExportState {
     pub padding: i32,
     pub confirm: Option<Confirm>,
     pub report: Option<Report>,
-    pub confirm_offset: Vec2,
-    pub report_offset: Vec2,
     /// 書き出しのウィンドウ（形・書き出す先）。
     pub window: window::WindowState,
     job: Option<Job>,
@@ -194,8 +195,6 @@ impl Default for ExportState {
             padding: -1,
             confirm: None,
             report: None,
-            confirm_offset: Vec2::ZERO,
-            report_offset: Vec2::ZERO,
             window: window::WindowState::default(),
             job: None,
             finished: None,
@@ -238,7 +237,7 @@ pub(crate) const JOB: JobSpec = JobSpec {
         Some(JobCard {
             text: format!(
                 "{} — {} {}/{}",
-                lang.pick("書き出し", "Exporting"),
+                lang.t("export-exporting"),
                 p.template,
                 p.index,
                 p.total
@@ -258,48 +257,22 @@ pub(crate) const JOB: JobSpec = JobSpec {
 /// 注意の文。
 pub fn note_text(lang: crate::lang::Lang, note: &Note) -> String {
     match note {
-        Note::NoModel => lang
-            .pick(
-                "3D ビューにモデルが無く UV が分からないので、塗り広げていません",
-                "Not padded because the 3D view has no model, so the UVs are unknown",
-            )
-            .into(),
-        Note::NoUv(set) => lang.pick(
-            format!("「{set}」はマテリアルの UV の三角形が無いので、塗り広げていません"),
-            format!("\"{set}\" is not padded because its material has no UV triangles"),
-        ),
-        Note::StaleOcclusion(set, why) => lang.with_reason(
-            lang.pick(
-                format!("「{set}」の AO は古いので使いません"),
-                format!("The AO of \"{set}\" is stale and is not used"),
-            ),
-            why,
-        ),
-        Note::WhiteOcclusion => lang
-            .pick(
-                "焼いた AO が無いセットの遮蔽は白（遮蔽なし）です",
-                "A set without a current AO bake has white occlusion (none)",
-            )
-            .into(),
-        Note::ReadOnly(set) => lang.pick(
-            format!("読むだけのセット「{set}」は書き出しません"),
-            format!("Read-only set \"{set}\" was not exported"),
-        ),
+        Note::NoModel => lang.t("export-not-padded-because-the-3d").into(),
+        Note::NoUv(set) => lang.f("export-is-not-padded-because-its", &[("set", &set)]),
+        Note::StaleOcclusion(set, why) => {
+            lang.with_reason(lang.f("export-the-ao-of-is-stale", &[("set", &set)]), why)
+        }
+        Note::WhiteOcclusion => lang.t("export-a-set-without-a-current").into(),
+        Note::ReadOnly(set) => lang.f("export-read-only-set-was-not", &[("set", &set)]),
         Note::InactiveEffects(set, effects) => {
             let first = effects
                 .first()
                 .map(|e| lang.inactive_effect(e))
                 .unwrap_or_default();
             lang.with_reason(
-                lang.pick(
-                    format!(
-                        "「{set}」の効いていない効果 {} 件は書き出しに入っていません",
-                        effects.len()
-                    ),
-                    format!(
-                        "{} inactive effect(s) of \"{set}\" are not in the exported images",
-                        effects.len()
-                    ),
+                lang.f(
+                    "export-inactive-effect-s-of-are",
+                    &[("set", &set), ("effects", &effects.len())],
                 ),
                 first,
             )
@@ -360,15 +333,13 @@ struct ChannelNames {
 
 /// 書き出すテクスチャセットが 1 つも無い（ウィンドウのチェックが全部外れている・直接の操作の選びが空か、無い uid だけ・全部読むだけ）ときの断り。
 pub(crate) fn no_sets_message(lang: crate::lang::Lang) -> &'static str {
-    lang.pick(
-        "書き出すテクスチャセットがありません。",
-        "There is no texture set to export.",
-    )
+    lang.t("export-there-is-no-texture-set")
 }
 
 /// 書き出しのファイル名の元（開いたプロジェクトのファイル名。無ければ Texture）。
 pub fn stem(state: &AppState) -> String {
     state
+        .session
         .project
         .as_ref()
         .and_then(|p| p.path().file_stem())
@@ -377,10 +348,10 @@ pub fn stem(state: &AppState) -> String {
         .unwrap_or_else(|| "Texture".into())
 }
 
-/// セットのマテリアルの UV の三角形（画素の座標。文書の大きさをかける）。
+/// セットのマテリアルの組の UV の三角形（画素の座標。文書の大きさをかける。組のマテリアルの三角形の和）。
 fn uv_triangles(
     model: &crate::view3d::model::ViewModel,
-    material: i32,
+    material: &yolu_core::geometry::MaterialSet,
     width: u32,
     height: u32,
 ) -> Vec<[DVec2; 3]> {
@@ -390,7 +361,7 @@ fn uv_triangles(
         .geometry
         .triangles()
         .iter()
-        .filter(|t| t.material == material)
+        .filter(|t| material.contains(t.material))
         .map(|t| [at(t.uv_a), at(t.uv_b), at(t.uv_c)])
         .collect()
 }
@@ -414,9 +385,9 @@ pub fn channel_suffix(doc: &Document, channel: Channel) -> String {
 
 /// 描くチャンネルの PNG の、既定のファイル名（全チャンネルの書き出しと同じ決まり）。
 pub fn default_channel_file_name(state: &AppState) -> String {
-    let doc = &state.doc;
+    let doc = &state.session.doc;
     let image = channel_image_spec(doc, state.m2.paint_channel);
-    let set = (state.sets.len() > 1).then(|| state.sets.current().name.as_str());
+    let set = (state.session.sets.len() > 1).then(|| state.session.sets.current().name.as_str());
     file_name(&stem(state), set, &image).unwrap_or_else(|_| "Texture.png".into())
 }
 
@@ -461,8 +432,8 @@ impl AppState {
     /// 書き出すセット（`selected` の uid のセットだけ。None は全部。読むだけのセットは除く）の番号。読むだけで除いたセットは注意に積む。
     fn exportable_sets(&self, notes: &mut Vec<Note>, selected: Option<&[u32]>) -> Vec<usize> {
         let mut indices = Vec::new();
-        for i in 0..self.sets.len() {
-            let set = self.sets.get(i).expect("範囲内");
+        for i in 0..self.session.sets.len() {
+            let set = self.session.sets.get(i).expect("範囲内");
             if selected.is_some_and(|uids| !uids.contains(&set.uid)) {
                 continue;
             }
@@ -498,13 +469,10 @@ impl AppState {
                 let d = self.set_doc(index);
                 (d.width(), d.height())
             };
-            let name = self.sets.get(index).expect("範囲内").name.clone();
+            let name = self.session.sets.get(index).expect("範囲内").name.clone();
             let snapshot = self.set_doc(index).capture_snapshot().map_err(|e| {
                 lang.with_reason(
-                    lang.pick(
-                        format!("テクスチャセット「{name}」を写せません"),
-                        format!("Cannot copy texture set “{name}”"),
-                    ),
+                    lang.f("export-cannot-copy-texture-set", &[("name", &name)]),
                     lang.core_error(&e),
                 )
             })?;
@@ -522,7 +490,7 @@ impl AppState {
                         None
                     }
                     (Some(m), Some(material)) => {
-                        let tris = uv_triangles(m, material, w, h);
+                        let tris = uv_triangles(m, &material, w, h);
                         if tris.is_empty() {
                             notes.push(Note::NoUv(name.clone()));
                             None
@@ -537,7 +505,7 @@ impl AppState {
                 }
             };
             sets.push(SetInput {
-                uid: self.sets.get(index).expect("範囲内").uid,
+                uid: self.session.sets.get(index).expect("範囲内").uid,
                 doc: snapshot,
                 occlusion: occlusions[p].clone(),
                 uv,
@@ -560,13 +528,13 @@ impl AppState {
         has_occlusion: &[bool],
     ) -> Result<TemplateNames, String> {
         let lang = self.lang;
-        let several = self.sets.len() > 1;
+        let several = self.session.sets.len() > 1;
         let mut planned = {
             let plan_sets: Vec<PlanSet<'_>> = indices
                 .iter()
                 .zip(has_occlusion)
                 .map(|(&i, &has_occlusion)| PlanSet {
-                    name: several.then(|| self.sets.get(i).expect("範囲内").name.as_str()),
+                    name: several.then(|| self.session.sets.get(i).expect("範囲内").name.as_str()),
                     document: self.set_doc(i),
                     has_occlusion,
                 })
@@ -579,7 +547,8 @@ impl AppState {
         if template.id == "liltoon" {
             for (p, &i) in indices.iter().enumerate() {
                 for (slot, image) in crate::look::export::extra_images(self.set_doc(i)) {
-                    let name = several.then(|| self.sets.get(i).expect("範囲内").name.as_str());
+                    let name =
+                        several.then(|| self.session.sets.get(i).expect("範囲内").name.as_str());
                     let file_name = file_name(stem, name, &image).map_err(|e| e.to_string())?;
                     template.images.push(image);
                     planned.push(yolu_io::export::PlannedFile {
@@ -592,15 +561,9 @@ impl AppState {
             }
         }
         if planned.is_empty() {
-            return Err(lang.pick(
-                format!(
-                    "どのレイヤーも「{}」が読むチャンネルを使っていないので、書き出すものがありません",
-                    template.name
-                ),
-                format!(
-                    "Nothing to export for \"{}\" because no layer uses a channel it reads",
-                    template.name
-                ),
+            return Err(lang.f(
+                "export-nothing-to-export-for-because",
+                &[("name", &template.name)],
             ));
         }
         let names: Vec<&str> = planned.iter().map(|p| p.file_name.as_str()).collect();
@@ -634,7 +597,7 @@ impl AppState {
             let occlusion = self.occlusion_for_export(i);
             if let Occlusion::Stale(why) = &occlusion {
                 notes.push(Note::StaleOcclusion(
-                    self.sets.get(i).expect("範囲内").name.clone(),
+                    self.session.sets.get(i).expect("範囲内").name.clone(),
                     why.clone(),
                 ));
             }
@@ -691,11 +654,8 @@ impl AppState {
     fn clash_message(&self, clash: &[String]) -> String {
         let lang = self.lang;
         lang.with_reason(
-            lang.pick(
-                "同じファイルになる画像があるので、書き出しませんでした",
-                "Nothing was exported because these images would write the same file",
-            ),
-            clash.join(lang.pick("、", ", ")),
+            lang.t("export-nothing-was-exported-because-these"),
+            clash.join(lang.t("export-text")),
         )
     }
 
@@ -703,7 +663,7 @@ impl AppState {
     /// 書き出しの道と、ウィンドウの書くファイルの一覧が同じ名前を出すための 1 か所。
     fn channel_names(&self, which: &Which<'_>, indices: &[usize]) -> Result<ChannelNames, String> {
         let lang = self.lang;
-        let several = self.sets.len() > 1;
+        let several = self.session.sets.len() > 1;
         // (indices の位置, チャンネル, ファイル名)
         let mut wanted: Vec<(usize, Channel, String)> = Vec::new();
         let mut images: Vec<ExportImage> = Vec::new();
@@ -723,7 +683,8 @@ impl AppState {
                 let name = match which {
                     Which::All { stem, .. } => file_name(
                         stem,
-                        several.then(|| self.sets.get(index).expect("範囲内").name.as_str()),
+                        several
+                            .then(|| self.session.sets.get(index).expect("範囲内").name.as_str()),
                         &image,
                     )
                     .map_err(|e| e.to_string())?,
@@ -735,12 +696,7 @@ impl AppState {
             }
         }
         if wanted.is_empty() {
-            return Err(lang
-                .pick(
-                    "どのレイヤーもチャンネルを使っていないので、書き出すものがありません",
-                    "Nothing to export because no layer uses any channel",
-                )
-                .into());
+            return Err(lang.t("export-nothing-to-export-because-no").into());
         }
         let clash = clashes(wanted.iter().map(|w| w.2.as_str()));
         if !clash.is_empty() {
@@ -767,7 +723,12 @@ impl AppState {
                 indices
             }
             Which::One { set, .. } => {
-                if let Some(reason) = self.sets.get(*set).and_then(|s| s.read_only.clone()) {
+                if let Some(reason) = self
+                    .session
+                    .sets
+                    .get(*set)
+                    .and_then(|s| s.read_only.clone())
+                {
                     return Err(crate::lang::refusals::read_only_set(lang, &reason));
                 }
                 vec![*set]
@@ -814,7 +775,8 @@ impl AppState {
             | ExportAction::SetChecked { .. }
             | ExportAction::ChooseDestination
             | ExportAction::Destination(_)
-            | ExportAction::Run => self.export_window_apply(action),
+            | ExportAction::Run
+            | ExportAction::Again => self.export_window_apply(action),
             ExportAction::TemplateTo { id, dir, sets } => {
                 self.start_export(&What::Template { id, sets }, &dir, false)
             }
@@ -837,20 +799,14 @@ impl AppState {
                 if self.export.confirm.take().is_some() {
                     self.info(
                         Source::Export,
-                        lang.pick(
-                            "書き出しをやめました（何も書いていません）。",
-                            "Export canceled (nothing was written).",
-                        ),
+                        lang.t("export-export-canceled-nothing-was-written"),
                     );
                 }
             }
             ExportAction::Cancel => {
                 if let Some(job) = &self.export.job {
                     job.worker.cancel();
-                    self.info(
-                        Source::Export,
-                        lang.pick("書き出しを取り消しています…", "Canceling the export…"),
-                    );
+                    self.info(Source::Export, lang.t("export-canceling-the-export"));
                 }
             }
             ExportAction::DismissReport => self.export.report = None,
@@ -870,10 +826,7 @@ impl AppState {
             return false;
         }
         if self.export.job.is_some() {
-            self.refuse(
-                Source::Export,
-                lang.pick("書き出し中です。", "An export is running."),
-            );
+            self.refuse(Source::Export, lang.t("export-an-export-is-running"));
             return false;
         }
         true
@@ -892,10 +845,7 @@ impl AppState {
                 None => {
                     self.refuse(
                         Source::Export,
-                        lang.pick(
-                            format!("書き出しのテンプレート「{id}」はありません。"),
-                            format!("No export template \"{id}\"."),
-                        ),
+                        lang.f("export-no-export-template", &[("id", &id)]),
                     );
                     return;
                 }
@@ -931,12 +881,9 @@ impl AppState {
                 });
                 self.info(
                     Source::Export,
-                    lang.pick(
-                        format!(
-                            "もうあるファイル {} 個を置き換えるか確かめます。",
-                            existing.len()
-                        ),
-                        format!("Confirm replacing {} existing file(s).", existing.len()),
+                    lang.f(
+                        "export-confirm-replacing-existing-file-s",
+                        &[("existing", &existing.len())],
                     ),
                 );
                 return;
@@ -944,7 +891,7 @@ impl AppState {
         }
         let label = match what {
             What::Template { .. } => plan.template.name.clone(),
-            What::Channels { .. } => lang.pick("チャンネル", "Channels").into(),
+            What::Channels { .. } => lang.t("export-channels").into(),
             What::ChannelFile(path) => path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -979,10 +926,7 @@ impl AppState {
         });
         self.info(
             Source::Export,
-            lang.pick(
-                "もうあるファイル 1 個を置き換えるか確かめます。",
-                "Confirm replacing 1 existing file.",
-            ),
+            lang.t("export-confirm-replacing-1-existing-file"),
         );
     }
 
@@ -993,17 +937,14 @@ impl AppState {
             return;
         }
         let Some(file_name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
-            self.refuse(
-                Source::Export,
-                lang.pick("出力先のファイルがありません。", "No file to write to."),
-            );
+            self.refuse(Source::Export, lang.t("export-no-file-to-write-to"));
             return;
         };
         let dir = match path.parent() {
             Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
             _ => PathBuf::from("."),
         };
-        let set = self.sets.current_index();
+        let set = self.session.sets.current_index();
         let channel = self.m2.paint_channel;
         let plan = match self.plan_channels(Which::One {
             set,
@@ -1065,10 +1006,7 @@ impl AppState {
             Err(e) => {
                 self.fail(
                     Source::Export,
-                    lang.with_reason(
-                        lang.pick("書き出せません", "Cannot export"),
-                        lang.thread_error(&e),
-                    ),
+                    lang.with_reason(lang.t("export-cannot-export"), lang.thread_error(&e)),
                 );
                 return;
             }
@@ -1076,14 +1014,11 @@ impl AppState {
         self.info(
             Source::Export,
             if total == 1 {
-                lang.pick(
-                    format!("書き出し中: {label}…"),
-                    format!("Exporting: {label}…"),
-                )
+                lang.f("export-exporting-2", &[("label", &label)])
             } else {
-                lang.pick(
-                    format!("書き出し中: {label}（{total} 枚）…"),
-                    format!("Exporting: {label} ({total} images)…"),
+                lang.f(
+                    "export-exporting-images",
+                    &[("label", &label), ("total", &total)],
                 )
             },
         );
@@ -1108,10 +1043,7 @@ impl AppState {
         let result = match job.worker.poll() {
             Polled::Message(r) => r,
             Polled::Empty => return,
-            Polled::Lost => Err(ExportError::Io(
-                lang.pick("書き出しが止まりました", "The export stopped")
-                    .into(),
-            )),
+            Polled::Lost => Err(ExportError::Io(lang.t("export-the-export-stopped").into())),
         };
         let job = self.export.job.take().expect("上で見た");
         // 書き終えた（書いたファイルが増えた・取り消して一時のファイルを消した）ので、一覧のファイルの有無を調べ直す
@@ -1131,19 +1063,13 @@ impl AppState {
                         .collect(),
                 );
                 let mut text = if job.report {
-                    lang.pick(
-                        format!(
-                            "書き出しました: {} 枚（{}）→ {}。",
-                            images.len(),
-                            job.template,
-                            job.dir.display()
-                        ),
-                        format!(
-                            "Exported {} image(s) ({}) to {}.",
-                            images.len(),
-                            job.template,
-                            job.dir.display()
-                        ),
+                    lang.f(
+                        "export-exported-image-s-to",
+                        &[
+                            ("images", &images.len()),
+                            ("template", &job.template),
+                            ("dir", &job.dir.display()),
+                        ],
                     )
                 } else {
                     // 1 枚のファイルは、書いたファイルの場所を出す
@@ -1151,10 +1077,7 @@ impl AppState {
                         .first()
                         .map(|i| i.path.display().to_string())
                         .unwrap_or_default();
-                    lang.pick(
-                        format!("書き出しました: {path}。"),
-                        format!("Exported {path}."),
-                    )
+                    lang.f("export-exported", &[("path", &path)])
                 };
                 for n in &job.notes {
                     text += &format!(" {}。", note_text(lang, n));
@@ -1175,18 +1098,12 @@ impl AppState {
                 }
             }
             Err(ExportError::Cancelled) => {
-                self.info(
-                    Source::Export,
-                    lang.pick(
-                        "書き出しを取り消しました（元のファイルは変えていません）。",
-                        "Export canceled (no file was changed).",
-                    ),
-                );
+                self.info(Source::Export, lang.t("export-export-canceled-no-file-was"));
             }
             Err(e) => {
                 self.fail(
                     Source::Export,
-                    lang.with_reason(lang.pick("書き出せません", "Cannot export"), e.to_string()),
+                    lang.with_reason(lang.t("export-cannot-export"), e.to_string()),
                 );
             }
         }
@@ -1291,6 +1208,12 @@ fn run(input: WorkerInput, cancel: &Cancel) -> Result<Vec<WrittenImage>, ExportE
         }
     })
 }
+
+/// 機能の表の行（毎フレーム、書き出しの仕事の終わりを受ける）。
+pub(crate) const FEATURE: Feature = Feature {
+    poll: Some((PollStage::BeforeDroppedPsds, AppState::poll_export)),
+    ..Feature::new("export")
+};
 
 #[cfg(test)]
 mod tests;

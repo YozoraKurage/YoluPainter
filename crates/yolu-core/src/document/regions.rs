@@ -3,6 +3,7 @@ use super::selection::{fill_pixel, mask_fill_pixel};
 use super::*;
 use crate::glam::DVec2;
 use crate::material::{ChannelPaint, GradientSettings};
+use crate::Reason;
 use crate::SelectionMask;
 
 /// 画素の中心（2D のグラデーションの点）。
@@ -22,7 +23,7 @@ impl Document {
         erase: bool,
     ) -> Result<bool, CoreError> {
         if !(0.0..=1.0).contains(&opacity) {
-            return Err(CoreError::InvalidArgument("opacity"));
+            return Err(CoreError::InvalidArgument(Reason::Opacity));
         }
         self.edit_material_region(
             layer,
@@ -68,7 +69,9 @@ impl Document {
                     .iter()
                     .any(|a| !to.iter().any(|b| a.channel == b.channel))
             {
-                return Err(CoreError::InvalidArgument("グラデーション両端のチャンネル"));
+                return Err(CoreError::InvalidArgument(
+                    Reason::ChannelsAtBothEndsGradient,
+                ));
             }
         }
         self.edit_material_region(
@@ -110,7 +113,7 @@ impl Document {
         gradient.validate()?;
         let index = self.index_of(layer)?;
         if !self.layers[index].is_channel_enabled(channel) {
-            return Err(CoreError::Unsupported("無効のチャンネルには塗れない"));
+            return Err(CoreError::Unsupported(Reason::CannotFillDisabledChannel));
         }
         self.gradient_material(
             layer,
@@ -144,7 +147,7 @@ impl Document {
         self.ensure_no_stroke()?;
         let index = self.index_of(layer)?;
         if self.layers[index].mask.is_none() {
-            return Err(CoreError::Unsupported("レイヤーにマスクが無い"));
+            return Err(CoreError::Unsupported(Reason::LayerHasNoMask));
         }
         self.refuse_lock(layer, LayerLocks::ALL)?;
         let effective = self.effective_region(region)?;

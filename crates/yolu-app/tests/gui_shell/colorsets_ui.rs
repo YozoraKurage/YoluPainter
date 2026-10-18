@@ -1,4 +1,5 @@
 use crate::common;
+use crate::common::drive::Drive;
 use egui::{vec2, Event, Modifiers, PointerButton, Pos2};
 use egui_kittest::{kittest::Queryable, Harness};
 use yolu_app::{
@@ -12,7 +13,7 @@ use yolu_app::{
 fn panel(width: f32, lang: Lang) -> Harness<'static, AppState> {
     let mut ready = false;
     let mut state = AppState::new(16, 16);
-    state.lang = lang;
+    state.set_lang(lang);
     let mut h = common::gpu_thread::builder()
         .with_size(vec2(width, 740.0))
         .build_ui_state(
@@ -53,7 +54,7 @@ fn click(h: &mut Harness<'_, AppState>, at: Pos2, button: PointerButton, modifie
     h.run();
 }
 fn swatch_at(h: &Harness<'_, AppState>, i: usize) -> Pos2 {
-    h.get_by_label(&h.state().colorsets.palette().colors[i].label())
+    h.get_by_label(&h.state().colorsets().palette().colors[i].label())
         .rect()
         .center()
 }
@@ -61,45 +62,48 @@ fn swatch_at(h: &Harness<'_, AppState>, i: usize) -> Pos2 {
 fn left_alt_and_context_menu_choose_foreground_or_background() {
     for lang in Lang::ALL {
         let mut h = panel(300.0, lang);
-        let color = h.state().colorsets.palette().colors[0].rgba;
+        let color = h.state().colorsets().palette().colors[0].rgba;
         let at = swatch_at(&h, 0);
         click(&mut h, at, PointerButton::Primary, Modifiers::NONE);
-        assert_eq!(h.state().color.main, color);
-        let color = h.state().colorsets.palette().colors[1].rgba;
+        assert_eq!(h.state().color().main, color);
+        let color = h.state().colorsets().palette().colors[1].rgba;
         let at = swatch_at(&h, 1);
         click(&mut h, at, PointerButton::Primary, Modifiers::ALT);
-        assert_eq!(h.state().color.sub, color);
+        assert_eq!(h.state().color().sub, color);
         h.event(Event::ModifiersChanged(Modifiers::NONE));
-        let main = h.state().color.main;
-        let color = h.state().colorsets.palette().colors[2].rgba;
+        let main = h.state().color().main;
+        let color = h.state().colorsets().palette().colors[2].rgba;
         let at = swatch_at(&h, 2);
         click(&mut h, at, PointerButton::Secondary, Modifiers::NONE);
         h.get_by_label(lang.pick("サブの色", "Background color"))
             .click();
         h.run();
-        assert_eq!(h.state().color.sub, color);
-        assert_eq!(h.state().color.main, main);
+        assert_eq!(h.state().color().sub, color);
+        assert_eq!(h.state().color().main, main);
     }
 }
 #[test]
 fn add_replace_remove_reorder_and_escape_use_real_widgets() {
     let mut h = panel(300.0, Lang::En);
     let c = [0.2, 0.4, 0.6, 0.5];
-    h.state_mut().color.set_main(c);
+    h.state_mut().color_mut().set_main(c);
     h.get_by_label("Add Color").click();
     h.run();
-    assert_eq!(h.state().colorsets.palette().colors.last().unwrap().rgba, c);
-    h.state_mut().color.set_main([0.3; 4]);
+    assert_eq!(
+        h.state().colorsets().palette().colors.last().unwrap().rgba,
+        c
+    );
+    h.state_mut().color_mut().set_main([0.3; 4]);
     h.get_by_label("Replace").click();
     h.run();
     assert_eq!(
-        h.state().colorsets.palette().colors.last().unwrap().rgba,
+        h.state().colorsets().palette().colors.last().unwrap().rgba,
         [0.3; 4]
     );
     h.get_by_label("Delete").click();
     h.run();
-    assert_eq!(h.state().colorsets.palette().colors.len(), 16);
-    let original = h.state().colorsets.palette().colors.clone();
+    assert_eq!(h.state().colorsets().palette().colors.len(), 16);
+    let original = h.state().colorsets().palette().colors.clone();
     let from = swatch_at(&h, 0);
     let to = swatch_at(&h, 3);
     pointer(&mut h, from, PointerButton::Primary, true, Modifiers::NONE);
@@ -107,8 +111,8 @@ fn add_replace_remove_reorder_and_escape_use_real_widgets() {
     h.step();
     pointer(&mut h, to, PointerButton::Primary, false, Modifiers::NONE);
     h.run();
-    assert_eq!(h.state().colorsets.palette().colors[3], original[0]);
-    let before = h.state().colorsets.palette().clone();
+    assert_eq!(h.state().colorsets().palette().colors[3], original[0]);
+    let before = h.state().colorsets().palette().clone();
     let from = swatch_at(&h, 0);
     let to = swatch_at(&h, 2);
     pointer(&mut h, from, PointerButton::Primary, true, Modifiers::NONE);
@@ -124,7 +128,7 @@ fn add_replace_remove_reorder_and_escape_use_real_widgets() {
     h.step();
     pointer(&mut h, to, PointerButton::Primary, false, Modifiers::NONE);
     h.run();
-    assert_eq!(h.state().colorsets.palette(), &before);
+    assert_eq!(h.state().colorsets().palette(), &before);
 }
 #[test]
 fn set_menu_new_duplicate_delete_and_switch() {
@@ -134,8 +138,8 @@ fn set_menu_new_duplicate_delete_and_switch() {
         h.run();
         h.get_by_label(lang.pick("新規セット", "New Set")).click();
         h.run();
-        assert_eq!(h.state().colorsets.entries().len(), 2);
-        assert!(h.state().colorsets.palette().colors.is_empty());
+        assert_eq!(h.state().colorsets().entries().len(), 2);
+        assert!(h.state().colorsets().palette().colors.is_empty());
         h.get_by_label(lang.pick("色を追加", "Add Color")).click();
         h.run();
         h.get_by_label(lang.pick("編集", "Edit")).click();
@@ -143,19 +147,19 @@ fn set_menu_new_duplicate_delete_and_switch() {
         h.get_by_label(lang.pick("セットを複製", "Duplicate Set"))
             .click();
         h.run();
-        assert_eq!(h.state().colorsets.entries().len(), 3);
-        assert_eq!(h.state().colorsets.palette().colors.len(), 1);
+        assert_eq!(h.state().colorsets().entries().len(), 3);
+        assert_eq!(h.state().colorsets().palette().colors.len(), 1);
         h.get_by_label(lang.pick("編集", "Edit")).click();
         h.run();
         h.get_by_label(lang.pick("セットを削除", "Delete Set"))
             .click();
         h.run();
-        assert_eq!(h.state().colorsets.entries().len(), 2);
+        assert_eq!(h.state().colorsets().entries().len(), 2);
         h.get_by_role(egui::accesskit::Role::ComboBox).click();
         h.run();
         h.get_by_label("Yolu").click();
         h.run();
-        assert_eq!(h.state().colorsets.active_index(), 0);
+        assert_eq!(h.state().colorsets().active_index(), 0);
     }
 }
 #[test]
@@ -170,15 +174,15 @@ fn grid_reflows_after_resize_and_intermediate_corner_captures_main() {
     let narrow7 = swatch_at(&h, 7);
     assert!(narrow7.y > narrow0.y);
     let c = [0.2, 0.6, 0.8, 0.25];
-    h.state_mut().color.set_main(c);
+    h.state_mut().color_mut().set_main(c);
     h.get_by_label("Top left #FF0000FF").click();
     h.run();
-    assert_eq!(h.state().colorsets.corners[0], c);
-    let expected = yolu_app::colorsets::intermediate(h.state().colorsets.corners, 0.5, 0.5);
+    assert_eq!(h.state().colorsets().corners[0], c);
+    let expected = yolu_app::colorsets::intermediate(h.state().colorsets().corners, 0.5, 0.5);
     let label = Swatch::new(expected).label();
     h.get_by_label(&label).click();
     h.run();
-    assert_eq!(h.state().color.main, expected);
+    assert_eq!(h.state().color().main, expected);
 }
 #[test]
 fn history_has_64_clickable_colors_and_both_languages_have_no_instructions() {
@@ -186,19 +190,19 @@ fn history_has_64_clickable_colors_and_both_languages_have_no_instructions() {
         let mut h = panel(320.0, lang);
         for i in 0..64 {
             h.state_mut()
-                .color
+                .color_mut()
                 .set_main([i as f32 / 100.0, 0.22, 0.37, 1.0]);
-            h.state_mut().color.remember();
+            h.state_mut().color_mut().remember();
         }
         h.state_mut()
-            .colorsets
+            .colorsets_mut()
             .edit(Edit::Rename("Sample".into()))
             .unwrap();
         h.run();
-        let c = h.state().color.recent[63];
+        let c = h.state().color().recent[63];
         h.get_by_label(&Swatch::new(c).label()).click();
         h.run();
-        assert_eq!(h.state().color.main, c);
+        assert_eq!(h.state().color().main, c);
         assert!(h.query_by_label(lang.pick("履歴", "History")).is_some());
         assert!(h
             .query_by_label(lang.pick("中間色", "Intermediate Colors"))
@@ -254,20 +258,17 @@ fn app_persists_history_with_the_color_sets_tab_closed() {
     let mut h = create(path.clone());
     h.run();
     for i in 0..70 {
-        h.state_mut()
-            .state
-            .color
-            .set_main([i as f32 / 100.0, 0.17, 0.31, 0.0]);
-        h.state_mut().state.color.remember();
+        h.color_mut().set_main([i as f32 / 100.0, 0.17, 0.31, 0.0]);
+        h.color_mut().remember();
     }
     h.run();
-    let expected = h.state().state.color.recent.clone();
+    let expected = h.color().recent.clone();
     assert_eq!(expected.len(), 64);
     assert!(dir.join("colorsets/state.conf").is_file());
     drop(h);
     let mut restored = create(path);
     restored.run();
-    assert_eq!(restored.state().state.color.recent, expected);
+    assert_eq!(restored.color().recent, expected);
     assert!(restored
         .state()
         .dock

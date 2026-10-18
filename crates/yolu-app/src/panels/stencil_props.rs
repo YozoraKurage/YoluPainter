@@ -21,13 +21,13 @@ const IMAGE_ROW: f32 = 24.0;
 /// 読み方の名前（自動は、この画像で決めた読み方を括弧に短く添える）。
 pub fn mode_name(lang: Lang, mode: StencilMode, resolved: Option<StencilMode>) -> String {
     match mode {
-        StencilMode::Mask => lang.pick("量（マスク）", "Amount (mask)").to_owned(),
-        StencilMode::Color => lang.pick("色", "Color").to_owned(),
+        StencilMode::Mask => lang.t("panels-amount-mask").to_owned(),
+        StencilMode::Color => lang.t("panels-color").to_owned(),
         StencilMode::Auto => {
-            let auto = lang.pick("自動", "Auto");
+            let auto = lang.t("panels-auto");
             match resolved {
-                Some(StencilMode::Mask) => format!("{auto} ({})", lang.pick("量", "Amount")),
-                Some(StencilMode::Color) => format!("{auto} ({})", lang.pick("色", "Color")),
+                Some(StencilMode::Mask) => format!("{auto} ({})", lang.t("panels-amount")),
+                Some(StencilMode::Color) => format!("{auto} ({})", lang.t("panels-color")),
                 _ => auto.to_owned(),
             }
         }
@@ -36,10 +36,10 @@ pub fn mode_name(lang: Lang, mode: StencilMode, resolved: Option<StencilMode>) -
 
 pub fn tiling_name(lang: Lang, tiling: StencilTiling) -> &'static str {
     match tiling {
-        StencilTiling::None => lang.pick("繰り返さない", "No tiling"),
-        StencilTiling::Horizontal => lang.pick("横に繰り返す", "Horizontal"),
-        StencilTiling::Vertical => lang.pick("縦に繰り返す", "Vertical"),
-        StencilTiling::Both => lang.pick("縦横に繰り返す", "Both"),
+        StencilTiling::None => lang.t("panels-no-tiling"),
+        StencilTiling::Horizontal => lang.t("panels-horizontal"),
+        StencilTiling::Vertical => lang.t("panels-vertical"),
+        StencilTiling::Both => lang.t("panels-both"),
     }
 }
 
@@ -50,7 +50,7 @@ pub fn image_entries(app: &AppState) -> Vec<Entry<Action>> {
     let st = &app.stencil;
     let current = st.image.as_ref().and_then(|i| i.path.as_deref());
     let mut v = vec![Entry::item(
-        lang.pick("画像を読む…", "Load an Image…"),
+        lang.t("panels-load-an-image"),
         Action::Stencil(StencilOp::Pick),
     )
     .enabled(free)];
@@ -68,7 +68,7 @@ pub fn image_entries(app: &AppState) -> Vec<Entry<Action>> {
         v.push(Entry::Separator);
         v.push(
             Entry::item(
-                lang.pick("なし（ステンシルを使わない）", "None (no stencil)"),
+                lang.t("panels-none-no-stencil"),
                 Action::Stencil(StencilOp::Clear),
             )
             .enabled(free),
@@ -138,9 +138,8 @@ fn image_box(ui: &mut Ui, app: &mut AppState, box_rect: Rect, enabled: bool) -> 
             Sense::hover()
         },
     );
-    let pointer_over = ui
-        .input(|i| i.pointer.hover_pos())
-        .is_some_and(|p| box_rect.contains(p));
+    let pointer_over =
+        crate::pen::drop_point::drop_point(ui.ctx()).is_some_and(|p| box_rect.contains(p));
     let dragging_file = enabled && ui.input(|i| !i.raw.hovered_files.is_empty()) && pointer_over;
     let hover = shown.live && response.hovered();
     let ctx = ui.ctx().clone();
@@ -150,7 +149,7 @@ fn image_box(ui: &mut Ui, app: &mut AppState, box_rect: Rect, enabled: bool) -> 
         .image
         .as_ref()
         .map(|i| i.name.clone())
-        .unwrap_or_else(|| lang.pick("なし", "None").to_owned());
+        .unwrap_or_else(|| lang.t("panels-none").to_owned());
     let has_image = app.stencil.image.is_some();
     let p = ui.painter();
     w::rounded(
@@ -229,7 +228,7 @@ fn image_box(ui: &mut Ui, app: &mut AppState, box_rect: Rect, enabled: bool) -> 
         t::TEXT_DIM,
         16.0,
     );
-    let accessible = format!("{}: {name}", lang.pick("画像", "Image"));
+    let accessible = format!("{}: {name}", lang.t("panels-image"));
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, enabled, &accessible)
     });
@@ -239,21 +238,14 @@ fn image_box(ui: &mut Ui, app: &mut AppState, box_rect: Rect, enabled: bool) -> 
             i.name,
             i.width,
             i.height,
-            lang.pick(
-                "ブラシが通して塗る画像。2D キャンバスと 3D ビューに重ねる。押すと画像を読む・読んだ画像から選ぶ。PNG をここへ落としてもよい。",
-                "The image the brush paints through, laid over the 2D canvas and the 3D view. Click to load an image or pick a recent one; a PNG can be dropped here."
-            )
+            lang.t("panels-the-image-the-brush-paints-tip")
         ),
-        None => lang
-            .pick(
-                "ブラシが通して塗る画像。2D キャンバスと 3D ビューに重ねる。押すと画像を読む。PNG をここへ落としてもよい。",
-                "The image the brush paints through, laid over the 2D canvas and the 3D view. Click to load an image; a PNG can be dropped here.",
-            )
-            .to_owned(),
+        None => lang.t("panels-the-image-the-brush-paints-2-tip").to_owned(),
     };
     let clicked = response.clicked();
     let _ = response.on_hover_text(tip);
     if enabled {
+        app.ui.stencil_image_rect = Some(box_rect);
         if let Some(path) = dropped_png(ui, pointer_over) {
             app.apply(Action::Stencil(StencilOp::Load(path)));
         }
@@ -269,7 +261,7 @@ pub fn stencil_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui:
         app,
         rows,
         "stencil",
-        lang.pick("ステンシル", "Stencil"),
+        lang.t("panels-stencil"),
         "square",
         None,
     );
@@ -284,7 +276,7 @@ pub fn stencil_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui:
     w::text(
         ui.painter(),
         Rect::from_min_size(row.min, vec2(LABEL_WIDTH, row.height())),
-        lang.pick("画像", "Image"),
+        lang.t("panels-image"),
         t::LABEL.with_color(w::label_color(ui, "stencil.image.label", enabled)),
         w::Align::Left,
     );
@@ -304,7 +296,7 @@ pub fn stencil_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui:
             ),
             "stencil.clear",
             "close",
-            lang.pick("ステンシルを外す", "Stop using the stencil"),
+            lang.t("panels-stop-using-the-stencil-tip"),
             false,
             enabled,
             15.0,
@@ -325,12 +317,9 @@ pub fn stencil_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui:
         ui,
         mode_row,
         "stencil.mode",
-        Some(lang.pick("読み方", "Reads as")),
+        Some(lang.t("panels-reads-as")),
         &mode,
-        Some(lang.pick(
-            "量: 画像の明るさが塗りを通す量（白は塗り、黒と透明は止める）。色: ブラシは画像の色で塗り、そのアルファが量。自動: 灰色の画像なら量、そうでなければ色。\n色のモードで、色を受けるのは描くチャンネル（マスクには量だけ）。",
-            "Amount: the image's brightness is how much paint gets through (white paints, black and transparent hold back). Color: the brush paints the image's colors, its alpha is the amount. Automatic: amount for a grey image, color otherwise.\nIn color mode the colors go to the paint channel (a mask takes only the amount).",
-        )),
+        Some(lang.t("panels-amount-the-image-s-brightness-tip")),
         enabled,
         LABEL_WIDTH,
     );
@@ -345,12 +334,9 @@ pub fn stencil_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui:
         ui,
         cols[0],
         "stencil.invert",
-        lang.pick("反転", "Invert"),
+        lang.t("panels-invert"),
         invert,
-        Some(lang.pick(
-            "黒が塗りを通し、白が止める（透明はやはり止める）。量のときだけ効く。",
-            "Black lets the paint through and white holds it back (transparent still holds back). Applies to amount only.",
-        )),
+        Some(lang.t("panels-black-lets-the-paint-through-tip")),
         enabled && masked,
     );
     if next != invert {
@@ -362,10 +348,7 @@ pub fn stencil_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui:
         "stencil.tiling",
         None,
         tiling_name(lang, app.stencil.tiling),
-        Some(lang.pick(
-            "画像を端の先へ、表示域いっぱいに繰り返す。繰り返さないときは、画像の外には塗らない。",
-            "Repeat the image beyond its edges across the view. Without tiling nothing is painted outside the image.",
-        )),
+        Some(lang.t("panels-repeat-the-image-beyond-its-tip")),
         enabled,
         0.0,
     );
@@ -377,13 +360,10 @@ pub fn stencil_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui:
         ui,
         rows,
         "stencil.opacity",
-        lang.pick("重ねの不透明度", "Overlay opacity"),
+        lang.t("panels-overlay-opacity"),
         app.stencil.opacity as f64,
         (0.0, 1.0),
-        Some(lang.pick(
-            "ステンシルを表示域にどれだけ濃く重ねるか（表示だけ）。",
-            "How strongly the stencil is shown over the views (display only).",
-        )),
+        Some(lang.t("panels-how-strongly-the-stencil-is-tip")),
         enabled,
     ) {
         app.apply(Action::Stencil(StencilOp::Opacity(v as f32)));
@@ -392,13 +372,10 @@ pub fn stencil_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui:
         ui,
         rows,
         "stencil.size",
-        lang.pick("大きさ", "Size"),
+        lang.t("panels-size-3"),
         app.stencil.size as f64,
         (MIN_SIZE as f64, SLIDER_MAX_SIZE as f64),
-        Some(lang.pick(
-            "画像の高さ（表示域の高さに対する割合）。",
-            "The image's height as a share of the view's height.",
-        )),
+        Some(lang.t("panels-the-image-s-height-as-tip")),
         enabled,
     ) {
         app.apply(Action::Stencil(StencilOp::Size(v as f32)));
@@ -407,14 +384,11 @@ pub fn stencil_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui:
         ui,
         rows,
         "stencil.angle",
-        lang.pick("角度", "Angle"),
+        lang.t("panels-angle"),
         app.stencil.angle,
         (-180.0, 180.0),
         NumberFormat::int("°"),
-        Some(lang.pick(
-            "画面の上の回転（時計回り）。",
-            "Rotation on the screen (clockwise).",
-        )),
+        Some(lang.t("panels-rotation-on-the-screen-clockwise-tip")),
         enabled,
     ) {
         app.apply(Action::Stencil(StencilOp::Angle(v)));
@@ -423,13 +397,10 @@ pub fn stencil_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui:
         ui,
         rows.row(24.0, 4.0),
         "stencil.reset",
-        lang.pick("置き場を戻す", "Reset placement"),
+        lang.t("panels-reset-placement"),
         false,
         enabled,
-        Some(lang.pick(
-            "表示域の中央・初めの大きさ・回転なしに戻す。",
-            "Back to the middle of the view, the first size and no rotation.",
-        )),
+        Some(lang.t("panels-back-to-the-middle-of-tip")),
         None,
     )
     .clicked()

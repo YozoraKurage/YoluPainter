@@ -15,12 +15,13 @@
 //!   選んだ。モードが替わる直前は、離したことにして戻してから替える。フォーカスを失った・ポップアップ・ダイアログ・文字の入力が開いたときも、離したことにする。
 //! - 押した時刻は、アプリ共通の時計（メインウィンドウの時刻。外へ出したウィンドウの時刻は、ウィンドウごとに始まりが違う）で持つ。
 
-use egui::{Event, Key};
+use egui::Event;
 
 use crate::brushes::BrushKey;
 use crate::commands;
 use crate::keymap::Fired;
 use crate::lang::Lang;
+use crate::state::key::Key;
 use crate::state::{Action, AppState, Tool};
 use crate::toolset::{SlotId, ToolsetAction};
 
@@ -58,19 +59,16 @@ impl ToolKeyMode {
     /// 選ぶ一覧の名前。
     pub fn label(self, lang: Lang) -> &'static str {
         match self {
-            Self::Tap => lang.pick("押すと切り替え", "Switch on Press"),
-            Self::Hold => lang.pick("押している間だけ", "Only While Held"),
-            Self::TapOrHold => lang.pick(
-                "短く押すと切り替え・長押しで押している間だけ",
-                "Tap to Switch, Hold for Temporary",
-            ),
+            Self::Tap => lang.t("toolkeys-switch-on-press"),
+            Self::Hold => lang.t("toolkeys-only-while-held"),
+            Self::TapOrHold => lang.t("toolkeys-tap-to-switch-hold-for"),
         }
     }
 
     /// 設定の表の欄に出す短い名前（長い名前は、欄に入りきらない）。
     pub fn short_label(self, lang: Lang) -> &'static str {
         match self {
-            Self::TapOrHold => lang.pick("短押し／長押し", "Tap / Hold"),
+            Self::TapOrHold => lang.t("toolkeys-tap-hold"),
             _ => self.label(lang),
         }
     }
@@ -217,7 +215,7 @@ pub fn press(ctx: &egui::Context, app: &mut AppState, fired: Fired) {
         to: ToolPoint::of(app),
         epoch: app.tool_epoch,
         started: now,
-        revision: app.doc.revision(),
+        revision: app.session.doc.revision(),
         drew: false,
         held: None,
     });
@@ -232,7 +230,7 @@ pub fn swallow_repeats(i: &mut egui::InputState, app: &AppState) {
     i.events.retain(|e| {
         !matches!(
             e,
-            Event::Key { key, pressed: true, repeat: true, .. } if keys.contains(key)
+            Event::Key { key, pressed: true, repeat: true, .. } if keys.contains(&(*key).into())
         )
     });
 }
@@ -252,7 +250,7 @@ pub fn update(ctx: &egui::Context, app: &mut AppState) {
     let focused = ctx.input(|i| i.focused);
     // ポップアップ・ダイアログ・文字の入力が開いたら、離したことにする（そのあとのキーの離しは、表へ届かない）
     let blocked = ctx.egui_wants_keyboard_input()
-        || app.popup.is_some()
+        || app.ui.popup.is_some()
         || app.sel.dialog.is_some()
         || crate::windows::modal_open(app);
     let mut levels = std::mem::take(&mut app.temp_tool.levels);
@@ -260,7 +258,9 @@ pub fn update(ctx: &egui::Context, app: &mut AppState) {
         if used(app, level.revision) {
             level.drew = true;
         }
-        if level.held.is_none() && (blocked || !focused || !ctx.input(|i| i.key_down(level.key))) {
+        if level.held.is_none()
+            && (blocked || !focused || !ctx.input(|i| i.key_down(level.key.into())))
+        {
             level.held = Some((now - level.started).max(0.0));
         }
     }
@@ -340,7 +340,7 @@ fn settle(app: &mut AppState, levels: &mut Vec<Level>, wait: bool) {
 /// ツールで描いている・ドラッグしている最中か（ストローク、キャンバスのツールのドラッグ（移動と変形・図形・グラデーション・パスと点の矩形・
 /// 選択の形・テキストの押し）、3D ビューのグラデーション・図形・定規・選択の形のドラッグ、3D のパスの矩形、多角形選択の途中（2D も 3D も））。戻すのは、これが
 /// 終わってから（ツールを替えると、途中の形を捨てるため）。
-/// ポインタを押している印（`canvas.tool_button` など）は、フォーカスを失ったあとに残りうるので、待つ条件には使わない。
+/// ポインタを押している印（`canvas.mouse_press` など）は、フォーカスを失ったあとに残りうるので、待つ条件には使わない。
 fn drawing(app: &AppState) -> bool {
     app.is_stroking()
         || crate::tools::input::CanvasKind::ALL
@@ -356,10 +356,10 @@ fn drawing(app: &AppState) -> bool {
 /// 押している間に、ツールで描いた・ドラッグしたか（描いている最中・描き終えて文書が変わった・ツールの押しが始まった）。
 fn used(app: &AppState, revision: u64) -> bool {
     drawing(app)
-        || app.doc.revision() != revision
-        || app.canvas.tool_button.is_some()
+        || app.session.doc.revision() != revision
+        || app.canvas.mouse_press.is_some()
         || app.canvas.pen_press.is_some()
-        || app.view3d.input.pen_press.is_some()
+        || app.view3d.view.input.pen_press.is_some()
 }
 
 /// 戻る先のツールへ替える（ツールバーで選ぶのと同じ道。列から消えていたら、そのツールの最初の項目）。

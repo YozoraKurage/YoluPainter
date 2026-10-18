@@ -915,22 +915,10 @@ impl Unavailable {
     /// 知らせの文（理由と、Windows Ink を使うこと。1 文）。
     pub fn text(self, lang: Lang) -> &'static str {
         match self {
-            Unavailable::NoLibrary => lang.pick(
-                "WinTab のドライバーが見つからないため、Windows Ink を使います。",
-                "Using Windows Ink because no WinTab driver was found.",
-            ),
-            Unavailable::NoDriver => lang.pick(
-                "WinTab のドライバーが応えないため、Windows Ink を使います。",
-                "Using Windows Ink because the WinTab driver did not respond.",
-            ),
-            Unavailable::NoTablet => lang.pick(
-                "WinTab のタブレットが見つからないため、Windows Ink を使います。",
-                "Using Windows Ink because no WinTab tablet was found.",
-            ),
-            Unavailable::NoContext => lang.pick(
-                "WinTab を開けなかったため、Windows Ink を使います。",
-                "Using Windows Ink because WinTab could not be opened.",
-            ),
+            Unavailable::NoLibrary => lang.t("pen-using-windows-ink-because-no"),
+            Unavailable::NoDriver => lang.t("pen-using-windows-ink-because-the"),
+            Unavailable::NoTablet => lang.t("pen-using-windows-ink-because-no-2"),
+            Unavailable::NoContext => lang.t("pen-using-windows-ink-because-wintab"),
         }
     }
 }

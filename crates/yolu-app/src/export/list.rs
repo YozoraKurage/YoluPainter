@@ -57,7 +57,7 @@ impl AppState {
             .map(|w| w.unchecked.as_slice())
             .unwrap_or_default();
         let row = |i: usize, selectable: bool| {
-            let set = self.sets.get(i).expect("範囲内");
+            let set = self.session.sets.get(i).expect("範囲内");
             let read_only = set.read_only.is_some();
             SetRow {
                 uid: set.uid,
@@ -68,9 +68,9 @@ impl AppState {
             }
         };
         if self.export_form().writes_file() {
-            return vec![row(self.sets.current_index(), false)];
+            return vec![row(self.session.sets.current_index(), false)];
         }
-        (0..self.sets.len()).map(|i| row(i, true)).collect()
+        (0..self.session.sets.len()).map(|i| row(i, true)).collect()
     }
 
     /// 書き出すセットの uid（左の一覧でチェックが入っている物。並びはセットの並び）。
@@ -90,9 +90,10 @@ impl AppState {
             return false;
         }
         let checked = self.export_checked_uids();
-        (0..self.sets.len()).any(|i| {
+        (0..self.session.sets.len()).any(|i| {
             self.has_baked_occlusion(i)
                 && self
+                    .session
                     .sets
                     .get(i)
                     .is_some_and(|set| checked.contains(&set.uid))
@@ -112,7 +113,7 @@ impl AppState {
     /// 今のチャンネルの PNG 1 枚の、書く名前（出力先のファイルの名前。決まっていなければ既定の名前）と、出力先のフォルダ。
     fn preview_channel_png(&self, destination: Option<&Path>) -> (Option<PathBuf>, Named) {
         let lang = self.lang;
-        let set = self.sets.current_index();
+        let set = self.session.sets.current_index();
         let name = destination
             .and_then(Path::file_name)
             .map(|n| n.to_string_lossy().into_owned())
@@ -121,7 +122,7 @@ impl AppState {
             .and_then(Path::parent)
             .filter(|d| !d.as_os_str().is_empty())
             .map(Path::to_path_buf);
-        let named = match self.sets.get(set).and_then(|s| s.read_only.clone()) {
+        let named = match self.session.sets.get(set).and_then(|s| s.read_only.clone()) {
             Some(reason) => Err(crate::lang::refusals::read_only_set(lang, &reason)),
             None => self
                 .channel_names(
@@ -141,10 +142,7 @@ impl AppState {
     fn preview_template(&mut self, id: &str, selected: &[u32]) -> Named {
         let lang = self.lang;
         let Some(template) = ExportTemplate::built_in_by_id(id) else {
-            return Err(lang.pick(
-                format!("書き出しのテンプレート「{id}」はありません。"),
-                format!("No export template \"{id}\"."),
-            ));
+            return Err(lang.f("export-no-export-template", &[("id", &id)]));
         };
         let indices = self.exportable_sets(&mut Vec::new(), Some(selected));
         let has_occlusion: Vec<bool> = indices

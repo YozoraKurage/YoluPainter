@@ -1,6 +1,7 @@
 //! lilToon の再現（3D ビューのマテリアル表示）: 光・影・輪郭線・カットアウト・半透明・ユーザーチャンネルのマスクを、lilToon の式を
 //! CPU で書いた参照と照らす（egui_kittest。描画は wgpu）。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::Pos2;
@@ -30,8 +31,7 @@ fn view(width: f32, height: f32, doc: u32) -> Harness<'static, YoluApp> {
 /// 新しいセットの既定（lilToon）でなく、標準の見た目から始める（標準と lilToon を比べる試験・割り当ての無いスロットを見る試験）。
 /// 開いた古い .ylp（look.json が無い）と同じ始まり。
 fn start_standard(h: &mut Harness<'_, YoluApp>, set: usize) {
-    h.state_mut()
-        .state
+    h.app_mut()
         .set_doc_mut(set)
         .restore_look(MaterialLook::default())
         .expect("作ったばかりの文書");
@@ -64,17 +64,18 @@ fn quad(size: f32) -> ModelMesh {
 }
 
 fn set_model(h: &mut Harness<'_, YoluApp>, meshes: Vec<ModelMesh>) {
-    let state = &mut h.state_mut().state;
-    let revision = state.view3d.next_revision();
-    state.view3d.material = 0;
-    let model = ViewModel::new("試験", meshes, vec![Some("試験".to_string())], revision).unwrap();
+    let state = h.app_mut();
+    let revision = state.view3d_mut().next_revision();
+    state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
+    let model =
+        ViewModel::new("テスト", meshes, vec![Some("テスト".to_string())], revision).unwrap();
     model.tangents();
-    state.view3d.set_model(model);
+    state.view3d_mut().set_model(model);
     h.run();
 }
 
 fn look_at(h: &mut Harness<'_, YoluApp>, distance: f32) {
-    h.state_mut().state.view3d.camera = OrbitCamera {
+    h.view3d_mut().view.camera = OrbitCamera {
         target: Vec3::ZERO,
         yaw: 0.0,
         pitch: 0.0,
@@ -98,9 +99,7 @@ fn light(h: &mut Harness<'_, YoluApp>, yaw: f32, pitch: f32) {
 }
 
 fn fill_color(h: &mut Harness<'_, YoluApp>, color: [u8; 4]) {
-    h.state_mut()
-        .state
-        .doc
+    h.doc_mut()
         .add_fill_layer(
             "色",
             &[(
@@ -124,7 +123,7 @@ fn lil() -> MaterialLook {
 }
 
 fn set_look(h: &mut Harness<'_, YoluApp>, look: MaterialLook) {
-    h.state_mut().state.doc.set_look(look, false).unwrap();
+    h.doc_mut().set_look(look, false).unwrap();
     h.run();
 }
 
@@ -267,7 +266,7 @@ fn the_shadow_follows_lilgetshading_from_lit_to_dark() {
         (0.0, 0.0),
     ] {
         light(&mut h, yaw, pitch);
-        let to_light = h.state().state.view3d.display.light_direction();
+        let to_light = h.view3d().view.display.light_direction();
         let image = h.render().expect("描ける");
         let expected = to_bytes(shaded(albedo, Vec3::NEG_Z, to_light));
         assert_close(
@@ -287,7 +286,7 @@ fn a_user_channel_mask_turns_the_shadow_off_where_it_is_black() {
     light(&mut h, 0.0, 0.0); // 後ろから: 全部が影
     let color = [230u8, 200, 180, 255];
     fill_color(&mut h, color);
-    let doc = &mut h.state_mut().state.doc;
+    let doc = h.doc_mut();
     let mask = doc
         .add_channel(ChannelInfo {
             name: "影の強さ".into(),
@@ -334,7 +333,7 @@ fn a_user_channel_mask_turns_the_shadow_off_where_it_is_black() {
         to_bytes(shaded(
             albedo,
             Vec3::NEG_Z,
-            h.state().state.view3d.display.light_direction(),
+            h.view3d().view.display.light_direction(),
         )),
         3,
         "マスク 1",
@@ -372,7 +371,7 @@ fn a_user_channel_mask_keeps_its_value_in_the_smaller_mips() {
     light(&mut h, 0.0, 0.0); // 後ろから: 全部が影
     let color = [230u8, 200, 180, 255];
     fill_color(&mut h, color);
-    let doc = &mut h.state_mut().state.doc;
+    let doc = h.doc_mut();
     let mut masks = Vec::new();
     for name in ["影の強さ", "影の強さ 2"] {
         masks.push(
@@ -426,7 +425,7 @@ fn a_user_channel_mask_keeps_its_value_in_the_smaller_mips() {
         to_bytes(shaded(
             albedo,
             Vec3::NEG_Z,
-            h.state().state.view3d.display.light_direction(),
+            h.view3d().view.display.light_direction(),
         )),
         3,
         "遠くのマスク 1",
@@ -442,7 +441,7 @@ fn a_packed_slot_reads_color_and_emission_as_their_painted_values() {
     set_model(&mut h, vec![quad(1.0)]);
     look_at(&mut h, 2.5);
     light(&mut h, 0.0, 0.0); // 後ろから: 全部が影（影の強さのマスクが見た目を決める）
-    let doc = &mut h.state_mut().state.doc;
+    let doc = h.doc_mut();
     doc.add_fill_layer(
         "色",
         &[
@@ -485,14 +484,14 @@ fn a_packed_slot_reads_color_and_emission_as_their_painted_values() {
     let from_emission = shadow_with(&mut h, packed(Channel::Emission));
     let mut user = Vec::new();
     for v in [128u8, 55] {
-        let doc = &mut h.state_mut().state.doc;
+        let doc = h.doc_mut();
         doc.add_fill_layer("マスク", &[(mask, Rgba8::new(v, v, v, 255))], None)
             .unwrap();
         user.push(shadow_with(&mut h, TextureSource::Channel(mask)));
     }
     assert!(
         (0..3).any(|k| user[0][k].abs_diff(user[1][k]) >= 4),
-        "マスク 128 と 55 で見た目が違う（試験が値の違いを見分けられる）: {user:?}"
+        "マスク 128 と 55 で見た目が違う（テストが値の違いを見分けられる）: {user:?}"
     );
     assert_close(
         from_color,
@@ -542,7 +541,7 @@ fn a_matcap_image_is_decoded_only_when_it_is_srgb() {
     ] {
         let pixels = [128u8, 128, 128, 255].repeat(16);
         let image = ImageInput::new(4, 4, pixels, space).unwrap();
-        let doc = &mut h.state_mut().state.doc;
+        let doc = h.doc_mut();
         let inputs = doc.effect_inputs().clone().with_image(id, image);
         doc.set_effect_inputs(inputs).unwrap();
         h.run();
@@ -624,7 +623,7 @@ fn the_alpha_mask_replaces_multiplies_adds_or_subtracts_the_alpha_like_liltoon()
         egui::pos2(rect.left() + 5.0, rect.top() + 5.0),
     );
     // アルファマスクのユーザーチャンネル: 左半分 0.2、右半分 0.8
-    let doc = &mut h.state_mut().state.doc;
+    let doc = h.doc_mut();
     let mask = doc
         .add_channel(ChannelInfo {
             name: "アルファマスク".into(),
@@ -901,7 +900,7 @@ fn the_user_channel_array_is_in_the_view_budget_and_shrinks_to_fit() {
     light(&mut h, 0.0, 0.0); // 後ろから: 全部が影
     let color = [230u8, 200, 180, 255];
     fill_color(&mut h, color);
-    let look = masked_shadow(&mut h.state_mut().state.doc, 1);
+    let look = masked_shadow(h.doc_mut(), 1);
     set_look(&mut h, look);
     let s = h.state().view3d_stats().unwrap();
     assert_eq!(
@@ -1015,13 +1014,13 @@ fn two_sets(size: u32) -> Harness<'static, YoluApp> {
         .unwrap();
     h.run();
     look_at(&mut h, 3.2);
-    assert_eq!(h.state().state.sets.len(), 2);
+    assert_eq!(h.sets().len(), 2);
     h
 }
 
 /// セットの文書の一辺（正方形）。
 fn side_of(h: &Harness<'_, YoluApp>, set: usize) -> u32 {
-    let doc = h.state().state.set_doc(set);
+    let doc = h.app().set_doc(set);
     assert_eq!(doc.width(), doc.height());
     doc.width()
 }
@@ -1029,19 +1028,13 @@ fn side_of(h: &Harness<'_, YoluApp>, set: usize) -> u32 {
 /// 世界の点が見えている画素。
 fn screen_of(h: &Harness<'_, YoluApp>, world: Vec3) -> Pos2 {
     let area = h.state().view3d_rect().unwrap();
-    let view = h
-        .state()
-        .state
-        .view3d
-        .camera
-        .view(area.width(), area.height());
+    let view = h.view3d().view.camera.view(area.width(), area.height());
     let p = view.to_screen(world).expect("カメラの前");
     area.min + egui::vec2(p.x, p.y)
 }
 
 fn fill_set(h: &mut Harness<'_, YoluApp>, set: usize, color: [u8; 4]) {
-    h.state_mut()
-        .state
+    h.app_mut()
         .set_doc_mut(set)
         .add_fill_layer(
             "色",
@@ -1071,14 +1064,13 @@ fn another_sets_liltoon_look_is_drawn_and_follows_its_changes() {
     for i in 0..2 {
         fill_set(&mut h, i, [230, 200, 180, 255]);
     }
-    let look = masked_shadow(h.state_mut().state.set_doc_mut(1), 0);
-    h.state_mut()
-        .state
+    let look = masked_shadow(h.app_mut().set_doc_mut(1), 0);
+    h.app_mut()
         .set_doc_mut(1)
         .set_look(look.clone(), false)
         .unwrap();
     // セット 1 を今のセットにして描いた絵を基準に
-    h.state_mut().state.switch_set(1).unwrap();
+    h.app_mut().switch_set(1).unwrap();
     h.run();
     let (lit, dark) = set1_halves(&mut h);
     assert!(
@@ -1086,7 +1078,7 @@ fn another_sets_liltoon_look_is_drawn_and_follows_its_changes() {
         "マスク 0 の所は影なし: {lit:?} {dark:?}"
     );
     // 今のセットを 0 に替えても、セット 1 の面は lilToon（ユーザーチャンネルのマスクも）のまま
-    h.state_mut().state.switch_set(0).unwrap();
+    h.app_mut().switch_set(0).unwrap();
     h.run();
     assert_eq!(h.state().view3d_held_materials(), vec![1]);
     let (l, d) = set1_halves(&mut h);
@@ -1105,11 +1097,7 @@ fn another_sets_liltoon_look_is_drawn_and_follows_its_changes() {
     weaker
         .properties
         .insert("_ShadowStrength".into(), LookValue::Float(0.0));
-    h.state_mut()
-        .state
-        .set_doc_mut(1)
-        .set_look(weaker, false)
-        .unwrap();
+    h.app_mut().set_doc_mut(1).set_look(weaker, false).unwrap();
     h.run();
     let (l, d) = set1_halves(&mut h);
     assert_close(d, l, 2, "影の強度 0");
@@ -1117,8 +1105,7 @@ fn another_sets_liltoon_look_is_drawn_and_follows_its_changes() {
     // 標準へ戻すと、ほかのセットの配列を手放す
     let mut standard = look;
     standard.kind = LookKind::Standard;
-    h.state_mut()
-        .state
+    h.app_mut()
         .set_doc_mut(1)
         .set_look(standard, false)
         .unwrap();
@@ -1134,12 +1121,8 @@ fn another_set_is_held_only_when_its_picture_and_user_channels_both_fit() {
     for i in 0..2 {
         fill_set(&mut h, i, [230, 200, 180, 255]);
     }
-    let look = masked_shadow(h.state_mut().state.set_doc_mut(1), 0);
-    h.state_mut()
-        .state
-        .set_doc_mut(1)
-        .set_look(look, false)
-        .unwrap();
+    let look = masked_shadow(h.app_mut().set_doc_mut(1), 0);
+    h.app_mut().set_doc_mut(1).set_look(look, false).unwrap();
     h.run();
     // 今のセット 0（Color だけ）、ほかのセット 1 は Color と 2 レイヤーの配列
     let (side0, side1) = (side_of(&h, 0), side_of(&h, 1));
@@ -1154,7 +1137,7 @@ fn another_set_is_held_only_when_its_picture_and_user_channels_both_fit() {
         (0, 1),
         "標準のチャンネルの絵だけなら入るが、配列が入らない: {s:?}"
     );
-    assert_eq!(h.state().state.view3d.unpainted, vec![1]);
+    assert_eq!(h.view3d().unpainted, vec![1]);
     // 同期の途中の最大は直前のフレームの終わりの分から数えるので、予算を下げた次のフレームで見る
     h.step();
     let s = h.state().view3d_stats().unwrap();
@@ -1198,11 +1181,7 @@ fn received_with(
 }
 
 fn set_received(h: &mut Harness<'_, YoluApp>, set: usize, r: Option<ReceivedLook>) {
-    h.state_mut()
-        .state
-        .set_doc_mut(set)
-        .set_received_look(r)
-        .unwrap();
+    h.app_mut().set_doc_mut(set).set_received_look(r).unwrap();
     h.run();
 }
 
@@ -1368,7 +1347,7 @@ fn a_received_normal_map_reads_x_from_alpha_times_red_and_keeps_green_where_alph
     let lost = draw(&mut h, [0, 0, 255, 255]);
     assert!(
         (0..3).any(|k| lost[k].abs_diff(rgb0[k]) > 10),
-        "Y が違えば絵も違う（試験が Y を見ている）: {lost:?} {rgb0:?}"
+        "Y が違えば絵も違う（テストが Y を見ている）: {lost:?} {rgb0:?}"
     );
     set_received(&mut h, 0, None);
     let flat = px(&h.render().expect("描ける"), middle(&h));
@@ -1418,14 +1397,14 @@ fn a_unity_texture_past_the_layer_limit_draws_the_slot_default() {
         "16 枚目までは受けた絵で描く: {red_drawn:?} {white:?}"
     );
     assert!(!yolu_app::look::panel::slot_over_received_limit(
-        &h.state().state.doc,
+        h.doc(),
         "_MatCap2ndTex"
     ));
     // 前に 16 枚あると、17 枚目は持たず既定（白）で描く
     let dropped = draw(&mut h, 15, true);
     assert_close(dropped, white, 1, "17 枚目は既定");
     assert!(yolu_app::look::panel::slot_over_received_limit(
-        &h.state().state.doc,
+        h.doc(),
         "_MatCap2ndTex"
     ));
     let s = h.state().view3d_stats().unwrap();
@@ -1520,14 +1499,13 @@ fn the_liltoon_values_are_built_only_when_the_look_or_document_changes() {
     // 標準の見た目のセットだけなら、値を作らない（カメラを回しても）。数は作った回数の合計なので、標準にした後からの増えを見る
     let base = builds(&h);
     for yaw in [0.1f32, 0.2, 0.3] {
-        h.state_mut().state.view3d.camera.yaw = yaw;
+        h.view3d_mut().view.camera.yaw = yaw;
         h.run();
     }
     assert_eq!(builds(&h), base);
     // lilToon にすると作る。カメラを回すだけのフレームでは作り直さない
-    let look = masked_shadow(h.state_mut().state.set_doc_mut(1), 0);
-    h.state_mut()
-        .state
+    let look = masked_shadow(h.app_mut().set_doc_mut(1), 0);
+    h.app_mut()
         .set_doc_mut(1)
         .set_look(look.clone(), false)
         .unwrap();
@@ -1536,7 +1514,7 @@ fn the_liltoon_values_are_built_only_when_the_look_or_document_changes() {
     assert!(after > base);
     let renders = h.state().view3d_stats().unwrap().renders;
     for yaw in [0.4f32, 0.5, 0.6] {
-        h.state_mut().state.view3d.camera.yaw = yaw;
+        h.view3d_mut().view.camera.yaw = yaw;
         h.run();
     }
     assert!(
@@ -1549,11 +1527,7 @@ fn the_liltoon_values_are_built_only_when_the_look_or_document_changes() {
     changed
         .properties
         .insert("_ShadowBorder".into(), LookValue::Float(0.3));
-    h.state_mut()
-        .state
-        .set_doc_mut(1)
-        .set_look(changed, false)
-        .unwrap();
+    h.app_mut().set_doc_mut(1).set_look(changed, false).unwrap();
     h.run();
     assert!(builds(&h) > after);
 }
@@ -1574,9 +1548,7 @@ fn measure_frames_standard_and_liltoon() {
     println!("GPU: {}", h.state().view3d_adapter().unwrap_or_default());
     op(&mut h, Op::Shading(Shading::Material));
     op(&mut h, Op::Env(EnvKind::Studio));
-    h.state_mut()
-        .state
-        .doc
+    h.doc_mut()
         .add_fill_layer(
             "値",
             &[
@@ -1588,7 +1560,7 @@ fn measure_frames_standard_and_liltoon() {
         )
         .unwrap();
     // 3 つの見た目を作る（文書の Undo とは別に、そのまま差し替える）
-    let standard = h.state().state.doc.look().clone();
+    let standard = h.doc().look().clone();
     let simple = {
         let mut look = lil();
         look.properties
@@ -1596,8 +1568,8 @@ fn measure_frames_standard_and_liltoon() {
         look
     };
     let full = {
-        let state = &mut h.state_mut().state;
-        state.apply(Action::Look(LookOp::Kind(LookKind::LilToon)));
+        let state = h.app_mut();
+        state.act(Action::Look(LookOp::Kind(LookKind::LilToon)));
         for toggle in [
             "_UseShadow",
             "_UseBumpMap",
@@ -1607,17 +1579,17 @@ fn measure_frames_standard_and_liltoon() {
             "_UseEmission",
             "_UseEmission2nd",
         ] {
-            state.apply(Action::Look(LookOp::Value {
+            state.act(Action::Look(LookOp::Value {
                 name: toggle,
                 value: LookValue::Float(1.0),
                 drag: false,
             }));
         }
-        state.apply(Action::Look(LookOp::Outline(true)));
-        state.apply(Action::Look(LookOp::Template));
+        state.act(Action::Look(LookOp::Outline(true)));
+        state.act(Action::Look(LookOp::Template));
         // マスクのチャンネルにも絵を置く（GPU にレイヤーを持たせる）
         let users: Vec<Channel> = state
-            .doc
+            .doc()
             .channels()
             .into_iter()
             .filter(|c| !c.is_standard())
@@ -1627,8 +1599,11 @@ fn measure_frames_standard_and_liltoon() {
             .iter()
             .map(|c| (*c, Rgba8::new(180, 180, 180, 255)))
             .collect();
-        state.doc.add_fill_layer("マスク", &fills, None).unwrap();
-        state.doc.look().clone()
+        state
+            .doc_mut()
+            .add_fill_layer("マスク", &fills, None)
+            .unwrap();
+        state.doc().look().clone()
     };
     let looks = [
         ("標準", standard),
@@ -1644,7 +1619,7 @@ fn measure_frames_standard_and_liltoon() {
         let mesh = cube_sphere(grid, 0.5);
         let triangles: usize = mesh.submeshes.iter().map(|s| s.indices.len() / 3).sum();
         set_model(&mut h, vec![mesh]);
-        h.state_mut().state.view3d.camera = OrbitCamera {
+        h.view3d_mut().view.camera = OrbitCamera {
             target: Vec3::ZERO,
             yaw: 20.0,
             pitch: 10.0,
@@ -1658,19 +1633,15 @@ fn measure_frames_standard_and_liltoon() {
         for _round in 0..3 {
             for (k, (_, look)) in looks.iter().enumerate() {
                 let started = Instant::now();
-                h.state_mut()
-                    .state
-                    .doc
-                    .set_look(look.clone(), false)
-                    .unwrap();
-                h.state_mut().state.sync_view3d();
+                h.doc_mut().set_look(look.clone(), false).unwrap();
+                h.app_mut().sync_view3d();
                 h.run();
                 h.state().view3d_wait_gpu();
                 switches[k].push(started.elapsed().as_micros() as f64 / 1000.0);
                 let (mut wall, mut cpu) = (Vec::new(), Vec::new());
                 let ticks_before = process_cpu_ms();
                 for frame in 0..24 {
-                    h.state_mut().state.view3d.camera.yaw += 3.0 + frame as f32 * 0.01;
+                    h.view3d_mut().view.camera.yaw += 3.0 + frame as f32 * 0.01;
                     let started = Instant::now();
                     h.step();
                     h.state().view3d_wait_gpu();

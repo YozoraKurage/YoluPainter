@@ -89,7 +89,7 @@ fn now_ms() -> u64 {
 /// 行の右の列: 経過時間（壊れた世代は「読めません」）。
 fn row_age(lang: Lang, row: &Row) -> String {
     if row.problem.is_some() {
-        return lang.pick("読めません", "Unreadable").into();
+        return lang.t("recovery-unreadable").into();
     }
     match row.time_ms {
         Some(ms) => lang.age_text(std::time::Duration::from_millis(
@@ -102,7 +102,7 @@ fn row_age(lang: Lang, row: &Row) -> String {
 /// 行の名前（元の .ylp の名前。無ければ「名称未設定」）。
 pub fn row_name(lang: Lang, row: &Row) -> String {
     if row.name.is_empty() {
-        lang.pick("名称未設定", "Untitled").into()
+        lang.t("recovery-untitled").into()
     } else {
         row.name.clone()
     }
@@ -110,16 +110,16 @@ pub fn row_name(lang: Lang, row: &Row) -> String {
 
 /// ウィンドウを描く（開いていれば）。押されたものは `Action::Recovery` として当てる。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
-    if app.recovery.window.is_none() {
+    if app.ui.recovery_window.is_none() {
         return;
     }
     let lang = app.lang;
     let (interval, keep, disk) = (
-        app.recovery.settings().interval_seconds,
-        app.recovery.settings().generations_to_keep,
-        app.recovery.settings().disk,
+        app.services.recovery.settings().interval_seconds,
+        app.services.recovery.settings().generations_to_keep,
+        app.services.recovery.settings().disk,
     );
-    let Some(state) = app.recovery.window.as_ref() else {
+    let Some(state) = app.ui.recovery_window.as_ref() else {
         return;
     };
     let rows = state.rows.clone();
@@ -147,11 +147,11 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         }
         + FOOTER;
     let spec = Spec {
-        title: lang.pick("復旧", "Recovery"),
+        title: lang.t("recovery-recovery"),
         icon: Some("restart_alt"),
         size: vec2(580.0, height),
         modal: false,
-        close_label: lang.pick("ウィンドウを閉じる", "Close Window"),
+        close_label: lang.t("recovery-close-window"),
     };
     let id = Id::new(("yolu.window", "recovery"));
     let mut actions: Vec<RecoveryAction> = Vec::new();
@@ -257,9 +257,10 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 Align::Right,
             );
             let tooltip = match (&row.problem, row.time_ms) {
-                (Some(reason), _) => {
-                    lang.pick(reason.clone(), "Damaged generation (cannot be read)".into())
-                }
+                (Some(reason), _) => lang.f(
+                    "recovery-damaged-generation-cannot-be-read",
+                    &[("reason", reason)],
+                ),
                 (None, Some(ms)) => text::utc_text(ms),
                 (None, None) => String::new(),
             };
@@ -283,9 +284,9 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         let mut y = list.bottom() + 6.0;
         let seconds = |n: u32| -> String {
             if n >= 60 && n.is_multiple_of(60) {
-                lang.pick(format!("{} 分", n / 60), format!("{} min", n / 60))
+                lang.f("recovery-min", &[("n", &(n / 60))])
             } else {
-                lang.pick(format!("{n} 秒"), format!("{n} s"))
+                lang.f("recovery-s", &[("n", &n)])
             }
         };
         let mut interval_values: Vec<u32> = INTERVALS.to_vec();
@@ -316,7 +317,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         };
         let settings_rows: [(&str, &[String], usize, &str); 3] = [
             (
-                lang.pick("書き置きの間隔", "Checkpoint interval"),
+                lang.t("recovery-checkpoint-interval"),
                 &interval_labels,
                 interval_values
                     .iter()
@@ -325,13 +326,13 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 "interval",
             ),
             (
-                lang.pick("残す世代", "Generations kept"),
+                lang.t("recovery-generations-kept"),
                 &keep_labels,
                 keep_values.iter().position(|n| *n == keep).unwrap_or(0),
                 "keep",
             ),
             (
-                lang.pick("使う量", "Disk space"),
+                lang.t("recovery-disk-space"),
                 &disk_labels,
                 disk_active,
                 "disk",
@@ -380,7 +381,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             ui,
             header,
             ("recovery", "disk-details"),
-            lang.pick("詳しく", "Details"),
+            lang.t("recovery-details"),
             details,
         );
         if open != details {
@@ -395,17 +396,14 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             let cap_gib = ((cap as f64 / GIB as f64).round() as u32)
                 .clamp(DISK_GIB_RANGE.0, DISK_GIB_RANGE.1);
             let shown = drag_gib.unwrap_or(cap_gib);
-            let tip = lang.pick(
-                "復旧の世代が使ってよいディスクの量（1 GB = 1024 MB）。動かして離すと、段の選びを置き換えた量の指定になり、超えていれば古い世代から消します",
-                "The disk space the recovery generations may use (1 GB = 1024 MB). Releasing it replaces the level with a custom amount and removes the oldest generations if the limit is exceeded",
-            );
+            let tip = lang.t("recovery-the-disk-space-the-recovery-tip");
             let out = w::slider(
                 ui,
                 r,
                 id.with("disk-total"),
                 shown as f32,
                 &SliderSpec::new(
-                    lang.pick("上限", "Limit"),
+                    lang.t("recovery-limit"),
                     DISK_GIB_RANGE.0 as f32,
                     DISK_GIB_RANGE.1 as f32,
                     NumberFormat::int(" GB"),
@@ -429,7 +427,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         let footer = Rect::from_min_max(pos2(body.left(), body.bottom() - FOOTER), body.max);
         w::fill(&p, footer, t::PANEL_HEADER);
         w::hline(&p, footer.left(), footer.right(), footer.top(), t::BORDER);
-        if !app.crash.text.is_empty() {
+        if !app.services.crash.text.is_empty() {
             let report_rect = Rect::from_min_size(
                 pos2(footer.left() + 14.0, footer.top() + 10.0),
                 vec2(165.0, 28.0),
@@ -438,7 +436,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 ui,
                 report_rect,
                 id.with("crash-report"),
-                lang.pick("クラッシュの報告", "Crash Report"),
+                lang.t("recovery-crash-report"),
                 false,
                 true,
                 None,
@@ -446,14 +444,14 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             )
             .clicked()
             {
-                app.crash.open = true;
+                app.services.crash.open = true;
             }
         }
         // 使っている量（短く。内訳はツールチップ）
         {
             let left = footer.left()
                 + 14.0
-                + if app.crash.text.is_empty() {
+                + if app.services.crash.text.is_empty() {
                     0.0
                 } else {
                     165.0 + 12.0
@@ -468,26 +466,26 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         let mut x = footer.right() - 14.0;
         let buttons: [(&str, bool, bool, &str, RecoveryAction); 3] = [
             (
-                lang.pick("開く", "Open"),
+                lang.t("recovery-open"),
                 true,
                 can_open,
-                lang.pick(
-                    "選んだ世代を「名称未設定（復旧）」として開きます。元のファイルには書きません",
-                    "Opens the selected generation as “Untitled (Recovered)”. The original file is not written",
-                ),
+                lang.t("recovery-opens-the-selected-generation-as"),
                 RecoveryAction::Open,
             ),
             (
-                lang.pick("捨てる", "Discard"),
+                lang.t("recovery-discard"),
                 false,
                 can_discard,
-                lang.pick(
-                    "選んだ世代を消します。保存した .ylp は残ります",
-                    "Deletes the selected generation. Saved .ylp files stay",
-                ),
+                lang.t("recovery-deletes-the-selected-generation-saved"),
                 RecoveryAction::Discard,
             ),
-            (lang.pick("閉じる", "Close"), false, true, "", RecoveryAction::CloseWindow),
+            (
+                lang.t("recovery-close"),
+                false,
+                true,
+                "",
+                RecoveryAction::CloseWindow,
+            ),
         ];
         for (i, (label, primary, enabled, tooltip, action)) in buttons.into_iter().enumerate() {
             let bw = w::text_width(&p, label, t::LABEL) + 32.0;
@@ -510,7 +508,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             }
         }
     });
-    if let Some(state) = app.recovery.window.as_mut() {
+    if let Some(state) = app.ui.recovery_window.as_mut() {
         state.offset = offset;
         state.scroll = scroll;
         state.drag_gib = drag_gib;
@@ -526,14 +524,19 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
 
 /// 捨てる前の確かめ（開いている間は下のウィンドウを触れない）。
 fn discard_confirm(ctx: &egui::Context, app: &mut AppState) {
-    let Some(row) = app.recovery.window.as_ref().and_then(|w| w.confirm.clone()) else {
+    let Some(row) = app
+        .ui
+        .recovery_window
+        .as_ref()
+        .and_then(|w| w.confirm.clone())
+    else {
         return;
     };
     let lang = app.lang;
     let age = row_age(lang, &row);
     let spec = crate::windows::ListSpec {
         id: "recovery-discard",
-        title: lang.pick("世代を捨てる", "Discard Generation").into(),
+        title: lang.t("recovery-discard-generation").into(),
         icon: "warning",
         modal: true,
         width: 440.0,
@@ -541,23 +544,20 @@ fn discard_confirm(ctx: &egui::Context, app: &mut AppState) {
         rows: Vec::new(),
         buttons: vec![
             crate::windows::Button {
-                label: lang.pick("やめる", "Cancel").into(),
+                label: lang.t("recovery-cancel").into(),
                 primary: false,
                 tooltip: None,
             },
             crate::windows::Button {
-                label: lang.pick("捨てる", "Discard").into(),
+                label: lang.t("recovery-discard").into(),
                 primary: true,
                 tooltip: Some(
-                    lang.pick(
-                        "この世代を消します。元に戻せません。保存した .ylp は残ります",
-                        "Deletes this generation permanently. Saved .ylp files stay",
-                    )
-                    .into(),
+                    lang.t("recovery-deletes-this-generation-permanently-saved-tip")
+                        .into(),
                 ),
             },
         ],
-        close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
+        close_label: lang.t("recovery-close-window").into(),
     };
     let mut offset = Vec2::ZERO;
     let mut scroll = 0.0;

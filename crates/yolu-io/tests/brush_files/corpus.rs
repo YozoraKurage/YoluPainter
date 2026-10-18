@@ -1,5 +1,5 @@
 //! C# との照合の入力: 手で組んだ事例（完全な指紋を比べる）と、それを壊した入力（結果と指紋の短縮を比べる）。
-//! 生成は決まっている（乱数を使わない）。変えたら `tools/csharp-golden/brushes.sh` で正解を作り直す。
+//! 生成は決まっている（乱数を使わない）。変えたら、正解（`tests/fixtures/brushes/`）を作り直す。
 use super::*;
 use yolu_io::brushes::FileKind;
 
@@ -9,19 +9,6 @@ pub struct Case {
     pub kind: FileKind,
     pub label: String,
     pub bytes: Vec<u8>,
-}
-
-pub fn kind_code(kind: FileKind) -> u8 {
-    match kind {
-        FileKind::Gbr => 0,
-        FileKind::Gih => 1,
-        FileKind::Vbr => 2,
-        FileKind::Abr => 3,
-        FileKind::Pat => 4,
-        FileKind::Png => 5,
-        // C# の読み手に無い形式（照合の事例には使わない）
-        FileKind::Sut => 6,
-    }
 }
 
 fn leaves_preset() -> Vec<u8> {

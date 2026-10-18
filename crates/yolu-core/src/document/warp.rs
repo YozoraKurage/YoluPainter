@@ -4,6 +4,7 @@ use super::transform::{read, sample, selected_amount, selection_surface};
 use super::{Document, LayerLocks, Resampling, Target};
 use crate::math::to_byte;
 use crate::surface::{Growth, PixelReader, Tile};
+use crate::Reason;
 use crate::{CoreError, LayerId, Rgba8, SelectionMask, Surface, TileCoord};
 use rayon::prelude::*;
 
@@ -112,7 +113,7 @@ impl Homography {
     }
 }
 fn invalid() -> CoreError {
-    CoreError::InvalidArgument("変形が潰れる、または範囲外")
+    CoreError::InvalidArgument(Reason::TransformDegenerateOrOutOfRange)
 }
 fn cross(a: WarpPoint, b: WarpPoint, c: WarpPoint) -> f64 {
     (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)
@@ -390,7 +391,7 @@ impl Document {
         let region = None;
         let include_mask = true;
         if ids.is_empty() {
-            return Err(CoreError::Unsupported("動かすラスターレイヤーが無い"));
+            return Err(CoreError::Unsupported(Reason::NoRasterLayerToMove));
         }
         for &id in ids {
             let index = self.index_of(id)?;

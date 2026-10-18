@@ -4,6 +4,7 @@
 //! - ブラシの 2D だけの設定（手ぶれ補正・入り抜き・ゆらぎ・筆先の形・効果のブラシの値）も、描ける先が 3D だけのあいだだけ無効
 //! - 調整レイヤーの欄は、描くチャンネルに効かなくても有効のまま（レイヤーの値は効くチャンネルの出力に効くので、直すためにチャンネルを替えさせない）
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::Rect;
@@ -20,7 +21,7 @@ use yolu_app::{Tab, YoluApp};
 type H = Harness<'static, YoluApp>;
 
 fn apply(h: &mut H, action: Action) {
-    h.state_mut().state.apply(action);
+    h.act(action);
     h.run();
 }
 
@@ -73,12 +74,12 @@ fn tooltip_adds(h: &mut H, label: &str, text: &str) -> bool {
 fn ruler_app(lang: Lang) -> H {
     // プロパティの欄が縦に収まる高さ
     let mut h = app(1280.0, 2400.0, 256);
-    h.state_mut().state.lang = lang;
+    h.set_lang(lang);
     {
-        let s = &mut h.state_mut().state;
+        let s = h.app_mut();
         // 中心をキャンバスの中心からずらしておく（「キャンバスの中心」は中心がずれているときだけ押せる）
         common::rulers::symmetry_2d(s, (64.0, 192.0), (1.0, 0.0), 6, true);
-        s.ui.property_tab = 1;
+        s.ui_mut().property_tab = 1;
     }
     h.run();
     h
@@ -104,11 +105,11 @@ fn the_ruler_fields_are_disabled_only_while_the_set_is_read_only() {
         let mut h = ruler_app(lang);
         assert_ruler_fields(&h, lang, false, "ふつう");
         // 指先・クローンでも欄は有効（効かないのはストロークを始めるとき）
-        h.state_mut().state.m2.brush.effect = BrushEffect::Smudge { strength: 0.5 };
+        h.m2_mut().brush.effect = BrushEffect::Smudge { strength: 0.5 };
         h.run();
         assert_ruler_fields(&h, lang, false, "指先");
-        h.state_mut().state.m2.brush.effect = BrushEffect::Paint;
-        h.state_mut().state.sets.get_mut(0).unwrap().read_only = Some("テスト".into());
+        h.m2_mut().brush.effect = BrushEffect::Paint;
+        h.sets_mut().get_mut(0).unwrap().read_only = Some("テスト".into());
         h.run();
         assert_ruler_fields(&h, lang, true, "読むだけのセット");
         // 無効の欄には、ほかの欄と同じく理由のツールチップ（スライダー・トグル・ボタン）
@@ -119,7 +120,7 @@ fn the_ruler_fields_are_disabled_only_while_the_set_is_read_only() {
                 "{lang:?}: {label} のツールチップに理由"
             );
         }
-        h.state_mut().state.sets.get_mut(0).unwrap().read_only = None;
+        h.sets_mut().get_mut(0).unwrap().read_only = None;
         h.run();
         assert_ruler_fields(&h, lang, false, "戻した");
         for label in ruler_labels(lang) {
@@ -136,7 +137,7 @@ fn the_ruler_fields_are_disabled_only_while_the_set_is_read_only() {
 fn the_ruler_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_side_or_stacked() {
     for lang in Lang::ALL {
         let mut h = ruler_app(lang);
-        h.state_mut().state.view3d.load_demo();
+        h.view3d_mut().load_demo();
         let mut dock = DockState::new(vec![Tab::Canvas]);
         let surface = dock.main_surface_mut();
         let [_, view3d] = surface.split_right(NodeIndex::root(), 0.4, vec![Tab::View3d]);
@@ -144,7 +145,7 @@ fn the_ruler_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_sid
         h.state_mut().dock = dock;
         h.run();
         assert!(h.state().view3d_rect().is_some(), "{lang:?}: 3D も出ている");
-        assert!(!h.state().state.paints_only_in_3d(), "{lang:?}");
+        assert!(!h.app().paints_only_in_3d(), "{lang:?}");
         assert_ruler_fields(&h, lang, false, "並べた");
         // キャンバスを 3D の裏へ回して 3D だけになっても、有効のまま
         let mut stacked = DockState::new(vec![Tab::Canvas, Tab::View3d]);
@@ -155,7 +156,7 @@ fn the_ruler_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_sid
         h.run();
         click_tab(&mut h, Tab::View3d);
         h.run();
-        assert!(h.state().state.paints_only_in_3d(), "{lang:?}");
+        assert!(h.app().paints_only_in_3d(), "{lang:?}");
         assert_ruler_fields(&h, lang, false, "重ねた");
     }
 }
@@ -165,8 +166,8 @@ fn the_ruler_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_sid
 /// 左にサブツールとその下のツールプロパティ。`side_by_side` ならキャンバスと 3D ビューを並べ、そうでなければ同じ組に重ねて 3D ビューを前に出す。
 fn brush_app(lang: Lang, side_by_side: bool) -> H {
     let mut h = app(1600.0, 1000.0, 128);
-    h.state_mut().state.lang = lang;
-    h.state_mut().state.view3d.load_demo();
+    h.set_lang(lang);
+    h.view3d_mut().load_demo();
     let mut dock = if side_by_side {
         DockState::new(vec![Tab::Canvas])
     } else {
@@ -188,7 +189,7 @@ fn brush_app(lang: Lang, side_by_side: bool) -> H {
 }
 
 fn open_brush_detail(h: &mut H, category: yolu_app::brushes::Category) {
-    let ui = &mut h.state_mut().state.brushes.ui;
+    let ui = &mut h.brushes_mut().ui;
     ui.detail.open = true;
     ui.detail.category = category;
     ui.detail.scroll = 0.0;
@@ -196,7 +197,7 @@ fn open_brush_detail(h: &mut H, category: yolu_app::brushes::Category) {
 }
 
 fn close_brush_detail(h: &mut H) {
-    h.state_mut().state.brushes.ui.detail.open = false;
+    h.brushes_mut().ui.detail.open = false;
     h.run();
 }
 
@@ -242,30 +243,30 @@ fn assert_brush_fields_enabled(h: &mut H, lang: Lang) {
     let found = (node.rect(), node.accesskit_node().is_disabled());
     assert_brush_field(h, lang, found, stabilizer, reason, false);
     // 効果のブラシ（ぼかし）の値
-    h.state_mut().state.m2.brush.effect = BrushEffect::BLUR;
+    h.m2_mut().brush.effect = BrushEffect::BLUR;
     h.run();
     let blur = lang.pick("ぼかしの半径", "Blur radius");
     let node = h.get_by_label(blur);
     let found = (node.rect(), node.accesskit_node().is_disabled());
     assert_brush_field(h, lang, found, blur, effect_reason, false);
-    h.state_mut().state.m2.brush.effect = BrushEffect::Paint;
+    h.m2_mut().brush.effect = BrushEffect::Paint;
     h.run();
     for (category, labels) in [
         (
-            Category::Shape,
+            Category::Tip,
             lang.pick(["真円率", "角度"], ["Roundness", "Angle"]),
         ),
         (
-            Category::Stroke,
+            Category::Stabilization,
             lang.pick(["手ぶれ補正", "曲線"], ["Stabilizer", "Curve"]),
         ),
         (
-            Category::Dynamics,
-            lang.pick(["入り", "抜き"], ["Taper in", "Taper out"]),
+            Category::Taper,
+            lang.pick(["入りの長さ", "抜きの長さ"], ["Start length", "End length"]),
         ),
         (
-            Category::Jitter,
-            lang.pick(["サイズ", "散布"], ["Size", "Scatter"]),
+            Category::Spray,
+            lang.pick(["散布", "数"], ["Scatter", "Count"]),
         ),
     ] {
         open_brush_detail(h, category);
@@ -283,10 +284,10 @@ fn the_brush_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_sid
         let mut h = brush_app(lang, true);
         assert!(h.state().view3d_rect().is_some(), "{lang:?}: 3D も出ている");
         assert!(
-            h.state().state.ui.canvas_visible && h.state().state.view3d.paintable_on_screen(),
+            h.ui().canvas_visible && h.view3d().paintable_on_screen(),
             "{lang:?}"
         );
-        assert!(!h.state().state.paints_only_in_3d(), "{lang:?}");
+        assert!(!h.app().paints_only_in_3d(), "{lang:?}");
         assert_brush_fields_enabled(&mut h, lang);
     }
 }
@@ -297,7 +298,7 @@ fn the_brush_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_sid
 fn the_brush_fields_stay_enabled_while_only_the_3d_view_can_be_painted() {
     for lang in Lang::ALL {
         let mut h = brush_app(lang, false);
-        assert!(h.state().state.paints_only_in_3d(), "{lang:?}");
+        assert!(h.app().paints_only_in_3d(), "{lang:?}");
         assert_brush_fields_enabled(&mut h, lang);
     }
 }
@@ -313,13 +314,13 @@ fn the_snap_to_symmetry_ruler_toggle_is_unavailable_only_while_just_the_3d_view_
         let reason = lang.pick("2D だけ", "2D only");
         for tool in [Tool::Fill, Tool::Wand] {
             let on = |h: &H| match tool {
-                Tool::Fill => h.state().state.region.snap_symmetry,
-                _ => h.state().state.sel.snap_symmetry,
+                Tool::Fill => h.region().snap_symmetry,
+                _ => h.sel().snap_symmetry,
             };
             // 並べて出している: 有効。押すと切り替わる
             let mut h = brush_app(lang, true);
             apply(&mut h, Action::SelectTool(tool));
-            assert!(!h.state().state.paints_only_in_3d(), "{lang:?} {tool:?}");
+            assert!(!h.app().paints_only_in_3d(), "{lang:?} {tool:?}");
             assert!(on(&h), "{lang:?} {tool:?}: 既定は入");
             assert!(!is_disabled(&h, label), "{lang:?} {tool:?}");
             assert!(!tooltip_shows(&mut h, label, reason), "{lang:?} {tool:?}");
@@ -331,7 +332,7 @@ fn the_snap_to_symmetry_ruler_toggle_is_unavailable_only_while_just_the_3d_view_
             // 3D だけ: 押せず、押しても変わらない。ポインタを置くと理由
             let mut h = brush_app(lang, false);
             apply(&mut h, Action::SelectTool(tool));
-            assert!(h.state().state.paints_only_in_3d(), "{lang:?} {tool:?}");
+            assert!(h.app().paints_only_in_3d(), "{lang:?} {tool:?}");
             assert!(is_disabled(&h, label), "{lang:?} {tool:?}");
             assert!(tooltip_shows(&mut h, label, reason), "{lang:?} {tool:?}");
             let at = rect_of_field(&h, label).center();
@@ -349,21 +350,21 @@ fn the_bucket_snap_to_symmetry_ruler_is_unavailable_while_paint_unfilled_areas_i
         let reason = lang.pick("塗り残しでは効きません", "Not used with leftover fill");
         let mut h = brush_app(lang, true);
         apply(&mut h, Action::SelectTool(Tool::Fill));
-        h.state_mut().state.region.by_color = true;
+        h.region_mut().by_color = true;
         h.run();
         assert!(
             !is_disabled(&h, label),
             "{lang:?}: 塗り残しが切のあいだは有効"
         );
         assert!(!tooltip_shows(&mut h, label, reason), "{lang:?}");
-        h.state_mut().state.region.color.leftovers = true;
+        h.region_mut().color.leftovers = true;
         h.run();
         assert!(
             is_disabled(&h, label),
             "{lang:?}: 塗り残しが入のあいだは押せない"
         );
         assert!(tooltip_shows(&mut h, label, reason), "{lang:?}");
-        h.state_mut().state.region.color.leftovers = false;
+        h.region_mut().color.leftovers = false;
         h.run();
         assert!(!is_disabled(&h, label), "{lang:?}: 切ると戻る");
     }
@@ -409,9 +410,9 @@ fn menu_items_disabled(h: &mut H, lang: Lang) -> Vec<bool> {
 fn the_selection_modify_menu_items_are_disabled_without_a_selection_and_come_back() {
     for lang in Lang::ALL {
         let mut h = app(1280.0, 800.0, 256);
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         apply(&mut h, Action::SelectTool(Tool::SelectRect));
-        assert!(h.state().state.doc.selection().is_none());
+        assert!(h.doc().selection().is_none());
         assert_eq!(
             menu_items_disabled(&mut h, lang),
             vec![true; 5],
@@ -426,7 +427,7 @@ fn the_selection_modify_menu_items_are_disabled_without_a_selection_and_come_bac
         }
         // 選択範囲を作れば有効に戻る
         apply(&mut h, Action::Sel(SelAction::Edit(SelEdit::All)));
-        assert!(h.state().state.doc.selection().is_some());
+        assert!(h.doc().selection().is_some());
         assert_eq!(
             menu_items_disabled(&mut h, lang),
             vec![false; 5],
@@ -448,7 +449,7 @@ fn the_selection_modify_menu_items_are_disabled_without_a_selection_and_come_bac
 fn adjustment_app(lang: Lang, paint: Channel) -> H {
     // （調整レイヤーの値が全部入る高さで）
     let mut h = app(1280.0, 1600.0, 256);
-    h.state_mut().state.lang = lang;
+    h.set_lang(lang);
     apply(
         &mut h,
         Action::M2(Edit::NewAdjustment(AdjustmentKind::HueSaturation)),
@@ -465,7 +466,7 @@ fn adjustment_labels(lang: Lang) -> [&'static str; 3] {
 fn the_hue_saturation_fields_say_why_they_do_not_reach_the_paint_channel_but_stay_editable() {
     for lang in Lang::ALL {
         let mut h = adjustment_app(lang, Channel::Roughness);
-        let name = yolu_app::m2::channel_name(lang, &h.state().state.doc, Channel::Roughness);
+        let name = yolu_app::m2::channel_name(lang, h.doc(), Channel::Roughness);
         let reason = lang.pick(
             format!("{name} には効きません"),
             format!("No effect on {name}"),
@@ -483,30 +484,14 @@ fn the_hue_saturation_fields_say_why_they_do_not_reach_the_paint_channel_but_sta
             "{lang:?}: 注記の行は出さない"
         );
         // 直せる: 色相のスライダーの右の方を押すと、レイヤーの値が変わる
-        let id = h.state().state.selected_layer.unwrap();
-        let before = h
-            .state()
-            .state
-            .doc
-            .layer(id)
-            .unwrap()
-            .adjustment()
-            .cloned()
-            .unwrap();
+        let id = h.selected_layer().unwrap();
+        let before = h.doc().layer(id).unwrap().adjustment().cloned().unwrap();
         let row = rect_of_field(&h, lang.pick("色相", "Hue"));
         click(
             &mut h,
             egui::pos2(row.left() + row.width() * 0.8, row.bottom() - 3.0),
         );
-        let after = h
-            .state()
-            .state
-            .doc
-            .layer(id)
-            .unwrap()
-            .adjustment()
-            .cloned()
-            .unwrap();
+        let after = h.doc().layer(id).unwrap().adjustment().cloned().unwrap();
         assert_ne!(
             after.hue(),
             before.hue(),
@@ -537,38 +522,37 @@ fn hardness_says_it_has_no_effect_with_an_image_tip() {
     for lang in Lang::ALL {
         let reason = lang.pick("画像の筆先では効きません", "No effect on an image tip");
         let hardness = lang.pick("硬さ", "Hardness");
-        let minimum = lang.pick("最小", "Minimum");
+        let minimum = lang.pick("最小値", "Minimum");
         // 丸い筆先: 有効・理由なし
         let mut h = brush_app(lang, true);
         assert!(!is_disabled(&h, hardness), "{lang:?}");
         assert!(!tooltip_shows(&mut h, hardness, reason), "{lang:?}");
         // 画像の筆先: ツールプロパティ
-        h.state_mut().state.m2.brush.tip.image = Some(image_tip());
+        h.m2_mut().brush.tip.image = Some(image_tip());
         h.run();
         assert!(is_disabled(&h, hardness), "{lang:?}");
         assert!(tooltip_shows(&mut h, hardness, reason), "{lang:?}");
-        // ブラシの詳細の形状
-        open_brush_detail(&mut h, Category::Shape);
+        // ブラシの詳細のブラシ先端
+        open_brush_detail(&mut h, Category::Tip);
         let found = pane_field(&h, hardness);
         assert_brush_field(&mut h, lang, found, hardness, reason, true);
-        // 筆圧: 硬さの項目（最後）の最小は、画像の筆先が理由
-        open_brush_detail(&mut h, Category::Pressure);
-        // 硬さの項目は一番下なので、見えるところまで送る
-        h.state_mut().state.brushes.ui.detail.scroll = 1000.0;
+        // 硬さの影響元のウィンドウ: 最小値は、画像の筆先が理由
+        h.brushes_mut().ui.detail.dynamics = Some(yolu_app::brushes::Row::Hardness);
         h.run();
-        let window = yolu_app::ui::window::last_rect(&h.ctx, yolu_app::panels::brush_detail::id())
-            .expect("ブラシの詳細のウィンドウ");
+        h.run();
+        let window =
+            yolu_app::ui::window::last_rect(&h.ctx, yolu_app::panels::brush_rows::dynamics_id())
+                .expect("影響元設定のウィンドウ");
         let last = h
             .query_all_by_label(minimum)
-            .filter(|n| window.contains(n.rect().center()))
-            .max_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
-            .expect("最小の欄");
+            .find(|n| window.contains(n.rect().center()))
+            .expect("最小値の欄");
         let found = (last.rect(), last.accesskit_node().is_disabled());
         assert_brush_field(&mut h, lang, found, minimum, reason, true);
     }
 }
 
-/// 消しゴムのときのクローンの「全レイヤーから」「揃える」は、ずれの欄と同じく消しゴムが理由。
+/// 消しゴムのときのクローンの「全レイヤーを読む」「揃える」は、ずれの欄と同じく消しゴムが理由。
 #[test]
 fn the_clone_toggles_say_the_eraser_is_the_reason() {
     use yolu_app::brushes::Category;
@@ -576,12 +560,12 @@ fn the_clone_toggles_say_the_eraser_is_the_reason() {
         let reason = lang.pick("消しゴムでは使えません", "Not available with the eraser");
         let mut h = brush_app(lang, true);
         apply(&mut h, Action::SelectTool(Tool::Eraser));
-        h.state_mut().state.m2.brush.effect = BrushEffect::Clone {
+        h.m2_mut().brush.effect = BrushEffect::Clone {
             offset: yolu_app::engine::DVec2::new(8.0, 0.0),
         };
-        open_brush_detail(&mut h, Category::Effect);
+        open_brush_detail(&mut h, Category::Ink);
         for label in [
-            lang.pick("全レイヤーから", "All layers"),
+            lang.pick("全レイヤーを読む", "Read all layers"),
             lang.pick("揃える", "Aligned"),
         ] {
             let found = pane_field(&h, label);
@@ -600,10 +584,10 @@ fn the_aligned_reason_names_the_key_that_sets_the_clone_source() {
             "Available once a source is set (Alt+Click)",
         );
         let mut h = brush_app(lang, true);
-        h.state_mut().state.m2.brush.effect = BrushEffect::Clone {
+        h.m2_mut().brush.effect = BrushEffect::Clone {
             offset: yolu_app::engine::DVec2::new(8.0, 0.0),
         };
-        open_brush_detail(&mut h, Category::Effect);
+        open_brush_detail(&mut h, Category::Ink);
         let label = lang.pick("揃える", "Aligned");
         let found = pane_field(&h, label);
         assert_brush_field(&mut h, lang, found, label, reason, true);

@@ -31,10 +31,10 @@ fn edit(app: &mut AppState, edit: Edit) {
 /// レイヤーの欄の全部（選んでいるレイヤーの種類に合わせて）。
 pub fn layer_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Context) {
     let lang = app.lang;
-    let Some(id) = app.selected_layer else {
+    let Some(id) = app.session.selected_layer else {
         return;
     };
-    let Some(layer) = app.doc.layer(id) else {
+    let Some(layer) = app.session.doc.layer(id) else {
         return;
     };
     let (kind, name) = (layer.kind(), layer.name().to_owned());
@@ -51,7 +51,12 @@ pub fn layer_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui:
     }
     lock_section(ui, app, rows);
     crate::rulers::props::section_for_layer(ui, app, rows);
-    if app.doc.layer(id).is_some_and(|l| l.text().is_some()) {
+    if app
+        .session
+        .doc
+        .layer(id)
+        .is_some_and(|l| l.text().is_some())
+    {
         crate::textlayer::props::layer_section(ui, app, rows, enabled);
     }
     match kind {
@@ -71,7 +76,7 @@ pub fn layer_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui:
 /// マスクに描くときのタブ（レイヤーマスクの設定だけ）。
 pub fn mask_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let lang = app.lang;
-    let Some(id) = app.selected_layer else {
+    let Some(id) = app.session.selected_layer else {
         return;
     };
     let enabled = app.can_edit();
@@ -86,7 +91,7 @@ fn layer_section(
     enabled: bool,
     lang: Lang,
 ) {
-    let Some(layer) = app.doc.layer(id) else {
+    let Some(layer) = app.session.doc.layer(id) else {
         return;
     };
     let (group, blend) = (layer.is_group(), layer.blend_mode());
@@ -95,12 +100,9 @@ fn layer_section(
             ui,
             rows,
             "layer.passthrough",
-            lang.pick("通過", "Pass through"),
+            lang.t("panels-pass-through"),
             blend == BlendMode::PassThrough,
-            Some(lang.pick(
-                "入: 中身をグループでないかのように下へ重ねる。切: 中身を先にまとめてから重ねる（分離）",
-                "On: the contents blend with the layers below as if not grouped. Off: they are composited together first (isolated)",
-            )),
+            Some(lang.t("panels-on-the-contents-blend-with-tip")),
             enabled,
         ) {
             edit(
@@ -121,7 +123,7 @@ fn layer_section(
     super::effect_props::anchor_row(ui, app, rows, id, yolu_core::AnchorPlacement::Layer);
     // 画素へのフィルター（調整・グループのレイヤーには画素が無い）
     if matches!(
-        app.doc.layer(id).map(|l| l.kind()),
+        app.session.doc.layer(id).map(|l| l.kind()),
         Some(LayerKind::Raster | LayerKind::Fill)
     ) {
         super::effect_props::add_effect_row(ui, app, rows, yolu_core::FilterTarget::Content);
@@ -137,56 +139,37 @@ pub fn lock_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     if ids.is_empty() {
         return;
     }
-    let (open, _) = section(
-        ui,
-        app,
-        rows,
-        "locks",
-        lang.pick("ロック", "Lock"),
-        "lock",
-        None,
-    );
+    let (open, _) = section(ui, app, rows, "locks", lang.t("panels-lock"), "lock", None);
     if !open {
         return;
     }
     let enabled = app.can_edit();
     for flag in LOCK_FLAGS {
-        let own = ids
-            .iter()
-            .all(|id| app.doc.layer(*id).is_some_and(|l| l.locks().contains(flag)));
+        let own = ids.iter().all(|id| {
+            app.session
+                .doc
+                .layer(*id)
+                .is_some_and(|l| l.locks().contains(flag))
+        });
         let effective = ids.iter().all(|id| {
-            app.doc
+            app.session
+                .doc
                 .effective_locks(*id)
                 .is_ok_and(|locks| locks.contains(flag))
         });
         let tip = if flag == yolu_core::LayerLocks::TRANSPARENCY {
-            lang.pick(
-                "描いても各画素の透明度は変わらず、色だけが変わる",
-                "Painting keeps each pixel's transparency and changes only its colour",
-            )
+            lang.t("panels-painting-keeps-each-pixel-s-tip")
         } else if flag == yolu_core::LayerLocks::PIXELS {
-            lang.pick(
-                "レイヤーの画素は変えられない（移動とマスクへの描画はできる）",
-                "The layer's pixels cannot be changed (it can still be moved and its mask painted)",
-            )
+            lang.t("panels-the-layer-s-pixels-cannot-tip")
         } else if flag == yolu_core::LayerLocks::POSITION {
-            lang.pick(
-                "レイヤーを動かす・変形できない",
-                "The layer cannot be moved or transformed",
-            )
+            lang.t("panels-the-layer-cannot-be-moved-tip")
         } else {
-            lang.pick(
-                "画素・位置・レイヤーの設定を変えられない",
-                "Pixels, position and the layer's settings cannot be changed",
-            )
+            lang.t("panels-pixels-position-and-the-layer-tip")
         };
         let tip = if effective && !own {
             format!(
                 "{tip} — {}",
-                lang.pick(
-                    "すべてのロックかグループのロックが効いています",
-                    "in effect through Lock all or a locked group"
-                )
+                lang.t("panels-in-effect-through-lock-all-tip")
             )
         } else {
             tip.to_owned()
@@ -226,20 +209,24 @@ fn fill_section(
         app,
         rows,
         "fill",
-        lang.pick("塗りつぶし", "Fill"),
+        lang.t("panels-fill"),
         "format_color_fill",
         None,
     );
     if !open {
         return;
     }
-    let channels = app.doc.channels();
+    let channels = app.session.doc.channels();
     for channel in channels {
-        let Some(info) = app.doc.channel_info(channel).cloned() else {
+        let Some(info) = app.session.doc.channel_info(channel).cloned() else {
             continue;
         };
-        let name = m2::channel_name(lang, &app.doc, channel);
-        let value = app.doc.layer(id).and_then(|l| l.fill_value(channel));
+        let name = m2::channel_name(lang, &app.session.doc, channel);
+        let value = app
+            .session
+            .doc
+            .layer(id)
+            .and_then(|l| l.fill_value(channel));
         let row = rows.row(t::ROW_HEIGHT, 3.0);
         let main = Rect::from_min_max(row.min, pos2(row.right() - 26.0, row.bottom()));
         let side = Rect::from_min_size(
@@ -254,10 +241,7 @@ fn fill_section(
                     side,
                     ("fill.add", channel.index()),
                     "add",
-                    &lang.pick(
-                        format!("{name} の値を追加（描画色から）"),
-                        format!("Add a value for {name} (from the paint color)"),
-                    ),
+                    &lang.f("panels-add-a-value-for-from-tip", &[("name", &name)]),
                     false,
                     enabled,
                     16.0,
@@ -315,7 +299,7 @@ fn fill_section(
                         target,
                         &name,
                         Pick::rgb([v.r, v.g, v.b]),
-                        &lang.pick(format!("{name} の値"), format!("Value of {name}")),
+                        &lang.f("panels-value-of-tip", &[("name", &name)]),
                         enabled,
                     ) {
                         let [r, g, b] = u.pick.rgb;
@@ -340,10 +324,7 @@ fn fill_section(
                     side,
                     ("fill.remove", channel.index()),
                     "delete",
-                    &lang.pick(
-                        format!("{name} の値を外す"),
-                        format!("Remove the value for {name}"),
-                    ),
+                    &lang.f("panels-remove-the-value-for-tip", &[("name", &name)]),
                     false,
                     enabled,
                     16.0,
@@ -374,7 +355,12 @@ fn adjustment_section(
     enabled: bool,
     lang: Lang,
 ) {
-    let Some(a) = app.doc.layer(id).and_then(|l| l.adjustment().cloned()) else {
+    let Some(a) = app
+        .session
+        .doc
+        .layer(id)
+        .and_then(|l| l.adjustment().cloned())
+    else {
         return;
     };
     let kind = AdjustmentKind::of(&a);
@@ -398,15 +384,13 @@ fn adjustment_section(
     // 出力には今も効くので、直すためにチャンネルを替えさせない
     let paint = app.m2.paint_channel;
     let reason = app
+        .session
         .doc
         .channel_info(paint)
         .filter(|info| !a.applies_to(info.kind))
         .map(|_| {
-            let name = m2::channel_name(lang, &app.doc, paint);
-            lang.pick(
-                format!("{name} には効きません"),
-                format!("No effect on {name}"),
-            )
+            let name = m2::channel_name(lang, &app.session.doc, paint);
+            lang.f("panels-no-effect-on", &[("name", &name)])
         });
     let why = reason.as_deref();
     let mut next: Option<Result<AdjustmentSettings, crate::engine::CoreError>> = None;
@@ -422,7 +406,7 @@ fn adjustment_section(
         | AdjustmentType::Posterize => {
             if let Some(value) = a.color_adjust() {
                 let histogram = (a.kind() == AdjustmentType::ToneCurve)
-                    .then(|| super::color_adjust::cached_histogram(ui, &app.doc, id, paint))
+                    .then(|| super::color_adjust::cached_histogram(ui, &app.session.doc, id, paint))
                     .flatten();
                 let mut failure = None;
                 let mut params = super::color_adjust::Params {
@@ -456,19 +440,16 @@ fn adjustment_section(
             );
             let mut changed = false;
             let range = (0.0, 1.0);
-            group_label(ui, rows, lang.pick("入力", "Input"));
+            group_label(ui, rows, lang.t("panels-input"));
             if let Some(v) = slider_row(
                 ui,
                 rows,
                 "levels.ib",
-                lang.pick("黒", "Black"),
+                lang.t("panels-black"),
                 ib,
                 range,
                 decimals(3),
-                why.or(Some(lang.pick(
-                    "これ以下の入力は黒",
-                    "Input at or below this becomes black",
-                ))),
+                why.or(Some(lang.t("panels-input-at-or-below-this-tip"))),
                 enabled,
             ) {
                 ib = v.min(iw - 0.004).max(0.0);
@@ -478,14 +459,11 @@ fn adjustment_section(
                 ui,
                 rows,
                 "levels.iw",
-                lang.pick("白", "White"),
+                lang.t("panels-white"),
                 iw,
                 range,
                 decimals(3),
-                why.or(Some(lang.pick(
-                    "これ以上の入力は白",
-                    "Input at or above this becomes white",
-                ))),
+                why.or(Some(lang.t("panels-input-at-or-above-this-tip"))),
                 enabled,
             ) {
                 iw = v.max(ib + 0.004).min(1.0);
@@ -495,25 +473,22 @@ fn adjustment_section(
                 ui,
                 rows,
                 "levels.gamma",
-                lang.pick("ガンマ", "Gamma"),
+                lang.t("panels-gamma"),
                 gamma,
                 (0.1, 9.99),
                 decimals(2),
-                why.or(Some(lang.pick(
-                    "中間の明るさ。1 より大きいと明るく、小さいと暗く",
-                    "Midtones: above 1 brightens, below 1 darkens",
-                ))),
+                why.or(Some(lang.t("panels-midtones-above-1-brightens-below-tip"))),
                 enabled,
             ) {
                 gamma = v;
                 changed = true;
             }
-            group_label(ui, rows, lang.pick("出力", "Output"));
+            group_label(ui, rows, lang.t("panels-output"));
             if let Some(v) = slider_row(
                 ui,
                 rows,
                 "levels.ob",
-                lang.pick("黒", "Black"),
+                lang.t("panels-black"),
                 ob,
                 range,
                 decimals(3),
@@ -527,7 +502,7 @@ fn adjustment_section(
                 ui,
                 rows,
                 "levels.ow",
-                lang.pick("白", "White"),
+                lang.t("panels-white"),
                 ow,
                 range,
                 decimals(3),
@@ -555,7 +530,7 @@ fn adjustment_section(
                 ui,
                 rows,
                 "hs.hue",
-                lang.pick("色相", "Hue"),
+                lang.t("panels-hue"),
                 hue,
                 (-180.0, 180.0),
                 NumberFormat::int("°"),
@@ -569,7 +544,7 @@ fn adjustment_section(
                 ui,
                 rows,
                 "hs.saturation",
-                lang.pick("彩度", "Saturation"),
+                lang.t("panels-saturation"),
                 sat as f64,
                 (-1.0, 1.0),
                 why,
@@ -582,7 +557,7 @@ fn adjustment_section(
                 ui,
                 rows,
                 "hs.lightness",
-                lang.pick("明度", "Lightness"),
+                lang.t("panels-lightness"),
                 light as f64,
                 (-1.0, 1.0),
                 why,
@@ -630,16 +605,16 @@ fn channels_section(
         app,
         rows,
         "layer-channels",
-        lang.pick("チャンネル", "Channels"),
+        lang.t("panels-channels"),
         "layers",
         None,
     );
     if !open {
         return;
     }
-    for channel in app.doc.channels() {
-        let name = m2::channel_name(lang, &app.doc, channel);
-        let Some(layer) = app.doc.layer(id) else {
+    for channel in app.session.doc.channels() {
+        let name = m2::channel_name(lang, &app.session.doc, channel);
+        let Some(layer) = app.session.doc.layer(id) else {
             return;
         };
         let on = layer.is_channel_enabled(channel);
@@ -655,10 +630,7 @@ fn channels_section(
             ("layer.channel", channel.index()),
             &name,
             on,
-            Some(&lang.pick(
-                format!("{name} に描く・合成する（切ってもそこにある画素は残る）"),
-                format!("Use this layer in {name} (what it holds there is kept when off)"),
-            )),
+            Some(&lang.f("panels-use-this-layer-in-what-tip", &[("name", &name)])),
             enabled,
         );
         if next != on {
@@ -694,10 +666,7 @@ fn channels_section(
                 clear,
                 ("layer.channel.clear", channel.index()),
                 "close",
-                &lang.pick(
-                    format!("{name} もレイヤーの合成モードと不透明度に戻す"),
-                    format!("Use the layer's blend mode and opacity in {name} again"),
-                ),
+                &lang.f("panels-use-the-layer-s-blend-tip", &[("name", &name)]),
                 false,
                 enabled,
                 14.0,
@@ -717,6 +686,47 @@ fn channels_section(
     }
 }
 
+/// マスクが無いレイヤーの「白のマスク」「黒のマスク」の追加ボタン（1 行に 2 つ）。
+fn add_mask_buttons(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    id: LayerId,
+    enabled: bool,
+    lang: Lang,
+) {
+    let r = rows.row(24.0, 4.0);
+    let cols = Rows::split(r, 2, 6.0);
+    if w::button(
+        ui,
+        cols[0],
+        "mask.add",
+        lang.t("panels-white-mask"),
+        false,
+        enabled,
+        Some(lang.t("panels-add-white-layer-mask-tip")),
+        Some("add"),
+    )
+    .clicked()
+    {
+        edit(app, Edit::AddMask(id));
+    }
+    if w::button(
+        ui,
+        cols[1],
+        "mask.add_black",
+        lang.t("panels-black-mask"),
+        false,
+        enabled,
+        Some(lang.t("panels-add-black-layer-mask-tip")),
+        Some("add"),
+    )
+    .clicked()
+    {
+        edit(app, Edit::AddMaskBlack(id));
+    }
+}
+
 /// レイヤーマスク（全チャンネルで共有）。
 fn mask_section(
     ui: &mut Ui,
@@ -731,7 +741,7 @@ fn mask_section(
         app,
         rows,
         "mask",
-        lang.pick("レイヤーマスク", "Layer Mask"),
+        lang.t("panels-layer-mask"),
         "vignette",
         None,
     );
@@ -739,44 +749,25 @@ fn mask_section(
         return;
     }
     let mask = app
+        .session
         .doc
         .layer(id)
         .and_then(|l| l.mask())
         .map(|m| (m.enabled(), m.inverted(), m.density()));
     let Some((on, inverted, density)) = mask else {
-        let r = rows.row(24.0, 4.0);
-        if w::button(
-            ui,
-            r,
-            "mask.add",
-            lang.pick("レイヤーマスクを追加", "Add Layer Mask"),
-            false,
-            enabled,
-            Some(lang.pick(
-                "マスクはレイヤーの一部を隠す。全チャンネルで共有する",
-                "A mask hides parts of the layer; it is shared by all channels",
-            )),
-            Some("add"),
-        )
-        .clicked()
-        {
-            edit(app, Edit::AddMask(id));
-        }
+        add_mask_buttons(ui, app, rows, id, enabled, lang);
         return;
     };
-    let editing = app.m2.edit_mask && app.selected_layer == Some(id);
+    let editing = app.m2.edit_mask && app.session.selected_layer == Some(id);
     let r = rows.row(24.0, 4.0);
     if w::button(
         ui,
         r,
         "mask.paint",
-        lang.pick("マスクに描く", "Paint on Mask"),
+        lang.t("panels-paint-on-mask"),
         editing,
         enabled,
-        Some(lang.pick(
-            "ブラシはマスクに描く。塗ると隠し、消すと見せる",
-            "Strokes go to the mask: painting hides, erasing reveals",
-        )),
+        Some(lang.t("panels-strokes-go-to-the-mask-tip")),
         Some("paint_brush"),
     )
     .clicked()
@@ -787,13 +778,10 @@ fn mask_section(
         ui,
         rows,
         "mask.density",
-        lang.pick("濃度", "Density"),
+        lang.t("panels-density"),
         density,
         (0.0, 1.0),
-        Some(lang.pick(
-            "マスクが隠す強さ（0% でマスクなしと同じ）",
-            "How strongly the mask hides (0% = as if there were no mask)",
-        )),
+        Some(lang.t("panels-how-strongly-the-mask-hides-tip")),
         enabled,
     ) {
         edit(app, Edit::MaskDensity(id, v));
@@ -808,12 +796,9 @@ fn mask_section(
         ui,
         cols[0],
         "mask.enabled",
-        lang.pick("有効", "Enabled"),
+        lang.t("panels-enabled"),
         on,
-        Some(lang.pick(
-            "切るとマスクなしと同じ（マスクは残る）",
-            "Off: the layer shows as if it had no mask (the mask is kept)",
-        )),
+        Some(lang.t("panels-off-the-layer-shows-as-tip")),
         enabled,
     );
     if a != on {
@@ -823,12 +808,9 @@ fn mask_section(
         ui,
         cols[1],
         "mask.invert",
-        lang.pick("反転", "Invert"),
+        lang.t("panels-invert"),
         inverted,
-        Some(lang.pick(
-            "隠す所と見せる所を入れ替える",
-            "Swaps what the mask hides and reveals",
-        )),
+        Some(lang.t("panels-swaps-what-the-mask-hides-tip")),
         enabled,
     );
     if b != inverted {
@@ -843,7 +825,7 @@ fn mask_section(
         del,
         "mask.delete",
         "delete",
-        lang.pick("レイヤーマスクを削除", "Delete Layer Mask"),
+        lang.t("panels-delete-layer-mask-tip"),
         false,
         enabled,
         16.0,

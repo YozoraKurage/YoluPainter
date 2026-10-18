@@ -17,13 +17,16 @@ fn canvas(id: u128, level: AntiAlias) -> CanvasPath {
         style: Default::default(),
         id,
         channel: Channel::Color,
-        brush: PathBrush(BrushSettings {
-            radius: 2.25,
-            hardness: 1.0,
-            color: Rgba8::new(20, 30, 200, 255),
-            anti_alias: level,
-            ..BrushSettings::default()
-        }),
+        brush: PathBrush(
+            BrushSettings {
+                radius: 2.25,
+                hardness: 1.0,
+                color: Rgba8::new(20, 30, 200, 255),
+                anti_alias: level,
+                ..BrushSettings::default()
+            },
+            yolu_core::PressureSwitches::default(),
+        ),
         points: vec![
             CanvasPoint::new(3.5, 4.0, 1.0).unwrap(),
             CanvasPoint::new(27.25, 21.5, 1.0).unwrap(),
@@ -192,12 +195,15 @@ fn a_3d_path_keeps_its_level_and_pixels_through_version_34() {
             style: Default::default(),
             id: 9,
             channel: Channel::Color,
-            brush: PathBrush(BrushSettings {
-                radius: 0.08,
-                hardness: 1.0,
-                anti_alias: level,
-                ..BrushSettings::default()
-            }),
+            brush: PathBrush(
+                BrushSettings {
+                    radius: 0.08,
+                    hardness: 1.0,
+                    anti_alias: level,
+                    ..BrushSettings::default()
+                },
+                yolu_core::PressureSwitches::default(),
+            ),
             points: vec![
                 PathPoint::new(0, 0.2, 0.1, 1.0).unwrap(),
                 PathPoint::new(1, 0.4, 0.3, 1.0).unwrap(),

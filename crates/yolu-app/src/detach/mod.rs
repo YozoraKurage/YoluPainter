@@ -81,6 +81,8 @@ pub(crate) struct Resolved {
 pub struct DropRects {
     pub brush_list: Option<Rect>,
     pub library_grid: Option<Rect>,
+    /// ステンシルの画像の箱（PNG をステンシルとして読む。ファイルの取り込みのウィンドウへ回さない）。
+    pub stencil_image: Option<Rect>,
 }
 
 /// 別ウィンドウ 1 つ。
@@ -408,6 +410,10 @@ pub fn default_mates(tab: Tab) -> Vec<Tab> {
     // 既定では閉じているナビゲーターは、開くとテクスチャセットの組へ（前の既定の並びの組）
     if tab == Tab::Navigator {
         return vec![Tab::TextureSets];
+    }
+    // 足した 3D ビューは、最初の 3D ビューの組へ
+    if let Tab::View3dMore(_) = tab {
+        return vec![Tab::View3d];
     }
     let dock = crate::app::default_dock();
     let Some(path) = dock.find_tab(&tab) else {

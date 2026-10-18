@@ -1,5 +1,6 @@
 //! 3D ビュー（wgpu の自前の描画・カメラの操作・面に描く）の振る舞いと見た目（egui_kittest。描画は wgpu のソフトの描画）。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::{pos2, vec2, Event, Key, Modifiers, PointerButton, Pos2, Rect};
@@ -13,9 +14,9 @@ use yolu_core::glam::Vec3;
 /// 3D のタブを出し、試しの立方体を読み、右（+X）と手前（−Z）の面が見えるカメラにする。
 fn cube_view(width: f32, height: f32, doc: u32) -> (Harness<'static, YoluApp>, Rect) {
     let mut h = app(width, height, doc);
-    h.state_mut().state.view3d.load_demo();
-    h.state_mut().state.view3d.camera.yaw = -40.0;
-    h.state_mut().state.view3d.camera.pitch = 15.0;
+    h.view3d_mut().load_demo();
+    h.view3d_mut().view.camera.yaw = -40.0;
+    h.view3d_mut().view.camera.pitch = 15.0;
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
@@ -24,12 +25,7 @@ fn cube_view(width: f32, height: f32, doc: u32) -> (Harness<'static, YoluApp>, R
 
 /// モデルの空間の点が見える画面の点。
 fn screen_of(h: &Harness<'_, YoluApp>, rect: Rect, p: Vec3) -> Pos2 {
-    let view = h
-        .state()
-        .state
-        .view3d
-        .camera
-        .view(rect.width(), rect.height());
+    let view = h.view3d().view.camera.view(rect.width(), rect.height());
     let s = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + s.x, rect.top() + s.y)
 }
@@ -40,7 +36,7 @@ fn island(x: u32, y: u32, size: u32) -> (u32, u32) {
 }
 
 fn painted_islands(h: &Harness<'_, YoluApp>) -> std::collections::BTreeSet<(u32, u32)> {
-    let doc = &h.state().state.doc;
+    let doc = h.doc();
     let size = doc.width();
     let mut out = std::collections::BTreeSet::new();
     for y in 0..size {
@@ -60,9 +56,9 @@ fn pixel(image: &image::RgbaImage, p: Pos2) -> [u8; 4] {
 #[test]
 fn painting_on_the_cube_crosses_the_seam_and_uploads_only_changed_tiles() {
     let (mut h, rect) = cube_view(1100.0, 760.0, 256); // 2 × 2 タイル
-    h.state_mut().state.color.set_main([0.85, 0.15, 0.1, 1.0]);
+    h.color_mut().set_main([0.85, 0.15, 0.1, 1.0]);
     // 入力の点を曲線で結ぶブラシ（撮った絵の線は曲線。3D の線もブラシの「曲線」に従う）
-    h.state_mut().state.m2.brush.assist.curve = true;
+    h.m2_mut().brush.assist.curve = true;
     let stats = h.state().view3d_stats().expect("wgpu の 3D");
     assert!(
         stats.renders >= 1 && stats.total_tiles == 0,
@@ -89,12 +85,8 @@ fn painting_on_the_cube_crosses_the_seam_and_uploads_only_changed_tiles() {
         [(0, 0), (0, 1)].into_iter().collect(),
         "手前の面（アイランド 0,0）と右の面（アイランド 0,1）。見えない面は塗らない"
     );
-    assert!(h.state().state.doc.can_undo());
-    assert!(
-        h.state().state.message.is_empty(),
-        "{}",
-        h.state().state.message
-    );
+    assert!(h.doc().can_undo());
+    assert!(h.message().is_empty(), "{}", h.message());
     let stats = h.state().view3d_stats().unwrap();
     assert!(
         !stats.last_rebuilt && stats.total_tiles > before,
@@ -114,7 +106,8 @@ fn painting_on_the_cube_crosses_the_seam_and_uploads_only_changed_tiles() {
     // 上の面（+Y）も見えている（裏の面を描いていない = 表の向きが合っている）
     let top = pixel(&image, screen_of(&h, rect, Vec3::new(0.0, 0.5, 0.0)));
     assert!(top[0] > 40, "上の面: {top:?}");
-    h.snapshot("view3d_cube_painted");
+    // 3D ビューで塗った立方体を見る、ウィンドウ全体の見本
+    crate::common::shot::window(&mut h, "view3d_cube_painted");
     // 1 回の Undo で両方の面が戻る
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
@@ -126,9 +119,9 @@ fn painting_on_the_cube_crosses_the_seam_and_uploads_only_changed_tiles() {
 #[test]
 fn painting_on_the_cube_in_orthographic_crosses_the_seam_and_undoes_in_one_step() {
     let (mut h, rect) = cube_view(1100.0, 760.0, 256);
-    h.state_mut().state.view3d.camera.set_orthographic(true);
+    h.view3d_mut().view.camera.set_orthographic(true);
     h.run();
-    h.state_mut().state.color.set_main([0.85, 0.15, 0.1, 1.0]);
+    h.color_mut().set_main([0.85, 0.15, 0.1, 1.0]);
     let from = screen_of(&h, rect, Vec3::new(0.15, 0.1, -0.5));
     let mid = screen_of(&h, rect, Vec3::new(0.5, 0.1, -0.5));
     let to = screen_of(&h, rect, Vec3::new(0.5, 0.05, -0.15));
@@ -143,27 +136,18 @@ fn painting_on_the_cube_in_orthographic_crosses_the_seam_and_undoes_in_one_step(
         })
         .collect();
     drag(&mut h, &points);
-    assert!(h.state().state.view3d.camera.is_orthographic());
+    assert!(h.view3d().view.camera.is_orthographic());
     assert_eq!(
         painted_islands(&h),
         [(0, 0), (0, 1)].into_iter().collect(),
         "手前の面（アイランド 0,0）と右の面（アイランド 0,1）。見えない面は塗らない"
     );
-    assert!(
-        h.state().state.message.is_empty(),
-        "{}",
-        h.state().state.message
-    );
+    assert!(h.message().is_empty(), "{}", h.message());
     let image = h.render().expect("描ける");
     let painted = pixel(&image, from);
     assert!(painted[0] > 120 && painted[1] < 80, "描いた所: {painted:?}");
     // ブラシの円の画面の大きさは、手前の面の点と奥の面の点で同じ
-    let view = h
-        .state()
-        .state
-        .view3d
-        .camera
-        .view(rect.width(), rect.height());
+    let view = h.view3d().view.camera.view(rect.width(), rect.height());
     let near = view.world_radius_to_screen(Vec3::new(0.0, 0.0, -0.5), 0.1);
     let far = view.world_radius_to_screen(Vec3::new(0.0, 0.0, 0.5), 0.1);
     assert!((near - far).abs() < 1e-4, "{near} {far}");
@@ -181,10 +165,10 @@ const BLURRED_CORNER_DOC: u32 = 256;
 fn open_3d_over_a_blurred_corner(seams: bool, source: &[(u32, u32)]) -> (usize, Vec<u8>) {
     use yolu_core::{Channel, EffectSettings, FilterSpec, FilterTarget, Rgba8};
     let mut h = app(1100.0, 760.0, BLURRED_CORNER_DOC);
-    let ts = h.state().state.doc.tile_size();
-    let layer = h.state().state.selected_layer.unwrap();
+    let ts = h.doc().tile_size();
+    let layer = h.selected_layer().unwrap();
     {
-        let doc = &mut h.state_mut().state.doc;
+        let doc = h.doc_mut();
         doc.set_filter_seams(seams).unwrap();
         // 元の画素は 1 つのタイル（0, 0）の中だけ。ぼかしは隣のタイルまで届く
         for &(x, y) in source {
@@ -199,7 +183,7 @@ fn open_3d_over_a_blurred_corner(seams: bool, source: &[(u32, u32)]) -> (usize, 
         )
         .unwrap();
     }
-    let doc = &h.state().state.doc;
+    let doc = h.doc();
     let (w, hh) = (doc.width(), doc.height());
     assert_eq!(
         doc.layer(layer)
@@ -226,10 +210,10 @@ fn open_3d_over_a_blurred_corner(seams: bool, source: &[(u32, u32)]) -> (usize, 
     let all = doc.canvas_tiles().count();
     // 上がった絵を合成と画素ごとに比べるので、UV の外への塗り広げは切る（塗り広げは view3d_padding の試験が見る）
     h.state_mut().view3d_set_display_padding(0);
-    h.state_mut().state.view3d.load_demo();
+    h.view3d_mut().load_demo();
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
-    let doc = &h.state().state.doc;
+    let doc = h.doc();
     assert_eq!(
         doc.seams_active(),
         seams,
@@ -310,17 +294,15 @@ fn opening_the_3d_view_uploads_the_same_picture_as_the_composite_across_uv_seams
 fn opening_the_3d_view_uploads_the_whole_canvas_of_a_fill_layer() {
     use yolu_core::{Channel, Rgba8};
     let mut h = app(1100.0, 760.0, 256);
-    h.state_mut()
-        .state
-        .doc
+    h.doc_mut()
         .add_fill_layer(
             "塗り",
             &[(Channel::Color, Rgba8::new(10, 200, 30, 255))],
             None,
         )
         .unwrap();
-    let tiles = h.state().state.doc.canvas_tiles().count();
-    h.state_mut().state.view3d.load_demo();
+    let tiles = h.doc().canvas_tiles().count();
+    h.view3d_mut().load_demo();
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     assert_eq!(h.state().view3d_stats().unwrap().total_tiles, tiles);
@@ -332,7 +314,7 @@ fn a_dab_uploads_only_the_touched_tiles() {
     let before = h.state().view3d_stats().unwrap();
     let at = screen_of(&h, rect, Vec3::new(0.1, 0.1, -0.5));
     click(&mut h, at);
-    assert!(h.state().state.doc.can_undo());
+    assert!(h.doc().can_undo());
     let after = h.state().view3d_stats().unwrap();
     let uploaded = after.total_tiles - before.total_tiles;
     assert!(!after.last_rebuilt);
@@ -352,7 +334,7 @@ fn a_dab_uploads_only_the_touched_tiles() {
 fn camera_orbits_pans_and_zooms_like_the_unity_view() {
     let (mut h, rect) = cube_view(1000.0, 700.0, 256);
     let c = rect.center();
-    let cam = h.state().state.view3d.camera;
+    let cam = h.view3d().view.camera;
     // 右ドラッグで回す（右へ 100 点で yaw +35°）
     press(&h, c, PointerButton::Secondary);
     h.step();
@@ -360,7 +342,7 @@ fn camera_orbits_pans_and_zooms_like_the_unity_view() {
     h.step();
     release(&h, c + vec2(100.0, 20.0), PointerButton::Secondary);
     h.run();
-    let after = h.state().state.view3d.camera;
+    let after = h.view3d().view.camera;
     assert!(
         (after.yaw - cam.yaw - 35.0).abs() < 1e-3,
         "{} → {}",
@@ -368,7 +350,7 @@ fn camera_orbits_pans_and_zooms_like_the_unity_view() {
         after.yaw
     );
     assert!((after.pitch - cam.pitch - 7.0).abs() < 1e-3);
-    assert!(!h.state().state.doc.can_undo(), "回しても描かない");
+    assert!(!h.doc().can_undo(), "回しても描かない");
     // 中ドラッグでパン
     press(&h, c, PointerButton::Middle);
     h.step();
@@ -376,25 +358,36 @@ fn camera_orbits_pans_and_zooms_like_the_unity_view() {
     h.step();
     release(&h, c + vec2(-50.0, 0.0), PointerButton::Middle);
     h.run();
-    assert_ne!(h.state().state.view3d.camera.target, after.target);
-    // Alt + 左ドラッグでも回す（描かない）
-    let yaw = h.state().state.view3d.camera.yaw;
+    assert_ne!(h.view3d().view.camera.target, after.target);
+    // Alt + 右ドラッグでも回す（描かない。閾値を超えたら、右へ動かした向きの隣の軸の視点）
+    let before = h.view3d().view.camera;
     h.event(Event::PointerMoved(c));
     h.event(Event::PointerButton {
         pos: c,
-        button: PointerButton::Primary,
+        button: PointerButton::Secondary,
         pressed: true,
         modifiers: Modifiers::ALT,
     });
     h.step();
-    move_to(&h, c + vec2(40.0, 0.0));
+    move_to(&h, c + vec2(60.0, 0.0));
     h.step();
-    release(&h, c + vec2(40.0, 0.0), PointerButton::Primary);
+    release(&h, c + vec2(60.0, 0.0), PointerButton::Secondary);
     h.run();
-    assert!((h.state().state.view3d.camera.yaw - yaw - 14.0).abs() < 1e-3);
-    assert!(!h.state().state.doc.can_undo());
+    let after = h.view3d().view.camera;
+    assert_eq!(
+        (after.yaw, after.pitch),
+        yolu_core::geometry::flicked_orientation(
+            before.yaw,
+            before.pitch,
+            yolu_core::geometry::Flick::Right
+        )
+    );
+    assert!(!h.doc().can_undo());
+    // 軸の視点に切り替えて正投影になったので、透視へ戻してから寄る距離を見る
+    h.view3d_mut().view.camera.set_orthographic(false);
+    h.view3d_mut().view.auto_orthographic = false;
     // ホイールで寄る（上へ 1 目盛りで約 1/1.2 の距離）
-    let distance = h.state().state.view3d.camera.distance;
+    let distance = h.view3d().view.camera.distance;
     move_to(&h, c);
     h.event(Event::MouseWheel {
         unit: egui::MouseWheelUnit::Line,
@@ -403,7 +396,7 @@ fn camera_orbits_pans_and_zooms_like_the_unity_view() {
         phase: egui::TouchPhase::Move,
     });
     h.run();
-    let d = h.state().state.view3d.camera.distance;
+    let d = h.view3d().view.camera.distance;
     assert!(
         (d / distance - (-0.18f32).exp()).abs() < 1e-4,
         "{distance} → {d}"
@@ -413,7 +406,7 @@ fn camera_orbits_pans_and_zooms_like_the_unity_view() {
     h.get_by_label("モデル全体が見える位置へ戻す").click();
     h.run();
     // 全体を表示する位置は、モデルを開いた直後と同じ向き（モデルの前、+Z 側から）
-    let camera = h.state().state.view3d.camera;
+    let camera = h.view3d().view.camera;
     assert_eq!(camera.yaw, yolu_core::geometry::DEFAULT_YAW);
     assert_eq!(camera.pitch, yolu_core::geometry::DEFAULT_PITCH);
     assert!(camera.position().z > camera.target.z, "前から見る");
@@ -424,18 +417,12 @@ fn a_model_opens_seen_from_its_front() {
     // モデルは +Z を向く。開いた直後（カメラを触らない）に、中央のレイが当たる面は +Z の面で、
     // ほかのモデルへ替えても・全体を表示しても同じ向きになる
     let mut h = app(1000.0, 700.0, 256);
-    h.state_mut().state.view3d.load_demo();
+    h.view3d_mut().load_demo();
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
-    let opened = h.state().state.view3d.camera;
-    let model = h
-        .state()
-        .state
-        .view3d
-        .model
-        .clone()
-        .expect("モデルを読んだ");
+    let opened = h.view3d().view.camera;
+    let model = h.view3d().model.clone().expect("モデルを読んだ");
     assert_eq!(
         opened,
         yolu_core::geometry::OrbitCamera::framing(&model.geometry.bounds())
@@ -446,12 +433,12 @@ fn a_model_opens_seen_from_its_front() {
         yolu_core::geometry::pick(&model.geometry, &view, center).expect("中央にモデルがある");
     assert!(hit.normal.z > 0.9, "前（+Z）の面が見える: {:?}", hit.normal);
     // 手で回してから全体を表示すると、開いた直後の位置へ戻る
-    h.state_mut().state.view3d.camera.yaw = 100.0;
-    h.state_mut().state.view3d.frame_model();
-    assert_eq!(h.state().state.view3d.camera, opened);
+    h.view3d_mut().view.camera.yaw = 100.0;
+    h.view3d_mut().frame_model();
+    assert_eq!(h.view3d().view.camera, opened);
     // モデルを替えても（別の名前）同じ向き
-    h.state_mut().state.view3d.camera.yaw = 100.0;
-    let revision = h.state_mut().state.view3d.next_revision();
+    h.view3d_mut().view.camera.yaw = 100.0;
+    let revision = h.view3d_mut().next_revision();
     let other = ViewModel::new(
         "別のモデル",
         vec![yolu_core::geometry::cube_sphere(3, 0.5)],
@@ -459,9 +446,9 @@ fn a_model_opens_seen_from_its_front() {
         revision,
     )
     .unwrap();
-    h.state_mut().state.view3d.set_model(other);
+    h.view3d_mut().set_model(other);
     h.run();
-    let replaced = h.state().state.view3d.camera;
+    let replaced = h.view3d().view.camera;
     assert_eq!((replaced.yaw, replaced.pitch), (opened.yaw, opened.pitch));
     assert!(replaced.position().z > replaced.target.z, "前から見る");
 }
@@ -475,9 +462,9 @@ fn escape_cancels_and_focus_loss_commits_the_surface_stroke() {
     h.step();
     move_to(&h, b);
     h.step();
-    assert!(h.state().state.is_stroking());
+    assert!(h.app().is_stroking());
     // 描いている間はホイールでカメラを動かさない
-    let distance = h.state().state.view3d.camera.distance;
+    let distance = h.view3d().view.camera.distance;
     h.event(Event::MouseWheel {
         unit: egui::MouseWheelUnit::Line,
         delta: vec2(0.0, 3.0),
@@ -485,12 +472,12 @@ fn escape_cancels_and_focus_loss_commits_the_surface_stroke() {
         phase: egui::TouchPhase::Move,
     });
     h.step();
-    assert_eq!(h.state().state.view3d.camera.distance, distance);
+    assert_eq!(h.view3d().view.camera.distance, distance);
     key(&h, Key::Escape, Modifiers::NONE);
     h.step();
-    assert!(!h.state().state.is_stroking());
+    assert!(!h.app().is_stroking());
     assert!(painted_islands(&h).is_empty(), "Esc は捨てる");
-    assert!(!h.state().state.doc.can_undo());
+    assert!(!h.doc().can_undo());
     release(&h, b, PointerButton::Primary);
     h.run();
     // 描いている途中でフォーカスを失うと、そこまでを確定する
@@ -500,8 +487,8 @@ fn escape_cancels_and_focus_loss_commits_the_surface_stroke() {
     h.step();
     h.event(Event::WindowFocused(false));
     h.step();
-    assert!(!h.state().state.is_stroking());
-    assert!(h.state().state.doc.can_undo());
+    assert!(!h.app().is_stroking());
+    assert!(h.doc().can_undo());
     assert_eq!(painted_islands(&h), [(0, 0)].into_iter().collect());
     release(&h, b, PointerButton::Primary);
     h.run();
@@ -552,19 +539,19 @@ fn painting_a_face_without_a_material_names_the_slot_in_the_selected_language() 
     use yolu_app::lang::Lang;
     for lang in Lang::ALL {
         let (mut h, _) = cube_view(1000.0, 700.0, 256);
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         let mut model = two_material_model();
         model.materials[1].key = yolu_protocol::MaterialKey::Unassigned;
         h.state_mut().load_live_link_model(&model).unwrap();
-        h.state_mut().state.view3d.camera.yaw = -40.0;
-        h.state_mut().state.view3d.camera.pitch = 15.0;
+        h.view3d_mut().view.camera.yaw = -40.0;
+        h.view3d_mut().view.camera.pitch = 15.0;
         h.run();
         let rect = h.state().view3d_rect().unwrap();
         // 右の面はマテリアルの無いスロット。最初のセット（肌）を描いているので、描き始めない
         let side = screen_of(&h, rect, Vec3::new(0.5, 0.0, -0.2));
         click(&mut h, side);
-        assert!(!h.state().state.doc.can_undo());
-        let message = h.state().state.message.clone();
+        assert!(!h.doc().can_undo());
+        let message = h.message().to_owned();
         match lang {
             Lang::Ja => assert!(message.contains("マテリアルなし"), "{message}"),
             Lang::En => {
@@ -581,19 +568,15 @@ fn live_link_model_paints_only_its_texture_set_and_waits_for_the_stroke() {
     h.state_mut()
         .load_live_link_model(&two_material_model())
         .unwrap();
-    h.state_mut().state.view3d.camera.yaw = -40.0;
-    h.state_mut().state.view3d.camera.pitch = 15.0;
+    h.view3d_mut().view.camera.yaw = -40.0;
+    h.view3d_mut().view.camera.pitch = 15.0;
     h.run();
     let rect = h.state().view3d_rect().unwrap();
     // 右の面は服（テクスチャセット 1）。肌を描いているので、描き始めない
     let side = screen_of(&h, rect, Vec3::new(0.5, 0.0, -0.2));
     click(&mut h, side);
-    assert!(!h.state().state.doc.can_undo());
-    assert!(
-        h.state().state.message.contains("服"),
-        "{}",
-        h.state().state.message
-    );
+    assert!(!h.doc().can_undo());
+    assert!(h.message().contains("服"), "{}", h.message());
     // 肌の面から服の面へ描いても、肌の面だけ（服の三角形は同じスロットでないので辿らない）
     let front = screen_of(&h, rect, Vec3::new(0.2, 0.0, -0.5));
     press(&h, front, PointerButton::Primary);
@@ -604,7 +587,7 @@ fn live_link_model_paints_only_its_texture_set_and_waits_for_the_stroke() {
     h.state_mut()
         .load_live_link_model(&two_material_model())
         .unwrap();
-    assert!(h.state().state.view3d.has_pending_model());
+    assert!(h.view3d().has_pending_model());
     // ポーズ（手前の面を 0.25 だけ手前へ）も、待っているモデルに当たる
     let mut model = two_material_model();
     for p in model.meshes[0].positions.iter_mut().take(4) {
@@ -619,16 +602,16 @@ fn live_link_model_paints_only_its_texture_set_and_waits_for_the_stroke() {
         }],
     };
     h.state_mut().apply_live_link_pose(&pose).unwrap();
-    let before = std::sync::Arc::as_ptr(h.state().state.view3d.model.as_ref().unwrap());
-    let camera = h.state().state.view3d.camera;
+    let before = std::sync::Arc::as_ptr(h.view3d().model.as_ref().unwrap());
+    let camera = h.view3d().view.camera;
     release(&h, side, PointerButton::Primary);
     h.run();
-    assert!(!h.state().state.view3d.has_pending_model());
-    let now = h.state().state.view3d.model.clone().unwrap();
+    assert!(!h.view3d().has_pending_model());
+    let now = h.view3d().model.clone().unwrap();
     assert_ne!(std::sync::Arc::as_ptr(&now), before);
     assert_eq!(now.geometry.triangles()[0].a.z, -0.75, "ポーズの位置");
     assert_eq!(
-        h.state().state.view3d.camera,
+        h.view3d().view.camera,
         camera,
         "同じモデルのポーズではカメラを動かさない"
     );
@@ -650,7 +633,7 @@ fn pen(pos: Pos2, pressure: f32, contact: bool, eraser: bool) -> yolu_app::pen::
 }
 
 fn painted_count(h: &Harness<'_, YoluApp>) -> (usize, u8) {
-    let doc = &h.state().state.doc;
+    let doc = h.doc();
     let (mut n, mut max) = (0, 0);
     for y in 0..doc.height() {
         for x in 0..doc.width() {
@@ -672,7 +655,7 @@ fn pen_pressure_scales_the_surface_dab_and_the_eraser_end_erases() {
         h.state().pen().push(pen(at, pressure, contact, false));
     }
     h.run();
-    assert!(!h.state().state.is_stroking());
+    assert!(!h.app().is_stroking());
     let (full, full_alpha) = painted_count(&h);
     assert!(full > 50 && full_alpha == 255, "{full} {full_alpha}");
     // 消しゴムの端で同じ所を消す
@@ -686,9 +669,9 @@ fn pen_pressure_scales_the_surface_dab_and_the_eraser_end_erases() {
         left * 2 < full && left_alpha < 255,
         "消しゴムの端で消える: {left} / {full}、{left_alpha}"
     );
-    assert_eq!(h.state().state.doc.undo_count(), 2);
-    h.state_mut().state.doc.undo().unwrap();
-    h.state_mut().state.doc.undo().unwrap();
+    assert_eq!(h.doc().undo_count(), 2);
+    h.doc_mut().undo().unwrap();
+    h.doc_mut().undo().unwrap();
     h.run();
     assert_eq!(painted_count(&h).0, 0);
     // 筆圧 0.25: 半径（面の上）も不透明度も 1/4
@@ -706,18 +689,14 @@ fn a_dab_rim_rounding_below_zero_does_not_cancel_the_stroke() {
     // 2048² の文書・この大きさのウィンドウ・このドラッグでは、ダブの縁のテクセルの覆いが単精度の丸めで −1.2e−7 になる（Unity 版と同じ値）。
     // 0 以下の覆いを apply_pixel に渡すと「値が範囲外」でストロークごと取り消されていた
     let mut h = app(1600.0, 960.0, 2048);
-    h.state_mut().state.view3d.load_demo();
+    h.view3d_mut().load_demo();
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     let mut points = vec![pos2(760.0, 520.0)];
     points.extend([780.0, 800.0, 820.0, 840.0, 860.0, 880.0, 900.0, 920.0].map(|x| pos2(x, 515.0)));
     drag(&mut h, &points);
-    assert!(
-        h.state().state.message.is_empty(),
-        "{}",
-        h.state().state.message
-    );
-    assert!(h.state().state.doc.can_undo());
+    assert!(h.message().is_empty(), "{}", h.message());
+    assert!(h.doc().can_undo());
 }
 
 /// 空の 3D ビュー（日英）: 主のボタンは「新規プロジェクト…」で、押すとファイルメニューの新規プロジェクトと同じ要求になる（モデルは読まない）。
@@ -729,7 +708,7 @@ fn placeholder_offers_a_new_project_first_and_the_test_cube_below() {
     use yolu_app::state::DialogRequest;
     for lang in [Lang::Ja, Lang::En] {
         let mut h = app(1000.0, 700.0, 256);
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         click_tab(&mut h, yolu_app::Tab::View3d);
         h.run();
         let new_label = lang.pick("新規プロジェクト…", "New Project…");
@@ -759,17 +738,13 @@ fn placeholder_offers_a_new_project_first_and_the_test_cube_below() {
         h.run();
         // 押す
         click(&mut h, new.center());
-        assert_eq!(
-            h.state().state.dialog_request,
-            Some(DialogRequest::New),
-            "{lang:?}"
-        );
-        assert!(h.state().state.view3d.model.is_none(), "{lang:?}");
+        assert_eq!(*h.dialog_request(), Some(DialogRequest::New), "{lang:?}");
+        assert!(h.view3d().model.is_none(), "{lang:?}");
         // 試しの立方体も今どおり読める
-        h.state_mut().state.dialog_request = None;
+        *h.dialog_request_mut() = None;
         h.get_by_label(cube_label).click();
         h.run();
-        assert!(h.state().state.view3d.model.is_some(), "{lang:?}");
+        assert!(h.view3d().model.is_some(), "{lang:?}");
     }
 }
 
@@ -781,7 +756,7 @@ fn placeholder_new_project_is_unavailable_while_saving() {
     use yolu_app::state::DialogRequest;
     for lang in Lang::ALL {
         let mut h = app(1000.0, 700.0, 64);
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         click_tab(&mut h, yolu_app::Tab::View3d);
         h.run();
         let label = lang.pick("新規プロジェクト…", "New Project…");
@@ -798,13 +773,11 @@ fn placeholder_new_project_is_unavailable_while_saving() {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("work.ylp");
-        h.state_mut().state.save.background = true;
-        let hold = h.state_mut().state.save.hold_next();
-        h.state_mut()
-            .state
-            .apply(yolu_app::state::Action::SaveProjectAs(path));
+        h.save_mut().background = true;
+        let hold = h.save_mut().hold_next();
+        h.act(yolu_app::state::Action::SaveProjectAs(path));
         h.run();
-        assert!(h.state().state.is_saving(), "{lang:?}");
+        assert!(h.app().is_saving(), "{lang:?}");
         let node = h.get_by_label(label);
         assert!(
             node.accesskit_node().is_disabled(),
@@ -815,20 +788,20 @@ fn placeholder_new_project_is_unavailable_while_saving() {
         assert!(h.query_by_label(reason).is_some(), "{lang:?}: 理由が出る");
         click(&mut h, at);
         assert_ne!(
-            h.state().state.dialog_request,
+            *h.dialog_request(),
             Some(DialogRequest::New),
             "{lang:?}: 押しても要求は出ない"
         );
         // 保存が終われば押せる
         hold.release();
         for _ in 0..500 {
-            if !h.state().state.is_saving() {
+            if !h.app().is_saving() {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
             h.run();
         }
-        assert!(!h.state().state.is_saving(), "{lang:?}");
+        assert!(!h.app().is_saving(), "{lang:?}");
         move_to(&h, pos2(2.0, 2.0));
         h.run();
         assert!(
@@ -866,12 +839,13 @@ fn placeholder_buttons_stay_inside_a_low_frame() {
 /// 空の 3D ビューの絵（ボタンの所）。
 fn placeholder_snapshot(lang: yolu_app::lang::Lang, name: &str) {
     let mut h = app(1000.0, 700.0, 256);
-    h.state_mut().state.lang = lang;
+    h.set_lang(lang);
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     move_to(&h, pos2(2.0, 2.0));
     h.run();
-    h.snapshot(name);
+    let area = crate::view3d_area(&h);
+    crate::common::shot::region(&mut h, name, area);
 }
 
 #[test]
@@ -891,6 +865,6 @@ fn placeholder_offers_the_demo_cube() {
     use egui_kittest::kittest::Queryable;
     h.get_by_label("試しの立方体を読む").click();
     h.run();
-    assert!(h.state().state.view3d.model.is_some());
+    assert!(h.view3d().model.is_some());
     assert!(h.state().view3d_stats().unwrap().renders >= 1);
 }

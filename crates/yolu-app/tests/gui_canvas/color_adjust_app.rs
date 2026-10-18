@@ -1,6 +1,7 @@
 //! 色調補正の 6 種のアプリの中でのつなぎ: 調整レイヤーとフィルターの段として足し、選ぶと欄が出て、操作が 1 回の Undo になり、
 //! 使えないチャンネルは理由つきで断る。欄そのものの操作・日英・スナップショットは `color_adjust.rs`。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::{pos2, Rect};
@@ -27,7 +28,7 @@ const SIX: [AdjustmentKind; 6] = [
 ];
 
 fn apply(h: &mut Harness<'_, YoluApp>, action: Action) {
-    h.state_mut().state.apply(action);
+    h.act(action);
     h.run();
 }
 
@@ -36,16 +37,11 @@ fn new_adjustment(h: &mut Harness<'_, YoluApp>, kind: AdjustmentKind) -> LayerId
     // 狭い欄は、欄の中身の高さが分かった次のフレームで並びが変わる（スクロールバーの分）。そのあとで部品の位置を読む
     h.step();
     h.step();
-    h.state()
-        .state
-        .selected_layer
-        .expect("足したレイヤーを選ぶ")
+    h.selected_layer().expect("足したレイヤーを選ぶ")
 }
 
 fn value_of(h: &Harness<'_, YoluApp>, id: LayerId) -> ColorAdjust {
-    h.state()
-        .state
-        .doc
+    h.doc()
         .layer(id)
         .unwrap()
         .adjustment()
@@ -54,7 +50,7 @@ fn value_of(h: &Harness<'_, YoluApp>, id: LayerId) -> ColorAdjust {
 }
 
 fn undo_count(h: &Harness<'_, YoluApp>) -> usize {
-    h.state().state.doc.undo_count()
+    h.doc().undo_count()
 }
 
 /// 右の列（プロパティの欄）の中で、スライダーの溝の `fraction` の位置を押す。
@@ -72,7 +68,7 @@ fn every_kind_is_a_new_adjustment_layer_acting_on_the_channels_it_can() {
         let before = undo_count(&h);
         let id = new_adjustment(&mut h, kind);
         assert_eq!(undo_count(&h), before + 1, "{kind:?}: 1 回の Undo");
-        let layer = h.state().state.doc.layer(id).unwrap();
+        let layer = h.doc().layer(id).unwrap();
         let settings = layer.adjustment().unwrap();
         assert_eq!(AdjustmentKind::of(settings), kind);
         assert_eq!(settings.kind(), kind.adjustment_type());
@@ -90,7 +86,7 @@ fn every_kind_is_a_new_adjustment_layer_acting_on_the_channels_it_can() {
         );
         // 元に戻せる
         apply(&mut h, Action::Undo);
-        assert!(h.state().state.doc.layer(id).is_none(), "{kind:?}");
+        assert!(h.doc().layer(id).is_none(), "{kind:?}");
         assert_eq!(undo_count(&h), before);
     }
 }
@@ -99,9 +95,9 @@ fn every_kind_is_a_new_adjustment_layer_acting_on_the_channels_it_can() {
 fn the_new_adjustment_menus_list_every_kind_in_both_languages() {
     for lang in Lang::ALL {
         let mut h = app(1280.0, 1400.0, 64);
-        h.state_mut().state.set_language(lang);
+        h.app_mut().set_language(lang);
         h.run();
-        let entries = yolu_app::m2_menu::entries(&h.state().state, Popup::NewAdjustment);
+        let entries = yolu_app::m2_menu::entries(h.app(), Popup::NewAdjustment);
         let labels: Vec<String> = entries
             .iter()
             .filter_map(|e| match e {
@@ -188,8 +184,8 @@ fn brightness_contrast_posterize_and_color_balance_edits_are_undoable() {
 /// 右の列を、その名前の部品が見える所（ウィンドウの中ほど）まで送る（欄は縦に長く、ウィンドウの外にはみ出す）。
 fn scroll_panel_to(h: &mut Harness<'_, YoluApp>, label: &str) {
     let r = rect_of(h, label, |r| r.left() > rx());
-    let scroll = h.state().state.m2.props_scroll + (r.top() - props_mid(h));
-    h.state_mut().state.m2.props_scroll = scroll.max(0.0);
+    let scroll = h.m2().props_scroll + (r.top() - props_mid(h));
+    h.m2_mut().props_scroll = scroll.max(0.0);
     h.run();
 }
 
@@ -232,12 +228,10 @@ fn the_tone_curve_panel_edits_a_curve_with_one_undo_and_the_histogram_follows_wh
     let mut h = app(1280.0, 1400.0, 64);
     // 下に絵のある調整レイヤー（分布が出る）
     apply(&mut h, Action::NewLayer);
-    let paint = h.state().state.selected_layer.unwrap();
+    let paint = h.selected_layer().unwrap();
     for y in 0..64 {
         for x in 0..64 {
-            h.state_mut()
-                .state
-                .doc
+            h.doc_mut()
                 .set_pixel(
                     paint,
                     x,
@@ -274,7 +268,7 @@ fn the_tone_curve_panel_edits_a_curve_with_one_undo_and_the_histogram_follows_wh
     };
     assert!(v.is_identity());
     // レイヤーの下の分布は、文書の合成の下半分（調整レイヤーより下）から求め、文書が変わるまで同じ
-    let doc = &h.state().state.doc;
+    let doc = h.doc();
     let hist = yolu_app::panels::color_adjust::Histogram::below(doc, id, Channel::Color).unwrap();
     assert!(
         hist.bins(ToneChannel::Red)
@@ -295,7 +289,7 @@ fn the_tone_curve_panel_edits_a_curve_with_one_undo_and_the_histogram_follows_wh
 
 fn fill_layer(h: &mut Harness<'_, YoluApp>) -> LayerId {
     apply(h, Action::M2(Edit::NewFill));
-    h.state().state.selected_layer.unwrap()
+    h.selected_layer().unwrap()
 }
 
 const FILTER_SIX: [FilterKind; 6] = [
@@ -321,12 +315,7 @@ fn filter_stages_of_the_six_kinds_are_added_selected_edited_and_undone() {
             }),
         );
         assert_eq!(undo_count(&h), steps + 1, "{kind:?}");
-        let stages = h
-            .state()
-            .state
-            .doc
-            .filters_of(layer, FilterTarget::Content)
-            .unwrap();
+        let stages = h.doc().filters_of(layer, FilterTarget::Content).unwrap();
         assert_eq!(stages.len(), 1);
         let id = stages[0].id();
         let first = stages[0].settings().clone();
@@ -365,15 +354,7 @@ fn filter_stages_of_the_six_kinds_are_added_selected_edited_and_undone() {
             FilterKind::Threshold => click_panel_slider(&mut h, "しきい値", 0.1),
             _ => click_panel_slider(&mut h, "階調", 0.0),
         }
-        let now = h
-            .state()
-            .state
-            .doc
-            .find_filter(id)
-            .unwrap()
-            .1
-            .settings()
-            .clone();
+        let now = h.doc().find_filter(id).unwrap().1.settings().clone();
         assert_ne!(now, first, "{kind:?}: 値が替わる");
         assert!(matches!(now, EffectSettings::Filter(_)));
         assert_eq!(
@@ -382,15 +363,7 @@ fn filter_stages_of_the_six_kinds_are_added_selected_edited_and_undone() {
             "{kind:?}: 1 回の操作は 1 回の Undo"
         );
         apply(&mut h, Action::Undo);
-        let restored = h
-            .state()
-            .state
-            .doc
-            .find_filter(id)
-            .unwrap()
-            .1
-            .settings()
-            .clone();
+        let restored = h.doc().find_filter(id).unwrap().1.settings().clone();
         assert_eq!(restored, first, "{kind:?}");
     }
 }
@@ -401,9 +374,8 @@ fn the_add_filter_menu_names_the_six_and_refuses_them_where_they_cannot_apply() 
     let _ = fill_layer(&mut h);
     // (ラベル, 押せるか, 理由)。理由はラベルに続けず、ツールチップに置く
     let label_of = |h: &Harness<'_, YoluApp>, kind: FilterKind| -> (String, bool, Option<String>) {
-        let lang = h.state().state.lang;
-        let entries =
-            yolu_app::fx::menu::add_filter_entries(&h.state().state, FilterTarget::Content);
+        let lang = h.lang();
+        let entries = yolu_app::fx::menu::add_filter_entries(h.app(), FilterTarget::Content);
         yolu_app::ui::menu::leaves(&entries)
             .into_iter()
             .find_map(|e| match e {
@@ -420,12 +392,12 @@ fn the_add_filter_menu_names_the_six_and_refuses_them_where_they_cannot_apply() 
             .unwrap_or_else(|| panic!("{kind:?}"))
     };
     // Color: 6 つとも足せる
-    h.state_mut().state.m2.paint_channel = Channel::Color;
+    h.m2_mut().paint_channel = Channel::Color;
     for kind in FILTER_SIX {
         assert!(label_of(&h, kind).1, "{kind:?}");
     }
     // スカラー（Height）: 色だけの 2 つは理由つきで断り、ほかは足せる
-    h.state_mut().state.m2.paint_channel = Channel::Height;
+    h.m2_mut().paint_channel = Channel::Height;
     for kind in FILTER_SIX {
         let (label, enabled, reason) = label_of(&h, kind);
         let colour_only = matches!(kind, FilterKind::GradientMap | FilterKind::ColorBalance);
@@ -434,7 +406,7 @@ fn the_add_filter_menu_names_the_six_and_refuses_them_where_they_cannot_apply() 
         assert!(!label.contains(" — "), "ラベルに理由を続けない: {label}");
     }
     // 法線: 6 つとも断る
-    h.state_mut().state.m2.paint_channel = Channel::Normal;
+    h.m2_mut().paint_channel = Channel::Normal;
     for kind in FILTER_SIX {
         let (label, enabled, reason) = label_of(&h, kind);
         assert!(
@@ -443,7 +415,7 @@ fn the_add_filter_menu_names_the_six_and_refuses_them_where_they_cannot_apply() 
         );
     }
     // 英語の画面でも、理由は一般の文（「Unsupported value or operation」）に落ちず、日本語も混ざらない
-    h.state_mut().state.set_language(Lang::En);
+    h.app_mut().set_language(Lang::En);
     h.run();
     for kind in FILTER_SIX {
         let (label, _, reason) = label_of(&h, kind);
@@ -457,7 +429,7 @@ fn the_add_filter_menu_names_the_six_and_refuses_them_where_they_cannot_apply() 
             "{kind:?} 法線: {label} {reason}"
         );
     }
-    h.state_mut().state.m2.paint_channel = Channel::Height;
+    h.m2_mut().paint_channel = Channel::Height;
     for kind in [FilterKind::GradientMap, FilterKind::ColorBalance] {
         let (label, enabled, reason) = label_of(&h, kind);
         assert!(!enabled, "{label}");
@@ -490,7 +462,7 @@ fn the_panels_for_layers_and_stages_have_no_instruction_text_and_the_english_one
     for lang in Lang::ALL {
         for kind in SIX {
             let mut h = app(1280.0, 1400.0, 64);
-            h.state_mut().state.set_language(lang);
+            h.app_mut().set_language(lang);
             h.run();
             let _ = new_adjustment(&mut h, kind);
             for text in texts(&h) {
@@ -562,23 +534,17 @@ fn the_mixing_mode_and_the_mixing_curve_are_one_undo_each_and_come_back_after_sa
     crate::common::tmp::clean_up_after_test(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("mixing.ylp");
-    h.state_mut()
-        .state
-        .apply(Action::SaveProjectAs(path.clone()));
-    assert!(
-        h.state().state.message.starts_with("保存しました"),
-        "{}",
-        h.state().state.message
-    );
+    h.act(Action::SaveProjectAs(path.clone()));
+    assert!(h.message().starts_with("保存しました"), "{}", h.message());
     let mut opened = yolu_app::state::AppState::new(8, 8);
-    opened.apply(Action::OpenProject(path));
+    opened.act(Action::OpenProject(path));
     assert!(
-        opened.message.starts_with("開きました"),
+        opened.message().starts_with("開きました"),
         "{}",
-        opened.message
+        opened.message()
     );
     let again = opened
-        .doc
+        .doc()
         .layers()
         .iter()
         .find_map(|l| l.adjustment().and_then(|a| a.color_adjust()))

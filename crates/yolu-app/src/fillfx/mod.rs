@@ -107,6 +107,9 @@ pub enum FillOp {
     },
     /// 選んだ点を消す（最後の 1 つは消さない）。
     DeletePoint,
+    /// 形のギズモのドラッグを始める（前の欄のドラッグにまとめないよう区切り、ドラッグの持ち主の札を置く）。途中の形は札を持つドラッグが
+    /// `gizmo::write_shape` で入れ（離すまで 1 回の Undo にまとめる）、離す・Esc・フォーカスの喪失で `gizmo::release` が終える。
+    GrabShape(Box<gizmo::ShapeDrag>),
     /// 3D ビューのモデルへ画像をデカールとして置く（`at` は画面の点、`rect` は 3D ビューの表示域）。
     PlaceDecal {
         image: ImageId,
@@ -154,6 +157,7 @@ impl FillOp {
                 | FillOp::AddPoints { .. }
                 | FillOp::Points { .. }
                 | FillOp::DeletePoint
+                | FillOp::GrabShape(_)
         )
     }
 }
@@ -178,7 +182,7 @@ impl Lang {
     pub fn fill_error(self, e: &FillError) -> String {
         match e {
             FillError::Invalid(what) => self.with_reason(
-                self.pick("投影の値が使えません", "Invalid projection"),
+                self.t("fillfx-invalid-projection"),
                 self.pick(
                     (*what).to_owned(),
                     match *what {
@@ -208,7 +212,8 @@ fn inactive_reason(
     layer: LayerId,
     target: InactiveTarget,
 ) -> Option<InactiveReason> {
-    app.doc
+    app.session
+        .doc
         .inactive_effect_list()
         .into_iter()
         .find(|e| e.layer == layer && e.target == target)
@@ -239,14 +244,10 @@ impl AppState {
 
     /// 塗りつぶしレイヤーの id（塗りつぶしでなければ理由を出して `None`）。
     fn fill_layer(&mut self, layer: LayerId) -> Option<LayerId> {
-        match self.doc.layer(layer).map(|l| l.kind()) {
+        match self.session.doc.layer(layer).map(|l| l.kind()) {
             Some(LayerKind::Fill) => Some(layer),
             _ => {
-                self.refuse(
-                    Source::FillLayer,
-                    self.lang
-                        .pick("塗りつぶしのレイヤーではありません", "Not a fill layer"),
-                );
+                self.refuse(Source::FillLayer, self.lang.t("fillfx-not-a-fill-layer"));
                 None
             }
         }
@@ -262,7 +263,7 @@ impl AppState {
             );
             return;
         }
-        let revision = self.doc.revision();
+        let revision = self.session.doc.revision();
         match op {
             FillOp::Image {
                 layer,
@@ -278,18 +279,14 @@ impl AppState {
                         return;
                     }
                 }
-                self.doc.end_coalescing();
-                match self.doc.set_fill_image(layer, channel, image) {
+                self.session.doc.end_coalescing();
+                match self.session.doc.set_fill_image(layer, channel, image) {
                     Ok(()) => {
                         self.info(
                             Source::FillLayer,
                             match image.and_then(|i| self.shelf.get(&inputs::resource_id(i))) {
-                                Some(r) => format!(
-                                    "{}: {}",
-                                    lang.pick("画像を差しました", "Image set"),
-                                    r.name
-                                ),
-                                None => lang.pick("画像を外しました", "Image removed").into(),
+                                Some(r) => format!("{}: {}", lang.t("fillfx-image-set"), r.name),
+                                None => lang.t("fillfx-image-removed").into(),
                             },
                         );
                     }
@@ -306,8 +303,8 @@ impl AppState {
                 let Some(layer) = self.fill_layer(layer) else {
                     return;
                 };
-                self.doc.end_coalescing();
-                if let Err(e) = self.doc.set_fill_anisotropic(layer, channel, on) {
+                self.session.doc.end_coalescing();
+                if let Err(e) = self.session.doc.set_fill_anisotropic(layer, channel, on) {
                     self.fill_refusal(&e);
                 }
             }
@@ -324,7 +321,11 @@ impl AppState {
                     self.fail(Source::FillLayer, lang.fill_error(&e));
                     return;
                 }
-                if let Err(e) = self.doc.set_fill_projection(layer, projection, coalesce) {
+                if let Err(e) = self
+                    .session
+                    .doc
+                    .set_fill_projection(layer, projection, coalesce)
+                {
                     self.fill_refusal(&e);
                 }
             }
@@ -338,23 +339,20 @@ impl AppState {
                 let Some(layer) = self.fill_layer(layer) else {
                     return;
                 };
-                let Some(l) = self.doc.layer(layer) else {
+                let Some(l) = self.session.doc.layer(layer) else {
                     return;
                 };
                 let mut p = *l.projection();
                 match self.fitted_placement(layer, p.mode) {
                     Some(placement) => {
                         p.placement = placement;
-                        self.doc.end_coalescing();
-                        if let Err(e) = self.doc.set_fill_projection(layer, p, false) {
+                        self.session.doc.end_coalescing();
+                        if let Err(e) = self.session.doc.set_fill_projection(layer, p, false) {
                             self.fill_refusal(&e);
                         }
                     }
                     None => {
-                        self.refuse(
-                            Source::FillLayer,
-                            lang.pick("モデルがありません", "No model"),
-                        );
+                        self.refuse(Source::FillLayer, lang.t("fillfx-no-model"));
                     }
                 }
             }
@@ -368,11 +366,12 @@ impl AppState {
                     return;
                 };
                 if !coalesce {
-                    self.doc.end_coalescing();
+                    self.session.doc.end_coalescing();
                 }
                 let gradient = gradient.map(|g| *g);
                 let clear = gradient.is_none();
                 if let Err(e) = self
+                    .session
                     .doc
                     .set_fill_gradient(layer, channel, gradient, coalesce)
                 {
@@ -386,8 +385,9 @@ impl AppState {
                     return;
                 };
                 let settings = placement::new_shape_gradient(self.model_bounds().as_ref());
-                self.doc.end_coalescing();
+                self.session.doc.end_coalescing();
                 match self
+                    .session
                     .doc
                     .set_fill_gradient(layer, channel, Some(settings), false)
                 {
@@ -403,8 +403,12 @@ impl AppState {
                     return;
                 };
                 let g = points::new_gradient(self, channel);
-                self.doc.end_coalescing();
-                match self.doc.set_fill_points(layer, channel, Some(g), false) {
+                self.session.doc.end_coalescing();
+                match self
+                    .session
+                    .doc
+                    .set_fill_points(layer, channel, Some(g), false)
+                {
                     Ok(()) => {
                         self.fillfx.edit_points = Some((layer, channel));
                         self.fillfx.point_selected = None;
@@ -422,10 +426,11 @@ impl AppState {
                     return;
                 };
                 if !coalesce {
-                    self.doc.end_coalescing();
+                    self.session.doc.end_coalescing();
                 }
                 let removed = g.is_none();
                 match self
+                    .session
                     .doc
                     .set_fill_points(layer, channel, g.map(|g| *g), coalesce)
                 {
@@ -441,6 +446,10 @@ impl AppState {
                 }
             }
             FillOp::DeletePoint => points::delete_selected(self),
+            FillOp::GrabShape(drag) => {
+                self.session.doc.end_coalescing(); // 前の欄のドラッグにまとめない
+                self.fillfx.drag = Some(*drag);
+            }
             FillOp::PlaceDecal { image, at, rect } => self.place_decal(image, at, rect),
             FillOp::ImportImage(path) => {
                 // 棚を変える操作は、別のスレッドの保存が終わるまで断る（保存の結果は足した後の棚で丸ごと差し替えるので、
@@ -470,7 +479,7 @@ impl AppState {
                 };
                 match self.shelf.set_image_color_space(lang, &id, text) {
                     Ok(true) => {
-                        self.modified = true;
+                        self.session.mark_modified();
                         // 読み方を読み替えるのは、復号している画像だけ（使っていない画像を復号して、予算に残さない）
                         if self.fx.inputs.has_decoded_image(image) {
                             if let Err(why) = self.use_shelf_image(&id) {
@@ -484,7 +493,7 @@ impl AppState {
             }
             FillOp::ImportImageDialog => {
                 if !self.shelf_refuse_while_saving() {
-                    self.dialog_request = Some(DialogRequest::FillImage)
+                    self.outbox.dialog_request = Some(DialogRequest::FillImage)
                 }
             }
             FillOp::Handles(hidden) => {
@@ -518,7 +527,7 @@ impl AppState {
                 self.fillfx.edit_gradient = target;
                 if let Some((layer, channel)) = target {
                     self.fillfx.edit_filter = None; // ギズモは 1 つ
-                    self.selected_layer = Some(layer);
+                    self.session.selected_layer = Some(layer);
                     self.set_edit_mask(false);
                     self.fillfx.handles_hidden = false;
                     // 編集のモードでは、その形を選ぶ（取っ手は選んだ物に出る）
@@ -535,7 +544,7 @@ impl AppState {
                 self.fillfx.edit_filter = target;
                 if let Some((layer, filter)) = target {
                     self.fillfx.edit_gradient = None;
-                    self.selected_layer = Some(layer);
+                    self.session.selected_layer = Some(layer);
                     crate::objects::select_when_editing(
                         self,
                         crate::objects::Object::Shape(gizmo::Target::Filter(layer, filter)),
@@ -564,15 +573,13 @@ impl AppState {
                 self.fillfx.point_selected = index;
             }
         }
-        if self.doc.revision() != revision {
-            self.modified = true;
-        }
+        self.session.mark_modified_if_changed(revision);
     }
 
     /// 投影の種類を替える（C# の `SetProjectionMode`）。デカールは画像を 1 回（繰り返さない）、UV から型の上の投影に替えたとき置き場が
     /// 初めのままならモデルの外形に合わせる。置き場のハンドルをすぐ動かせるように出す。
     fn set_projection_mode(&mut self, layer: LayerId, mode: ProjectionMode) {
-        let Some(l) = self.doc.layer(layer) else {
+        let Some(l) = self.session.doc.layer(layer) else {
             return;
         };
         let p = *l.projection();
@@ -596,8 +603,8 @@ impl AppState {
             next.backface_angle = d.backface_angle;
             next.backface_hardness = d.backface_hardness;
         }
-        self.doc.end_coalescing();
-        match self.doc.set_fill_projection(layer, next, false) {
+        self.session.doc.end_coalescing();
+        match self.session.doc.set_fill_projection(layer, next, false) {
             Ok(()) => {
                 if mode != ProjectionMode::Uv {
                     self.fillfx.handles_hidden = false;
@@ -613,9 +620,10 @@ impl AppState {
         layer: LayerId,
         mode: ProjectionMode,
     ) -> Option<yolu_core::fill_image::Placement> {
-        let image = self.doc.layer(layer).and_then(|l| {
+        let image = self.session.doc.layer(layer).and_then(|l| {
             l.fill_images().find_map(|(_, id)| {
-                self.doc
+                self.session
+                    .doc
                     .effect_inputs()
                     .image(id)
                     .map(|i| (i.width, i.height))
@@ -634,7 +642,7 @@ impl AppState {
         if mode != ProjectionMode::Decal {
             return Some(placement::fit_to_bounds(&bounds, mode));
         }
-        let rotation = self.view3d.camera.rotation();
+        let rotation = self.view3d.view.camera.rotation();
         Some(placement::decal_fit(
             &bounds,
             rotation * yolu_core::glam::Vec3::Z,
@@ -652,15 +660,11 @@ impl AppState {
         let lang = self.lang;
         let rid = inputs::resource_id(image);
         let Some(name) = self.shelf.get(&rid).map(|r| r.name.clone()) else {
-            return Err(lang
-                .pick(
-                    "アセットに画像がありません",
-                    "No such image in the project's assets",
-                )
-                .into());
+            return Err(lang.t("fillfx-no-such-image-in-the").into());
         };
         self.use_shelf_image(&rid)?;
         match self
+            .session
             .doc
             .effect_inputs()
             .image(image)
@@ -669,9 +673,7 @@ impl AppState {
             Some(size) => Ok((name, size)),
             None => {
                 self.release_shelf_image(image);
-                Err(lang
-                    .pick("画像を読めません", "Cannot read the image")
-                    .into())
+                Err(lang.t("fillfx-cannot-read-the-image").into())
             }
         }
     }
@@ -685,23 +687,17 @@ impl AppState {
             self.refuse(Source::FillLayer, self.region_missing_reason());
             return;
         };
-        let view = self.view3d.camera.view(rect.width(), rect.height());
+        let view = self.view3d.view.camera.view(rect.width(), rect.height());
         let gui = Vec2::new(at.x - rect.left(), at.y - rect.top());
         let Some(hit) = yolu_core::geometry::pick(&model.geometry, &view, gui) else {
-            self.refuse(
-                Source::FillLayer,
-                lang.pick("モデルの上ではありません", "Not on the model"),
-            );
+            self.refuse(Source::FillLayer, lang.t("fillfx-not-on-the-model"));
             return;
         };
-        if hit.material != material {
+        if !material.contains(hit.material) {
             let name = model.material_name(hit.material as usize, lang);
             self.refuse(
                 Source::FillLayer,
-                lang.pick(
-                    format!("ほかのテクスチャセット（{name}）の面です。"),
-                    format!("Surface of another texture set ({name})."),
-                ),
+                lang.f("fillfx-surface-of-another-texture-set", &[("name", &name)]),
             );
             return;
         }
@@ -714,16 +710,14 @@ impl AppState {
         };
         let channel = self.m2.paint_channel;
         let kind = self
+            .session
             .doc
             .channel_info(channel)
             .map_or(ChannelKind::Color, |c| c.kind);
         let placed = placement::decal_at(&hit, &view, gui, size);
         let projection = placement::new_projection(ProjectionMode::Decal, Some(placed));
-        let above = self
-            .selected_layer
-            .filter(|id| self.doc.layer(*id).is_some());
-        self.doc.end_coalescing();
-        let result = self.doc.batch(|d| {
+        self.session.doc.end_coalescing();
+        let result = self.add_in_current_set_as(yolu_core::HistoryKind::Batch, |d, above| {
             let id = d.add_fill_layer(&name, &[(channel, default_fallback(kind))], above)?;
             d.set_fill_image(id, channel, Some(image))?;
             d.set_fill_projection(id, projection, false)?;
@@ -731,7 +725,7 @@ impl AppState {
         });
         match result {
             Ok(id) => {
-                self.selected_layer = Some(id);
+                self.session.selected_layer = Some(id);
                 self.set_edit_mask(false);
                 self.fillfx.handles_hidden = false;
                 self.fillfx.edit_gradient = None;
@@ -742,23 +736,14 @@ impl AppState {
                 match self.decal_problem(id) {
                     None => self.info(
                         Source::FillLayer,
-                        format!(
-                            "{}: {name}",
-                            lang.pick("デカールを置きました", "Decal placed")
-                        ),
+                        format!("{}: {name}", lang.t("fillfx-decal-placed")),
                     ),
                     // 置いたが、まだ出ない（理由つき）: 気をつけること
                     Some(why) => self.warn(
                         Source::FillLayer,
-                        lang.pick(
-                            format!(
-                                "デカールを置きました。{}はまだ出ません（{why}）。",
-                                lang.quote(&name)
-                            ),
-                            format!(
-                                "Decal placed. {} is not shown yet ({why}).",
-                                lang.quote(&name)
-                            ),
+                        lang.f(
+                            "fillfx-decal-placed-is-not-shown",
+                            &[("name", &lang.quote(&name)), ("why", &why)],
                         ),
                     ),
                 }
@@ -797,22 +782,16 @@ impl AppState {
                 let added = self.shelf.resources().len() > before;
                 self.shelf.selected = Some(id);
                 if added {
-                    self.modified = true;
+                    self.session.mark_modified();
                 }
                 self.info(
                     Source::FillLayer,
                     format!(
                         "{}: {name}",
                         if added {
-                            lang.pick(
-                                "アセットに画像を取り込みました",
-                                "Image added to the project's assets",
-                            )
+                            lang.t("fillfx-image-added-to-the-project")
                         } else {
-                            lang.pick(
-                                "すでにアセットにあります",
-                                "Already in the project's assets",
-                            )
+                            lang.t("fillfx-already-in-the-project-s")
                         }
                     ),
                 );
@@ -828,10 +807,7 @@ impl AppState {
 /// 「「名前」をアセットに取り込めません」（理由は `Lang::with_reason` で添える）。
 fn cannot_add_image(lang: Lang, name: &str) -> String {
     let name = lang.quote(name);
-    lang.pick(
-        format!("{name}をアセットに取り込めません"),
-        format!("Cannot import {name}"),
-    )
+    lang.f("fillfx-cannot-import", &[("name", &name)])
 }
 
 /// 取り込める画像の 1 辺の上限（core の画像の入力と同じ）。
@@ -840,27 +816,39 @@ const MAX_IMAGE_SIDE: u32 = 8192;
 /// PNG を straight RGBA8（上の行が先）で読む。寸法はヘッダーで先に見て、画素を読む前に断る（大きすぎる画像で全体を展開しない）。
 /// 読める上限（1 辺と確保）は `Limits` でも守る。
 fn read_png(path: &std::path::Path, lang: Lang) -> Result<(Vec<u8>, u32, u32), String> {
+    read_image(path, image::ImageFormat::Png, lang)
+}
+
+/// 画像（PNG・JPEG・TGA。`image` の機能にある形式）を straight RGBA8（上の行が先）で読む。上限は [`read_png`] と同じ（1 辺 1〜8192・確保 1 GiB）。
+/// 寸法はヘッダーで先に見て、画素を読む前に断る。
+pub(crate) fn read_image(
+    path: &std::path::Path,
+    format: image::ImageFormat,
+    lang: Lang,
+) -> Result<(Vec<u8>, u32, u32), String> {
     use image::ImageDecoder;
     let unreadable = || {
-        lang.pick("PNG として読めません", "Not a readable PNG")
-            .to_owned()
+        if format == image::ImageFormat::Png {
+            lang.t("fillfx-not-a-readable-png").to_owned()
+        } else {
+            lang.t("fillfx-not-a-readable-image").to_owned()
+        }
     };
     let file = std::fs::File::open(path).map_err(|e| lang.file_error(&e))?;
-    let mut decoder = image::codecs::png::PngDecoder::new(std::io::BufReader::new(file))
-        .map_err(|_| unreadable())?;
-    let (w, h) = decoder.dimensions();
-    if !(1..=MAX_IMAGE_SIDE).contains(&w) || !(1..=MAX_IMAGE_SIDE).contains(&h) {
-        return Err(lang
-            .pick(
-                "画像の 1 辺は 1〜8192 です",
-                "Image sides must be 1 to 8192",
-            )
-            .to_owned());
-    }
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_IMAGE_SIDE);
     limits.max_image_height = Some(MAX_IMAGE_SIDE);
     limits.max_alloc = Some(1 << 30);
+    let mut reader = image::ImageReader::with_format(std::io::BufReader::new(file), format);
+    reader.limits(limits.clone());
+    let mut decoder = reader.into_decoder().map_err(|e| match e {
+        image::ImageError::Limits(_) => lang.t("fillfx-image-sides-must-be-1").to_owned(),
+        _ => unreadable(),
+    })?;
+    let (w, h) = decoder.dimensions();
+    if !(1..=MAX_IMAGE_SIDE).contains(&w) || !(1..=MAX_IMAGE_SIDE).contains(&h) {
+        return Err(lang.t("fillfx-image-sides-must-be-1").to_owned());
+    }
     decoder.set_limits(limits).map_err(|_| unreadable())?;
     let img = image::DynamicImage::from_decoder(decoder)
         .map_err(|_| unreadable())?
@@ -869,7 +857,7 @@ fn read_png(path: &std::path::Path, lang: Lang) -> Result<(Vec<u8>, u32, u32), S
 }
 
 /// 行の並びを上下逆にする（1 行は `stride` バイト）。
-fn flip_rows(raw: &mut [u8], stride: usize) {
+pub(crate) fn flip_rows(raw: &mut [u8], stride: usize) {
     let rows = raw.len() / stride;
     for y in 0..rows / 2 {
         let (head, tail) = raw.split_at_mut((rows - 1 - y) * stride);
@@ -882,9 +870,9 @@ pub fn image_users(app: &AppState, resource_id: &str) -> Vec<String> {
     let Some(image) = inputs::image_id(resource_id) else {
         return Vec::new();
     };
-    let named = app.sets.len() > 1;
+    let named = app.session.sets.len() > 1;
     let mut users = Vec::new();
-    for (i, set) in app.sets.iter().enumerate() {
+    for (i, set) in app.session.sets.iter().enumerate() {
         for layer in app.set_doc(i).layers() {
             if layer.image_ids().any(|id| id == image)
                 || yolu_core::paths::list_images(layer.paths()).contains(&image)
@@ -915,7 +903,11 @@ pub fn decal_drop(ui: &egui::Ui, app: &mut AppState, content: Rect) {
     };
     let painter = ui.painter_at(content);
     let on_model = app.region_model().is_some_and(|(model, _)| {
-        let view = app.view3d.camera.view(content.width(), content.height());
+        let view = app
+            .view3d
+            .view
+            .camera
+            .view(content.width(), content.height());
         yolu_core::geometry::pick(
             &model.geometry,
             &view,

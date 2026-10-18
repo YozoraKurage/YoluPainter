@@ -15,7 +15,7 @@ use egui::{pos2, Color32, ColorImage, Painter, Pos2, Rect, TextureHandle, Textur
 use super::cpu::{CpuCanvas, FrameBudget, Viewport};
 use super::gpu::{CanvasBackend, Fallback, GpuCanvas, Shown};
 use super::view::CanvasView;
-use crate::engine::{Channel, Document, Rect as DocRect, RowOrder};
+use crate::engine::{Channel, Document, LayerSetId, Rect as DocRect, RowOrder};
 use crate::ui::theme as t;
 
 /// 頁の一辺（タイルの倍数）。
@@ -85,6 +85,15 @@ impl CanvasDisplay {
         doc: &Document,
         channel: Channel,
     ) -> Result<ColorImage, crate::engine::CoreError> {
+        Self::thumbnail_in(doc, channel, None)
+    }
+
+    /// `thumbnail` の、レイヤーセットの合成の縮小像（`set` が None なら最終の結果）。
+    pub fn thumbnail_in(
+        doc: &Document,
+        channel: Channel,
+        set: Option<LayerSetId>,
+    ) -> Result<ColorImage, crate::engine::CoreError> {
         let (w, h) = (doc.width(), doc.height());
         let scale = (256.0 / w.max(h) as f64).min(1.0);
         let (tw, th) = (
@@ -97,12 +106,18 @@ impl CanvasDisplay {
             for x in (0..w).step_by(128) {
                 let (bw, bh) = (128.min(w - x), 128.min(h - y));
                 buffer.resize((bw * bh * 4) as usize, 0);
-                doc.composite_into(
-                    channel,
-                    DocRect::new(x, y, bw, bh),
-                    &mut buffer,
-                    RowOrder::BottomUp,
-                )?;
+                let rect = DocRect::new(x, y, bw, bh);
+                match set {
+                    Some(set) => doc.composite_set_into_cancellable(
+                        set,
+                        channel,
+                        rect,
+                        &mut buffer,
+                        RowOrder::BottomUp,
+                        None,
+                    )?,
+                    None => doc.composite_into(channel, rect, &mut buffer, RowOrder::BottomUp)?,
+                }
                 for py in 0..bh {
                     for px in 0..bw {
                         let tx = (x + px) as usize * tw / w as usize;
@@ -145,7 +160,7 @@ impl CanvasDisplay {
         self.fallback = None;
     }
 
-    /// 文書の入れ替えの回数（`AppState::doc_epoch`）を渡す。変わっていたら、前の文書の合成（CPU の頁・GPU の常駐）を捨てて
+    /// 文書の入れ替えの回数（`Session::doc_epoch`）を渡す。変わっていたら、前の文書の合成（CPU の頁・GPU の常駐）を捨てて
     /// 次の `sync` で作り直す。文書 ID が同じでも（保存した ID が戻る読み直し）変更記録の通し番号で差分を読まないため。
     pub fn set_document_epoch(&mut self, epoch: u64) {
         if epoch != self.epoch {
@@ -209,9 +224,31 @@ impl CanvasDisplay {
         self.sync_channel(ctx, doc, Channel::Color)
     }
 
-    /// 文書の変わった所をテクスチャに上げる（`channel` の合成を出す）。上げた（合成し直した）タイルの数を返す。
+    /// 文書の変わった所をテクスチャに上げる（`channel` の最終の結果を出す）。上げた（合成し直した）タイルの数を返す。
     /// GPU で合成できるときは GPU、できなければ理由を覚えて CPU（毎フレームは GPU を試し直さない）。
     pub fn sync_channel(&mut self, ctx: &egui::Context, doc: &Document, channel: Channel) -> usize {
+        self.sync_view(ctx, doc, channel, None)
+    }
+
+    /// `sync_channel` の、レイヤーセット `set` の合成を出す形（2D のキャンバスは、今のレイヤーセットの合成を見せる）。`set` が None か、
+    /// `channel` の出力の割り当てのレイヤーセットなら最終の結果（同じ画素）で、GPU で合成できる。そうでないレイヤーセットは CPU の頁で
+    /// 合成する（GPU の合成は最終の結果の計画だけを作るので、`Fallback::LayerSet`）。
+    pub fn sync_view(
+        &mut self,
+        ctx: &egui::Context,
+        doc: &Document,
+        channel: Channel,
+        set: Option<LayerSetId>,
+    ) -> usize {
+        let set = set.filter(|s| doc.channel_output(channel) != Ok(Some(*s)));
+        self.cpu.show_set(set);
+        if set.is_some() {
+            if self.shown == Shown::Gpu {
+                self.leave_gpu();
+            }
+            self.fallback = Some(Fallback::LayerSet);
+            return self.sync_cpu(ctx, doc, channel);
+        }
         match self.gpu.decide(self.policy, doc, channel) {
             None => {
                 if self.shown != Shown::Gpu {

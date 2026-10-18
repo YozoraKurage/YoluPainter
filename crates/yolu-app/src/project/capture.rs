@@ -18,7 +18,7 @@ use yolu_core::mesh_maps::BakedMeshMap;
 use yolu_core::Document;
 use yolu_io::{composite_pngs, shelf::Shelf, DocumentSource, Project, SetSpec};
 
-use crate::lang::Lang;
+use crate::lang::{Count, Lang};
 use crate::newproject::relative_model_path;
 use crate::sets::MaterialRef;
 use crate::state::AppState;
@@ -32,7 +32,7 @@ const COMPOSITE_PARALLEL: usize = 4;
 pub(crate) struct SetCapture {
     pub id: String,
     pub name: String,
-    pub material: MaterialRef,
+    pub materials: Vec<MaterialRef>,
     /// 文書の写し（読むだけのセットは無い。選択範囲・見た目・Unity の値はここから）。
     pub snapshot: Option<Arc<Document>>,
     /// 正本・合成の PNG を作り直すか（開いた時のファイルに無い、または開いた・保存した時から変わった）。
@@ -73,11 +73,11 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
     if state.is_stroking() {
         return Err(crate::lang::refusals::during_stroke(lang).into());
     }
-    let base = state.project.as_ref().map(|p| p.project_shared());
-    let mut sets = Vec::with_capacity(state.sets.len());
+    let base = state.session.project.as_ref().map(|p| p.project_shared());
+    let mut sets = Vec::with_capacity(state.session.sets.len());
     let mut left_out = Vec::new();
     let mut maps = Vec::new();
-    for (i, set) in state.sets.iter().enumerate() {
+    for (i, set) in state.session.sets.iter().enumerate() {
         let doc = state.set_doc(i);
         let in_base = base
             .as_ref()
@@ -96,10 +96,7 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
         } else {
             let what = |e: &yolu_core::CoreError| {
                 lang.with_reason(
-                    lang.pick(
-                        format!("セット「{}」の写しを取れません", set.name),
-                        format!("Cannot copy texture set “{}”", set.name),
-                    ),
+                    lang.f("project-cannot-copy-texture-set", &[("name", &set.name)]),
                     lang.core_error(e),
                 )
             };
@@ -112,22 +109,21 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
         sets.push(SetCapture {
             id: set.id.clone(),
             name: set.name.clone(),
-            material: set.material.clone(),
+            materials: set.materials.clone(),
             snapshot,
             rewrite,
             mark: (doc.id(), doc.revision()),
         });
     }
     // 今のセットを除いたときは、並びで最初の残るセットを今のセットにする。残るセットが無ければ書くものが無いので断る
-    let current = state.sets.current().id.clone();
+    let current = state.session.sets.current().id.clone();
     let current = match sets.iter().find(|s| s.id == current).or(sets.first()) {
         Some(set) => set.id.clone(),
         None => {
             let quoted = quoted_names(lang, &left_out);
-            let have = if left_out.len() == 1 { "has" } else { "have" };
-            return Err(lang.pick(
-                format!("{quoted}は保存したことが無く、読めません"),
-                format!("{quoted} cannot be read and {have} never been saved"),
+            return Err(lang.f(
+                "project-cannot-be-read-and-have",
+                &[("quoted", &quoted), ("count", &Count(left_out.len()))],
             ));
         }
     };
@@ -138,6 +134,7 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
         base.as_deref(),
         // 読むだけのセットの文書は見せるだけの写し（保存の正本は開いたときのバイト列のまま）なので数えない
         state
+            .session
             .sets
             .iter()
             .enumerate()
@@ -165,14 +162,11 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
 
 /// セットの名前を、言語ごとの引用の形に並べる（日本語は「A」「B」、英語は "A", "B"）。
 pub(crate) fn quoted_names(lang: Lang, names: &[String]) -> String {
-    lang.pick(
-        names.iter().map(|n| format!("「{n}」")).collect::<String>(),
-        names
-            .iter()
-            .map(|n| format!("\"{n}\""))
-            .collect::<Vec<_>>()
-            .join(", "),
-    )
+    names
+        .iter()
+        .map(|n| lang.quote(n))
+        .collect::<Vec<_>>()
+        .join(lang.t("project-quoted-names-separator"))
 }
 
 /// 読めないため保存に入れなかったセットの知らせ（1 文。無ければ空）。
@@ -181,10 +175,7 @@ pub(crate) fn left_out_note(lang: Lang, names: &[String]) -> String {
         return String::new();
     }
     let quoted = quoted_names(lang, names);
-    lang.pick(
-        format!("テクスチャセット{quoted}は読めないため、保存に入れていません。"),
-        format!("Texture set {quoted} could not be read and was left out of the save."),
-    )
+    lang.f("project-texture-set-could-not-be", &[("quoted", &quoted)])
 }
 
 /// 組み立てが済まなかった理由。
@@ -255,7 +246,7 @@ pub(crate) fn build(
         specs.push(SetSpec {
             id: set.id.clone(),
             name: set.name.clone(),
-            material: set.material.clone(),
+            materials: set.materials.clone(),
             document,
             composites,
         });
@@ -360,10 +351,7 @@ pub(crate) fn build(
         for map in maps {
             project = project.with_mesh_map(id, map).map_err(|e| {
                 BuildError::Message(lang.with_reason(
-                    lang.pick(
-                        format!("セット「{name}」のメッシュマップを書けません"),
-                        format!("Cannot write the mesh maps of set \"{name}\""),
-                    ),
+                    lang.f("project-cannot-write-the-mesh-maps", &[("name", &name)]),
                     lang.io_error(&e),
                 ))
             })?;
@@ -373,10 +361,7 @@ pub(crate) fn build(
     if let Some(shelf) = &capture.shelf {
         project = project.with_shelf(shelf, writer).map_err(|e| {
             BuildError::Message(lang.with_reason(
-                lang.pick(
-                    "プロジェクトのアセットを書けません",
-                    "Cannot write the project's assets",
-                ),
+                lang.t("project-cannot-write-the-project-s"),
                 lang.io_error(&e),
             ))
         })?;
@@ -439,21 +424,18 @@ fn compose_sets(
             .expect("読むだけのセットは作り直さない");
         let native = DocumentSource::from_core(doc.clone()).map_err(|e| {
             BuildError::Message(lang.with_reason(
-                lang.pick(
-                    format!("セット「{}」の中身を作れません", set.name),
-                    format!("Cannot build the contents of texture set “{}”", set.name),
+                lang.f(
+                    "project-cannot-build-the-contents-of",
+                    &[("name", &set.name)],
                 ),
                 lang.io_error(&e),
             ))
         })?;
         let pngs = composite_pngs(doc).map_err(|e| {
             BuildError::Message(lang.with_reason(
-                lang.pick(
-                    format!("セット「{}」の合成の PNG を作れません", set.name),
-                    format!(
-                        "Cannot build the composite PNG of texture set “{}”",
-                        set.name
-                    ),
+                lang.f(
+                    "project-cannot-build-the-composite-png",
+                    &[("name", &set.name)],
                 ),
                 lang.io_error(&e),
             ))

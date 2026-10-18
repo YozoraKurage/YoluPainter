@@ -1,6 +1,7 @@
 //! 3D ビューの表示の写しの塗り広げ（UV の外へ。`view3d::paint` の `set_padding`）: アイランドの中は正本と同じバイト・アイランドの外は書き出しと同じ式で
 //! 塗り広がる・描いたタイルの周りだけの塗り広げ直しが全体の塗り広げと同じ・モデルの UV が替わると覆いを作り直す・離れて見たときの継ぎ目。
 use crate::common;
+use crate::common::drive::{Drive, DriveApp};
 
 use common::*;
 use egui_kittest::Harness;
@@ -46,9 +47,7 @@ fn view_for_measure(width: f32, height: f32, doc: u32) -> Harness<'static, YoluA
 }
 
 fn view_on(mut h: Harness<'static, YoluApp>) -> Harness<'static, YoluApp> {
-    h.state_mut()
-        .state
-        .doc
+    h.doc_mut()
         .restore_look(yolu_core::look::MaterialLook::default())
         .unwrap();
     click_tab(&mut h, yolu_app::Tab::View3d);
@@ -58,16 +57,17 @@ fn view_on(mut h: Harness<'static, YoluApp>) -> Harness<'static, YoluApp> {
 }
 
 fn set_model(h: &mut Harness<'_, YoluApp>, meshes: Vec<ModelMesh>) {
-    let state = &mut h.state_mut().state;
-    let revision = state.view3d.next_revision();
-    state.view3d.material = 0;
-    let model = ViewModel::new("試験", meshes, vec![Some("試験".to_string())], revision).unwrap();
-    state.view3d.set_model(model);
+    let state = h.app_mut();
+    let revision = state.view3d_mut().next_revision();
+    state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
+    let model =
+        ViewModel::new("テスト", meshes, vec![Some("テスト".to_string())], revision).unwrap();
+    state.view3d_mut().set_model(model);
     h.run();
 }
 
 fn look_at(h: &mut Harness<'_, YoluApp>, distance: f32, yaw: f32, pitch: f32) {
-    h.state_mut().state.view3d.camera = OrbitCamera {
+    h.view3d_mut().view.camera = OrbitCamera {
         target: Vec3::ZERO,
         yaw,
         pitch,
@@ -94,7 +94,12 @@ fn keep_of(mesh: &ModelMesh, size: u32) -> Vec<bool> {
 }
 
 fn first_layer(h: &Harness<'_, YoluApp>) -> LayerId {
-    h.state().state.doc.layers()[0].id()
+    h.doc()
+        .layers()
+        .iter()
+        .find(|l| l.kind() == yolu_app::engine::LayerKind::Raster)
+        .unwrap()
+        .id()
 }
 
 /// レイヤーのチャンネルに、`at` が返す画素を丸ごと読み込む（行は下から。タイルごと）。
@@ -117,7 +122,7 @@ fn import(doc: &mut Document, layer: LayerId, channel: Channel, at: impl Fn(u32,
 /// アイランドの中（覆うテクセル）だけを塗った文書: Color はアイランドごとに違う色（アイランドの外は透明）、Roughness はアイランドの中だけ 200。
 fn paint_inside(h: &mut Harness<'_, YoluApp>, keep: &[bool]) {
     let layer = first_layer(h);
-    let doc = &mut h.state_mut().state.doc;
+    let doc = h.doc_mut();
     let size = doc.width();
     import(doc, layer, Channel::Color, |x, y| {
         if keep[(y * size + x) as usize] {
@@ -210,7 +215,7 @@ fn the_view_copy_keeps_island_texels_and_fills_outside_like_the_export() {
     set_model(&mut h, vec![mesh]);
     look_at(&mut h, 2.5, 30.0, 20.0);
     let color = level0(&h, Slot::Color);
-    let doc = &h.state().state.doc;
+    let doc = h.doc();
     // アイランドの中は正本（合成）を塗り広げずに上げたのと同じバイト
     let plain = reduce_srgb_premultiplied(
         &doc.composite_channel(Channel::Color, doc.bounds()).unwrap(),
@@ -281,7 +286,7 @@ fn repadding_only_the_painted_tiles_matches_padding_the_whole_image() {
     look_at(&mut h, 2.0, 180.0, 0.0);
     let layer = first_layer(&h);
     let rings = padding::Rings::new(size, size, &keep, DISPLAY_PAD_TEXELS).unwrap();
-    let ts = h.state().state.doc.tile_size();
+    let ts = h.doc().tile_size();
     assert_eq!(ts, 128);
     let tile = |tx: u32, ty: u32| Rect::new(tx * ts, ty * ts, ts, ts);
     let grown = |r: Rect| {
@@ -314,7 +319,7 @@ fn repadding_only_the_painted_tiles_matches_padding_the_whole_image() {
         assert_eq!(near_filled, near, "{name}: 塗り広げるテクセル");
         let before = h.state().view3d_stats().unwrap();
         {
-            let doc = &mut h.state_mut().state.doc;
+            let doc = h.doc_mut();
             let (cx, cy) = (t.x + ts / 2, t.y + ts / 2);
             for y in cy - 3..cy + 3 {
                 for x in cx - 3..cx + 3 {
@@ -346,7 +351,7 @@ fn repadding_only_the_painted_tiles_matches_padding_the_whole_image() {
             1,
             "{name}"
         );
-        let doc = &h.state().state.doc;
+        let doc = h.doc();
         assert!(
             level0(&h, Slot::Color) == expected_color(doc, &keep),
             "{name}: タイルだけの Color が全体の塗り広げと同じ"
@@ -426,20 +431,20 @@ fn check_shrunk_current(size: u32, shift: u32, budget: u64, cases: Cases<'_>) {
         h.state().view3d_read_paint_level(Slot::Color, 0).unwrap().1,
         [small, small]
     );
-    let doc = &h.state().state.doc;
+    let doc = h.doc();
     assert!(
         level0(&h, Slot::Color) == expected_color_at(doc, &keep, shift),
         "作った直後の Color"
     );
     let layer = first_layer(&h);
     let rings = padding::Rings::new(size, size, &keep, reach_for(shift)).unwrap();
-    let ts = h.state().state.doc.tile_size();
+    let ts = h.doc().tile_size();
     for (name, (tx, ty), kinds) in cases {
         let tile = Rect::new(tx * ts, ty * ts, ts, ts);
         assert_eq!(tile_kinds(&rings, tile, size), *kinds, "{name}: 場合");
         let before = h.state().view3d_stats().unwrap();
         touch(
-            &mut h.state_mut().state.doc,
+            h.doc_mut(),
             layer,
             tile,
             &[
@@ -456,7 +461,7 @@ fn check_shrunk_current(size: u32, shift: u32, budget: u64, cases: Cases<'_>) {
             1,
             "{name}"
         );
-        let doc = &h.state().state.doc;
+        let doc = h.doc();
         assert!(
             level0(&h, Slot::Color) == expected_color_at(doc, &keep, shift),
             "{name}: タイルだけの Color が、文書の解像度で塗り広げてから縮めたものと同じ"
@@ -567,14 +572,15 @@ fn two_sets(size: u32, meshes: [ModelMesh; 2]) -> Harness<'static, YoluApp> {
     h.state_mut().load_live_link_model(&model).unwrap();
     h.run();
     look_at(&mut h, 4.0, 180.0, 0.0);
-    assert_eq!(h.state().state.sets.len(), 2);
+    assert_eq!(h.sets().len(), 2);
     h
 }
 
 /// 文書 `set` の最初のレイヤーに、アイランドの中だけを塗った Color と Roughness（`paint_inside` の、今のセット以外の文書向け）。
 fn paint_inside_set(h: &mut Harness<'_, YoluApp>, set: usize, keep: &[bool]) -> LayerId {
-    let doc = h.state_mut().state.set_doc_mut(set);
-    let layer = doc.layers()[0].id();
+    let doc = h.app_mut().set_doc_mut(set);
+    // 白の単色の上の、空のレイヤー
+    let layer = doc.layers().last().unwrap().id();
     let size = doc.width();
     import(doc, layer, Channel::Color, |x, y| {
         if keep[(y * size + x) as usize] {
@@ -601,7 +607,7 @@ fn repadding_a_tile_of_another_set_held_shrunk_matches_padding_the_document_then
     let shift = 2;
     let mut h = two_sets(size, [quad_island(0.55, 1.0), quad_island(0.55, 1.0)]);
     h.state_mut().view3d_set_other_cap(size >> shift);
-    let model = h.state().state.view3d.model.clone().unwrap();
+    let model = h.view3d().model.clone().unwrap();
     // セット 1（マテリアル 1）の面の UV から覆いを作る（アプリが見ているモデルの UV）
     let keep = keep_of(&model.meshes[1], size);
     let layer = paint_inside_set(&mut h, 1, &keep);
@@ -614,7 +620,7 @@ fn repadding_a_tile_of_another_set_held_shrunk_matches_padding_the_document_then
         assert_eq!((dims, level), ([size >> shift; 2], shift));
         texels
     };
-    let doc = h.state().state.set_doc(1);
+    let doc = h.app().set_doc(1);
     assert!(
         read(&h, Slot::Color) == expected_color_at(doc, &keep, shift),
         "作った直後の Color"
@@ -624,7 +630,7 @@ fn repadding_a_tile_of_another_set_held_shrunk_matches_padding_the_document_then
         "作った直後の Roughness"
     );
     let rings = padding::Rings::new(size, size, &keep, reach_for(shift)).unwrap();
-    let ts = h.state().state.set_doc(1).tile_size();
+    let ts = h.app().set_doc(1).tile_size();
     // 同じセットの文書を、何度か 1 タイルずつ変える（そのたびに同期して、絵は文書の解像度で塗り広げてから縮めたものと同じ）
     for (name, (tx, ty), kinds) in [
         ("アイランドの縁をまたぐ", (4, 4), (true, true)),
@@ -635,7 +641,7 @@ fn repadding_a_tile_of_another_set_held_shrunk_matches_padding_the_document_then
         let tile = Rect::new(tx * ts, ty * ts, ts, ts);
         assert_eq!(tile_kinds(&rings, tile, size), kinds, "{name}: 場合");
         touch(
-            h.state_mut().state.set_doc_mut(1),
+            h.app_mut().set_doc_mut(1),
             layer,
             tile,
             &[
@@ -647,7 +653,7 @@ fn repadding_a_tile_of_another_set_held_shrunk_matches_padding_the_document_then
         // ほかのセットは、作り終えたら段の地図を手放す（文書の大きさのメモリを、ほかのセットの数に比例して残さない）
         let stats = h.state().view3d_stats().unwrap();
         assert_eq!(stats.other_scratch_bytes, 0, "{name}: {stats:?}");
-        let doc = h.state().state.set_doc(1);
+        let doc = h.app().set_doc(1);
         assert!(
             read(&h, Slot::Color) == expected_color_at(doc, &keep, shift),
             "{name}: ほかのセットの Color"
@@ -668,7 +674,7 @@ fn check_normal_from_height(edges: HeightEdgeMode, shift: u32, budget: Option<u6
     let keep = keep_of(&mesh, size);
     let layer = first_layer(&h);
     {
-        let doc = &mut h.state_mut().state.doc;
+        let doc = h.doc_mut();
         // アイランドの中だけに、緩い起伏の Height（アイランドの外は透明）
         import(doc, layer, Channel::Height, |x, y| {
             if keep[(y * size + x) as usize] {
@@ -691,13 +697,13 @@ fn check_normal_from_height(edges: HeightEdgeMode, shift: u32, budget: Option<u6
     set_model(&mut h, vec![mesh]);
     look_at(&mut h, 2.0, 180.0, 0.0);
     assert_eq!(h.state().view3d_stats().unwrap().paint_level, shift);
-    let doc = &h.state().state.doc;
+    let doc = h.doc();
     assert!(
         level0(&h, Slot::Normal) == expected_normal_at(doc, &keep, shift),
         "作った直後の Normal"
     );
     let rings = padding::Rings::new(size, size, &keep, reach_for(shift)).unwrap();
-    let ts = h.state().state.doc.tile_size();
+    let ts = h.doc().tile_size();
     let cases: Cases<'_> = &[
         ("アイランドの縁をまたぐ", (3, 3), (true, true)),
         ("アイランドの縁とキャンバスの端", (3, 0), (true, true)),
@@ -710,7 +716,7 @@ fn check_normal_from_height(edges: HeightEdgeMode, shift: u32, budget: Option<u6
         assert_eq!(tile_kinds(&rings, tile, size), *kinds, "{name}: 場合");
         let before = h.state().view3d_stats().unwrap();
         touch(
-            &mut h.state_mut().state.doc,
+            h.doc_mut(),
             layer,
             tile,
             &[(Channel::Height, Rgba8::new(250, 250, 250, 255))],
@@ -725,7 +731,7 @@ fn check_normal_from_height(edges: HeightEdgeMode, shift: u32, budget: Option<u6
                 > before.total_slot_tiles[Slot::Normal.index()],
             "{name}: Normal を上げた"
         );
-        let doc = &h.state().state.doc;
+        let doc = h.doc();
         assert!(
             level0(&h, Slot::Normal) == expected_normal_at(doc, &keep, shift),
             "{name}: タイルだけの Normal が、出力全体を塗り広げてから縮めたものと同じ"
@@ -765,7 +771,7 @@ fn a_model_with_other_uvs_rebuilds_the_coverage_and_a_new_pose_does_not() {
     paint_inside(&mut h, &keep_a);
     set_model(&mut h, vec![a.clone()]);
     look_at(&mut h, 2.5, 30.0, 20.0);
-    assert!(level0(&h, Slot::Color) == expected_color(&h.state().state.doc, &keep_a));
+    assert!(level0(&h, Slot::Color) == expected_color(h.doc(), &keep_a));
     // 同じ UV で位置だけ違う（ポーズを変えたのと同じ: 面の世代が変わる）モデルは、作り直さない
     let mut moved = a.clone();
     for p in &mut moved.positions {
@@ -781,11 +787,11 @@ fn a_model_with_other_uvs_rebuilds_the_coverage_and_a_new_pose_does_not() {
     assert_ne!(keep_a, keep_b);
     set_model(&mut h, vec![b]);
     assert!(h.state().view3d_stats().unwrap().last_rebuilt);
-    assert!(level0(&h, Slot::Color) == expected_color(&h.state().state.doc, &keep_b));
+    assert!(level0(&h, Slot::Color) == expected_color(h.doc(), &keep_b));
     // 塗り広げを切れば、前と同じ（アイランドの外は透明のまま）
     h.state_mut().view3d_set_display_padding(0);
     h.run();
-    let doc = &h.state().state.doc;
+    let doc = h.doc();
     let plain = reduce_srgb_premultiplied(
         &doc.composite_channel(Channel::Color, doc.bounds()).unwrap(),
         doc.bounds(),
@@ -834,7 +840,7 @@ fn seam_shots_with(
     (distance, yaw, pitch): (f32, f32, f32),
 ) -> (image::RgbaImage, image::RgbaImage) {
     let layer = first_layer(h);
-    let size = h.state().state.doc.width();
+    let size = h.doc().width();
     let colored = |x: u32, y: u32, keep: &[bool]| {
         if keep[(y * size + x) as usize] {
             inside
@@ -855,20 +861,12 @@ fn seam_shots_with(
         )
         .to_image()
     };
-    import(
-        &mut h.state_mut().state.doc,
-        layer,
-        Channel::Color,
-        |x, y| colored(x, y, keep),
-    );
+    import(h.doc_mut(), layer, Channel::Color, |x, y| {
+        colored(x, y, keep)
+    });
     h.run();
     let inside_shot = shot(h);
-    import(
-        &mut h.state_mut().state.doc,
-        layer,
-        Channel::Color,
-        |_, _| inside,
-    );
+    import(h.doc_mut(), layer, Channel::Color, |_, _| inside);
     h.run();
     let full = shot(h);
     (inside_shot, full)
@@ -927,20 +925,16 @@ fn far_away_the_island_borders_no_longer_bleed_the_transparent_outside() {
     assert_eq!(after, 0, "塗り広げるとアイランドの縁がにじまない");
     // アイランドの中だけを塗った絵（塗り広げあり）
     let layer = first_layer(&h);
-    import(
-        &mut h.state_mut().state.doc,
-        layer,
-        Channel::Color,
-        |x, y| {
-            if keep[(y * size + x) as usize] {
-                [230, 120, 60, 255]
-            } else {
-                [0, 0, 0, 0]
-            }
-        },
-    );
+    import(h.doc_mut(), layer, Channel::Color, |x, y| {
+        if keep[(y * size + x) as usize] {
+            [230, 120, 60, 255]
+        } else {
+            [0, 0, 0, 0]
+        }
+    });
     h.run();
-    h.snapshot("view3d_padding_far");
+    let area = crate::view3d_area(&h);
+    crate::common::shot::region(&mut h, "view3d_padding_far", area);
 }
 
 /// 平らな立方体（面ごとに 3 × 2 のセルの中に、セルの中心のまわりに `scale` 倍の正方形のアイランド）。面の辺が UV の継ぎ目になる。
@@ -1124,14 +1118,14 @@ fn every_mip_level_holds_only_the_uv_colors_never_the_outside_fill() {
     let mesh = quad_island(0.3, 0.7);
     let keep = keep_of(&mesh, size);
     let layer = first_layer(&h);
-    paint_with_outside_fill(&mut h.state_mut().state.doc, layer, &keep);
+    paint_with_outside_fill(h.doc_mut(), layer, &keep);
     set_model(&mut h, vec![mesh]);
     look_at(&mut h, 2.0, 180.0, 0.0);
     let color = color_levels(&h, Slot::Color);
     assert_eq!(color.len(), 9, "256² は 9 段");
     assert!(
         color[0].0.chunks(4).any(|t| t == [255, 255, 255, 255]),
-        "段 0 の遠い外側は塗り広げの外で白のまま（試験の前提）"
+        "段 0 の遠い外側は塗り広げの外で白のまま（テストの前提）"
     );
     let off = texels_with_outside_fill(|slot| color_levels(&h, slot));
     println!("段 1 以降で外側の値を含むテクセル: {off:?}");
@@ -1149,7 +1143,7 @@ fn every_mip_level_of_a_shrunk_picture_holds_only_the_uv_colors() {
     let mesh = quad_island(0.3, 0.7);
     let keep = keep_of(&mesh, size);
     let layer = first_layer(&h);
-    paint_with_outside_fill(&mut h.state_mut().state.doc, layer, &keep);
+    paint_with_outside_fill(h.doc_mut(), layer, &keep);
     h.state_mut().view3d_set_paint_budget(2 << 20);
     set_model(&mut h, vec![mesh]);
     look_at(&mut h, 2.0, 180.0, 0.0);
@@ -1168,11 +1162,11 @@ fn every_mip_level_of_another_set_holds_only_the_uv_colors() {
     let size = 512;
     let mut h = two_sets(size, [quad_island(0.3, 0.7), quad_island(0.3, 0.7)]);
     h.state_mut().view3d_set_other_cap(size / 2);
-    let model = h.state().state.view3d.model.clone().unwrap();
+    let model = h.view3d().model.clone().unwrap();
     let keep = keep_of(&model.meshes[1], size);
     {
-        let doc = h.state_mut().state.set_doc_mut(1);
-        let layer = doc.layers()[0].id();
+        let doc = h.app_mut().set_doc_mut(1);
+        let layer = doc.layers().last().unwrap().id();
         paint_with_outside_fill(doc, layer, &keep);
     }
     h.run();
@@ -1222,22 +1216,17 @@ fn the_pull_fills_texels_without_uv_pixels_from_the_coarser_level() {
     let layer = first_layer(&h);
     let red = [250u8, 20, 20, 255];
     let blue = [20u8, 30, 240, 255];
-    import(
-        &mut h.state_mut().state.doc,
-        layer,
-        Channel::Color,
-        |x, y| {
-            if keep[(y * size + x) as usize] {
-                if x < size / 2 {
-                    red
-                } else {
-                    blue
-                }
+    import(h.doc_mut(), layer, Channel::Color, |x, y| {
+        if keep[(y * size + x) as usize] {
+            if x < size / 2 {
+                red
             } else {
-                [255, 255, 255, 255]
+                blue
             }
-        },
-    );
+        } else {
+            [255, 255, 255, 255]
+        }
+    });
     set_model(&mut h, vec![mesh]);
     look_at(&mut h, 3.0, 180.0, 0.0);
     let (colors, weights) = (color_levels(&h, Slot::Color), weight_levels(&h));
@@ -1269,7 +1258,7 @@ fn the_pull_fills_texels_without_uv_pixels_from_the_coarser_level() {
                 if let Some(first) = near.first() {
                     assert!(
                         near.iter().all(|n| n == first),
-                        "試験の前提: となりのアイランドは 1 つ"
+                        "テストの前提: となりのアイランドは 1 つ"
                     );
                     assert_eq!(
                         texel, *first,
@@ -1362,7 +1351,7 @@ fn the_weight_picture_counts_the_uv_pixels_of_each_texel_at_every_level() {
         let mesh = quad_island(0.3, 0.7);
         let keep = keep_of(&mesh, size);
         let layer = first_layer(&h);
-        paint_with_outside_fill(&mut h.state_mut().state.doc, layer, &keep);
+        paint_with_outside_fill(h.doc_mut(), layer, &keep);
         if let Some(budget) = budget {
             h.state_mut().view3d_set_paint_budget(budget);
         }
@@ -1437,9 +1426,9 @@ fn check_mips_after_a_stroke_match_a_full_rebuild(
     };
     let rings = padding::Rings::new(size, size, keep, reach_for(shift)).unwrap();
     let ts = if other_set {
-        h.state().state.set_doc(1).tile_size()
+        h.app().set_doc(1).tile_size()
     } else {
-        h.state().state.doc.tile_size()
+        h.doc().tile_size()
     };
     let mut touched = 0;
     for (name, (tx, ty), kinds) in cases {
@@ -1458,9 +1447,9 @@ fn check_mips_after_a_stroke_match_a_full_rebuild(
             ),
         ];
         let doc = if other_set {
-            h.state_mut().state.set_doc_mut(1)
+            h.app_mut().set_doc_mut(1)
         } else {
-            &mut h.state_mut().state.doc
+            h.doc_mut()
         };
         touch(doc, layer, tile, &channels);
         h.run();
@@ -1548,7 +1537,7 @@ fn mips_of_another_set_after_painting_one_tile_match_a_full_rebuild() {
     let size = 1024;
     let mut h = two_sets(size, [quad_island(0.55, 1.0), quad_island(0.55, 1.0)]);
     h.state_mut().view3d_set_other_cap(size >> 2);
-    let model = h.state().state.view3d.model.clone().unwrap();
+    let model = h.view3d().model.clone().unwrap();
     let keep = keep_of(&model.meshes[1], size);
     let layer = paint_inside_set(&mut h, 1, &keep);
     h.run();
@@ -1579,14 +1568,14 @@ fn mips_after_painting_a_whole_tile_match_a_full_rebuild_where_the_view_reads_th
     set_model(&mut h, vec![mesh]);
     look_at(&mut h, 2.0, 180.0, 0.0);
     let layer = first_layer(&h);
-    let ts = h.state().state.doc.tile_size();
+    let ts = h.doc().tile_size();
     for (name, (tx, ty)) in [("縁", (0u32, 1u32)), ("縁と角", (3, 3)), ("奥", (1, 1))] {
         h.state_mut().view3d_invalidate_paint();
         h.run();
         h.run();
         let tile = Rect::new(tx * ts, ty * ts, ts, ts);
         {
-            let doc = &mut h.state_mut().state.doc;
+            let doc = h.doc_mut();
             for y in tile.y..tile.y + ts {
                 for x in tile.x..tile.x + ts {
                     for channel in [Channel::Color, Channel::Roughness] {
@@ -1634,7 +1623,7 @@ fn the_weight_picture_counts_against_the_budget_and_goes_away_without_padding() 
     let prepared = |budget: Option<u64>| {
         let mut h = view(900.0, 700.0, size);
         let layer = first_layer(&h);
-        paint_with_outside_fill(&mut h.state_mut().state.doc, layer, &keep);
+        paint_with_outside_fill(h.doc_mut(), layer, &keep);
         if let Some(budget) = budget {
             h.state_mut().view3d_set_paint_budget(budget);
         }
@@ -1708,9 +1697,7 @@ fn measure_painting_frames_with_and_without_display_padding() {
     let layer = first_layer(&h);
     let started = Instant::now();
     paint_inside(&mut h, &keep);
-    h.state_mut()
-        .state
-        .doc
+    h.doc_mut()
         .add_fill_layer(
             "値",
             &[
@@ -1722,7 +1709,7 @@ fn measure_painting_frames_with_and_without_display_padding() {
         )
         .unwrap();
     h.step();
-    h.state().view3d_wait_gpu();
+    h.view3d_wait_gpu();
     let s = h.state().view3d_stats().unwrap();
     println!(
         "初めての構築: {:.0} ms（同期 {:.0} ms）",
@@ -1737,7 +1724,7 @@ fn measure_painting_frames_with_and_without_display_padding() {
         for _ in 0..FRAMES {
             counter += 1;
             let (x, y) = (200 + counter * 37 % 3500, 300 + counter * 53 % 3400);
-            let doc = &mut h.state_mut().state.doc;
+            let doc = h.doc_mut();
             for k in 0..2 {
                 for (channel, v) in [
                     (Channel::Color, Rgba8::new(255, 128, 0, 255)),
@@ -1748,7 +1735,7 @@ fn measure_painting_frames_with_and_without_display_padding() {
                 }
             }
             h.step();
-            h.state().view3d_wait_gpu();
+            h.view3d_wait_gpu();
             sync.push(h.state().view3d_stats().unwrap().last_sync_us as f64 / 1000.0);
         }
         sync.iter().sum::<f64>() / sync.len() as f64
@@ -1761,7 +1748,7 @@ fn measure_painting_frames_with_and_without_display_padding() {
             h.state_mut().view3d_set_display_padding(texels);
             h.state_mut().view3d_invalidate_paint();
             h.step();
-            h.state().view3d_wait_gpu();
+            h.view3d_wait_gpu();
             results[i].push(frames(&mut h));
         }
     }
@@ -1794,17 +1781,17 @@ fn shape_gradient_scene_on(
     use yolu_core::mesh_maps::MeshMapKind;
     use yolu_core::{EffectSettings, FilterSpec, FilterTarget, MapInput};
     {
-        let s = &mut h.state_mut().state;
-        s.bake.backend = BakeBackend::Cpu;
-        s.apply(Action::LoadDemoModel);
-        s.bake.settings.maps = vec![MeshMapKind::WorldNormal, MeshMapKind::Position];
-        s.bake.settings.padding = 4;
-        s.apply(Action::Bake(BakeAction::Start));
+        let s = h.app_mut();
+        s.bake_mut().backend = BakeBackend::Cpu;
+        s.act(Action::LoadDemoModel);
+        s.bake_mut().settings.maps = vec![MeshMapKind::WorldNormal, MeshMapKind::Position];
+        s.bake_mut().settings.padding = 4;
+        s.act(Action::Bake(BakeAction::Start));
         s.wait_bake();
-        let mut inputs = s.doc.effect_inputs().clone();
+        let mut inputs = s.doc().effect_inputs().clone();
         for kind in [MeshMapKind::Position, MeshMapKind::WorldNormal] {
             let map = s
-                .sets
+                .sets()
                 .current()
                 .mesh_maps
                 .get(kind)
@@ -1814,10 +1801,10 @@ fn shape_gradient_scene_on(
                 .with_map(MapInput::from_baked(&map, MapState::Current).expect("マップ"))
                 .expect("入力");
         }
-        s.doc.set_effect_inputs(inputs).expect("入力を置く");
-        s.apply(Action::M2(Edit::NewFill));
-        let layer = s.selected_layer.expect("足したレイヤー");
-        s.doc
+        s.doc_mut().set_effect_inputs(inputs).expect("入力を置く");
+        s.act(Action::M2(Edit::NewFill));
+        let layer = s.selected_layer().expect("足したレイヤー");
+        s.doc_mut()
             .set_fill_value(
                 layer,
                 Channel::Color,
@@ -1830,22 +1817,22 @@ fn shape_gradient_scene_on(
         settings.volume.center = [-0.5, 0.5, 0.5];
         settings.volume.size = [0.9; 3];
         let filter = s
-            .doc
+            .doc_mut()
             .add_filter(
                 layer,
                 FilterTarget::Content,
                 FilterSpec::new(EffectSettings::generator(settings)).channels(&[Channel::Color]),
             )
             .unwrap();
-        s.view3d.camera.yaw = -40.0;
-        s.view3d.camera.pitch = 15.0;
-        s.apply(Action::Fill(FillOp::EditFilter(Some((layer, filter)))));
+        s.view3d_mut().view.camera.yaw = -40.0;
+        s.view3d_mut().view.camera.pitch = 15.0;
+        s.act(Action::Fill(FillOp::EditFilter(Some((layer, filter)))));
     }
     h.run();
     h.step();
-    h.state().view3d_wait_gpu();
+    h.view3d_wait_gpu();
     let rect = h.state().view3d_rect().unwrap();
-    let from = gizmo::handle_point(&h.state().state, rect, Handle::SizeXPos).expect("つまみ");
+    let from = gizmo::handle_point(h.app(), rect, Handle::SizeXPos).expect("つまみ");
     (h, from)
 }
 
@@ -1858,10 +1845,7 @@ fn drag_shape_handle(
 ) {
     press(h, from, egui::PointerButton::Primary);
     h.step();
-    assert!(
-        h.state().state.fillfx.drag.is_some(),
-        "つまみのドラッグが始まった"
-    );
+    assert!(h.fillfx().drag.is_some(), "つまみのドラッグが始まった");
     for frame in 0..frames {
         // 最初のフレームから動かす（動かさないと文書が変わらない）
         let wobble = 30.0 * ((frame + 1) as f32 * 0.35).sin();
@@ -1932,28 +1916,28 @@ fn add_blur_scene(
     keep: &[bool],
 ) -> (LayerId, yolu_core::FilterId) {
     use yolu_core::{EffectSettings, FilterSpec, FilterTarget};
-    let size = state.doc.width();
-    let base = state.doc.layers()[0].id();
-    import(&mut state.doc, base, Channel::Color, |x, y| {
+    let size = state.doc().width();
+    let base = state.doc().layers()[0].id();
+    import(state.doc_mut(), base, Channel::Color, |x, y| {
         if keep[(y * size + x) as usize] {
             [0, 0, 0, 255]
         } else {
             [255, 255, 255, 255]
         }
     });
-    state.apply(yolu_app::state::Action::NewLayer);
-    let layer = state.selected_layer.expect("足したレイヤー");
+    state.act(yolu_app::state::Action::NewLayer);
+    let layer = state.selected_layer().expect("足したレイヤー");
     assert_ne!(layer, base);
     for y in 300..340 {
         for x in 700..740 {
             state
-                .doc
+                .doc_mut()
                 .set_channel_pixel(layer, Channel::Color, x, y, Rgba8::new(128, 128, 128, 255))
                 .unwrap();
         }
     }
     let filter = state
-        .doc
+        .doc_mut()
         .add_filter(
             layer,
             FilterTarget::Content,
@@ -1973,14 +1957,12 @@ fn a_partial_coarse_drag_leaves_no_plain_mip_texels_after_the_release() {
     let mut h = view(900.0, 700.0, size);
     let mesh = quad_island(0.1, 0.47);
     let keep = keep_of(&mesh, size);
-    let (layer, filter) = add_blur_scene(&mut h.state_mut().state, &keep);
+    let (layer, filter) = add_blur_scene(h.app_mut(), &keep);
     set_model(&mut h, vec![mesh]);
     look_at(&mut h, 2.0, 180.0, 0.0);
     let start = h.state().view3d_stats().unwrap();
     for radius in 4..12 {
-        h.state_mut()
-            .state
-            .doc
+        h.doc_mut()
             .set_filter_settings(layer, filter, EffectSettings::blur(radius), true)
             .unwrap();
         h.step();
@@ -1997,7 +1979,7 @@ fn a_partial_coarse_drag_leaves_no_plain_mip_texels_after_the_release() {
         mid.paint_weighted_mip_builds,
         start.paint_weighted_mip_builds
     );
-    h.state_mut().state.doc.end_coalescing();
+    h.doc_mut().end_coalescing();
     h.run();
     let after = h.state().view3d_stats().unwrap();
     assert_eq!(after.paint_coarse_tiles, 0);
@@ -2022,12 +2004,12 @@ fn switching_sets_during_a_coarse_drag_rebuilds_the_other_picture_instead_of_cop
     let size = 1024;
     let mut h = two_sets(size, [quad_island(0.1, 0.47), quad_island(0.1, 0.47)]);
     h.state_mut().view3d_set_other_cap(size / 4);
-    let model = h.state().state.view3d.model.clone().unwrap();
+    let model = h.view3d().model.clone().unwrap();
     let keep = keep_of(&model.meshes[0], size);
-    let (layer, filter) = add_blur_scene(&mut h.state_mut().state, &keep);
+    let (layer, filter) = add_blur_scene(h.app_mut(), &keep);
     h.run();
     let switch = |h: &mut Harness<'_, YoluApp>, set: usize| {
-        h.state_mut().state.switch_set(set).unwrap();
+        h.app_mut().switch_set(set).unwrap();
         h.run();
         h.run();
     };
@@ -2042,9 +2024,7 @@ fn switching_sets_during_a_coarse_drag_rebuilds_the_other_picture_instead_of_cop
     switch(&mut h, 0);
     let before = demotions(&h);
     for radius in 4..12 {
-        h.state_mut()
-            .state
-            .doc
+        h.doc_mut()
             .set_filter_settings(layer, filter, EffectSettings::blur(radius), true)
             .unwrap();
         h.step();
@@ -2105,7 +2085,7 @@ fn measure_dragging_the_shape_gradient_gizmo_in_3d() {
         let t = Instant::now();
         f(h);
         let step_ms = t.elapsed().as_secs_f64() * 1000.0;
-        h.state().view3d_wait_gpu();
+        h.view3d_wait_gpu();
         let total_ms = t.elapsed().as_secs_f64() * 1000.0;
         let st = h.state().view3d_stats().unwrap();
         (
@@ -2121,7 +2101,7 @@ fn measure_dragging_the_shape_gradient_gizmo_in_3d() {
     };
     press(&h, from, egui::PointerButton::Primary);
     h.step();
-    assert!(h.state().state.fillfx.drag.is_some());
+    assert!(h.fillfx().drag.is_some());
     for frame in 0..frames {
         let wobble = 30.0 * ((frame + 1) as f32 * 0.35).sin();
         move_to(&h, from + egui::vec2(wobble, 0.0));
@@ -2234,15 +2214,9 @@ fn drag_scene(size: u32) -> (Harness<'static, YoluApp>, DragScene) {
     use yolu_core::fill_points::{GradientPoint, PointGradient, PointSpace};
     use yolu_core::{AdjustmentSettings, EffectSettings, FilterSpec, FilterTarget};
     let (mut h, _) = shape_gradient_scene_on(view_for_measure(1400.0, 900.0, size));
-    let gradient = h
-        .state()
-        .state
-        .selected_layer
-        .expect("形のグラデーションのレイヤー");
+    let gradient = h.selected_layer().expect("形のグラデーションのレイヤー");
     let (filter, _) = h
-        .state()
-        .state
-        .fillfx
+        .fillfx()
         .edit_filter
         .map(|(l, f)| (f, l))
         .expect("Generator");
@@ -2252,12 +2226,12 @@ fn drag_scene(size: u32) -> (Harness<'static, YoluApp>, DragScene) {
     };
     let base = first_layer(&h);
     let scene = {
-        let s = &mut h.state_mut().state;
-        import(&mut s.doc, base, Channel::Color, pattern);
-        let blurred = s.doc.add_layer("ぼかし").unwrap();
-        import(&mut s.doc, blurred, Channel::Color, pattern);
+        let s = h.app_mut();
+        import(s.doc_mut(), base, Channel::Color, pattern);
+        let blurred = s.doc_mut().add_layer("ぼかし").unwrap();
+        import(s.doc_mut(), blurred, Channel::Color, pattern);
         let blur = s
-            .doc
+            .doc_mut()
             .add_filter(
                 blurred,
                 FilterTarget::Content,
@@ -2265,7 +2239,7 @@ fn drag_scene(size: u32) -> (Harness<'static, YoluApp>, DragScene) {
             )
             .unwrap();
         let adjust = s
-            .doc
+            .doc_mut()
             .add_adjustment_layer(
                 "色相",
                 AdjustmentSettings::hue_saturation(20.0, 0.0, 0.0).unwrap(),
@@ -2289,25 +2263,27 @@ fn drag_scene(size: u32) -> (Harness<'static, YoluApp>, DragScene) {
             .collect();
         let image =
             yolu_core::ImageInput::new(n, n, pixels, yolu_core::ImageColorSpace::Srgb).unwrap();
-        let inputs = s.doc.effect_inputs().clone().with_image(image_id, image);
-        s.doc.set_effect_inputs(inputs).unwrap();
+        let inputs = s.doc().effect_inputs().clone().with_image(image_id, image);
+        s.doc_mut().set_effect_inputs(inputs).unwrap();
         let decal = s
-            .doc
+            .doc_mut()
             .add_fill_layer(
                 "デカール",
                 &[(Channel::Color, Rgba8::new(255, 255, 255, 255))],
                 Some(adjust),
             )
             .unwrap();
-        s.doc
+        s.doc_mut()
             .set_fill_image(decal, Channel::Color, Some(image_id))
             .unwrap();
-        let mut projection = *s.doc.layer(decal).unwrap().projection();
+        let mut projection = *s.doc().layer(decal).unwrap().projection();
         projection.mode = ProjectionMode::Decal;
         projection.placement = s
             .fitted_placement_for(ProjectionMode::Decal, Some((n, n)))
             .expect("モデルがある");
-        s.doc.set_fill_projection(decal, projection, false).unwrap();
+        s.doc_mut()
+            .set_fill_projection(decal, projection, false)
+            .unwrap();
         // 点のグラデーション: モデルの外形の中の 3 点
         let bounds = s.model_bounds().expect("モデルがある");
         let at = |k: f32| {
@@ -2315,14 +2291,14 @@ fn drag_scene(size: u32) -> (Harness<'static, YoluApp>, DragScene) {
             [p.x as f64, p.y as f64, p.z as f64]
         };
         let points_layer = s
-            .doc
+            .doc_mut()
             .add_fill_layer(
                 "点",
                 &[(Channel::Color, Rgba8::new(255, 255, 255, 255))],
                 Some(decal),
             )
             .unwrap();
-        s.doc
+        s.doc_mut()
             .set_fill_points(
                 points_layer,
                 Channel::Color,
@@ -2348,15 +2324,15 @@ fn drag_scene(size: u32) -> (Harness<'static, YoluApp>, DragScene) {
             )
             .unwrap();
         // 形のグラデーションのレイヤーをいちばん上へ（ギズモの対象は選んだレイヤー）
-        let top = s.doc.layers().len() - 1;
+        let top = s.doc().layers().len() - 1;
         let index = s
-            .doc
+            .doc()
             .layers()
             .iter()
             .position(|l| l.id() == gradient)
             .unwrap();
         if index != top {
-            s.doc.move_layer(gradient, top).unwrap();
+            s.doc_mut().move_layer(gradient, top).unwrap();
         }
         DragScene {
             base,
@@ -2461,25 +2437,25 @@ fn measure_drag_frames_by_operation() {
             for &op in &ops {
                 // 対象のレイヤーだけを見せて、落ち着くまで回す
                 {
-                    let s = &mut h.state_mut().state;
-                    let shown = scene.layers_for(op);
+                    let s = h.app_mut();
                     for id in scene.all() {
-                        s.doc.set_layer_visible(id, shown.contains(&id)).unwrap();
+                        let visible = scene.layers_for(op).contains(&id);
+                        s.doc_mut().set_layer_visible(id, visible).unwrap();
                     }
-                    s.selected_layer = Some(if op == DragOp::Gizmo {
+                    s.set_selected_layer(Some(if op == DragOp::Gizmo {
                         scene.gradient
                     } else {
                         scene.base
-                    });
-                    s.fillfx.edit_filter =
+                    }));
+                    s.fillfx_mut().edit_filter =
                         (op == DragOp::Gizmo).then_some((scene.gradient, scene.filter));
                     // 前の回の評価のキャッシュを使わない（同じ値の繰り返しで、粗い絵の道を通らなくなる）
-                    s.doc.release_effect_cache();
+                    s.doc().release_effect_cache();
                 }
                 run += 1;
                 h.run();
                 h.step();
-                h.state().view3d_wait_gpu();
+                h.view3d_wait_gpu();
                 let canvas = if both {
                     // CPU なら理由も（GPU を試して落ちたのか、方針か）
                     match h.state().display().fallback() {
@@ -2490,15 +2466,15 @@ fn measure_drag_frames_by_operation() {
                     "-".into()
                 };
                 let rect = h.state().view3d_rect().expect("3D ビュー");
-                let from = gizmo::handle_point(&h.state().state, rect, Handle::SizeXPos);
+                let from = gizmo::handle_point(h.app(), rect, Handle::SizeXPos);
                 if op == DragOp::Gizmo {
                     let from = from.expect("つまみ");
                     press(&h, from, egui::PointerButton::Primary);
                     h.step();
-                    assert!(h.state().state.fillfx.drag.is_some(), "つまみを掴んだ");
+                    assert!(h.fillfx().drag.is_some(), "つまみを掴んだ");
                 }
                 let originals = {
-                    let doc = &h.state().state.doc;
+                    let doc = h.doc();
                     (
                         *doc.layer(scene.decal).unwrap().projection(),
                         doc.layer(scene.points)
@@ -2516,7 +2492,7 @@ fn measure_drag_frames_by_operation() {
                     let wobble = ((frame + 1) as f64 * 0.35 + run as f64 * 0.7).sin();
                     let t = Instant::now();
                     {
-                        let doc = &mut h.state_mut().state.doc;
+                        let doc = h.doc_mut();
                         match op {
                             DragOp::Gizmo => {
                                 move_to(&h, from.unwrap() + egui::vec2(30.0 * wobble as f32, 0.0))
@@ -2560,7 +2536,7 @@ fn measure_drag_frames_by_operation() {
                     let edit_ms = t.elapsed().as_secs_f64() * 1000.0;
                     h.step();
                     let step_ms = t.elapsed().as_secs_f64() * 1000.0;
-                    h.state().view3d_wait_gpu();
+                    h.view3d_wait_gpu();
                     let total_ms = t.elapsed().as_secs_f64() * 1000.0;
                     let st = h.state().view3d_stats().unwrap();
                     let breakdown = drag_breakdown();
@@ -2577,7 +2553,7 @@ fn measure_drag_frames_by_operation() {
                         continue;
                     }
                     coarse_frames += usize::from(st.paint_coarse_tiles > 0);
-                    ended += usize::from(!h.state().state.doc.is_coalescing());
+                    ended += usize::from(!h.doc().is_coalescing());
                     let mut row = vec![
                         edit_ms,
                         step_ms - edit_ms,
@@ -2620,11 +2596,11 @@ fn measure_drag_frames_by_operation() {
                 if op == DragOp::Gizmo {
                     release(&h, from.unwrap(), egui::PointerButton::Primary);
                 } else {
-                    h.state_mut().state.doc.end_coalescing();
+                    h.doc_mut().end_coalescing();
                 }
                 h.step();
                 let step_ms = t.elapsed().as_secs_f64() * 1000.0;
-                h.state().view3d_wait_gpu();
+                h.view3d_wait_gpu();
                 let total_ms = t.elapsed().as_secs_f64() * 1000.0;
                 let st = h.state().view3d_stats().unwrap();
                 let breakdown = drag_breakdown();
@@ -2661,7 +2637,7 @@ fn measure_upload_calls_on_this_gpu() {
     use eframe::egui_wgpu::wgpu;
     use std::time::Instant;
     let rs = egui_kittest::wgpu::create_render_state(
-        egui_kittest::wgpu::default_wgpu_setup(),
+        common::default_wgpu_setup(),
         common::render_options(),
     );
     let info = rs.adapter.get_info();
@@ -2901,7 +2877,7 @@ fn measure_syncing_another_set_with_and_without_display_padding() {
     let mut h = two_sets(size, [islands(77, 0.9), islands(77, 0.9)]);
     let adapter = h.state().view3d_adapter().unwrap_or_default();
     h.state_mut().view3d_set_other_cap(size >> shift);
-    let model = h.state().state.view3d.model.clone().unwrap();
+    let model = h.view3d().model.clone().unwrap();
     let started = Instant::now();
     let keep = keep_of(&model.meshes[1], size);
     println!(
@@ -2922,7 +2898,7 @@ fn measure_syncing_another_set_with_and_without_display_padding() {
         .map(|i| (i.wrapping_mul(2654435761) >> 24) as u8)
         .collect();
     println!(
-        "（試験の画素の用意: {:.0} ms）",
+        "（テストの画素の用意: {:.0} ms）",
         started.elapsed().as_secs_f64() * 1000.0
     );
     let started = Instant::now();
@@ -2936,7 +2912,7 @@ fn measure_syncing_another_set_with_and_without_display_padding() {
     drop(pixels);
     let layer = paint_inside_set(&mut h, 1, &keep);
     h.step();
-    h.state().view3d_wait_gpu();
+    h.view3d_wait_gpu();
     const ROUNDS: usize = 3;
     const CHANGES: u32 = 10;
     let mut counter = 0u32;
@@ -2949,11 +2925,11 @@ fn measure_syncing_another_set_with_and_without_display_padding() {
             // 今のセットだけを作るフレームと、そのあとにほかのセットだけを作るフレームを分けて測る
             h.state_mut().view3d_set_show_other_sets(false);
             h.step();
-            h.state().view3d_wait_gpu();
+            h.view3d_wait_gpu();
             let current_build = h.state().view3d_stats().unwrap().last_sync_us as f64 / 1000.0;
             h.state_mut().view3d_set_show_other_sets(true);
             h.step();
-            h.state().view3d_wait_gpu();
+            h.view3d_wait_gpu();
             let s = h.state().view3d_stats().unwrap();
             assert_eq!(s.other_sets, 1, "{s:?}");
             if round == 0 {
@@ -2963,9 +2939,9 @@ fn measure_syncing_another_set_with_and_without_display_padding() {
             for _ in 0..CHANGES {
                 counter += 1;
                 let (tx, ty) = (4 + counter % 12, 4 + counter * 5 % 12);
-                let ts = h.state().state.set_doc(1).tile_size();
+                let ts = h.app().set_doc(1).tile_size();
                 touch(
-                    h.state_mut().state.set_doc_mut(1),
+                    h.app_mut().set_doc_mut(1),
                     layer,
                     Rect::new(tx * ts, ty * ts, ts, ts),
                     // 毎回違う値にする（同じ値を描いても文書は変わらず、同期が起きない）
@@ -2978,7 +2954,7 @@ fn measure_syncing_another_set_with_and_without_display_padding() {
                     ],
                 );
                 h.step();
-                h.state().view3d_wait_gpu();
+                h.view3d_wait_gpu();
                 sync.push(h.state().view3d_stats().unwrap().last_sync_us as f64 / 1000.0);
             }
             println!("  幅 {texels}: {sync:.1?}");

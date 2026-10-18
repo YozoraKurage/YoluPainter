@@ -103,12 +103,12 @@ fn only_versions_with_a_meaning_are_read() {
         let mut bytes = bytes.clone();
         bytes[8..12].copy_from_slice(&version.to_le_bytes());
         let Err(e) = NativeDocument::read(&bytes) else {
-            panic!("版 {version} を読めた");
+            panic!("バージョン {version} を読めた");
         };
         assert!(
             e.to_string()
                 .contains(&format!(".version の値 {version} は未対応または範囲外です")),
-            "版 {version} の断り: {e}"
+            "バージョン {version} の断り: {e}"
         );
     }
 }
@@ -133,7 +133,7 @@ fn a_ylp_keeps_the_setting() {
     let spec = SetSpec {
         id: "0f0f0f0f-0000-4000-8000-000000000032".into(),
         name: "Set".into(),
-        material: yolu_io::MaterialRef::Unassigned,
+        materials: vec![yolu_io::MaterialRef::Unassigned],
         document: Some(native.clone().into()),
         composites: vec![],
     };

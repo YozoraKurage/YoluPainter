@@ -68,22 +68,22 @@ impl Category {
 
     pub fn label(self, lang: Lang) -> &'static str {
         match self {
-            Category::General => lang.pick("一般", "General"),
-            Category::Pen => lang.pick("ペン", "Pen"),
-            Category::Shortcuts => lang.pick("ショートカット", "Keyboard Shortcuts"),
-            Category::Display => lang.pick("表示", "Display"),
-            Category::Memory => lang.pick("メモリ", "Memory"),
-            Category::Processing => lang.pick("処理", "Processing"),
-            Category::View3d => lang.pick("3D ビュー", "3D View"),
-            Category::Files => lang.pick("ファイル", "Files"),
-            Category::LiveLink => lang.pick("Live Link と外からの操作", "Live Link & Commands"),
-            Category::Updates => lang.pick("更新", "Updates"),
+            Category::General => lang.t("prefs-general"),
+            Category::Pen => lang.t("prefs-pen"),
+            Category::Shortcuts => lang.t("prefs-keyboard-shortcuts"),
+            Category::Display => lang.t("prefs-display"),
+            Category::Memory => lang.t("prefs-memory"),
+            Category::Processing => lang.t("prefs-processing"),
+            Category::View3d => lang.t("prefs-3d-view"),
+            Category::Files => lang.t("prefs-files"),
+            Category::LiveLink => lang.t("prefs-live-link-commands"),
+            Category::Updates => lang.t("prefs-updates"),
         }
     }
 
     /// この区分を左に出すか（更新は、公開鍵を組み込んだビルドだけ）。
     pub fn available(self, app: &AppState) -> bool {
-        self != Category::Updates || app.update.enabled()
+        self != Category::Updates || app.services.update.enabled()
     }
 
     /// この区分に並べる項目（表示順。この PC・このビルドで出すものだけ）。ショートカットは表なので項目は無い。
@@ -248,17 +248,17 @@ impl Item {
     pub fn names(self, lang: Lang) -> Vec<&'static str> {
         use crate::settings::setting_name as name;
         match self {
-            Item::Language => vec![lang.pick("言語", "Language")],
+            Item::Language => vec![lang.t("prefs-language")],
             Item::PenInput => vec![name(lang, "pen_input")],
             Item::TabletPressure => vec![name(lang, "tablet_pressure")],
             Item::PressureAdjust => vec![
-                lang.pick("筆圧の調整", "Pen Pressure"),
-                lang.pick("下限", "Low"),
-                lang.pick("上限", "High"),
+                lang.t("prefs-pen-pressure"),
+                lang.t("prefs-low"),
+                lang.t("prefs-high"),
             ],
             Item::Compositing => vec![name(lang, "compositing")],
             Item::Vsync => vec![name(lang, "vsync")],
-            Item::GpuMemory => vec![name(lang, "gpu_memory"), lang.pick("合計", "Total")],
+            Item::GpuMemory => vec![name(lang, "gpu_memory"), lang.t("prefs-total")],
             Item::BakeRayQuery => vec![name(lang, "bake_ray_query")],
             Item::Budget(kind) => vec![name(lang, kind.key())],
             Item::MinUndoSteps => vec![name(lang, "min_undo_steps")],
@@ -266,31 +266,22 @@ impl Item {
             Item::OrbitCenter => vec![name(lang, "view3d_orbit")],
             Item::ZoomCenter => vec![name(lang, "view3d_zoom")],
             Item::AxisOrtho => vec![name(lang, "view3d_axis_ortho")],
-            Item::UvWireframe => vec![lang.pick("UV ワイヤーフレーム", "UV Wireframe")],
+            Item::UvWireframe => vec![lang.t("prefs-uv-wireframe")],
             Item::ExportPadding => vec![name(lang, "export_padding")],
             Item::Library => vec![name(lang, "library_folder")],
-            Item::Backups => vec![
-                lang.pick("退避を残す数", "Backups to keep"),
-                lang.pick("すべて残す", "Keep all"),
-            ],
+            Item::Backups => vec![lang.t("prefs-backups-to-keep"), lang.t("prefs-keep-all")],
             Item::DiskCache => vec![
                 name(lang, "disk_cache"),
                 name(lang, "disk_cache_limit_gib"),
                 name(lang, "disk_cache_folder"),
             ],
-            Item::LiveLinkAccept => vec![lang.pick(
-                "Unity の Live Link を受け付ける",
-                "Accept Live Link from Unity",
-            )],
-            Item::LiveLinkKeep => vec![lang.pick(
-                "Unity から受けたマテリアルの値を保存する",
-                "Save material values received from Unity",
-            )],
+            Item::LiveLinkAccept => vec![lang.t("prefs-accept-live-link-from-unity")],
+            Item::LiveLinkKeep => vec![lang.t("prefs-save-material-values-received-from")],
             Item::ExternalOps => vec![name(lang, "external_ops"), name(lang, "external_ops_port")],
             Item::UpdateStartup => {
-                vec![lang.pick("起動時に更新を確かめる", "Check for Updates at Startup")]
+                vec![lang.t("prefs-check-for-updates-at-startup")]
             }
-            Item::UpdateBeta => vec![lang.pick("試験版を使う", "Use Beta Versions")],
+            Item::UpdateBeta => vec![lang.t("prefs-use-beta-versions")],
         }
     }
 }
@@ -366,8 +357,8 @@ impl View {
             gpu_details: app.prefs.gpu_details,
             gpu_total: app.gpu_total_mib(),
             cache_details: app.prefs.cache_details,
-            update_startup: app.update.preference() == crate::update::Preference::On,
-            update_beta: app.update.beta(),
+            update_startup: app.services.update.preference() == crate::update::Preference::On,
+            update_beta: app.services.update.beta(),
             s,
         }
     }
@@ -453,8 +444,7 @@ pub(super) fn heading(ui: &mut Ui, rows: &mut w::Rows, line: bool, title: &str) 
 
 /// 行を、左の欄と、右の「詳しく」の開け閉めに分ける。
 fn details_split(ui: &Ui, r: Rect, lang: Lang) -> (Rect, Rect) {
-    let width =
-        16.0 + w::text_width(ui.painter(), lang.pick("詳しく", "Details"), t::LABEL_BOLD) + 12.0;
+    let width = 16.0 + w::text_width(ui.painter(), lang.t("prefs-details"), t::LABEL_BOLD) + 12.0;
     let details = Rect::from_min_max(pos2(r.right() - width, r.top()), r.max);
     let left = Rect::from_min_max(r.min, pos2(details.left() - 8.0, r.bottom()));
     (left, details)
@@ -501,10 +491,7 @@ fn folder_rows(
     )
     .on_hover_text(shown);
     let row = rows.row(t::ROW_HEIGHT, GAP);
-    let (choose, default) = (
-        lang.pick("選ぶ…", "Choose…"),
-        lang.pick("既定に戻す", "Default"),
-    );
+    let (choose, default) = (lang.t("prefs-choose"), lang.t("prefs-default"));
     let widths = [choose, default].map(|s| w::text_width(&p, s, t::LABEL) + 24.0);
     let right = row.right();
     let default_rect = Rect::from_min_size(
@@ -567,9 +554,9 @@ pub(super) fn draw_item(
                 ui,
                 rows,
                 "language",
-                lang.pick("言語", "Language"),
+                lang.t("prefs-language"),
                 lang.name(),
-                lang.pick("画面の言語", "The language of the screen"),
+                lang.t("prefs-the-language-of-the-screen-tip"),
                 PrefChoice::Language,
             ));
         }
@@ -580,10 +567,7 @@ pub(super) fn draw_item(
                 "pen-input",
                 crate::settings::setting_name(lang, "pen_input"),
                 pen_api_name(s.pen_input),
-                lang.pick(
-                    "ペンの筆圧・傾き・回転・消しゴムの端・サイドボタンを読む方式。WinTab は Wacom などのドライバーが出す入力で、ドライバーが無い PC やタブレットが無いときは Windows Ink のままです",
-                    "How pen pressure, tilt, rotation, the eraser end and the side buttons are read. WinTab is the input that tablet drivers such as Wacom's provide; without the driver or a tablet, Windows Ink stays in use",
-                ),
+                lang.t("prefs-how-pen-pressure-tilt-rotation-tip"),
                 PrefChoice::PenInput,
             ));
         }
@@ -594,10 +578,7 @@ pub(super) fn draw_item(
                 id.with("tablet-pressure"),
                 crate::settings::setting_name(lang, "tablet_pressure"),
                 s.tablet_pressure,
-                Some(lang.pick(
-                    "Wacom・XP-Pen などのドライバーが macOS の標準のイベントで送る筆圧・傾き・消しゴムの端・サイドボタンを読む。切ると、ペンはマウスと同じに描く",
-                    "Reads the pressure, tilt, eraser end and side buttons that tablet drivers such as Wacom and XP-Pen send as standard macOS events. When off, the pen draws like a mouse",
-                )),
+                Some(lang.t("prefs-reads-the-pressure-tilt-eraser-tip")),
                 true,
             );
             if next != s.tablet_pressure {
@@ -614,12 +595,7 @@ pub(super) fn draw_item(
                 id.with("bake-ray-query"),
                 crate::settings::setting_name(lang, "bake_ray_query"),
                 s.bake_ray_query && allowed,
-                (!allowed).then(|| {
-                    lang.pick(
-                        "環境変数で切っています",
-                        "Turned off by an environment variable",
-                    )
-                }),
+                (!allowed).then(|| lang.t("prefs-turned-off-by-an-environment-tip")),
                 allowed,
             );
             if allowed && next != s.bake_ray_query {
@@ -629,12 +605,7 @@ pub(super) fn draw_item(
         }
         Item::PressureAdjust => {
             // 上に行があるときだけ、見出しの上に線を引く
-            heading(
-                ui,
-                rows,
-                !slot.first,
-                lang.pick("筆圧の調整", "Pen Pressure"),
-            );
+            heading(ui, rows, !slot.first, lang.t("prefs-pen-pressure"));
             crate::pen::window::rows(ui, rows, app, slot.visible);
         }
         Item::Compositing => {
@@ -642,12 +613,9 @@ pub(super) fn draw_item(
                 ui,
                 rows,
                 "compositing",
-                lang.pick("表示の合成", "Display compositing"),
+                lang.t("prefs-display-compositing"),
                 compositing_name(lang, s.compositing),
-                lang.pick(
-                    "2D のキャンバスに出すレイヤーの合成をどこで行うか。保存・書き出し・3D ビューの値の合成は、どれでも CPU です",
-                    "Where the layers shown on the 2D canvas are composited. Saving, exporting and the 3D view always composite on the CPU",
-                ),
+                lang.t("prefs-where-the-layers-shown-on-tip"),
                 PrefChoice::Compositing,
             ));
         }
@@ -657,8 +625,8 @@ pub(super) fn draw_item(
             if v.vsync_restart {
                 label += &format!(
                     "{}{}",
-                    lang.pick(" ・ ", " · "),
-                    lang.pick("再起動で反映", "applies after restart")
+                    lang.t("prefs-text-3"),
+                    lang.t("prefs-applies-after-restart")
                 );
             }
             let next = w::toggle(
@@ -667,10 +635,7 @@ pub(super) fn draw_item(
                 id.with("vsync"),
                 &label,
                 s.vsync,
-                Some(lang.pick(
-                    "垂直同期を待つと、画面の上下のずれ（テアリング）が出ない代わりに、ペンで描く線が画面に出るまでの遅れが増えます。次の起動から効きます",
-                    "Waiting for the monitor's vertical sync avoids screen tearing but adds delay before a line you draw appears. Takes effect from the next start",
-                )),
+                Some(lang.t("prefs-waiting-for-the-monitor-s-tip")),
                 true,
             );
             if next != s.vsync {
@@ -687,17 +652,14 @@ pub(super) fn draw_item(
                 "gpu-memory",
                 crate::settings::setting_name(lang, "gpu_memory"),
                 s.gpu_memory.name(lang),
-                lang.pick(
-                    "3D ビュー・キャンバスの GPU の合成・アセットのサムネイルが使ってよい GPU のメモリの量。足りないと、3D ビューはほかのテクスチャセットの絵を減らし、今のセットの絵を小さくして見せます（テクスチャと書き出しは変わりません）。自動は GPU のメモリの量が分かるときだけ、それに合わせます（少なければ低に、多ければ標準の量を増やします）。分からないときは標準です",
-                    "How much GPU memory the 3D view, the canvas compositing and the asset previews may use. When it runs short, the 3D view drops the other sets' pictures and shows the current one smaller (the texture and exports are unchanged). Automatic follows the GPU's memory only when it is known (Low when there is little, a larger Standard when there is plenty); otherwise it is Standard",
-                ),
+                lang.t("prefs-how-much-gpu-memory-the-tip"),
                 PrefChoice::GpuMemory,
             ));
             let open = w::subsection_header(
                 ui,
                 details_rect,
                 ("prefs", "gpu-details"),
-                lang.pick("詳しく", "Details"),
+                lang.t("prefs-details"),
                 v.gpu_details,
             );
             if open != v.gpu_details {
@@ -711,15 +673,12 @@ pub(super) fn draw_item(
                     ("prefs", "gpu-total"),
                     v.gpu_total as f32,
                     &SliderSpec::new(
-                        lang.pick("合計", "Total"),
+                        lang.t("prefs-total"),
                         gpu_memory::MIN_TOTAL_MIB as f32,
                         gpu_memory::MAX_TOTAL_MIB as f32,
                         NumberFormat::int(" MiB"),
                     )
-                    .tooltip(lang.pick(
-                        "GPU のメモリの合計。3D の絵・キャンバスの合成・アセットのサムネイルへ 4 : 4 : 1 に配ります。動かすと、段の選びを置き換えた量の指定になります",
-                        "The total GPU memory, split 4 : 4 : 1 between the 3D pictures, the canvas compositing and the asset previews. Moving it replaces the level with a custom amount",
-                    )),
+                    .tooltip(lang.t("prefs-the-total-gpu-memory-split-tip")),
                 );
                 out.gpu_dragging = slider.active;
                 // 押し始めの選びを覚える（この枠の `s` は、押した枠の変更を入れる前の設定）
@@ -749,18 +708,9 @@ pub(super) fn draw_item(
         }
         Item::Budget(kind) => {
             let tip = match kind {
-                BudgetKind::Undo => lang.pick(
-                    "取り消しの履歴に使うメモリの、全テクスチャセットの合計。超えた古い段から捨てます（最小の段数は残します）。0 は最小の段数だけ残します",
-                    "Memory for the undo history, in total over all texture sets. The oldest steps beyond it are dropped (the minimum steps are kept). 0 keeps only those",
-                ),
-                BudgetKind::Source => lang.pick(
-                    "全テクスチャセットの全レイヤーが画素に使うメモリの合計の上限。使う分だけ取り、先には確保しません。PSD の読み込み・書き出しや .ylp を開くときの大きさの上限もこれで決まります。超える操作は何も変えずに断ります",
-                    "The most memory all layers in all texture sets may use for pixels, in total. Only what is used is taken, nothing is reserved up front. It also sets the size limit when importing or exporting a PSD or opening a .ylp. An edit that would exceed it is refused without changing anything",
-                ),
-                BudgetKind::Stroke => lang.pick(
-                    "ストロークや塗りつぶし 1 回が巻き戻し用に持てるメモリ。書き出しの作業にも使います。超える操作は何も変えずに止めます",
-                    "Undo data one stroke or fill may keep; also the working memory of exports. A bigger one is stopped without changing anything",
-                ),
+                BudgetKind::Undo => lang.t("prefs-memory-for-the-undo-history-tip"),
+                BudgetKind::Source => lang.t("prefs-the-most-memory-all-layers-tip"),
+                BudgetKind::Stroke => lang.t("prefs-undo-data-one-stroke-or-tip"),
             };
             out.requests.extend(choice(
                 ui,
@@ -784,10 +734,7 @@ pub(super) fn draw_item(
                     MAX_MIN_UNDO_STEPS as f32,
                     NumberFormat::int(""),
                 )
-                .tooltip(lang.pick(
-                    "取り消しの予算を超えても残す直近の段数。大きな塗りつぶしや変形も取り消せるようにします。0 は予算を厳密にします",
-                    "The newest steps kept even beyond the undo budget, so a large fill can still be undone. 0 makes the budget strict",
-                )),
+                .tooltip(lang.t("prefs-the-newest-steps-kept-even-tip")),
             );
             if slider.changed {
                 out.requests
@@ -801,20 +748,17 @@ pub(super) fn draw_item(
             if v.restart {
                 threads += &format!(
                     "{}{}",
-                    lang.pick(" ・ ", " · "),
-                    lang.pick("再起動で反映", "applies after restart")
+                    lang.t("prefs-text-3"),
+                    lang.t("prefs-applies-after-restart")
                 );
             }
             out.requests.extend(choice(
                 ui,
                 rows,
                 "threads",
-                lang.pick("CPU のスレッド", "CPU threads"),
+                lang.t("prefs-cpu-threads"),
                 &threads,
-                lang.pick(
-                    "CPU の処理（合成・ブラシ・塗りつぶし・選択範囲など）が同時に使う数。どの値でも結果の画素は同じで、少ないと大きなキャンバスで遅くなる代わりにほかのアプリに余裕が残ります。次の起動から効きます",
-                    "The most threads the CPU work (compositing, brushes, fills, selections) uses at once. Any value gives the same pixels; fewer are slower on large canvases but leave cores to other programs. Takes effect from the next start",
-                ),
+                lang.t("prefs-the-most-threads-the-cpu-tip"),
                 PrefChoice::CpuThreads,
             ));
         }
@@ -823,12 +767,9 @@ pub(super) fn draw_item(
                 ui,
                 rows,
                 "orbit-center",
-                lang.pick("回転の中心", "Orbit center"),
+                lang.t("prefs-orbit-center"),
                 s.navigation.orbit.label(lang),
-                lang.pick(
-                    "3D ビューを回すときの中心。3D ビューの表示の設定の「視点」と同じ値です",
-                    "The pivot when orbiting the 3D view. The same value as Navigation in the 3D view's display settings",
-                ),
+                lang.t("prefs-the-pivot-when-orbiting-the-tip"),
                 PrefChoice::OrbitCenter,
             ));
         }
@@ -837,12 +778,9 @@ pub(super) fn draw_item(
                 ui,
                 rows,
                 "zoom-center",
-                lang.pick("ズームの中心", "Zoom center"),
+                lang.t("prefs-zoom-center"),
                 s.navigation.zoom.label(lang),
-                lang.pick(
-                    "3D ビューをズームするときの中心。3D ビューの表示の設定の「視点」と同じ値です",
-                    "The center when zooming the 3D view. The same value as Navigation in the 3D view's display settings",
-                ),
+                lang.t("prefs-the-center-when-zooming-the-tip"),
                 PrefChoice::ZoomCenter,
             ));
         }
@@ -853,10 +791,7 @@ pub(super) fn draw_item(
                 id.with("axis-ortho"),
                 crate::settings::setting_name(lang, "view3d_axis_ortho"),
                 s.navigation.axis_ortho,
-                Some(lang.pick(
-                    "軸の視点を選んだとき・スナップ回転で軸の向きに吸い付いたときは正投影にし、回して軸から外れたら透視へ戻す",
-                    "Switches to orthographic when you pick an axis view or snap-orbit onto an axis, and back to perspective when you orbit off the axis",
-                )),
+                Some(lang.t("prefs-switches-to-orthographic-when-you-tip")),
                 true,
             );
             if next != s.navigation.axis_ortho {
@@ -872,12 +807,9 @@ pub(super) fn draw_item(
                 ui,
                 rows,
                 "padding",
-                lang.pick("書き出しのパディング", "Export padding"),
+                lang.t("prefs-export-padding"),
                 &padding_name(lang, s.export_padding),
-                lang.pick(
-                    "書き出しで、UV が触れないテクセルへ UV の縁の色を塗り広げる量。ミップマップや補間で縁に別の色が混ざるのを防ぎます",
-                    "How far the colors at the UV edges are spread into texels no UV touches when exporting, so mipmaps and filtering do not pull in other colors",
-                ),
+                lang.t("prefs-how-far-the-colors-at-tip"),
                 PrefChoice::ExportPadding,
             ));
         }
@@ -893,13 +825,10 @@ pub(super) fn draw_item(
                 rows,
                 lang,
                 "library",
-                lang.pick("ライブラリの場所", "Library folder"),
+                lang.t("prefs-library-folder"),
                 &shown,
-                lang.pick(
-                    "ライブラリの場所のフォルダを選ぶ",
-                    "Choose the library folder",
-                ),
-                lang.pick("既定の場所に戻す", "Back to the default folder"),
+                lang.t("prefs-choose-the-library-folder-tip"),
+                lang.t("prefs-back-to-the-default-folder-tip"),
                 s.library_folder.is_some(),
                 true,
             );
@@ -920,15 +849,12 @@ pub(super) fn draw_item(
                 ("prefs", "backups"),
                 v.backup_count as f32,
                 &SliderSpec::new(
-                    lang.pick("退避を残す数", "Backups to keep"),
+                    lang.t("prefs-backups-to-keep"),
                     0.0,
                     MAX_BACKUPS_TO_KEEP as f32,
                     NumberFormat::int(""),
                 )
-                .tooltip(lang.pick(
-                    "上書き保存で置き換えた前の版を、新しい順にいくつ残すか。超えた古い版は消します。0 は残しません",
-                    "How many replaced versions to keep per file, newest first. Older ones beyond this are deleted. 0 keeps none",
-                ))
+                .tooltip(lang.t("prefs-how-many-replaced-versions-to-tip"))
                 .enabled(!v.keep_all),
             );
             out.dragging |= slider.active;
@@ -941,9 +867,9 @@ pub(super) fn draw_item(
                 ui,
                 rows.row(t::ROW_HEIGHT, GAP),
                 id.with("backups-all"),
-                lang.pick("すべて残す", "Keep all"),
+                lang.t("prefs-keep-all"),
                 v.keep_all,
-                Some(lang.pick("退避を消さない", "Never delete backups")),
+                Some(lang.t("prefs-never-delete-backups-tip")),
                 true,
             );
             if next != v.keep_all {
@@ -965,10 +891,7 @@ pub(super) fn draw_item(
                 id.with("disk-cache"),
                 crate::settings::setting_name(lang, "disk_cache"),
                 s.disk_cache,
-                Some(lang.pick(
-                    "レイヤーのメモリと取り消し履歴の予算を超えた分のタイルを、使っていないものからディスクへ移して続けます。切ると、予算を超える操作は断ります",
-                    "Moves the tiles beyond the layer memory and undo history budgets to the disk, least recently used first, so work can go on. When off, edits beyond the budgets are refused",
-                )),
+                Some(lang.t("prefs-moves-the-tiles-beyond-the-tip")),
                 true,
             );
             if next != s.disk_cache {
@@ -979,7 +902,7 @@ pub(super) fn draw_item(
                 ui,
                 details_rect,
                 ("prefs", "cache-details"),
-                lang.pick("詳しく", "Details"),
+                lang.t("prefs-details"),
                 v.cache_details,
             );
             if open != v.cache_details {
@@ -994,10 +917,7 @@ pub(super) fn draw_item(
                     ("prefs", "disk-cache-limit"),
                     Some(crate::settings::setting_name(lang, "disk_cache_limit_gib")),
                     &disk_limit_name(lang, s.disk_cache_limit, v.cache_free),
-                    Some(lang.pick(
-                        "ディスクキャッシュに使う量の上限。自動は 64 GiB と、置き場所の空きの半分の小さい方。満杯なら、超える操作は断ります",
-                        "The most disk space the cache may use. Automatic is 64 GiB or half the free space of the folder, whichever is smaller. When it is full, edits beyond it are refused",
-                    )),
+                    Some(lang.t("prefs-the-most-disk-space-the-tip")),
                     s.disk_cache,
                     LABEL_WIDTH,
                 );
@@ -1013,11 +933,8 @@ pub(super) fn draw_item(
                     "cache",
                     crate::settings::setting_name(lang, "disk_cache_folder"),
                     &shown,
-                    lang.pick(
-                        "キャッシュのファイルを置くフォルダを選ぶ。速いドライブ（SSD）ほど、移したタイルを戻すのが速い",
-                        "Choose the folder for the cache file. A faster drive (SSD) brings moved tiles back faster",
-                    ),
-                    lang.pick("OS の一時フォルダに戻す", "Back to the system temporary folder"),
+                    lang.t("prefs-choose-the-folder-for-the-tip"),
+                    lang.t("prefs-back-to-the-system-temporary-tip"),
                     s.disk_cache_folder.is_some(),
                     s.disk_cache,
                 );
@@ -1036,12 +953,9 @@ pub(super) fn draw_item(
                 ui,
                 rows.row(t::ROW_HEIGHT, GAP),
                 id.with("livelink-on-startup"),
-                lang.pick("Unity の Live Link を受け付ける", "Accept Live Link from Unity"),
+                lang.t("prefs-accept-live-link-from-unity"),
                 s.livelink_on_startup,
-                Some(lang.pick(
-                    "Unity のエディタの「YoluPainter で開く」で送ったモデルとマテリアルを開く。--livelink を付けて起動すると、この設定によらず受け付ける",
-                    "Opens the model and materials sent with Open in YoluPainter in the Unity Editor. Launching with --livelink always accepts them",
-                )),
+                Some(lang.t("prefs-opens-the-model-and-materials-tip")),
                 true,
             );
             if next != s.livelink_on_startup {
@@ -1054,12 +968,9 @@ pub(super) fn draw_item(
                 ui,
                 rows.row(t::ROW_HEIGHT, GAP),
                 id.with("livelink-keep-values"),
-                lang.pick("Unity から受けたマテリアルの値を保存する", "Save material values received from Unity"),
+                lang.t("prefs-save-material-values-received-from"),
                 s.livelink_keep_values,
-                Some(lang.pick(
-                    "Live Link で受けた lilToon の値を .ylp に入れる（テクスチャの画素は入れず、開き直すとファイルから読む）。切ると、次に保存するときに外す",
-                    "Stores the lilToon values received through Live Link in the .ylp (not the pixels of textures; they are read from their files on reopening). When off, they are removed on the next save",
-                )),
+                Some(lang.t("prefs-stores-the-liltoon-values-received-tip")),
                 true,
             );
             if next != s.livelink_keep_values {
@@ -1071,9 +982,9 @@ pub(super) fn draw_item(
         }
         Item::ExternalOps => {
             let ops_url = yolu_mcp::endpoint(s.external_ops_port);
-            let ops_tip = lang.pick(
-                format!("AI のアシスタント（MCP）やコマンドラインからの操作を {ops_url} で受ける。入れている間だけ待ち、切るとつながりも閉じる。合言葉は無いので、この PC のほかのアカウントのプログラムもつなげる"),
-                format!("Accepts commands from AI assistants (MCP) and the command line at {ops_url}. It listens only while on; turning it off also closes the connections. There is no password, so programs of other accounts on this PC can connect too"),
+            let ops_tip = lang.f(
+                "prefs-accepts-commands-from-ai-assistants-tip",
+                &[("ops_url", &ops_url)],
             );
             let next = w::toggle(
                 ui,
@@ -1104,10 +1015,7 @@ pub(super) fn draw_item(
                     field,
                     ("prefs", "external-ops-port"),
                     &s.external_ops_port.to_string(),
-                    Some(lang.pick(
-                        "外からの操作を待つ番号（1024〜65535）。変えたら、つなぐ側の設定の番号も同じにする",
-                        "The port external commands are accepted on (1024 to 65535). When you change it, use the same port in the programs that connect",
-                    )),
+                    Some(lang.t("prefs-the-port-external-commands-are-tip")),
                     false,
                 );
                 if let Some(text) = typed.committed {
@@ -1123,7 +1031,7 @@ pub(super) fn draw_item(
                 ui,
                 rows.row(t::ROW_HEIGHT, GAP),
                 id.with("update-startup"),
-                lang.pick("起動時に更新を確かめる", "Check for Updates at Startup"),
+                lang.t("prefs-check-for-updates-at-startup"),
                 v.update_startup,
                 None,
                 true,
@@ -1139,12 +1047,9 @@ pub(super) fn draw_item(
                 ui,
                 rows.row(t::ROW_HEIGHT, GAP),
                 id.with("update-beta"),
-                lang.pick("試験版を使う", "Use Beta Versions"),
+                lang.t("prefs-use-beta-versions"),
                 v.update_beta,
-                Some(lang.pick(
-                    "正式版より前の試験版も、更新の候補にします。切ると正式版だけを見ます",
-                    "Also offers beta versions as updates. When off, only stable releases are offered",
-                )),
+                Some(lang.t("prefs-also-offers-beta-versions-as-tip")),
                 true,
             );
             if next != v.update_beta {

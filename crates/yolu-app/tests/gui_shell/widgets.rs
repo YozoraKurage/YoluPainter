@@ -35,7 +35,7 @@ fn row(g: &Gallery, y: f32, h: f32) -> Rect {
 
 fn draw(ui: &mut egui::Ui, g: &mut Gallery) {
     if !g.ready {
-        // 書体は次のフレームから効く（このフレームで太字の書体を使うと egui が止まる）ので、初めのフレームは準備だけ
+        // フォントは次のフレームから効く（このフレームで太字のフォントを使うと egui が止まる）ので、初めのフレームは準備だけ
         YoluApp::setup(ui.ctx());
         g.ready = true;
         ui.ctx().request_repaint();
@@ -304,8 +304,10 @@ fn two_line_slider_clicks_drags_and_types() {
         h.state().size
     );
     assert_eq!(h.state().released, 1);
-    // ドラッグで左端へ
-    let start = pos2(r.left() + track_w * 0.5, r.bottom() - 6.0);
+    // 押し始めでは飛ばない。動かした量で変わる（溝の幅の 2 割の移動で、範囲の 2 割）
+    let before = h.state().size;
+    let y = r.bottom() - 6.0;
+    let start = pos2(r.left() + track_w * 0.5, y);
     h.event(Event::PointerMoved(start));
     h.event(Event::PointerButton {
         pos: start,
@@ -314,21 +316,91 @@ fn two_line_slider_clicks_drags_and_types() {
         modifiers: Modifiers::NONE,
     });
     h.step();
-    for x in [0.3, 0.1, -0.2] {
-        h.event(Event::PointerMoved(pos2(
-            r.left() + track_w * x,
-            r.bottom() - 6.0,
-        )));
-        h.step();
-    }
+    assert_eq!(h.state().size, before, "押しただけでは動かない");
+    let moves = |h: &mut Harness<'_, Gallery>, xs: &[f32]| {
+        for x in xs {
+            h.event(Event::PointerMoved(pos2(r.left() + track_w * x, y)));
+            h.step();
+        }
+    };
+    moves(&mut h, &[0.6, 0.7]);
+    assert!(
+        (h.state().size - (before + 255.0 * 0.2)).abs() < 1.0,
+        "{} ← {before}",
+        h.state().size
+    );
+    // Shift を押しているあいだは 10 分の 1（押したまま入り切りしても飛ばない）
+    let at = h.state().size;
+    h.event(Event::ModifiersChanged(Modifiers::SHIFT));
+    moves(&mut h, &[0.9]);
+    assert!(
+        (h.state().size - (at + 255.0 * 0.02)).abs() < 1.0,
+        "{} ← {at}",
+        h.state().size
+    );
+    h.event(Event::ModifiersChanged(Modifiers::NONE));
+    // 左へ大きく動かすと、範囲の端で止まる
+    moves(&mut h, &[0.5, -0.5, -1.5]);
+    assert_eq!(h.state().size, 1.0);
+    // 端で止めた分は戻さなくてよい（すぐ右へ動かせば動く）
+    moves(&mut h, &[-1.4]);
+    assert!(h.state().size > 1.0, "{}", h.state().size);
     h.event(Event::PointerButton {
-        pos: pos2(r.left() - 20.0, r.bottom() - 6.0),
+        pos: pos2(r.left() - 20.0, y),
         button: PointerButton::Primary,
         pressed: false,
         modifiers: Modifiers::NONE,
     });
     h.run();
-    assert_eq!(h.state().size, 1.0);
+    assert!(h.state().released >= 2);
+    // Esc で押し始めの値へ戻り、離すまで残りの動きは受けない
+    let before = h.state().size;
+    let start = pos2(r.left() + track_w * 0.5, y);
+    h.event(Event::PointerMoved(start));
+    h.event(Event::PointerButton {
+        pos: start,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::NONE,
+    });
+    h.step();
+    moves(&mut h, &[0.6, 0.7]);
+    assert!(h.state().size > before);
+    key(&h, Key::Escape, Modifiers::NONE);
+    h.step();
+    assert_eq!(h.state().size, before);
+    moves(&mut h, &[0.9]);
+    assert_eq!(h.state().size, before);
+    h.event(Event::PointerButton {
+        pos: pos2(r.left() + track_w * 0.9, y),
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::NONE,
+    });
+    h.run();
+    assert_eq!(h.state().size, before);
+    // 動かさずに離す（3 点の内）と、押した位置の値
+    let at = pos2(r.left() + track_w * 0.25, y);
+    h.event(Event::PointerMoved(at));
+    h.event(Event::PointerButton {
+        pos: at,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::NONE,
+    });
+    h.step();
+    h.event(Event::PointerMoved(at + vec2(2.0, 0.0)));
+    h.step();
+    assert_eq!(h.state().size, before, "離すまで動かない");
+    h.event(Event::PointerButton {
+        pos: at + vec2(2.0, 0.0),
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::NONE,
+    });
+    h.run();
+    let expect = 1.0 + 255.0 * (0.25 + 2.0 / track_w);
+    assert!((h.state().size - expect).abs() < 0.5, "{}", h.state().size);
     // 値の箱を押すと数値を打てる（Enter で決める）
     click(&mut h, pos2(r.right() - 10.0, r.top() + 7.0));
     key(&h, Key::A, Modifiers::COMMAND);

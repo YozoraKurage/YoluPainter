@@ -18,10 +18,10 @@ fn a_test_directory_is_gone_when_the_test_thread_ends_and_not_before() {
         let inside_exists = dir.join("file.txt").is_file();
         (dir, inside_exists)
     });
-    assert!(inside_exists, "試験の間は使える");
+    assert!(inside_exists, "テストの間は使える");
     assert!(
         !dir.exists(),
-        "試験（のスレッド）が終わったら消える: {}",
+        "テスト（のスレッド）が終わったら消える: {}",
         dir.display()
     );
 }
@@ -43,11 +43,11 @@ fn a_directory_registered_after_creation_is_removed_with_its_contents_and_a_fail
         std::fs::create_dir_all(made.join("inner")).unwrap();
         std::fs::write(made.join("inner/file.txt"), b"x").unwrap();
         tmp::clean_up_after_test(&made);
-        panic!("試験の失敗");
+        panic!("テストの失敗");
     })
     .join();
     assert!(outcome.is_err());
-    assert!(!dir.exists(), "落ちた試験の分も消える");
+    assert!(!dir.exists(), "落ちたテストの分も消える");
 }
 
 #[test]
@@ -69,12 +69,12 @@ fn a_live_link_exchange_folder_is_gone_with_what_was_put_in_it_and_a_neighbour_i
         let exchange = Exchange::new("cleanup");
         exchange.put_bytes("request.json", b"{}");
         let put = exchange.folder().inbox().join("request.json");
-        assert!(put.is_file(), "試験の間は置いた頼みがある");
+        assert!(put.is_file(), "テストの間は置いた頼みがある");
         (exchange.root.clone(), put)
     });
     assert!(
         !put.exists() && !root.exists(),
-        "試験が終わったら、受け渡しのフォルダごと消える: {}",
+        "テストが終わったら、受け渡しのフォルダごと消える: {}",
         root.display()
     );
     assert!(neighbour.is_dir(), "控えていないフォルダには触らない");

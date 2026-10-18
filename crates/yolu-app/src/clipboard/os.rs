@@ -49,21 +49,10 @@ pub enum OsClipboardError {
 impl OsClipboardError {
     pub fn text(self, lang: Lang) -> &'static str {
         match self {
-            OsClipboardError::Unavailable => lang.pick(
-                "OS のクリップボードを使えません",
-                "OS clipboard unavailable",
-            ),
-            OsClipboardError::Busy => {
-                lang.pick("OS のクリップボードが使用中です", "OS clipboard is busy")
-            }
-            OsClipboardError::Unreadable => lang.pick(
-                "OS のクリップボードの画像を扱えません",
-                "Cannot convert the OS clipboard image",
-            ),
-            OsClipboardError::NotResponding => lang.pick(
-                "OS のクリップボードが応答しません",
-                "OS clipboard is not responding",
-            ),
+            OsClipboardError::Unavailable => lang.t("clipboard-os-clipboard-unavailable"),
+            OsClipboardError::Busy => lang.t("clipboard-os-clipboard-is-busy"),
+            OsClipboardError::Unreadable => lang.t("clipboard-cannot-convert-the-os-clipboard"),
+            OsClipboardError::NotResponding => lang.t("clipboard-os-clipboard-is-not-responding"),
         }
     }
 }
@@ -113,29 +102,29 @@ impl MemoryClipboard {
     }
     /// 外のアプリがコピーしたことにする（None で、画像が無い状態）。
     pub fn set(&self, image: Option<ClipImage>) {
-        self.0.lock().expect("試験用の中身").image = image;
+        self.0.lock().expect("テスト用の中身").image = image;
     }
     /// 今の中身。
     pub fn get(&self) -> Option<ClipImage> {
-        self.0.lock().expect("試験用の中身").image.clone()
+        self.0.lock().expect("テスト用の中身").image.clone()
     }
     /// 書かれた回数・読まれた回数。
     pub fn counts(&self) -> (usize, usize) {
-        let s = self.0.lock().expect("試験用の中身");
+        let s = self.0.lock().expect("テスト用の中身");
         (s.writes, s.reads)
     }
     /// 次からの書き込み（読み出し）を失敗させる（None で戻す）。
     pub fn fail_writes(&self, error: Option<OsClipboardError>) {
-        self.0.lock().expect("試験用の中身").fail_write = error;
+        self.0.lock().expect("テスト用の中身").fail_write = error;
     }
     pub fn fail_reads(&self, error: Option<OsClipboardError>) {
-        self.0.lock().expect("試験用の中身").fail_read = error;
+        self.0.lock().expect("テスト用の中身").fail_read = error;
     }
 }
 
 impl OsClipboard for MemoryClipboard {
     fn read_image(&mut self) -> Result<Option<ClipImage>, OsClipboardError> {
-        let mut s = self.0.lock().expect("試験用の中身");
+        let mut s = self.0.lock().expect("テスト用の中身");
         s.reads += 1;
         match s.fail_read {
             Some(e) => Err(e),
@@ -143,7 +132,7 @@ impl OsClipboard for MemoryClipboard {
         }
     }
     fn write_image(&mut self, image: ClipImage) {
-        let mut s = self.0.lock().expect("試験用の中身");
+        let mut s = self.0.lock().expect("テスト用の中身");
         s.writes += 1;
         match s.fail_write {
             Some(e) => s.error = Some(e),
@@ -151,7 +140,7 @@ impl OsClipboard for MemoryClipboard {
         }
     }
     fn take_error(&mut self) -> Option<OsClipboardError> {
-        self.0.lock().expect("試験用の中身").error.take()
+        self.0.lock().expect("テスト用の中身").error.take()
     }
 }
 

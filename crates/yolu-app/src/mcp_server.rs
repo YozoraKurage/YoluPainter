@@ -86,19 +86,16 @@ impl OpsView {
         let url = yolu_mcp::endpoint(self.port);
         match &self.status {
             OpsStatus::Off => String::new(),
-            OpsStatus::Listening => lang.pick(
-                format!("外からの操作を待っています（{url}）"),
-                format!("Waiting for external commands ({url})"),
+            OpsStatus::Listening => lang.f(
+                "mcp_server-waiting-for-external-commands-tip",
+                &[("url", &url)],
             ),
-            OpsStatus::Connected(n) => lang.pick(
-                format!("外からの操作を受けています（つながり {n}・{url}）"),
-                format!("Accepting external commands ({n} connected, {url})"),
+            OpsStatus::Connected(n) => lang.f(
+                "mcp_server-accepting-external-commands-connected-tip",
+                &[("n", &n), ("url", &url)],
             ),
             OpsStatus::Failed(reason) => lang.with_reason(
-                lang.pick(
-                    "外からの操作を受けられません",
-                    "Cannot accept external commands",
-                ),
+                lang.t("mcp_server-cannot-accept-external-commands-tip"),
                 reason,
             ),
         }
@@ -234,13 +231,12 @@ impl Drop for McpServer {
 /// 待てなかった理由の文。
 fn bind_failure(lang: Lang, port: u16, error: &std::io::Error) -> String {
     match error.kind() {
-        std::io::ErrorKind::AddrInUse => lang.pick(
-            format!("{port} 番はほかのプログラムが使っています"),
-            format!("Port {port} is used by another program"),
-        ),
-        std::io::ErrorKind::PermissionDenied => lang.pick(
-            format!("{port} 番は使えません（OS が予約しています）"),
-            format!("Port {port} cannot be used (reserved by the system)"),
+        std::io::ErrorKind::AddrInUse => {
+            lang.f("mcp_server-port-is-used-by-another", &[("port", &port)])
+        }
+        std::io::ErrorKind::PermissionDenied => lang.f(
+            "mcp_server-port-cannot-be-used-reserved",
+            &[("port", &port)],
         ),
         _ => error.to_string(),
     }
@@ -485,7 +481,7 @@ impl McpServer {
         if self.pending.is_none() {
             return;
         }
-        let outcome = state.save.take_outcome();
+        let outcome = state.services.save.take_outcome();
         if outcome.is_none() && state.is_saving() {
             return;
         }
@@ -547,32 +543,20 @@ fn announce(state: &mut AppState, command: &str) {
     });
     state.info(
         Source::Ops,
-        lang.pick(
-            format!("外からの操作: {title}"),
-            format!("External command: {title}"),
-        ),
+        lang.f("mcp_server-external-command", &[("title", &title)]),
     );
 }
 
 fn refusal_text(lang: Lang, kind: Refusal) -> String {
     match kind {
         Refusal::Host => lang
-            .pick(
-                "外からの操作: 宛先がこの PC でない要求を断りました。",
-                "External command refused: the request was not addressed to this PC.",
-            )
+            .t("mcp_server-external-command-refused-the-request")
             .into(),
         Refusal::Origin => lang
-            .pick(
-                "外からの操作: ウェブページからの要求を断りました。",
-                "External command refused: the request came from a web page.",
-            )
+            .t("mcp_server-external-command-refused-the-request-2")
             .into(),
         Refusal::Busy => lang
-            .pick(
-                "外からの操作: つながりの数が上限のため断りました。",
-                "External command client refused: too many connections.",
-            )
+            .t("mcp_server-external-command-client-refused-too")
             .into(),
     }
 }

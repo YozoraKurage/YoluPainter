@@ -2,6 +2,7 @@ use super::{Command, Document};
 use crate::smart::{
     check_name, SmartKind, SmartMaterial, SmartPlaceResult, SmartPlacement, SmartResampling,
 };
+use crate::Reason;
 use crate::{Channel, ChannelKind, CoreError, Layer, LayerId, LayerKind};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -32,7 +33,7 @@ impl Document {
         self.ensure_no_stroke()?;
         check_name(name)?;
         if ids.is_empty() {
-            return Err(CoreError::InvalidArgument("保存するレイヤーがありません"));
+            return Err(CoreError::InvalidArgument(Reason::NoLayersToSave));
         }
         for &id in ids {
             self.index_of(id)?;
@@ -97,9 +98,7 @@ impl Document {
     /// 塗りつぶしレイヤーでなければ断る。
     pub fn capture_material(&self, id: LayerId, name: &str) -> Result<SmartMaterial, CoreError> {
         if self.layers[self.index_of(id)?].kind != LayerKind::Fill {
-            return Err(CoreError::InvalidArgument(
-                "塗りつぶしレイヤーではありません",
-            ));
+            return Err(CoreError::InvalidArgument(Reason::NotFillLayer));
         }
         let mut material = self.capture_smart_material(&[id], name)?;
         for l in &mut material.layers {
@@ -120,7 +119,7 @@ impl Document {
         let mask = self.layers[self.index_of(id)?]
             .mask
             .clone()
-            .ok_or(CoreError::InvalidArgument("保存するマスクがありません"))?;
+            .ok_or(CoreError::InvalidArgument(Reason::NoMaskToSave))?;
         let mut holder = Layer::new(id, name, LayerKind::Fill);
         holder.mask = Some(mask);
         Ok(self
@@ -170,7 +169,7 @@ impl Document {
         check_name(name)?;
         self.validate_structure()?;
         if self.layers.is_empty() {
-            return Err(CoreError::InvalidArgument("空のスマート素材"));
+            return Err(CoreError::InvalidArgument(Reason::EmptySmartMaterial));
         }
         if kind == SmartKind::Mask
             && (self.layers.len() != 1
@@ -178,7 +177,7 @@ impl Document {
                 || !self.layers[0].fill.is_empty()
                 || self.layers[0].mask.is_none())
         {
-            return Err(CoreError::InvalidArgument("スマートマスクの断片が不正"));
+            return Err(CoreError::InvalidArgument(Reason::InvalidSmartMaskFragment));
         }
         Ok(self.smart_fragment(kind, name, self.layers.clone()))
     }
@@ -190,14 +189,29 @@ impl Document {
         self.ensure_no_stroke()?;
         if material.kind != SmartKind::Material {
             return Err(CoreError::InvalidArgument(
-                "スマートマスクはレイヤーに置けません",
+                Reason::SmartMaskCannotBePlacedOnLayer,
             ));
         }
-        if let Some(p) = placement.parent {
-            if !self.layers[self.index_of(p)?].is_group() {
-                return Err(CoreError::InvalidArgument("配置先がグループではありません"));
+        // 置き先のレイヤーセット: 配置先のグループのもの、一番上の段なら渡されたもの（無ければ最初のレイヤーセット）
+        let set = match placement.parent {
+            Some(p) => {
+                let l = &self.layers[self.index_of(p)?];
+                if !l.is_group() {
+                    return Err(CoreError::InvalidArgument(Reason::TargetNotGroup));
+                }
+                if placement.set.is_some_and(|s| s != l.set) {
+                    return Err(CoreError::InvalidArgument(Reason::IntoGroupOfOtherLayerSet));
+                }
+                l.set
             }
-        }
+            None => match placement.set {
+                Some(s) => {
+                    self.require_layer_set(s)?;
+                    s
+                }
+                None => self.layer_sets[0].id,
+            },
+        };
         self.check_user_channels(material)?;
         let wrap = material
             .layers
@@ -206,7 +220,7 @@ impl Document {
             .count()
             > 1;
         if self.layers.len() + material.layers.len() + usize::from(wrap) > 2048 {
-            return Err(CoreError::InvalidArgument("レイヤーは2048個までです"));
+            return Err(CoreError::InvalidArgument(Reason::TooManyLayers));
         }
         self.ensure_nesting_room(
             placement.parent,
@@ -216,7 +230,7 @@ impl Document {
             .layers
             .iter()
             .enumerate()
-            .filter(|(_, l)| l.parent == placement.parent)
+            .filter(|(_, l)| l.parent == placement.parent && l.set == set)
             .map(|(i, _)| i)
             .collect();
         let index = match placement.position.and_then(|p| siblings.get(p)).copied() {
@@ -247,6 +261,7 @@ impl Document {
         for l in &mut copies {
             l.id = ids[&l.id];
             l.parent = l.parent.map(|p| ids[&p]).or(group).or(placement.parent);
+            l.set = set;
             if let Some(keep) = &placement.channels {
                 for c in material.channels() {
                     if l.is_channel_enabled(c) && !keep.contains(&c) {
@@ -263,6 +278,7 @@ impl Document {
                 LayerKind::Group,
             );
             l.parent = placement.parent;
+            l.set = set;
             copies.push(l);
         }
         let layer_id = copies
@@ -301,7 +317,7 @@ impl Document {
             let info = material.channel_info.get(i).and_then(Option::as_ref);
             if info.is_none() || self.channel_info(channel) != info {
                 return Err(CoreError::Unsupported(
-                    "ユーザーチャンネルの対応が一致しません",
+                    Reason::UserChannelMappingDoesNotMatch,
                 ));
             }
         }
@@ -316,7 +332,7 @@ impl Document {
         self.ensure_no_stroke()?;
         if material.kind != SmartKind::Mask {
             return Err(CoreError::InvalidArgument(
-                "スマートマテリアルはマスクに置けません",
+                Reason::SmartMaterialCannotBePlacedOnMask,
             ));
         }
         let i = self.index_of(id)?;
@@ -466,6 +482,11 @@ impl SmartMaterial {
         d.id = self.document_id;
         d.normal_settings = self.normal_settings;
         d.layers = self.layers.clone();
+        // 断片は 1 つのレイヤーセット（新しい文書の最初のもの）に入る
+        let set = d.layer_sets[0].id;
+        for l in &mut d.layers {
+            l.set = set;
+        }
         d.channels = self.channel_info.clone();
         Ok(d)
     }

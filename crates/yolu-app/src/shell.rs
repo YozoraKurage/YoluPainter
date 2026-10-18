@@ -38,15 +38,20 @@ pub const HELP_MENU: usize = 7;
 /// 言語ごとのメニューバーの見出し。
 pub fn menu_titles(lang: Lang) -> [&'static str; 8] {
     [
-        lang.pick("ファイル", "File"),
-        lang.pick("編集", "Edit"),
-        lang.pick("レイヤー", "Layer"),
-        lang.pick("選択範囲", "Select"),
-        lang.pick("フィルター", "Filter"),
-        lang.pick("表示", "View"),
-        lang.pick("ウィンドウ", "Window"),
-        lang.pick("ヘルプ", "Help"),
+        lang.t("shell-file"),
+        lang.t("shell-edit"),
+        lang.t("shell-layer"),
+        lang.t("shell-select"),
+        lang.t("shell-filter"),
+        lang.t("shell-view"),
+        lang.t("shell-window"),
+        lang.t("shell-help"),
     ]
+}
+
+/// 操作の名前とキーの文字で作るメニューの項目（名前は `commands` の表のもの）。
+fn command_item(lang: Lang, id: &str, action: Action) -> Entry<Action> {
+    Entry::item(crate::commands::label_of(id, lang), action).command_key(id)
 }
 
 /// ファイルメニューのインポート（入れ子のメニュー。PSD を新しいテクスチャセットに・今のテクスチャセットに）と書き出し（テクスチャを書き出す・PSD）。
@@ -56,39 +61,60 @@ fn import_export_entries(app: &AppState) -> Vec<Entry<Action>> {
     let l = app.lang;
     vec![
         Entry::submenu(
-            l.pick("インポート", "Import"),
+            l.t("shell-import"),
             vec![
                 Entry::item(
-                    l.pick(
-                        "PSD を新しいテクスチャセットに…",
-                        "PSD as a New Texture Set…",
-                    ),
+                    l.t("shell-psd-as-a-new-texture"),
                     Action::Psd(PsdAction::ImportDialog(PsdTarget::NewSet)),
                 )
                 .enabled(free),
                 Entry::item(
-                    l.pick(
-                        "PSD を今のテクスチャセットに…",
-                        "PSD into the Current Texture Set…",
-                    ),
+                    l.t("shell-psd-into-the-current-texture"),
                     Action::Psd(PsdAction::ImportDialog(PsdTarget::CurrentSet)),
                 )
                 .enabled(free && app.read_only_reason().is_none()),
             ],
         )
         .enabled(free),
+        command_item(l, "file.export", Action::Export(ExportAction::OpenWindow)).enabled(free),
+        command_item(l, "file.export_again", Action::Export(ExportAction::Again)).enabled(free),
         Entry::item(
-            l.pick("テクスチャを書き出す…", "Export Textures…"),
-            Action::Export(ExportAction::OpenWindow),
-        )
-        .command_key("file.export")
-        .enabled(free),
-        Entry::item(
-            l.pick("PSD を書き出す…", "Export PSD…"),
+            l.t("shell-export-psd"),
             Action::Psd(PsdAction::ExportDialog),
         )
         .enabled(free),
     ]
+}
+
+/// ファイルのメニューの「最近開いたプロジェクト」（新しい順に最大 10。項目はファイル名、ツールチップにフルパス。最後に区切りと一覧を消す。
+/// 一覧が空なら押せない）。
+fn recent_entry(app: &AppState, enabled: bool) -> Entry<Action> {
+    let l = app.lang;
+    let mut entries: Vec<Entry<Action>> = app
+        .recent_projects
+        .items()
+        .iter()
+        .map(|path| {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
+            Entry::item(name, Action::OpenRecent(path.clone())).tooltip(path.display().to_string())
+        })
+        .collect();
+    entries.push(Entry::Separator);
+    entries.push(Entry::item(l.t("shell-clear-recent"), Action::ClearRecent));
+    Entry::submenu(l.t("shell-open-recent"), entries)
+        .enabled(enabled && !app.recent_projects.is_empty())
+}
+
+/// ファイルのメニューの「復旧…」（保存の間・描いている間は押せない。復旧が無効のときも押せない）。
+fn recovery_entry(app: &AppState, idle: bool) -> Entry<Action> {
+    Entry::item(
+        app.lang.t("shell-recovery"),
+        Action::Recovery(crate::recovery::RecoveryAction::OpenWindow),
+    )
+    .enabled(idle && app.services.recovery.is_enabled())
 }
 
 /// メニューバーの見出しの中身。
@@ -107,34 +133,15 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
     match index {
         0 => {
             let mut entries = vec![
-                why(Entry::item(
-                    l.pick("新規プロジェクト…", "New Project…"),
-                    Action::NewProjectDialog,
-                )
-                .command_key("file.new_project")
-                .enabled(idle)),
-                why(
-                    Entry::item(l.pick("開く…", "Open…"), Action::OpenProjectDialog)
-                        .command_key("file.open")
-                        .enabled(idle),
-                ),
-                why(Entry::item(
-                    l.pick("復旧…", "Recovery…"),
-                    Action::Recovery(crate::recovery::RecoveryAction::OpenWindow),
-                )
-                .enabled(idle && app.recovery.is_enabled())),
+                why(command_item(l, "file.new_project", Action::NewProjectDialog).enabled(idle)),
+                why(command_item(l, "file.open", Action::OpenProjectDialog).enabled(idle)),
+                why(recent_entry(app, idle)),
+                why(recovery_entry(app, idle)),
                 Entry::Separator,
-                why(Entry::item(l.pick("保存", "Save"), Action::SaveProject)
-                    .command_key("file.save")
-                    .enabled(idle)),
+                why(command_item(l, "file.save", Action::SaveProject).enabled(idle)),
+                why(command_item(l, "file.save_as", Action::SaveProjectAsDialog).enabled(idle)),
                 why(Entry::item(
-                    l.pick("別名で保存…", "Save As…"),
-                    Action::SaveProjectAsDialog,
-                )
-                .command_key("file.save_as")
-                .enabled(idle)),
-                why(Entry::item(
-                    l.pick("配布用に保存…", "Save for Distribution…"),
+                    l.t("shell-save-for-distribution"),
                     Action::Distribute(crate::distribute::DistributeAction::Start),
                 )
                 .enabled(idle && !app.distribute.is_open() && !app.distribute.is_busy())),
@@ -145,25 +152,21 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
             entries.extend([
                 Entry::Separator,
                 Entry::item(
-                    l.pick("プロジェクト設定…", "Project Configuration…"),
+                    l.t("shell-project-configuration"),
                     Action::Project(crate::newproject::NpAction::OpenConfigure),
                 )
                 .enabled(free),
                 Entry::Separator,
-                Entry::item("Live Link", Action::ToggleLiveLink).checked(app.link.is_on()),
+                Entry::item("Live Link", Action::ToggleLiveLink).checked(app.services.link.is_on()),
                 Entry::Separator,
-                Entry::item(l.pick("終了", "Quit"), Action::Quit).command_key("app.quit"),
+                command_item(l, "app.quit", Action::Quit),
             ]);
             entries
         }
         1 => {
             let mut entries = vec![
-                Entry::item(l.pick("取り消し", "Undo"), Action::Undo)
-                    .command_key("edit.undo")
-                    .enabled(free && app.can_undo()),
-                Entry::item(l.pick("やり直し", "Redo"), Action::Redo)
-                    .command_key("edit.redo")
-                    .enabled(free && app.can_redo()),
+                command_item(l, "edit.undo", Action::Undo).enabled(free && app.can_undo()),
+                command_item(l, "edit.redo", Action::Redo).enabled(free && app.can_redo()),
                 Entry::Separator,
             ];
             entries.extend(crate::clipboard::menu_entries(app));
@@ -193,97 +196,61 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 tool_entry(Tool::Path),
                 tool_entry(Tool::Text),
                 Entry::Separator,
-                Entry::item(
-                    l.pick("メインとサブの色を入れ替え", "Swap Main and Sub Colors"),
-                    Action::SwapColors,
-                )
-                .command_key("color.swap"),
-                Entry::item(
-                    l.pick("初期設定の色", "Default Colors"),
-                    Action::DefaultColors,
-                )
-                .command_key("color.default"),
+                command_item(l, "color.swap", Action::SwapColors),
+                command_item(l, "color.default", Action::DefaultColors),
                 // 設定は、Unity の Edit ▸ Preferences と同じく編集のメニューの一番下（区切りの後）
                 Entry::Separator,
-                Entry::item(
-                    l.pick("設定…", "Settings…"),
+                command_item(
+                    l,
+                    "app.settings",
                     Action::Prefs(crate::prefs::PrefsAction::Open),
-                )
-                .command_key("app.settings"),
+                ),
             ]);
             entries
         }
         // 選んでいるレイヤーの右クリックと同じ項目（選んでいなければ、足す項目とグループだけ）
-        2 => layer_menu(app, app.selected_layer),
+        2 => layer_menu(app, app.session.selected_layer),
         3 => crate::selection::menu::select_menu(app),
         4 => crate::fx::menu::menu_entries(app),
         5 => vec![
             crate::uv_wireframe::menu_entry(app),
             crate::uv_wireframe::overlap::menu_entry(app),
-            Entry::item(l.pick("ズームイン", "Zoom In"), Action::ZoomIn)
-                .command_key("view.zoom_in"),
-            Entry::item(l.pick("ズームアウト", "Zoom Out"), Action::ZoomOut)
-                .command_key("view.zoom_out"),
-            Entry::item(l.pick("画面に合わせる", "Fit to Screen"), Action::FitView)
-                .command_key("view.fit")
-                .enabled(free),
+            command_item(l, "view.zoom_in", Action::ZoomIn),
+            command_item(l, "view.zoom_out", Action::ZoomOut),
+            command_item(l, "view.fit", Action::FitView).enabled(free),
             Entry::Separator,
-            Entry::item(
-                l.pick("表示を左に回す", "Rotate View Left"),
-                Action::RotateLeft,
-            )
-            .command_key("view.rotate_left")
-            .enabled(free),
-            Entry::item(
-                l.pick("表示を右に回す", "Rotate View Right"),
-                Action::RotateRight,
-            )
-            .command_key("view.rotate_right")
-            .enabled(free),
-            Entry::item(
-                l.pick("回転を戻す", "Reset Rotation"),
-                Action::ResetRotation,
-            )
-            .command_key("view.reset_rotation")
-            .enabled(free && app.view.angle != 0.0),
-            Entry::item(l.pick("表示を左右反転", "Flip View"), Action::FlipView)
-                .command_key("view.flip")
+            command_item(l, "view.rotate_left", Action::RotateLeft).enabled(free),
+            command_item(l, "view.rotate_right", Action::RotateRight).enabled(free),
+            command_item(l, "view.reset_rotation", Action::ResetRotation)
+                .enabled(free && app.view.angle != 0.0),
+            command_item(l, "view.flip", Action::FlipView)
                 .checked(app.view.flip)
                 .enabled(free),
             Entry::Separator,
-            Entry::item(
-                l.pick("定規にスナップ", "Snap to Ruler"),
+            command_item(
+                l,
+                "view.ruler_snap",
                 Action::Ruler(crate::rulers::RulerAction::ToggleSnapRuler),
             )
-            .command_key("view.ruler_snap")
             .checked(app.rulers.snap_ruler)
             .enabled(free),
-            Entry::item(
-                l.pick("特殊定規にスナップ", "Snap to Special Ruler"),
+            command_item(
+                l,
+                "view.special_ruler_snap",
                 Action::Ruler(crate::rulers::RulerAction::ToggleSnapSpecial),
             )
-            .command_key("view.special_ruler_snap")
             .checked(app.rulers.snap_special)
             .enabled(free),
-            Entry::item(
-                l.pick(
-                    "スナップする特殊定規の切り替え",
-                    "Switch the Snapping Special Ruler",
-                ),
+            command_item(
+                l,
+                "view.switch_special_ruler",
                 Action::Ruler(crate::rulers::RulerAction::SwitchSpecial),
             )
-            .command_key("view.switch_special_ruler")
             .enabled(free),
             Entry::Separator,
             crate::mode::view_menu_entry(app),
-            Entry::item(
-                l.pick(
-                    "3D ビューでモデル全体を見る",
-                    "Frame the Model in the 3D View",
-                ),
-                Action::FrameModel,
-            )
-            .enabled(free && app.view3d.model.is_some()),
+            Entry::item(l.t("shell-frame-the-model-in-the"), Action::FrameModel)
+                .enabled(free && app.view3d.model.is_some()),
         ],
         WINDOW_MENU => crate::detach::menu::window_entries(app),
         _ => help_entries(app),
@@ -293,22 +260,16 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
 /// ヘルプのメニュー。更新の項目は、公開鍵を組み込んだビルドだけに出る（新しい版があれば先頭に）。
 fn help_entries(app: &AppState) -> Vec<Entry<Action>> {
     let l = app.lang;
-    let about = Entry::item(
-        l.pick("YoluPainter について", "About YoluPainter"),
-        Action::About,
-    );
-    if !app.update.enabled() {
+    let about = Entry::item(l.t("shell-about-yolupainter-tip"), Action::About);
+    if !app.services.update.enabled() {
         return vec![
-            Entry::item(
-                l.pick("ログのフォルダを開く", "Open Log Folder"),
-                Action::OpenLogFolder,
-            ),
+            Entry::item(l.t("shell-open-log-folder-tip"), Action::OpenLogFolder),
             about,
         ];
     }
-    let busy = app.update.is_busy();
+    let busy = app.services.update.is_busy();
     let mut entries = Vec::new();
-    if let Some(label) = app.update.install_label(l) {
+    if let Some(label) = app.services.update.install_label(l) {
         entries.push(
             Entry::item(label, Action::Update(UpdateAction::Install))
                 .enabled(!busy && !app.is_stroking()),
@@ -317,14 +278,14 @@ fn help_entries(app: &AppState) -> Vec<Entry<Action>> {
     }
     entries.push(
         Entry::item(
-            l.pick("更新を確かめる…", "Check for Updates…"),
+            l.t("shell-check-for-updates-tip"),
             Action::Update(UpdateAction::Check),
         )
         .enabled(!busy),
     );
     entries.push(Entry::Separator);
     entries.push(Entry::item(
-        l.pick("ログのフォルダを開く", "Open Log Folder"),
+        l.t("shell-open-log-folder-tip"),
         Action::OpenLogFolder,
     ));
     entries.push(about);
@@ -333,20 +294,22 @@ fn help_entries(app: &AppState) -> Vec<Entry<Action>> {
 
 /// ポップアップの中身（メニューバー・合成モード・レイヤーの右クリック）。
 pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
+    // 描いている間の判断は項目ごとに求めず、ここで 1 回だけ
+    let free = !app.is_stroking();
     match kind {
         PopupKind::MenuBar(i) => menu_entries(app, i),
         PopupKind::BlendMode(id) => {
             // 描くチャンネルが自分の合成を持っていれば、そのチャンネルの値を替える（レイヤーの値は変えない）
             let channel = app.m2.paint_channel;
-            let layer = app.doc.layer(id);
+            let layer = app.session.doc.layer(id);
             let own = layer.is_some_and(|l| !l.channel_blend(channel).is_empty());
             let current = layer.map(|l| l.blend_mode_in(channel));
             let group = layer.is_some_and(|l| l.is_group());
             // 頭: 描くチャンネルだけの合成モードと不透明度にする・レイヤーの値に戻す
-            let name = crate::m2::channel_name(app.lang, &app.doc, channel);
+            let name = crate::m2::channel_name(app.lang, &app.session.doc, channel);
             let lang = app.lang;
             let own_item = Entry::item(
-                lang.pick(format!("{name} だけの値"), format!("{name} only")),
+                lang.f("shell-only", &[("name", &name)]),
                 Action::M2(Edit::OwnBlend {
                     id,
                     channel,
@@ -355,17 +318,9 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
             )
             .checked(own)
             .tooltip(if own {
-                lang.pick(
-                    format!("{name} だけの合成モードと不透明度（押すとレイヤーの値に戻す）"),
-                    format!(
-                        "{name} only: its own blend mode and opacity (click to follow the layer)"
-                    ),
-                )
+                lang.f("shell-only-its-own-blend-mode-tip", &[("name", &name)])
             } else {
-                lang.pick(
-                    format!("レイヤーの合成モードと不透明度（押すと {name} 専用にする）"),
-                    format!("The layer's blend mode and opacity (click to give {name} its own)"),
-                )
+                lang.f("shell-the-layer-s-blend-mode-tip", &[("name", &name)])
             });
             [own_item, Entry::Separator]
                 .into_iter()
@@ -384,40 +339,42 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
         }
         PopupKind::M2(popup) => crate::m2_menu::entries(app, popup),
         PopupKind::SetContext(uid) => {
-            let set = app.sets.by_uid(uid);
+            let set = app.session.sets.by_uid(uid);
             let visible = set.is_some_and(|s| s.visible);
             let writable = set.is_some_and(|s| s.read_only.is_none());
             let l = app.lang;
             vec![
-                Entry::item(l.pick("名前を変更", "Rename"), Action::StartRenameSet(uid))
-                    .enabled(!app.is_stroking() && writable),
+                Entry::item(l.t("shell-rename"), Action::StartRenameSet(uid))
+                    .enabled(free && writable),
                 Entry::item(
                     if visible {
-                        l.pick("隠す", "Hide")
+                        l.t("shell-hide")
                     } else {
-                        l.pick("見せる", "Show")
+                        l.t("shell-show")
                     },
                     Action::ToggleSetVisible(uid),
                 ),
                 Entry::Separator,
                 // 下の帯のベイクのボタンは、帯が狭いと隠れる。ここからも開ける（ベイクのウィンドウで、焼くセットを選ぶ）
                 Entry::item(
-                    l.pick("メッシュマップをベイク…", "Bake Mesh Maps…"),
+                    l.t("shell-bake-mesh-maps"),
                     Action::Bake(crate::bake::BakeAction::OpenWindow),
                 )
                 .command_key("bake.open"),
                 Entry::Separator,
                 Entry::item(
-                    l.pick("消す…", "Remove…"),
+                    l.t("shell-remove"),
                     Action::Project(crate::newproject::NpAction::RemoveSets(vec![uid])),
                 )
-                .enabled(!app.is_stroking() && app.sets.len() > 1),
+                .enabled(free && app.session.sets.len() > 1),
             ]
         }
         PopupKind::LayerContext(id) => layer_context(app, id),
         PopupKind::RulerLayer(id) => crate::rulers::layer_icon::menu_entries(app, id),
         PopupKind::Shelf => crate::panels::assets::menu_entries(app),
         PopupKind::View3dShading => crate::view3d::display::entries(app),
+        PopupKind::HidePreset(id) => crate::view3d::hide::shelf::hide_entries(app, id, free),
+        PopupKind::PosePreset(id) => crate::view3d::hide::shelf::pose_entries(app, id, free),
         PopupKind::LiveLink => link_entries(app),
         PopupKind::BakeIsland {
             set, island, map, ..
@@ -435,12 +392,10 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
 /// 変形のメニューの項目（左右反転・上下反転・90° 回転）。
 fn transform_entry(l: Lang, x: Xform, free: bool) -> Entry<Action> {
     let name = match x {
-        Xform::Flip { horizontal: true } => l.pick("左右反転", "Flip Horizontal"),
-        Xform::Flip { horizontal: false } => l.pick("上下反転", "Flip Vertical"),
-        Xform::Rotate90 { clockwise: true } => {
-            l.pick("時計回りに 90° 回転", "Rotate 90° Clockwise")
-        }
-        _ => l.pick("反時計回りに 90° 回転", "Rotate 90° Counter-clockwise"),
+        Xform::Flip { horizontal: true } => l.t("shell-flip-horizontal"),
+        Xform::Flip { horizontal: false } => l.t("shell-flip-vertical"),
+        Xform::Rotate90 { clockwise: true } => l.t("shell-rotate-90-clockwise"),
+        _ => l.t("shell-rotate-90-counter-clockwise"),
     };
     Entry::item(name, Action::M2(Edit::Transform(x))).enabled(free)
 }
@@ -448,6 +403,47 @@ fn transform_entry(l: Lang, x: Xform, free: bool) -> Entry<Action> {
 /// レイヤーの右クリックのメニュー（複数選んでいれば、複製・グループ化・結合・ロック・表示・削除は選んだレイヤーの全部に効く）。
 fn layer_context(app: &AppState, id: crate::engine::LayerId) -> Vec<Entry<Action>> {
     layer_menu(app, Some(id))
+}
+
+/// レイヤーのメニューのマスクの項目（マスクが無ければ白・黒の追加、あれば「マスクをコピー」。貼り付けは、コピーしたマスクがあるときだけ押せる。
+/// `targets` は貼り付ける先（複数選んでいれば選んだ全部。マスクがあれば置き換える）。
+fn mask_menu_entries(
+    app: &AppState,
+    id: crate::engine::LayerId,
+    has_mask: bool,
+    free: bool,
+    targets: &[crate::engine::LayerId],
+) -> Vec<Entry<Action>> {
+    let lang = app.lang;
+    let mut v = Vec::new();
+    if has_mask {
+        v.push(
+            Entry::item(lang.t("shell-copy-mask"), Action::M2(Edit::CopyMask(id))).enabled(free),
+        );
+    } else {
+        v.push(
+            Entry::item(
+                lang.t("shell-add-white-layer-mask"),
+                Action::M2(Edit::AddMask(id)),
+            )
+            .enabled(free),
+        );
+        v.push(
+            Entry::item(
+                lang.t("shell-add-black-layer-mask"),
+                Action::M2(Edit::AddMaskBlack(id)),
+            )
+            .enabled(free),
+        );
+    }
+    v.push(
+        Entry::item(
+            lang.t("shell-paste-to-mask"),
+            Action::M2(Edit::PasteMask(targets.to_vec())),
+        )
+        .enabled(free && app.clip.mask.is_some()),
+    );
+    v
 }
 
 /// 「レイヤー」のメニューの全体（メニューバーの「レイヤー」・レイヤーの右クリック・一覧の空白の右クリックが同じ関数を使う）。
@@ -459,25 +455,22 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     let lang = app.lang;
     let free = !app.is_stroking();
     let mut v = crate::layermenu::creation_entries(app);
-    let new_group = Entry::item(
-        lang.pick("新規グループ", "New Group"),
-        Action::M2(Edit::NewGroup),
-    )
-    .enabled(free);
-    let Some(id) = id.filter(|id| app.doc.layer(*id).is_some()) else {
+    let new_group =
+        Entry::item(lang.t("shell-new-group"), Action::M2(Edit::NewGroup)).enabled(free);
+    let Some(id) = id.filter(|id| app.session.doc.layer(*id).is_some()) else {
         v.push(Entry::Separator);
         v.push(new_group);
         return v;
     };
-    let layer = app.doc.layer(id);
+    let layer = app.session.doc.layer(id);
     let visible = layer.map(|l| l.visible()).unwrap_or(true);
     let group = layer.is_some_and(|l| l.is_group());
     let has_mask = layer.is_some_and(|l| l.mask().is_some());
     let mask = layer.and_then(|l| l.mask());
-    let editing = app.m2.edit_mask && app.selected_layer == Some(id);
+    let editing = app.m2.edit_mask && app.session.selected_layer == Some(id);
     let selected = app.selected_layers();
     let multi = selected.len() > 1 && selected.contains(&id);
-    let members = app.doc.topmost_of(&selected).unwrap_or_default();
+    let members = app.session.doc.topmost_of(&selected).unwrap_or_default();
     // 効果（選んでいるレイヤーに足す。アンカーを置く・外す）
     v.push(Entry::Separator);
     v.extend(crate::fx::menu::layer_entries(app, id));
@@ -486,79 +479,61 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     v.push(new_group);
     if group && !multi {
         let ungroup = Entry::item(
-            lang.pick("グループ解除", "Ungroup"),
+            crate::commands::label_of("layer.ungroup", lang),
             Action::M2(Edit::Ungroup(id)),
         )
         .enabled(free);
         // Ctrl+Shift+G は選んでいるレイヤーのグループ解除なので、右クリックしたグループが選んでいるレイヤーと同じときだけ出す
-        v.push(if app.selected_layer == Some(id) {
+        v.push(if app.session.selected_layer == Some(id) {
             ungroup.command_key("layer.ungroup")
         } else {
             ungroup
         });
     } else {
         v.push(
-            Entry::item(
-                lang.pick("レイヤーをグループ化", "Group Layers"),
-                Action::M2(Edit::GroupSelected),
-            )
-            .command_key("layer.group")
-            .enabled(free && app.selected_layer == Some(id)),
+            command_item(lang, "layer.group", Action::M2(Edit::GroupSelected))
+                .enabled(free && app.session.selected_layer == Some(id)),
         );
     }
     v.push(Entry::Separator);
     let duplicate = Entry::item(
-        lang.pick("複製", "Duplicate"),
+        crate::commands::duplicate_name(app, Some(id)),
         Action::M2(Edit::DuplicateSelected),
     )
     .enabled(free);
     // 選択範囲があるあいだの Ctrl+J は「コピーして新しいレイヤー」（選択範囲のメニューと帯）。複製のキーは、選択範囲が無いときだけ出す
-    v.push(if app.doc.selection().is_some() {
+    v.push(if app.session.doc.selection().is_some() {
         duplicate
     } else {
         duplicate.command_key("layer.duplicate")
     });
     // 結合（できない理由は、押したあとに短い文で言う。複数選んでいればそのレイヤーを、グループならグループを、そうでなければ下のレイヤーと）
-    let merge_label = if members.len() > 1 {
-        lang.pick("レイヤーを結合", "Merge Layers")
-    } else if group {
-        lang.pick("グループを結合", "Merge Group")
-    } else {
-        lang.pick("下のレイヤーと結合", "Merge Down")
-    };
-    v.push(
-        Entry::item(merge_label, Action::M2(Edit::MergeDown))
-            .command_key("layer.merge_down")
-            .enabled(free && app.selected_layer == Some(id)),
-    );
     v.push(
         Entry::item(
-            lang.pick("表示レイヤーを結合", "Merge Visible"),
-            Action::M2(Edit::MergeVisible),
+            crate::commands::merge_down_name(app, Some(id)),
+            Action::M2(Edit::MergeDown),
         )
-        .command_key("layer.merge_visible")
-        .enabled(free),
+        .command_key("layer.merge_down")
+        .enabled(free && app.session.selected_layer == Some(id)),
     );
+    v.push(command_item(lang, "layer.merge_visible", Action::M2(Edit::MergeVisible)).enabled(free));
     if layer.is_some_and(|l| l.path().is_some()) {
         // 塗りつぶしレイヤーのパスは画素にできない（パスの欄のボタンと同じ条件）
         let can = app.path_can_rasterize(id);
         let mut entry = Entry::item(
-            lang.pick("パスをラスタライズ", "Rasterize Path"),
+            lang.t("shell-rasterize-path"),
             Action::Path(PathAction::Rasterize(id)),
         )
         .enabled(free && can);
         if !can {
-            entry = entry.tooltip(lang.pick(
-                "塗りつぶしレイヤーのパスは画素にできません",
-                "A path on a fill layer cannot become pixels",
-            ));
+            entry = entry.tooltip(lang.t("shell-a-path-on-a-fill-tip"));
         }
         v.push(entry);
     }
     if layer.is_some_and(|l| l.text().is_some()) {
         v.push(
             Entry::item(
-                lang.pick("テキストをラスタライズ", "Rasterize Text"),
+                lang.t("shell-rasterize-text"),
                 Action::Text(crate::textlayer::TextAction::Rasterize(id)),
             )
             .enabled(free),
@@ -567,7 +542,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     // アセットの棚へ（レイヤーのまとまり・マスク）
     v.push(
         Entry::item(
-            lang.pick("スマートマテリアルとして保存", "Save as Smart Material"),
+            lang.t("shell-save-as-smart-material"),
             Action::Shelf(ShelfOp::SaveMaterial(id)),
         )
         .enabled(free),
@@ -576,7 +551,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     if let Some(l) = layer.filter(|l| l.kind() == crate::engine::LayerKind::Fill) {
         let refusal = crate::library::ops::material_refusal(lang, l);
         let entry = Entry::item(
-            lang.pick("マテリアルとして保存", "Save as Material"),
+            lang.t("shell-save-as-material"),
             Action::Shelf(ShelfOp::SaveAsMaterial(id)),
         )
         .enabled(free && refusal.is_none());
@@ -588,10 +563,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     if has_mask {
         v.push(
             Entry::item(
-                lang.pick(
-                    "マスクをスマートマスクとして保存",
-                    "Save Mask as Smart Mask",
-                ),
+                lang.t("shell-save-mask-as-smart-mask"),
                 Action::Shelf(ShelfOp::SaveMask(id)),
             )
             .enabled(free),
@@ -601,25 +573,26 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     v.push(Entry::Separator);
     v.push(
         Entry::item(
-            lang.pick("参照レイヤー", "Reference Layer"),
+            lang.t("shell-reference-layer"),
             Action::Region(crate::region::RegionAction::ReferenceLayer(id)),
         )
-        .checked(app.region.references.contains(&(app.doc.id(), id)))
+        .checked(app.region.references.contains(&(app.session.doc.id(), id)))
         .enabled(free),
     );
     v.push(
         Entry::item(
-            lang.pick("クリッピング", "Clipping"),
+            lang.t("shell-clipping"),
             Action::M2(Edit::Clipping(id, !layer.is_some_and(|l| l.clipping()))),
         )
         .checked(layer.is_some_and(|l| l.clipping()))
         .enabled(free),
     );
+    let targets = if multi { selected.clone() } else { vec![id] };
     v.push(Entry::Separator);
     if has_mask {
         v.push(
             Entry::item(
-                lang.pick("マスクに描く", "Paint on Mask"),
+                lang.t("shell-paint-on-mask"),
                 Action::M2Ui(UiOp::EditMask(!editing)),
             )
             .checked(editing)
@@ -627,7 +600,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         );
         v.push(
             Entry::item(
-                lang.pick("マスクを有効にする", "Enable Mask"),
+                lang.t("shell-enable-mask"),
                 Action::M2(Edit::MaskEnabled(id, !mask.is_some_and(|m| m.enabled()))),
             )
             .checked(mask.is_some_and(|m| m.enabled()))
@@ -635,7 +608,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         );
         v.push(
             Entry::item(
-                lang.pick("マスクを反転", "Invert Mask"),
+                lang.t("shell-invert-mask"),
                 Action::M2(Edit::MaskInverted(id, !mask.is_some_and(|m| m.inverted()))),
             )
             .checked(mask.is_some_and(|m| m.inverted()))
@@ -643,27 +616,22 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         );
         v.push(
             Entry::item(
-                lang.pick("レイヤーマスクを削除", "Delete Layer Mask"),
+                lang.t("shell-delete-layer-mask"),
                 Action::M2(Edit::RemoveMask(id)),
             )
             .enabled(free),
         );
-    } else {
-        v.push(
-            Entry::item(
-                lang.pick("レイヤーマスクを追加", "Add Layer Mask"),
-                Action::M2(Edit::AddMask(id)),
-            )
-            .enabled(free),
-        );
     }
+    v.extend(mask_menu_entries(app, id, has_mask, free, &targets));
     // ロック（選んでいるレイヤーの全部に効く。持っているロックにチェック）
-    let targets = if multi { selected.clone() } else { vec![id] };
     v.push(Entry::Separator);
     for flag in LOCK_FLAGS {
-        let own = targets
-            .iter()
-            .all(|t| app.doc.layer(*t).is_some_and(|l| l.locks().contains(flag)));
+        let own = targets.iter().all(|t| {
+            app.session
+                .doc
+                .layer(*t)
+                .is_some_and(|l| l.locks().contains(flag))
+        });
         v.push(
             Entry::item(
                 menu_lock_name(lang, flag),
@@ -678,54 +646,29 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         );
     }
     v.push(Entry::Separator);
-    v.push(Entry::item(lang.pick("名前を変更", "Rename"), Action::StartRename(id)).enabled(free));
-    if multi {
-        v.push(
-            Entry::item(
-                lang.pick("表示を切り替え", "Toggle Visibility"),
-                Action::M2(Edit::ToggleSelectedVisible),
-            )
-            .enabled(free),
-        );
-    } else {
-        v.push(
-            Entry::item(
-                if visible {
-                    lang.pick("非表示にする", "Hide")
-                } else {
-                    lang.pick("表示する", "Show")
-                },
-                Action::ToggleVisible(id),
-            )
-            .enabled(free),
-        );
-    }
+    v.push(Entry::item(lang.t("shell-rename"), Action::StartRename(id)).enabled(free));
+    let (visibility, toggle) = match (multi, visible) {
+        (true, _) => (
+            lang.t("shell-toggle-visibility"),
+            Action::M2(Edit::ToggleSelectedVisible),
+        ),
+        (false, true) => (lang.t("shell-hide-2"), Action::ToggleVisible(id)),
+        (false, false) => (lang.t("shell-show-2"), Action::ToggleVisible(id)),
+    };
+    v.push(Entry::item(visibility, toggle).enabled(free));
     v.push(Entry::Separator);
-    v.push(
-        Entry::item(
-            lang.pick("レイヤーを上へ", "Move Layer Up"),
-            Action::LayerUp,
-        )
-        .enabled(free),
-    );
-    v.push(
-        Entry::item(
-            lang.pick("レイヤーを下へ", "Move Layer Down"),
-            Action::LayerDown,
-        )
-        .enabled(free),
-    );
+    // レイヤーセットが 2 つ以上あるとき: 選んでいるレイヤー（グループは中身ごと）を別のレイヤーセットへ
+    v.extend(crate::m2_menu::layer_set_move_submenu(app, targets.clone()));
+    v.push(Entry::item(lang.t("shell-move-layer-up"), Action::LayerUp).enabled(free));
+    v.push(Entry::item(lang.t("shell-move-layer-down"), Action::LayerDown).enabled(free));
     let removed: usize = members
         .iter()
-        .map(|m| m2::subtree_len(&app.doc, *m))
+        .map(|m| m2::subtree_len(&app.session.doc, *m))
         .sum::<usize>()
-        .max(m2::subtree_len(&app.doc, id));
+        .max(m2::subtree_len(&app.session.doc, id));
     v.push(
-        Entry::item(
-            lang.pick("レイヤーを削除", "Delete Layer"),
-            Action::DeleteLayer,
-        )
-        .enabled(free && app.doc.layers().len() > removed),
+        Entry::item(lang.t("shell-delete-layer"), Action::DeleteLayer)
+            .enabled(free && app.session.doc.layers().len() > removed),
     );
     v
 }
@@ -741,7 +684,7 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
     crate::objects::transform::settle(app);
     crate::objects::transform::start_requested(ctx, app);
     if ctx.egui_wants_keyboard_input()
-        || app.popup.is_some()
+        || app.ui.popup.is_some()
         || app.sel.dialog.is_some()
         || crate::windows::modal_open(app)
     {
@@ -767,7 +710,7 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
     let flying = crate::view3d::navigation::flying(app);
     ctx.input_mut(|i| {
         // キーの段 1「途中の操作」: 右を押している間の W/A/S/D/Q/E は視点の移動（表の `Scope::During` の行。下の段へ渡さない）
-        crate::keymap::take_fly_keys(i, &mut app.view3d.input.fly_held, flying);
+        crate::keymap::take_fly_keys(i, &mut app.view3d.view.input.fly_held, flying);
         // ツールのキーを押している間の、そのキーの繰り返しの押し（修飾を先に離したあとも）は、表のほかの割り当てへ渡さない
         crate::toolkeys::swallow_repeats(i, app);
         // コピー・カット・ペースト（X などの修飾なしのキーより先に取る）。画素を変えるカット・ペーストは、ペイントのモードだけ
@@ -820,6 +763,11 @@ pub fn options_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let mut x = crate::mode::dropdown(ui, app, r, r.left() + 8.0) + 8.0;
     w::vline(&p, x - 4.0, r.top() + 6.0, r.bottom() - 6.0, t::SEPARATOR);
     x += 4.0;
+    if app.mode == crate::mode::EditorMode::Hide {
+        // ハイド: 今の選ぶツールのアイコン
+        crate::view3d::hide::strip::options(ui, app, r, x);
+        return;
+    }
     if !app.mode.paints() {
         // 編集・ポーズ: 今のツールのアイコン（ツールの設定は無い）
         w::icon(
@@ -848,8 +796,8 @@ pub fn options_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
     (app.tool.def().options)(ui, app, r, x);
 }
 
-/// ツールの帯（左）。
-pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect) {
+/// ツールの帯（左）。`free` は描いていない間（ハイドのモードの帯の、押せるかを決める）。
+pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect, free: bool) {
     let p = ui.painter().clone();
     w::fill(&p, r, t::PANEL_BG);
     w::vline(&p, r.right() - 1.0, r.top(), r.bottom(), t::BORDER);
@@ -859,8 +807,12 @@ pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect) {
         crate::toolset::ui::strip(ui, app, r, bottom);
         crate::panels::color_swatch::draw(ui, app, crate::panels::color_swatch::area(r));
     } else {
-        // 編集・ポーズ: 選択・移動・回転・拡縮。色の 2 枚は暗くして押せない
-        crate::mode::edit_strip(ui, app, r, bottom);
+        // 編集・ポーズ: 選択・移動・回転・拡縮。ハイド: UV アイランドの選び・隠す。色の 2 枚は暗くして押せない
+        if app.mode == crate::mode::EditorMode::Hide {
+            crate::view3d::hide::strip::show(ui, app, r, bottom, free);
+        } else {
+            crate::mode::edit_strip(ui, app, r, bottom);
+        }
         let area = crate::panels::color_swatch::area(r);
         w::enabled_scope(ui, "mode.swatch", false, |ui| {
             crate::panels::color_swatch::draw(ui, app, area)
@@ -869,34 +821,108 @@ pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect) {
     }
 }
 
-/// 直前の操作の結果と理由（`message`）。状態の帯の左には出さず、小さな知らせ（`toast`）が短く出して消す。試験が読む口はここ。
+/// 直前の操作の結果と理由（`message`）。状態の帯の左に、知らせ（`toast`）が短く出して消す。テストが読む口はここ。
 pub fn status_text(app: &AppState) -> &str {
     &app.message
 }
 
-/// 状態の帯: 左は何も出さない。右端に、版とビルド・使っているメモリ（`usage` が決める項目。ツールチップに内訳。実際のウィンドウだけで、測れない値は出さない）。
+/// 状態の帯の右端の項目の置き場（右から左へ。幅は文字で決まる）。
+pub struct StatusLayout {
+    /// UI を隠している間（Tab）だけ、右の項目の左に出す印のアイコンと文字の矩形と文字。
+    pub hidden_note: Option<(Rect, Rect, String)>,
+    /// 外からの操作の印（丸）。
+    pub dot: Option<Rect>,
+    /// 使っているメモリなどの項目と、その文字の矩形。
+    pub items: Vec<(crate::usage::Item, Rect)>,
+    /// 右の項目の左の端（これより左は空き。知らせ `toast` が使う）。項目の間と同じ 16 の間をあけてある。
+    pub free_right: f32,
+}
+
+/// 状態の帯の、右の項目の手前の x（知らせ `toast` を、右の項目に重ならない幅で置くため）。
+pub fn status_free_right(ctx: &egui::Context, app: &AppState) -> f32 {
+    let screen = ctx.content_rect();
+    let bar = Rect::from_min_max(
+        pos2(screen.left(), screen.bottom() - t::STATUS_BAR_HEIGHT),
+        screen.max,
+    );
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("yolu.toast.measure"),
+    ));
+    status_layout(&painter, app, bar).free_right
+}
+
+/// 状態の帯 `r` の右端の項目の置き場。
+pub fn status_layout(p: &egui::Painter, app: &AppState, r: Rect) -> StatusLayout {
+    let mut right = r.right() - 10.0;
+    let mut dot = None;
+    if app.services.ops.indicator().is_some() {
+        let d = Rect::from_center_size(
+            pos2(right - OPS_DOT / 2.0, r.center().y),
+            vec2(OPS_DOT, OPS_DOT),
+        );
+        right = d.left() - 16.0;
+        dot = Some(d);
+    }
+    let mut items = Vec::new();
+    for item in app.services.usage.items(app.lang) {
+        let width = w::text_width(p, &item.text, t::LABEL_DIM);
+        let at = Rect::from_min_max(pos2(right - width, r.top()), pos2(right, r.bottom()));
+        right = at.left() - 16.0;
+        items.push((item, at));
+    }
+    let hidden_note = app.ui.hide_ui.then(|| {
+        let text = hidden_note_text(app.lang);
+        let width = w::text_width(p, &text, t::LABEL);
+        let at = Rect::from_min_max(pos2(right - width, r.top()), pos2(right, r.bottom()));
+        let icon =
+            Rect::from_center_size(pos2(at.left() - 6.0 - 7.0, r.center().y), vec2(14.0, 14.0));
+        right = icon.left() - 16.0;
+        (icon, at, text)
+    });
+    StatusLayout {
+        hidden_note,
+        dot,
+        items,
+        free_right: right,
+    }
+}
+
+/// UI を隠している間の、状態の帯の左端の文（戻すキーは割り当ての表から引く。割り当てが無ければキーを書かない）。
+fn hidden_note_text(lang: Lang) -> String {
+    match crate::shortcuts::shortcut_text(&Action::ToggleUi) {
+        Some(key) => lang.f("shell-ui-hidden", &[("key", &key)]),
+        None => lang.t("shell-ui-hidden-no-key").to_string(),
+    }
+}
+
+/// 状態の帯: 左は、直前の操作の知らせ（`toast`。出ているあいだだけ）。右の項目の左に、UI を隠している間（Tab）の印。右端に、バージョンとビルド・使っているメモリ（`usage` が決める項目。ツールチップに内訳。
+/// 実際のウィンドウだけで、測れない値は出さない）。
 pub fn status_bar(ui: &mut Ui, app: &AppState, r: Rect) {
     let p = ui.painter().clone();
     w::fill(&p, r, t::MENU_BG);
     w::hline(&p, r.left(), r.right(), r.top(), t::BORDER);
-    let mut right = r.right() - 10.0;
-    // 外からの操作を受けている間だけ、右端に小さな丸（待っている・つながっている・受けられない。色が状態。説明はツールチップ）
-    if let Some(indicator) = app.ops.indicator() {
-        let tip = app.ops.tooltip(app.lang);
-        let dot = Rect::from_center_size(
-            pos2(right - OPS_DOT / 2.0, r.center().y),
-            vec2(OPS_DOT, OPS_DOT),
+    let layout = status_layout(&p, app, r);
+    if let Some((icon, at, text)) = &layout.hidden_note {
+        w::icon(&p, *icon, "warning_circle", t::ERROR, 14.0);
+        w::text(&p, *at, text, t::LABEL, Align::Left);
+        let response = ui.interact(
+            at.union(*icon),
+            ui.id().with("status.hidden_ui"),
+            Sense::hover(),
         );
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
+    }
+    // 外からの操作を受けている間だけ、右端に小さな丸（待っている・つながっている・受けられない。色が状態。説明はツールチップ）
+    if let (Some(indicator), Some(dot)) = (app.services.ops.indicator(), layout.dot) {
+        let tip = app.services.ops.tooltip(app.lang);
         p.circle_filled(dot.center(), OPS_DOT / 2.0, ops_indicator_color(indicator));
         let response = ui.interact(dot.expand(4.0), ui.id().with("status.ops"), Sense::hover());
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &tip));
         response.on_hover_text(&tip);
-        right = dot.left() - 16.0;
     }
-    for item in app.usage.items(app.lang) {
-        let width = w::text_width(&p, &item.text, t::LABEL_DIM);
-        let at = Rect::from_min_max(pos2(right - width, r.top()), pos2(right, r.bottom()));
-        w::text(&p, at, &item.text, t::LABEL_DIM, Align::Right);
+    for (item, at) in &layout.items {
+        w::text(&p, *at, &item.text, t::LABEL_DIM, Align::Right);
         let response = ui.interact(
             at.expand2(vec2(4.0, 0.0)),
             ui.id().with(("status", item.key)),
@@ -905,7 +931,6 @@ pub fn status_bar(ui: &mut Ui, app: &AppState, r: Rect) {
         response
             .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &item.text));
         response.on_hover_text(&item.tip);
-        right = at.left() - 16.0;
     }
 }
 
@@ -951,7 +976,7 @@ pub fn link_icon(ui: &mut Ui, bar: Rect, left_of: f32, app: &AppState, open: boo
         pos2(left_of - LINK_ICON_SLOT, bar.top() + 1.0),
         vec2(LINK_ICON_WIDTH, bar.height() - 3.0),
     );
-    let link = &app.link;
+    let link = &app.services.link;
     let tip = link.tooltip(app.lang);
     let response = ui.interact(rect, ui.id().with("menubar.livelink"), Sense::hover());
     response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, open, &tip));
@@ -972,7 +997,7 @@ pub fn link_icon(ui: &mut Ui, bar: Rect, left_of: f32, app: &AppState, open: boo
 /// 受け付けないの切り替え。文は名前と状態だけ（合わなかった物の理由は入口の印のツールチップ）。
 pub fn link_entries(app: &AppState) -> Vec<Entry<Action>> {
     let l = app.lang;
-    let link = &app.link;
+    let link = &app.services.link;
     let on = link.is_on();
     let mut entries = vec![Entry::Heading(link.heading(l))];
     if let Some(target) = link.target_line() {
@@ -980,17 +1005,14 @@ pub fn link_entries(app: &AppState) -> Vec<Entry<Action>> {
     }
     entries.push(Entry::Separator);
     entries.push(
-        Entry::item(l.pick("受け付ける", "Accept"), Action::ToggleLiveLink)
+        Entry::item(l.t("shell-accept"), Action::ToggleLiveLink)
             .radio(on)
             .enabled(!on),
     );
     entries.push(
-        Entry::item(
-            l.pick("受け付けない", "Don't accept"),
-            Action::ToggleLiveLink,
-        )
-        .radio(!on)
-        .enabled(on),
+        Entry::item(l.t("shell-don-t-accept"), Action::ToggleLiveLink)
+            .radio(!on)
+            .enabled(on),
     );
     entries
 }

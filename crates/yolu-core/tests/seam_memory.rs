@@ -105,7 +105,10 @@ fn atlas(n: u32) -> Arc<UvTopology> {
         }
     }
     let g = SurfaceGeometry::new(tris, 1, DEFAULT_WELD_TOLERANCE).unwrap();
-    Arc::new(UvTopology::new(Arc::new(g), Some(0)))
+    Arc::new(UvTopology::new(
+        Arc::new(g),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
+    ))
 }
 
 fn picture() -> Vec<u8> {

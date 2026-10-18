@@ -1,22 +1,27 @@
-//! テクスチャセット。Unity 版と同じく、モデルのマテリアル 1 つ = セット 1 つで、文書（yolu-core の `Document`）はセットに 1 つ。
+//! テクスチャセット。Unity 版と同じく、初めはモデルのマテリアル 1 つ = セット 1 つで、文書（yolu-core の `Document`）はセットに 1 つ。
+//! 1 つのセットは複数のマテリアルを持てる（それらの面を同じテクスチャに描く。.ylp の中身の形式 9）。
 //!
 //! 今のセットの文書は `AppState.doc`（キャンバス・レイヤーのパネル・試験が読む所）に置き、ほかのセットの文書は各セットの中にしまう。
 //! 切り替えはこの 2 つを入れ替える（文書を写さない）。Undo・Redo は文書ごと（セットごと）。
 //!
 //! マテリアルの鍵は .ylp の形式 7 の `material` と同じ 3 つの形（名前と、アセットなら GUID と localFileId／マテリアルの無いスロットの
-//! 全部／まだ結び付けていないスロットの番号）。モデルのマテリアルへの照合も Unity 版と同じ順: 識別子（GUID と localFileId）→
+//! 全部／まだ結び付けていないスロットの番号）。セットは鍵を 1 つ以上持つ（どのマテリアルにも結び付けないセットは、モデルのスロットの
+//! 数より後の仮のスロットの番号の鍵）。モデルのマテリアルへの照合は鍵ごとに Unity 版と同じ順: 識別子（GUID と localFileId）→
 //! Unassigned → 名前（大文字小文字まで同じ、次に区別せず）→ スロットの番号。1 つのマテリアルは 1 つのセットだけが持つ。合わない
-//! セットも残し、鍵も変えない（3D に見えないだけ。そのマテリアルを持つモデルに替えればまた付く）。合ったセットの鍵はそのマテリアルの
-//! 鍵に書き換える（スロットの番号や古いアセットの鍵のまま保存しない）。
+//! 鍵も残し、変えない（3D に見えないだけ。そのマテリアルを持つモデルに替えればまた付く）。合った鍵はそのマテリアルの鍵に書き換える
+//! （スロットの番号や古いアセットの鍵のまま保存しない）。
 
 use std::sync::atomic::Ordering;
 
 use yolu_protocol::{channel, MaterialInfo, MaterialKey as LinkKey};
 
 use crate::canvas::view::ViewState;
-use crate::engine::{Document, LayerId};
+use crate::engine::{CoreError, Document, HistoryKind, LayerId, LayerSetId};
+use crate::m2::layersets::{display_name, outputs, top_layer_of, LayerSetEdit};
+use crate::m2::{self, Edit, UiOp};
 use crate::notice::Source;
-use crate::state::{blank_document_in, AppState, DEFAULT_DOCUMENT_SIZE};
+use crate::state::canvas_bar::{Add, Chip, Column, Eye, Row};
+use crate::state::{starter_document_in, Action, AppState, DEFAULT_DOCUMENT_SIZE};
 
 pub use yolu_io::{MaterialAsset, MaterialRef};
 
@@ -36,12 +41,9 @@ pub fn material_from_link(key: &LinkKey) -> MaterialRef {
 
 pub fn describe_material_in(material: &MaterialRef, lang: crate::lang::Lang) -> String {
     match material {
-        MaterialRef::Material { name, .. } => lang.pick(
-            format!("マテリアル「{name}」"),
-            format!("Material “{name}”"),
-        ),
-        MaterialRef::Unassigned => lang.pick("マテリアルなし", "No material").into(),
-        MaterialRef::PendingSlot(_) => lang.pick("マテリアルに未割り当て", "Unassigned").into(),
+        MaterialRef::Material { name, .. } => lang.f("sets-material", &[("name", &name)]),
+        MaterialRef::Unassigned => lang.t("sets-no-material").into(),
+        MaterialRef::PendingSlot(_) => lang.t("sets-unassigned").into(),
     }
 }
 
@@ -53,15 +55,12 @@ pub fn material_tooltip_in(material: &MaterialRef, lang: crate::lang::Lang) -> S
             asset: Some(a),
         } => {
             let guid = &a.guid[..a.guid.len().min(8)];
-            lang.pick(
-                format!("マテリアル「{name}」（アセット {guid}…・{}）", a.file_id),
-                format!("Material “{name}” (asset {guid}… · {})", a.file_id),
+            lang.f(
+                "sets-material-asset-tip",
+                &[("name", &name), ("guid", &guid), ("file_id", &a.file_id)],
             )
         }
-        MaterialRef::PendingSlot(n) => lang.pick(
-            format!("マテリアルに未割り当て（スロット {n}）"),
-            format!("Unassigned (slot {n})"),
-        ),
+        MaterialRef::PendingSlot(n) => lang.f("sets-unassigned-slot-tip", &[("n", &n)]),
         other => describe_material_in(other, lang),
     }
 }
@@ -134,6 +133,8 @@ pub struct Keep {
     pub view: Option<ViewState>,
     /// レイヤーの欄のスクロール（None は今のまま）。
     pub layer_scroll: Option<f32>,
+    /// 今のレイヤーセット（None は最初のレイヤーセット。選ぶレイヤーがあれば、そのレイヤーのレイヤーセットが先）。
+    pub layer_set: Option<LayerSetId>,
 }
 
 impl Keep {
@@ -143,6 +144,7 @@ impl Keep {
             selected_layer: None,
             view: Some(ViewState::default()),
             layer_scroll: Some(0.0),
+            layer_set: None,
         }
     }
 }
@@ -153,6 +155,8 @@ pub struct Stash {
     pub selected_layer: Option<LayerId>,
     pub view: ViewState,
     pub layer_scroll: f32,
+    /// 今のレイヤーセット（None は最初のレイヤーセット）。
+    pub layer_set: Option<LayerSetId>,
 }
 
 impl std::fmt::Debug for Stash {
@@ -169,12 +173,13 @@ impl std::fmt::Debug for Stash {
 
 impl Stash {
     pub fn new(doc: Document) -> Stash {
-        let selected_layer = doc.layers().last().map(|l| l.id());
+        let selected_layer = crate::m2::layersets::default_selection(&doc);
         Stash {
             doc,
             selected_layer,
             view: ViewState::default(),
             layer_scroll: 0.0,
+            layer_set: None,
         }
     }
 }
@@ -189,11 +194,12 @@ pub struct TextureSet {
     pub name: String,
     /// 名前をマテリアルから付けたまま（利用者が変えていない。マテリアルに結び付けたとき名前を付け直す）。
     pub auto_name: bool,
-    pub material: MaterialRef,
+    /// マテリアルの鍵（1 個以上。並びは .ylp に書く順）。
+    pub materials: Vec<MaterialRef>,
     /// 目（3D ビューと Unity に見せるか。2D のキャンバスでは隠しても描ける。保存しない）。
     pub visible: bool,
-    /// 今のモデルの、このセットが受け持つマテリアルの番号（モデルが無い・合わなければ None）。
-    pub bound: Option<u32>,
+    /// 今のモデルの、このセットが受け持つマテリアルの番号（昇順・重なり無し。モデルが無い・どの鍵も合わなければ空）。
+    pub bound: Vec<u32>,
     /// 読むだけの理由（core で扱えない中身がある・効果の入力がそろわない）。あれば描く・レイヤーを変える・名前を変えるを断る。
     pub read_only: Option<String>,
     /// 読むだけの理由が、効果の入力（メッシュマップ・モデルのルート・画像）がそろわないこと。入力がそろったら編集できるようになる
@@ -210,6 +216,33 @@ impl TextureSet {
     pub fn is_current(&self) -> bool {
         self.stash.is_none()
     }
+
+    /// 今のモデルで描くマテリアルの組（`bound` を core の組にしたもの。どれにも付いていなければ空）。
+    pub fn bound_set(&self) -> yolu_core::geometry::MaterialSet {
+        yolu_core::geometry::MaterialSet::new(self.bound.iter().map(|m| *m as i32))
+    }
+
+    /// 今のモデルのマテリアル `material` を受け持つか。
+    pub fn binds(&self, material: u32) -> bool {
+        self.bound.contains(&material)
+    }
+}
+
+/// マテリアルの名前の並びの閉じた形（「Face, Ear」。3 つより多い・入りきらなければ「先頭 ほか n」、英語は「先頭 +n」）。`fits` は文字の
+/// 並びが欄に入るか（画面の幅で測る）。
+pub fn materials_label(
+    lang: crate::lang::Lang,
+    names: &[&str],
+    fits: impl Fn(&str) -> bool,
+) -> String {
+    let full = names.join(", ");
+    if names.len() <= 1 || (names.len() <= 3 && fits(&full)) {
+        return full;
+    }
+    lang.f(
+        "sets-materials-and-more",
+        &[("first", &names[0]), ("more", &(names.len() - 1))],
+    )
 }
 
 /// テクスチャセットの並び（上から表示する順）と今のセット。
@@ -225,13 +258,13 @@ fn next_uid() -> u32 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
-/// 最初のセットの名前。
-pub const FIRST_SET_NAME: &str = "テクスチャセット 1";
-
 /// 最初のセットの名前（言語ごと）。
 pub fn first_set_name(lang: crate::lang::Lang) -> &'static str {
-    lang.pick(FIRST_SET_NAME, "Texture Set 1")
+    lang.t("sets-texture-set-1")
 }
+
+/// 開いたセット 1 つ（id・名前・マテリアルの鍵・読むだけの理由・文書）。
+pub type OpenedSet = (String, String, Vec<MaterialRef>, Option<String>, Document);
 
 impl TextureSets {
     /// モデル無しの最初のセット 1 つ（文書は呼ぶ側の `AppState.doc`。鍵はスロット 0 = 最初に読んだモデルの最初のスロットのマテリアル）。
@@ -266,9 +299,9 @@ impl TextureSets {
                 id: guid_string(doc.id()),
                 name: first_set_name(lang).into(),
                 auto_name: true,
-                material: MaterialRef::PendingSlot(0),
+                materials: vec![MaterialRef::PendingSlot(0)],
                 visible: true,
-                bound: None,
+                bound: Vec::new(),
                 read_only: None,
                 waiting_inputs: false,
                 saved: None,
@@ -294,6 +327,14 @@ impl TextureSets {
     pub fn get_mut(&mut self, index: usize) -> Option<&mut TextureSet> {
         self.list.get_mut(index)
     }
+    /// しまってある文書すべてを、今の中身で保存した所として覚える（今の文書は呼び手が覚える）。
+    pub(crate) fn mark_stashed_saved(&mut self) {
+        for set in &mut self.list {
+            if let Some(stash) = &mut set.stash {
+                stash.doc.mark_saved();
+            }
+        }
+    }
     pub fn current_index(&self) -> usize {
         self.current
     }
@@ -318,7 +359,8 @@ impl TextureSets {
     /// 今でないセットの文書を入れ替える（選んでいるレイヤーは新しい文書の一番上にする）。
     pub fn replace_stashed_doc(&mut self, index: usize, doc: Document) {
         if let Some(stash) = self.list.get_mut(index).and_then(|s| s.stash.as_mut()) {
-            stash.selected_layer = doc.layers().last().map(|l| l.id());
+            stash.selected_layer = crate::m2::layersets::default_selection(&doc);
+            stash.layer_set = None;
             stash.doc = doc;
         }
     }
@@ -332,10 +374,7 @@ impl TextureSets {
 
     /// 開いたセットを並べる（id・名前・鍵・読むだけの理由・文書）。返すのは並びと、今のセット（current）の文書。どのセットも
     /// 「開いた時のまま」の印を付ける。
-    pub fn from_parts(
-        parts: Vec<(String, String, MaterialRef, Option<String>, Document)>,
-        current: usize,
-    ) -> (TextureSets, Document) {
+    pub fn from_parts(parts: Vec<OpenedSet>, current: usize) -> (TextureSets, Document) {
         assert!(!parts.is_empty(), "セットが 1 つは要る");
         let current = current.min(parts.len() - 1);
         let mut sets = TextureSets {
@@ -343,9 +382,9 @@ impl TextureSets {
             current,
         };
         let mut current_doc = None;
-        for (i, (id, name, material, read_only, doc)) in parts.into_iter().enumerate() {
+        for (i, (id, name, materials, read_only, doc)) in parts.into_iter().enumerate() {
             let saved = Some((doc.id(), doc.revision()));
-            let index = sets.push(id, name, false, material, read_only, doc);
+            let index = sets.push(id, name, false, materials, read_only, doc);
             sets.list[index].saved = saved;
             if i == current {
                 current_doc = sets.list[index].stash.take().map(|s| s.doc);
@@ -357,15 +396,15 @@ impl TextureSets {
     /// 新しく作ったセットを並べる（id・名前・名前をマテリアルから付けたままか・鍵・文書）。`from_parts` と違い、どのセットも「保存した時のまま」の印を付けない
     /// （ファイルに無いセットなので、保存は正本を書く）。返すのは並びと、最初のセットの文書（今のセット）。
     pub fn from_new_parts(
-        parts: Vec<(String, String, bool, MaterialRef, Document)>,
+        parts: Vec<(String, String, bool, Vec<MaterialRef>, Document)>,
     ) -> (TextureSets, Document) {
         assert!(!parts.is_empty(), "セットが 1 つは要る");
         let mut sets = TextureSets {
             list: Vec::with_capacity(parts.len()),
             current: 0,
         };
-        for (id, name, auto_name, material, doc) in parts {
-            sets.push(id, name, auto_name, material, None, doc);
+        for (id, name, auto_name, materials, doc) in parts {
+            sets.push(id, name, auto_name, materials, None, doc);
         }
         let first = sets.list[0].stash.take().map(|s| s.doc);
         (sets, first.expect("最初のセットの文書"))
@@ -407,26 +446,27 @@ impl TextureSets {
         true
     }
 
-    /// セットを後ろに足す（文書はしまう）。返すのは位置。
+    /// セットを後ろに足す（文書はしまう）。`materials` は 1 個以上の鍵。返すのは位置。
     #[allow(clippy::too_many_arguments)]
     pub fn push(
         &mut self,
         id: String,
         name: String,
         auto_name: bool,
-        material: MaterialRef,
+        materials: Vec<MaterialRef>,
         read_only: Option<String>,
         doc: Document,
     ) -> usize {
+        debug_assert!(!materials.is_empty(), "セットは鍵を 1 つは持つ");
         let uid = next_uid();
         self.list.push(TextureSet {
             uid,
             id,
             name,
             auto_name,
-            material,
+            materials,
             visible: true,
-            bound: None,
+            bound: Vec::new(),
             read_only,
             waiting_inputs: false,
             saved: None,
@@ -450,18 +490,24 @@ pub(crate) fn exclusive_key(material: &MaterialRef) -> Option<String> {
 }
 
 /// セットの鍵をモデルのマテリアルに照合する（Unity 版と同じ順: 識別子 → Unassigned → 名前（同じ、次に大文字小文字を区別せず）→
-/// スロット）。返すのはマテリアルごとのセットの位置。1 つのセットは 1 つのマテリアルにしか付かない。`slots` はスロットごとの
-/// マテリアルの番号（`SceneModel::slots`）。
+/// スロット）。`sets` はセットごとの鍵の並び。照合は鍵ごとで、1 つの鍵は 1 つのマテリアルにしか付かない（1 つのセットは鍵の数だけ
+/// マテリアルを持てる）。同じ順の中では、セットの並び・鍵の並びの順に探す。返すのはマテリアルごとの（セットの位置・鍵の位置）。
+/// `slots` はスロットごとのマテリアルの番号（`SceneModel::slots`）。
 pub fn match_materials(
-    sets: &[&MaterialRef],
+    sets: &[&[MaterialRef]],
     materials: &[LinkKey],
     slots: &[u32],
-) -> Vec<Option<usize>> {
+) -> Vec<Option<(usize, usize)>> {
+    let keys: Vec<(usize, usize, &MaterialRef)> = sets
+        .iter()
+        .enumerate()
+        .flat_map(|(si, ks)| ks.iter().enumerate().map(move |(ki, k)| (si, ki, k)))
+        .collect();
     let mut by_material: Vec<Option<usize>> = vec![None; materials.len()];
-    let mut taken = vec![false; sets.len()];
-    let assign = |by: &mut Vec<Option<usize>>, taken: &mut Vec<bool>, m: usize, s: usize| {
-        by[m] = Some(s);
-        taken[s] = true;
+    let mut taken = vec![false; keys.len()];
+    let assign = |by: &mut Vec<Option<usize>>, taken: &mut Vec<bool>, m: usize, k: usize| {
+        by[m] = Some(k);
+        taken[k] = true;
     };
     // 1. 識別子
     for (mi, m) in materials.iter().enumerate() {
@@ -472,22 +518,22 @@ pub fn match_materials(
         else {
             continue;
         };
-        let found = (0..sets.len()).find(|&si| {
-            !taken[si]
-                && matches!(sets[si], MaterialRef::Material { asset: Some(a), .. }
+        let found = (0..keys.len()).find(|&ki| {
+            !taken[ki]
+                && matches!(keys[ki].2, MaterialRef::Material { asset: Some(a), .. }
                     if a.guid == *guid && a.file_id == *file_id)
         });
-        if let Some(si) = found {
-            assign(&mut by_material, &mut taken, mi, si);
+        if let Some(ki) = found {
+            assign(&mut by_material, &mut taken, mi, ki);
         }
     }
     // 2. マテリアルの無いスロット
     for (mi, m) in materials.iter().enumerate() {
         if by_material[mi].is_none() && *m == LinkKey::Unassigned {
-            if let Some(si) =
-                (0..sets.len()).find(|&si| !taken[si] && *sets[si] == MaterialRef::Unassigned)
+            if let Some(ki) =
+                (0..keys.len()).find(|&ki| !taken[ki] && *keys[ki].2 == MaterialRef::Unassigned)
             {
-                assign(&mut by_material, &mut taken, mi, si);
+                assign(&mut by_material, &mut taken, mi, ki);
             }
         }
     }
@@ -507,29 +553,32 @@ pub fn match_materials(
                     a.to_lowercase() == name.to_lowercase()
                 }
             };
-            let found = (0..sets.len()).find(|&si| {
-                !taken[si] && matches!(sets[si], MaterialRef::Material { name: n, .. } if same(n))
+            let found = (0..keys.len()).find(|&ki| {
+                !taken[ki] && matches!(keys[ki].2, MaterialRef::Material { name: n, .. } if same(n))
             });
-            if let Some(si) = found {
-                assign(&mut by_material, &mut taken, mi, si);
+            if let Some(ki) = found {
+                assign(&mut by_material, &mut taken, mi, ki);
             }
         }
     }
     // 5. まだ結び付けていないスロットの番号
-    for si in 0..sets.len() {
-        let MaterialRef::PendingSlot(n) = sets[si] else {
+    for ki in 0..keys.len() {
+        let MaterialRef::PendingSlot(n) = keys[ki].2 else {
             continue;
         };
-        if taken[si] {
+        if taken[ki] {
             continue;
         }
         if let Some(&mi) = slots.get(*n as usize) {
             if (mi as usize) < materials.len() && by_material[mi as usize].is_none() {
-                assign(&mut by_material, &mut taken, mi as usize, si);
+                assign(&mut by_material, &mut taken, mi as usize, ki);
             }
         }
     }
     by_material
+        .into_iter()
+        .map(|k| k.map(|k| (keys[k].0, keys[k].1)))
+        .collect()
 }
 
 /// モデルにセットを結び付けた結果。
@@ -552,9 +601,9 @@ impl BindReport {
     pub fn limit_text(&self, lang: crate::lang::Lang) -> Option<String> {
         let limit = crate::newproject::MAX_SETS;
         (self.skipped > 0).then(|| {
-            lang.pick(
-                format!("テクスチャセットが上限（{limit}）に達したため、{} 個のマテリアルにはセットを作っていません。", self.skipped),
-                format!("Texture set limit ({limit}) reached: {} material(s) have no set.", self.skipped),
+            lang.f(
+                "sets-texture-set-limit-reached-material",
+                &[("limit", &limit), ("skipped", &self.skipped)],
             )
         })
     }
@@ -563,28 +612,43 @@ impl BindReport {
 impl AppState {
     /// セットの文書（今のセットなら `self.doc`）。
     pub fn set_doc(&self, index: usize) -> &Document {
-        if index == self.sets.current_index() {
-            &self.doc
+        if index == self.session.sets.current_index() {
+            &self.session.doc
         } else {
-            self.sets
+            self.session
+                .sets
                 .stashed_doc(index)
                 .expect("今でないセットは文書をしまっている")
         }
     }
 
     pub fn set_doc_mut(&mut self, index: usize) -> &mut Document {
-        if index == self.sets.current_index() {
-            &mut self.doc
+        if index == self.session.sets.current_index() {
+            &mut self.session.doc
         } else {
-            self.sets
+            self.session
+                .sets
                 .stashed_doc_mut(index)
                 .expect("今でないセットは文書をしまっている")
         }
     }
 
+    /// セット `index` が今のモデルで受け持つマテリアルの名前（マテリアルの番号の順。モデルが無い・付いていなければ空）。
+    pub fn bound_material_names(&self, index: usize) -> Vec<String> {
+        let (Some(set), Some(model)) = (self.session.sets.get(index), self.session.model.as_ref())
+        else {
+            return Vec::new();
+        };
+        set.bound
+            .iter()
+            .filter_map(|m| model.materials.get(*m as usize))
+            .map(|info| crate::newproject::set_name_for(&info.key))
+            .collect()
+    }
+
     /// 今のセットが読むだけなら、その理由。
     pub fn read_only_reason(&self) -> Option<&str> {
-        self.sets.current().read_only.as_deref()
+        self.session.sets.current().read_only.as_deref()
     }
 
     /// 今の文書を変えてよいか（描いていない・読むだけでない）。
@@ -594,45 +658,43 @@ impl AppState {
 
     /// モデルのマテリアルの番号を受け持つセットの位置。
     pub fn set_for_material(&self, material: u32) -> Option<usize> {
-        self.sets.iter().position(|s| s.bound == Some(material))
+        self.session.sets.iter().position(|s| s.binds(material))
     }
 
     /// 今のセットを替える（描いている間は断る）。表示（拡大・回転）と選んだレイヤーはセットごとに覚える。
     pub fn switch_set(&mut self, index: usize) -> Result<(), String> {
-        if index >= self.sets.len() {
-            return Err(self
-                .lang
-                .pick(
-                    "そのテクスチャセットはありません。",
-                    "Texture set not found.",
-                )
-                .into());
+        if index >= self.session.sets.len() {
+            return Err(self.lang.t("sets-texture-set-not-found").into());
         }
-        if index == self.sets.current_index() {
+        if index == self.session.sets.current_index() {
             return Ok(());
         }
         if self.is_stroking() {
             return Err(crate::lang::refusals::during_stroke(self.lang).into());
         }
-        self.doc.end_coalescing();
-        let incoming = self.sets.list[index]
+        self.session.doc.end_coalescing();
+        let incoming = self.session.sets.list[index]
             .stash
             .take()
             .expect("今でないセットは文書をしまっている");
         // 今の文書をしまってから入れる（予算の同期が、ほかのセットのしまった文書を読む）
+        // 出ていく文書の今のレイヤーセットは、文書を替える前に読む
+        let layer_set = Some(self.layer_set());
         let outgoing = Stash {
-            doc: std::mem::replace(&mut self.doc, incoming.doc),
-            selected_layer: self.selected_layer,
+            doc: self.session.install(incoming.doc),
+            selected_layer: self.session.selected_layer,
             view: std::mem::take(&mut self.view),
             layer_scroll: self.ui.layer_scroll,
+            layer_set,
         };
-        let previous = self.sets.current;
-        self.sets.list[previous].stash = Some(outgoing);
-        self.sets.current = index;
+        let previous = self.session.sets.current;
+        self.session.sets.list[previous].stash = Some(outgoing);
+        self.session.sets.current = index;
         self.settle_installed_document(Keep {
             selected_layer: incoming.selected_layer,
             view: Some(incoming.view),
             layer_scroll: Some(incoming.layer_scroll),
+            layer_set: incoming.layer_set,
         });
         Ok(())
     }
@@ -641,15 +703,16 @@ impl AppState {
     /// ポップアップ・選んだ効果）はいつも戻し、選択・3D ビュー・予算を新しい文書に合わせる。選んだレイヤー・表示・レイヤーのスクロールは `keep` の
     /// とおり。
     pub fn install_document(&mut self, doc: Document, keep: Keep) {
-        self.doc = doc;
+        self.session.install(doc);
         self.settle_installed_document(keep);
     }
 
     /// [`install_document`](Self::install_document) の、文書を入れたあとの段（`switch_set` は今の文書をしまってから入れるので、ここを
     /// 直に呼ぶ）。
     fn settle_installed_document(&mut self, keep: Keep) {
-        self.document_replaced();
-        self.selected_layer = keep.selected_layer;
+        crate::features::document_replaced(self);
+        self.session.selected_layer = keep.selected_layer;
+        self.session.layer_set = keep.layer_set;
         if let Some(view) = keep.view {
             self.view = view;
         }
@@ -659,7 +722,8 @@ impl AppState {
         // 前の文書のレイヤーを指す途中の操作は捨てる
         self.ui.renaming = None;
         self.ui.layer_drag = None;
-        self.popup = None;
+        self.ui.mask_drag = None;
+        self.ui.popup = None;
         // 打っている文字は前の文書のもの（まとめた段は前の文書の履歴に残る）。開いた文書のテキストレイヤーのフォントは探し直して知らせる
         self.text.editing = None;
         self.text.press = None;
@@ -678,27 +742,12 @@ impl AppState {
     }
 
     /// 今の文書を別のものに替えた（`doc` に別の `Document` を入れた）ことを知らせる。同じ文書 ID の別の中身（保存した ID が戻る
-    /// .ylp や PSD の読み直し）でも、キャンバスの表示は前の文書の合成をここで捨てる。
+    /// .ylp や PSD の読み直し）でも、キャンバスの表示は前の文書の合成をここで捨てる。アプリの中の入れ替えは `install_document`
+    /// （`Session::install` が世代を進める）を通るので、これを呼ぶのはテストだけ。
+    #[cfg(test)]
     pub(crate) fn document_replaced(&mut self) {
-        self.doc_epoch = self.doc_epoch.wrapping_add(1);
-        // スポイトの印の見本は前の文書を読んだもの（文書の版は別の文書と同じ値になりうる）
-        self.eyedrop.sample_cache = None;
-        self.canvas.previous_end = None;
-        self.canvas.current_end = None;
-        self.canvas.shift_hold = None;
-        self.canvas.ruler_constraint = None;
-        self.canvas.clone_press = None;
-        self.canvas.clone_offset = None;
-        self.forget_clone_sources();
-        self.view3d.input.previous_end = None;
-        self.drafting_cancel();
-        self.drafting.pen_down = None;
-        // 選んでいた定規と、編集のモードで選んだ物・隠した物は前の文書のもの（レイヤーの ID は文書をまたいで同じ値になりうるので、別の文書の同じ番号の
-        // レイヤーの物を指さない）
-        self.rulers.selected = None;
-        self.rulers.icon_drag = None;
-        self.objects.selected = None;
-        self.objects.hidden.clear();
+        self.session.advance_doc_epoch();
+        crate::features::document_replaced(self);
     }
 
     /// 何も触っていないセット（`index`）の文書を、同じセット（uid・名前・鍵はそのまま）のまま別の文書に替える。履歴は持ち越さない。
@@ -706,17 +755,17 @@ impl AppState {
     /// 大きさで作り直すときに使う（触っていないことは呼ぶ側が確かめる）。
     pub(crate) fn swap_untouched_set_document(&mut self, index: usize, doc: Document) {
         self.eyedrop.sample_cache = None;
-        if let Some(set) = self.sets.get_mut(index) {
+        if let Some(set) = self.session.sets.get_mut(index) {
             // 新しく作るセットと同じく、セットの ID は文書の ID と同じ値
             set.id = guid_string(doc.id());
             set.saved = None;
             // 効果の入力の覚えは前の文書へ渡したもの（鍵はセットの uid に付き、文書の ID を含まない）。新しい文書へ渡し直させる
             self.fx.inputs.forget_set(set.uid);
         }
-        if index == self.sets.current_index() {
+        if index == self.session.sets.current_index() {
             self.install_document(doc, Keep::reset());
         } else {
-            self.sets.replace_untouched_stashed_doc(index, doc);
+            self.session.sets.replace_untouched_stashed_doc(index, doc);
             self.sync_view3d();
             self.sync_budgets();
         }
@@ -730,13 +779,13 @@ impl AppState {
     /// `replace_sets` の、今のモデルのマテリアルのうちセットの無いものにセットを作るか選べるもの（新規プロジェクトは、利用者が
     /// 選んだマテリアルだけをセットにする）。
     pub fn replace_sets_with(&mut self, sets: TextureSets, doc: Document, create_missing: bool) {
-        self.sets = sets;
+        self.session.sets = sets;
         // 効果の状態はプロジェクトのもの（復号した画像・入力の覚えも捨てる）。画像の復号の上限は持ち越す
         let image_limit = self.fx.inputs.image_limit;
         self.fx = Default::default();
         self.fx.inputs.image_limit = image_limit;
         // 新規プロジェクトのウィンドウで作ったときだけ、作ったあとで立てる（ウィンドウで選んだ解像度）
-        self.resolution_chosen = false;
+        self.session.resolution_chosen = false;
         self.ui.renaming_set = None;
         // モデルのマテリアルに結び付けてから文書を入れる（3D ビューの同期は、描くマテリアルが決まったあとの 1 回）。結び付けは
         // セットの並びとモデルだけを読み書きし、今の文書には触らない
@@ -762,27 +811,38 @@ impl AppState {
 
     fn bind_model_to_sets(&mut self, create: bool) -> BindReport {
         let mut report = BindReport::default();
-        for s in &mut self.sets.list {
-            s.bound = None;
+        for s in &mut self.session.sets.list {
+            s.bound.clear();
         }
-        let Some(model) = &self.model else {
+        let Some(model) = &self.session.model else {
             return report;
         };
         let keys: Vec<LinkKey> = model.materials.iter().map(|m| m.key.clone()).collect();
         let matched = {
-            let refs: Vec<&MaterialRef> = self.sets.list.iter().map(|s| &s.material).collect();
+            let refs: Vec<&[MaterialRef]> = self
+                .session
+                .sets
+                .list
+                .iter()
+                .map(|s| s.materials.as_slice())
+                .collect();
             match_materials(&refs, &keys, &model.slots)
         };
         let infos = model.materials.clone();
-        for (mi, si) in matched.iter().enumerate() {
-            let Some(si) = *si else { continue };
-            let set = &mut self.sets.list[si];
-            set.bound = Some(mi as u32);
-            set.material = material_from_link(&keys[mi]);
-            report.matched += 1;
-            if set.auto_name {
+        // マテリアルの番号の順に見るので、`bound` は昇順になる。合わない鍵は残す（そのマテリアルを持つモデルに替えればまた付く）
+        for (mi, at) in matched.iter().enumerate() {
+            let Some((si, ki)) = *at else { continue };
+            let set = &mut self.session.sets.list[si];
+            if set.bound.is_empty() {
+                report.matched += 1;
+            }
+            set.bound.push(mi as u32);
+            set.materials[ki] = material_from_link(&keys[mi]);
+            // 名前はセットの最初の鍵のマテリアルから付ける
+            if set.auto_name && ki == 0 {
                 let base = name_for(&keys[mi]);
                 let others: Vec<String> = self
+                    .session
                     .sets
                     .list
                     .iter()
@@ -790,89 +850,86 @@ impl AppState {
                     .filter(|(i, _)| *i != si)
                     .map(|(_, s)| s.name.clone())
                     .collect();
-                self.sets.list[si].name = unique_name(&base, others.iter().map(String::as_str));
+                self.session.sets.list[si].name =
+                    unique_name(&base, others.iter().map(String::as_str));
             }
         }
-        for (mi, si) in matched.iter().enumerate() {
-            if si.is_some() || !create {
+        for (mi, at) in matched.iter().enumerate() {
+            if at.is_some() || !create {
                 continue;
             }
             // .ylp は 64 セットまで。超えるマテリアルにはセットを作らず、数だけ知らせる（新規プロジェクトのウィンドウと同じ扱い）
-            if self.sets.list.len() >= crate::newproject::MAX_SETS {
+            if self.session.sets.list.len() >= crate::newproject::MAX_SETS {
                 report.skipped += 1;
                 continue;
             }
             let size = size_for(&infos[mi]);
-            let (doc, _) = blank_document_in(size, size, self.lang);
+            let (doc, _) = starter_document_in(size, size, self.lang);
             let name = unique_name(
                 &name_for(&keys[mi]),
-                self.sets.list.iter().map(|s| s.name.as_str()),
+                self.session.sets.list.iter().map(|s| s.name.as_str()),
             );
-            let index = self.sets.push(
+            let index = self.session.sets.push(
                 guid_string(doc.id()),
                 name.clone(),
                 true,
-                material_from_link(&keys[mi]),
+                vec![material_from_link(&keys[mi])],
                 None,
                 doc,
             );
-            self.sets.list[index].bound = Some(mi as u32);
-            report.created_sets.push(self.sets.list[index].uid);
+            self.session.sets.list[index].bound = vec![mi as u32];
+            report.created_sets.push(self.session.sets.list[index].uid);
             report.created.push(name);
         }
         report.unmatched = self
+            .session
             .sets
             .iter()
-            .filter(|s| s.bound.is_none())
+            .filter(|s| s.bound.is_empty())
             .map(|s| s.name.clone())
             .collect();
         report
     }
 
+    /// セットの名前を変える（`Action::RenameSet`）。変えられなければ理由を知らせる。
+    pub(crate) fn rename_set_apply(&mut self, uid: u32, name: &str) {
+        if let Err(e) = self.rename_set(uid, name) {
+            self.refuse(Source::TextureSet, e);
+        }
+    }
+
     /// セットの名前を変える（読むだけのセットは断る）。
     pub fn rename_set(&mut self, uid: u32, name: &str) -> Result<(), String> {
         let name = name.trim();
-        let Some(i) = self.sets.index_of(uid) else {
-            return Err(self
-                .lang
-                .pick(
-                    "そのテクスチャセットはありません。",
-                    "Texture set not found.",
-                )
-                .into());
+        let Some(i) = self.session.sets.index_of(uid) else {
+            return Err(self.lang.t("sets-texture-set-not-found").into());
         };
-        if let Some(reason) = &self.sets.list[i].read_only {
+        if let Some(reason) = &self.session.sets.list[i].read_only {
             return Err(crate::lang::refusals::read_only_set(self.lang, reason));
         }
         if name.is_empty()
             || name.chars().any(|c| c.is_control())
             || name.encode_utf16().count() > 256
         {
-            return Err(self
-                .lang
-                .pick(
-                    "テクスチャセットの名前は 1〜256 文字で、制御文字は使えません。",
-                    "Invalid texture set name (1–256 characters, no control characters).",
-                )
-                .into());
+            return Err(self.lang.t("sets-invalid-texture-set-name-1").into());
         }
         let upper = name.to_uppercase();
         if self
+            .session
             .sets
             .list
             .iter()
             .any(|s| s.uid != uid && s.name.to_uppercase() == upper)
         {
-            return Err(self.lang.pick(
-                format!("「{name}」はほかのテクスチャセットと同じ名前です。"),
-                format!("Another texture set is already named {name}."),
-            ));
+            return Err(self
+                .lang
+                .f("sets-another-texture-set-is-already", &[("name", &name)]));
         }
-        let set = &mut self.sets.list[i];
+        let set = &mut self.session.sets.list[i];
         if set.name != name {
             set.name = name.to_owned();
             set.auto_name = false;
-            self.modified = true;
+            self.session.mark_modified();
         }
         Ok(())
     }
@@ -885,29 +942,24 @@ impl AppState {
         if self.is_stroking() {
             return Err(crate::lang::refusals::during_stroke(lang).into());
         }
-        if self.sets.len() >= crate::newproject::MAX_SETS {
-            return Err(lang.pick(
-                format!(
-                    "1 つのプロジェクトのテクスチャセットは {} までです。",
-                    crate::newproject::MAX_SETS
-                ),
-                format!(
-                    "A project has at most {} texture sets.",
-                    crate::newproject::MAX_SETS
-                ),
+        if self.session.sets.len() >= crate::newproject::MAX_SETS {
+            return Err(lang.f(
+                "sets-a-project-has-at-most",
+                &[("max_sets", &crate::newproject::MAX_SETS)],
             ));
         }
         let groups = self
+            .session
             .model
             .as_ref()
             .map(crate::newproject::groups_of)
             .unwrap_or_default();
         let free = groups
             .iter()
-            .find(|g| self.sets.iter().all(|s| s.bound != Some(g.index as u32)));
+            .find(|g| self.session.sets.iter().all(|s| !s.binds(g.index as u32)));
         let doc = {
-            let like = &self.doc;
-            crate::newproject::new_set_document(
+            let like = &self.session.doc;
+            crate::newproject::new_starter_set_document(
                 like.width(),
                 like.height(),
                 like.tile_size(),
@@ -920,30 +972,28 @@ impl AppState {
             Some(g) => g.name.clone(),
             None => format!(
                 "{} {}",
-                lang.pick("テクスチャセット", "Texture Set"),
-                self.sets.len() + 1
+                lang.t("sets-texture-set"),
+                self.session.sets.len() + 1
             ),
         };
-        let name = unique_name(&base, self.sets.iter().map(|s| s.name.as_str()));
-        let key = match free {
+        let name = unique_name(&base, self.session.sets.iter().map(|s| s.name.as_str()));
+        let key = vec![match free {
             Some(g) => g.key.clone(),
             None => MaterialRef::PendingSlot(self.unbound_pending_slot(&[])),
-        };
-        let uid_index = self
-            .sets
-            .push(guid_string(doc.id()), name.clone(), true, key, None, doc);
-        let uid = self.sets.get(uid_index).expect("足した").uid;
-        if let Some(set) = self.sets.get_mut(uid_index) {
-            set.bound = free.map(|g| g.index as u32);
+        }];
+        let uid_index =
+            self.session
+                .sets
+                .push(guid_string(doc.id()), name.clone(), true, key, None, doc);
+        let uid = self.session.sets.get(uid_index).expect("足した").uid;
+        if let Some(set) = self.session.sets.get_mut(uid_index) {
+            set.bound = free.map(|g| g.index as u32).into_iter().collect();
         }
-        self.modified = true;
+        self.session.mark_modified();
         self.switch_set(uid_index)?;
         self.info(
             Source::TextureSet,
-            lang.pick(
-                format!("テクスチャセット {name} を追加しました。"),
-                format!("Added the texture set {name}."),
-            ),
+            lang.f("sets-added-the-texture-set", &[("name", &name)]),
         );
         Ok(uid)
     }
@@ -952,12 +1002,14 @@ impl AppState {
     /// `also` は、まだセットに入れていない鍵（構成の下書き）。
     pub fn unbound_pending_slot(&self, also: &[&MaterialRef]) -> u16 {
         let used = |n: u16| {
-            self.sets
+            self.session
+                .sets
                 .iter()
-                .any(|s| s.material == MaterialRef::PendingSlot(n))
+                .any(|s| s.materials.contains(&MaterialRef::PendingSlot(n)))
                 || also.iter().any(|k| **k == MaterialRef::PendingSlot(n))
         };
         let mut slot = self
+            .session
             .model
             .as_ref()
             .map_or(0, |m| m.slots.len().min(u16::MAX as usize) as u16);
@@ -977,34 +1029,34 @@ impl AppState {
         let mut gone: Vec<u32> = uids
             .iter()
             .copied()
-            .filter(|u| self.sets.index_of(*u).is_some())
+            .filter(|u| self.session.sets.index_of(*u).is_some())
             .collect();
         gone.sort_unstable();
         gone.dedup();
         if gone.is_empty() {
             return Ok(Vec::new());
         }
-        if gone.len() >= self.sets.len() {
-            return Err(lang
-                .pick(
-                    "プロジェクトには少なくとも 1 つのテクスチャセットが要ります。",
-                    "A project keeps at least one texture set.",
-                )
-                .into());
+        if gone.len() >= self.session.sets.len() {
+            return Err(lang.t("sets-a-project-keeps-at-least").into());
         }
-        let current = self.sets.current_index();
-        if gone.contains(&self.sets.current().uid) {
+        let current = self.session.sets.current_index();
+        if gone.contains(&self.session.sets.current().uid) {
             // 並びの次、無ければ前のセットを今のセットにする
-            let n = self.sets.len();
+            let n = self.session.sets.len();
             let next = (current + 1..n)
                 .chain((0..current).rev())
-                .find(|i| self.sets.get(*i).is_some_and(|s| !gone.contains(&s.uid)))
+                .find(|i| {
+                    self.session
+                        .sets
+                        .get(*i)
+                        .is_some_and(|s| !gone.contains(&s.uid))
+                })
                 .expect("全部は消さない");
             self.switch_set(next)?;
         }
         let mut names = Vec::new();
         for uid in &gone {
-            if let Some(set) = self.sets.take_other(*uid) {
+            if let Some(set) = self.session.sets.take_other(*uid) {
                 names.push(set.name.clone());
                 self.bake.skipped.remove(uid);
                 if self.ui.renaming_set == Some(*uid) {
@@ -1015,57 +1067,345 @@ impl AppState {
         self.ui.set_scroll = 0.0;
         self.sync_mesh_map_view();
         self.sync_view3d();
-        self.modified = true;
+        self.session.mark_modified();
         Ok(names)
     }
 
-    /// 2 つのセットが同じ排他の鍵（アセット・Unassigned・仮のスロットの番号）を持たないようにする（保存は重なりを断るので）。
-    /// マテリアルに付いたセットの鍵を残し、ほかのセットの鍵は、Unassigned は名前に、仮のスロットの番号はモデルの外の番号に、
-    /// アセットは名前だけに替える。
+    /// 2 つのセット（と 1 つのセットの 2 つの鍵）が同じ排他の鍵（アセット・Unassigned・仮のスロットの番号）を持たないようにする（保存は
+    /// 重なりを断るので）。マテリアルに付いたセットの鍵を残し、ほかの鍵は、Unassigned は名前に、仮のスロットの番号はモデルの外の番号に、
+    /// アセットは名前だけに替える（名前はセットの名前）。同じセットの中で同じになった名前だけの鍵は 1 つにまとめる。
     pub fn dedupe_set_keys(&mut self) {
         let mut seen = std::collections::HashSet::new();
-        let order: Vec<usize> = (0..self.sets.len())
-            .filter(|i| self.sets.get(*i).is_some_and(|s| s.bound.is_some()))
-            .chain(
-                (0..self.sets.len())
-                    .filter(|i| self.sets.get(*i).is_some_and(|s| s.bound.is_none())),
-            )
+        let order: Vec<usize> = (0..self.session.sets.len())
+            .filter(|i| {
+                self.session
+                    .sets
+                    .get(*i)
+                    .is_some_and(|s| !s.bound.is_empty())
+            })
+            .chain((0..self.session.sets.len()).filter(|i| {
+                self.session
+                    .sets
+                    .get(*i)
+                    .is_some_and(|s| s.bound.is_empty())
+            }))
             .collect();
         for i in order {
-            let Some(key) = self.sets.get(i).and_then(|s| exclusive_key(&s.material)) else {
-                continue;
-            };
-            if seen.insert(key) {
-                continue;
-            }
-            let (material, name) = {
-                let set = self.sets.get(i).expect("範囲内");
-                (set.material.clone(), set.name.clone())
-            };
-            let next = match material {
-                MaterialRef::PendingSlot(_) => {
-                    MaterialRef::PendingSlot(self.unbound_pending_slot(&[]))
+            let count = self.session.sets.get(i).map_or(0, |s| s.materials.len());
+            for k in 0..count {
+                let Some(key) = self
+                    .session
+                    .sets
+                    .get(i)
+                    .and_then(|s| exclusive_key(&s.materials[k]))
+                else {
+                    continue;
+                };
+                if seen.insert(key) {
+                    continue;
                 }
-                MaterialRef::Unassigned | MaterialRef::Material { .. } => {
-                    MaterialRef::Material { name, asset: None }
+                let (material, name) = {
+                    let set = self.session.sets.get(i).expect("範囲内");
+                    (set.materials[k].clone(), set.name.clone())
+                };
+                let next = match material {
+                    MaterialRef::PendingSlot(_) => {
+                        MaterialRef::PendingSlot(self.unbound_pending_slot(&[]))
+                    }
+                    MaterialRef::Unassigned | MaterialRef::Material { .. } => {
+                        MaterialRef::Material { name, asset: None }
+                    }
+                };
+                if let Some(key) = exclusive_key(&next) {
+                    seen.insert(key);
                 }
-            };
-            if let Some(key) = exclusive_key(&next) {
-                seen.insert(key);
+                if let Some(set) = self.session.sets.get_mut(i) {
+                    set.materials[k] = next;
+                }
             }
-            if let Some(set) = self.sets.get_mut(i) {
-                set.material = next;
+            if let Some(set) = self.session.sets.get_mut(i) {
+                let mut unique: Vec<MaterialRef> = Vec::with_capacity(set.materials.len());
+                for m in set.materials.drain(..) {
+                    if !unique.contains(&m) {
+                        unique.push(m);
+                    }
+                }
+                set.materials = unique;
             }
         }
     }
 
     /// セットの目を切り替える（3D ビューではそのマテリアルの面を隠す・見せる。Live Link では Unity に出す・外す）。
     pub fn toggle_set_visible(&mut self, uid: u32) {
-        if let Some(i) = self.sets.index_of(uid) {
-            let set = &mut self.sets.list[i];
+        if let Some(i) = self.session.sets.index_of(uid) {
+            let set = &mut self.session.sets.list[i];
             set.visible = !set.visible;
         }
         self.sync_view3d();
+    }
+
+    // ───────── レイヤーセット ─────────
+    //
+    // 今のレイヤーセット（[`AppState::layer_set`]）は、レイヤーのパネルの一覧と、2D のキャンバスの表示・描く先のレイヤーセット。選んでいる
+    // レイヤーがあれば、そのレイヤーのレイヤーセットが今のレイヤーセット（レイヤーを選ぶ操作がほかのレイヤーセットのレイヤーを選ぶと、
+    // 自然にそのレイヤーセットへ切り替わる）。選んでいるレイヤーが無い（空のレイヤーセットを選んだ）ときだけ、`Session::layer_set` に覚えた
+    // レイヤーセットが今のレイヤーセット。どちらも無い・文書に無いときは最初のレイヤーセット。保存しない: 選んでいるレイヤー・描くチャンネル・
+    // 拡大の位置と同じく .ylp に入れず、開いたときは最初のレイヤーセット（形式を変えない）。
+    // 3D ビュー・書き出し・ベイクの読み・lilToon・Live Link は、これによらず最終の結果（`Document::composite_channel`）を読む。
+    // 操作（[`LayerSetEdit`]）は文書の操作で、どれも 1 回の Undo（履歴の名前は `HistoryKind::LayerSets`）。
+
+    /// 今のレイヤーセット（いつも文書にある）。
+    pub fn layer_set(&self) -> LayerSetId {
+        let doc = &self.session.doc;
+        if let Some(layer) = self.session.selected_layer.and_then(|id| doc.layer(id)) {
+            return layer.layer_set();
+        }
+        self.session
+            .layer_set
+            .filter(|s| doc.layer_sets().iter().any(|i| i.id == *s))
+            .unwrap_or_else(|| doc.layer_sets()[0].id)
+    }
+
+    /// 今のレイヤーセットの一覧の番号。
+    pub fn layer_set_index(&self) -> usize {
+        let set = self.layer_set();
+        self.session
+            .doc
+            .layer_sets()
+            .iter()
+            .position(|s| s.id == set)
+            .unwrap_or(0)
+    }
+
+    /// 選ぶレイヤーが無いとき（`ensure_selection`）に覚えるレイヤーセットを、今の値に合わせる。
+    pub(crate) fn remember_layer_set(&mut self) {
+        self.session.layer_set = Some(self.layer_set());
+    }
+
+    /// 今のレイヤーセットを替える（描いている間の断りは `UiOp::SelectLayerSet`）。選ぶレイヤーはそのレイヤーセットの一番上（空なら選ばない）、描くチャンネルは
+    /// そのレイヤーセットが出力している最初のチャンネル（どのチャンネルも出力していなければ今のまま）。今のレイヤーセットをもう一度選んだときも、
+    /// 描くチャンネルは出力の最初のチャンネルに揃える（選ぶレイヤーは変えない）。
+    pub fn select_layer_set(&mut self, set: LayerSetId) {
+        if !self.session.doc.layer_sets().iter().any(|s| s.id == set) {
+            return;
+        }
+        if self.layer_set() != set {
+            self.session.layer_set = Some(set);
+            self.session.selected_layer = top_layer_of(&self.session.doc, set);
+            self.layer_ops.selection = Default::default();
+            self.ui.layer_scroll = 0.0;
+            self.set_edit_mask(false);
+        } else {
+            self.session.layer_set = Some(set);
+        }
+        if let Some(channel) = outputs(&self.session.doc, set).first() {
+            self.m2_ui(UiOp::PaintChannel(*channel));
+        }
+    }
+
+    /// キャンバスの右上の、描くチャンネルのボタンの中身（今の描くチャンネルのアイコンと名前）。
+    pub fn canvas_bar_chip(&self) -> Chip {
+        let channel = self.m2.paint_channel;
+        Chip {
+            icon: m2::channel_icon(channel),
+            name: m2::channel_name(self.lang, &self.session.doc, channel),
+        }
+    }
+
+    /// キャンバスの右上の欄の 3 つの列（テクスチャセット・今のテクスチャセットのレイヤーセット・チャンネル）の中身。`free` は描いていないこと
+    /// （追加のボタンを押せるか）。
+    pub fn canvas_bar_columns(&self, free: bool) -> [Column<Action>; 3] {
+        let lang = self.lang;
+        let doc = &self.session.doc;
+        let current_texture = self.session.sets.current().uid;
+        let textures = self.session.sets.iter().map(|s| Row {
+            key: ("canvasbar.set", s.uid as u128, 0),
+            icon: None,
+            label: s.name.clone(),
+            selected: s.uid == current_texture,
+            action: Action::SelectSet(s.uid),
+            eye: None,
+        });
+        let current_layer_set = self.layer_set();
+        let layer_sets = (0..doc.layer_sets().len()).map(|i| {
+            let id = doc.layer_sets()[i].id;
+            Row {
+                key: ("canvasbar.ls", id.0, 0),
+                icon: None,
+                label: display_name(lang, doc, i),
+                selected: id == current_layer_set,
+                action: Action::M2Ui(UiOp::SelectLayerSet(id)),
+                eye: None,
+            }
+        });
+        let channels = doc.channels().into_iter().map(|channel| {
+            let name = m2::channel_name(lang, doc, channel);
+            Row {
+                key: ("canvasbar.ch", channel.index() as u128, 0),
+                icon: Some(m2::channel_icon(channel)),
+                selected: channel == self.m2.paint_channel,
+                action: Action::M2Ui(UiOp::PaintChannel(channel)),
+                eye: Some(Eye {
+                    showing: channel == self.m2.display_channel,
+                    key: channel.index(),
+                    tip: lang.f("panels-show-in-the-canvas-tip", &[("name", &name)]),
+                    action: Action::M2Ui(UiOp::DisplayChannel(channel)),
+                }),
+                label: name,
+            }
+        });
+        let can_add_texture = free && self.session.sets.len() < crate::newproject::MAX_SETS;
+        let can_add_layer_set =
+            free && doc.layer_sets().len() < yolu_core::MAX_LAYER_SETS && self.can_edit();
+        [
+            Column {
+                icon: None,
+                head: lang.t("canvasbar-texture-set-tip"),
+                add: Some(Add {
+                    tip: lang.t("canvasbar-add-texture-set-tip"),
+                    enabled: can_add_texture,
+                    action: Action::Project(crate::newproject::NpAction::AddSet),
+                }),
+                rows: textures.collect(),
+            },
+            Column {
+                icon: Some("layers"),
+                head: lang.t("layersets-layer-set"),
+                add: Some(Add {
+                    tip: lang.t("canvasbar-add-layer-set-tip"),
+                    enabled: can_add_layer_set,
+                    action: Action::M2(Edit::LayerSets(LayerSetEdit::New)),
+                }),
+                rows: layer_sets.collect(),
+            },
+            Column {
+                icon: Some("paint_brush"),
+                head: lang.t("canvasbar-paint-channel-tip"),
+                add: None,
+                rows: channels.collect(),
+            },
+        ]
+    }
+
+    /// 選ぶレイヤーを、レイヤーセットの一番上のレイヤーにする（空なら選ばない）。消したレイヤーの選び直しに使う。
+    pub(crate) fn select_top_of_layer_set(&mut self, set: LayerSetId) {
+        self.session.selected_layer = top_layer_of(&self.session.doc, set);
+    }
+
+    /// レイヤーセットの操作（`Edit::LayerSets`）。
+    pub(crate) fn layer_set_edit(&mut self, edit: LayerSetEdit) -> Result<(), CoreError> {
+        let lang = self.lang;
+        match edit {
+            LayerSetEdit::New => {
+                let name = self.unique_layer_set_name(&format!(
+                    "{} {}",
+                    lang.t("layersets-layer-set"),
+                    self.session.doc.layer_sets().len() + 1
+                ));
+                let layer = format!("{} 1", lang.t("state-layer"));
+                let set = self.session.doc.batch_as(HistoryKind::LayerSets, |d| {
+                    let set = d.add_layer_set(&name)?;
+                    crate::state::add_starter_white(d, lang, Some(set))?;
+                    d.add_layer_in_set(&layer, set, None)?;
+                    Ok(set)
+                })?;
+                self.select_layer_set(set);
+            }
+            LayerSetEdit::Duplicate(set) => {
+                let index = self.layer_set_index_of(set)?;
+                let name = self.unique_layer_set_name(&format!(
+                    "{} 2",
+                    display_name(lang, &self.session.doc, index)
+                ));
+                let copy = self.session.doc.duplicate_layer_set(set, Some(&name))?;
+                self.select_layer_set(copy);
+            }
+            LayerSetEdit::Rename(set, name) => {
+                let index = self.layer_set_index_of(set)?;
+                let name = name.trim();
+                if name.is_empty() || name.chars().any(char::is_control) {
+                    self.refuse(Source::Layer, lang.t("layersets-invalid-layer-set-name"));
+                    return Ok(());
+                }
+                let upper = name.to_uppercase();
+                let taken = (0..self.session.doc.layer_sets().len()).any(|i| {
+                    i != index && display_name(lang, &self.session.doc, i).to_uppercase() == upper
+                });
+                if taken {
+                    let text = lang.f("layersets-another-layer-set-is-already", &[("name", &name)]);
+                    self.refuse(Source::Layer, text);
+                    return Ok(());
+                }
+                self.session.doc.rename_layer_set(set, name)?;
+            }
+            LayerSetEdit::Move(set, index) => self.session.doc.move_layer_set(set, index)?,
+            LayerSetEdit::Remove(set) => {
+                let index = self.layer_set_index_of(set)?;
+                let sets = self.session.doc.layer_sets();
+                // 今のレイヤーセットを消すなら、一覧の次（無ければ前）のレイヤーセットが今のレイヤーセット
+                let next = sets
+                    .get(index + 1)
+                    .or_else(|| index.checked_sub(1).and_then(|i| sets.get(i)))
+                    .map(|s| s.id);
+                if sets.len() <= 1 {
+                    self.refuse(
+                        Source::Layer,
+                        lang.t("layersets-the-last-layer-set-cannot-be-removed"),
+                    );
+                    return Ok(());
+                }
+                let was_current = self.layer_set() == set;
+                self.session.doc.remove_layer_set(set)?;
+                if was_current {
+                    if let Some(next) = next {
+                        self.session.layer_set = Some(next);
+                        self.session.selected_layer = top_layer_of(&self.session.doc, next);
+                        self.set_edit_mask(false);
+                    }
+                }
+            }
+            LayerSetEdit::Output { channel, set } => {
+                self.session.doc.set_channel_output(channel, set)?
+            }
+            LayerSetEdit::MoveLayers { ids, set } => {
+                let current = self.layer_set();
+                self.session.doc.move_layers_to_set(&ids, set)?;
+                // 選んでいたレイヤーが別のレイヤーセットへ移ったら、今のレイヤーセットに残ったレイヤーの一番上を選び直す
+                // （移した先へ画面が飛ばない）
+                let moved_away = self
+                    .session
+                    .selected_layer
+                    .and_then(|id| self.session.doc.layer(id))
+                    .is_some_and(|l| l.layer_set() != current);
+                if moved_away {
+                    self.session.layer_set = Some(current);
+                    self.session.selected_layer = top_layer_of(&self.session.doc, current);
+                    self.set_edit_mask(false);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// レイヤーセットの一覧の番号（無ければ断る）。
+    fn layer_set_index_of(&self, set: LayerSetId) -> Result<usize, CoreError> {
+        self.session
+            .doc
+            .layer_sets()
+            .iter()
+            .position(|s| s.id == set)
+            .ok_or(CoreError::InvalidArgument(
+                yolu_core::Reason::LayerSetDoesNotExist,
+            ))
+    }
+
+    /// 文書の中のほかのレイヤーセットと名前が重ならない（大文字小文字を区別しない）ように、要れば「 2」「 3」… を付けた名前。
+    pub(crate) fn unique_layer_set_name(&self, base: &str) -> String {
+        let doc = &self.session.doc;
+        let names: Vec<String> = (0..doc.layer_sets().len())
+            .map(|i| display_name(self.lang, doc, i))
+            .collect();
+        unique_name(base, names.iter().map(String::as_str))
     }
 }
 
@@ -1077,15 +1417,16 @@ pub(crate) mod install_testing {
     /// 名前の変更・レイヤーのドラッグ・ポップアップ・効果の選びを、今の文書のレイヤーに向けて立て、レイヤーの欄をずらす。
     pub(crate) fn stir(app: &mut AppState) {
         let layer = app
+            .session
             .selected_layer
-            .or_else(|| app.doc.layers().first().map(|l| l.id()))
+            .or_else(|| app.session.doc.layers().first().map(|l| l.id()))
             .expect("レイヤーがある");
         app.ui.renaming = Some(layer);
         app.ui.layer_drag = Some(crate::m2::LayerDrag {
             id: layer,
             target: None,
         });
-        app.popup = Some(OpenPopup {
+        app.ui.popup = Some(OpenPopup {
             kind: PopupKind::LayerContext(layer),
             state: crate::ui::menu::PopupState::new(&egui::Context::default(), egui::Rect::ZERO),
         });
@@ -1099,7 +1440,7 @@ pub(crate) mod install_testing {
     pub(crate) fn assert_settled(app: &AppState, what: &str) {
         assert!(app.ui.renaming.is_none(), "{what}: 名前の変更");
         assert!(app.ui.layer_drag.is_none(), "{what}: レイヤーのドラッグ");
-        assert!(app.popup.is_none(), "{what}: ポップアップ");
+        assert!(app.ui.popup.is_none(), "{what}: ポップアップ");
         assert!(app.fx.selected.is_none(), "{what}: 効果の選び");
     }
 
@@ -1143,7 +1484,7 @@ mod tests {
             name: "Gone".into(),
             asset: None,
         };
-        let sets = [&orphan, &slot, &hair, &unassigned, &renamed, &a];
+        let sets = [&orphan, &slot, &hair, &unassigned, &renamed, &a].map(std::slice::from_ref);
         let materials = [
             asset("Skin", 'a', 2100000), // 識別子で a
             asset("NewName", 'b', 7),    // 名前が変わっても識別子で renamed
@@ -1154,7 +1495,17 @@ mod tests {
         ];
         let slots = [0, 4, 5];
         let got = match_materials(&sets, &materials, &slots);
-        assert_eq!(got, [Some(5), Some(4), Some(3), Some(2), Some(1), None]);
+        assert_eq!(
+            got,
+            [
+                Some((5, 0)),
+                Some((4, 0)),
+                Some((3, 0)),
+                Some((2, 0)),
+                Some((1, 0)),
+                None
+            ]
+        );
     }
 
     #[test]
@@ -1168,17 +1519,25 @@ mod tests {
             asset: None,
         };
         // 小文字のセットが先にあっても、同じ名前のセットが先に取る
-        let got = match_materials(&[&lower, &upper], &[named("Skin"), named("SKIN")], &[]);
-        assert_eq!(got, [Some(1), Some(0)]);
+        let got = match_materials(
+            &[&lower, &upper].map(std::slice::from_ref),
+            &[named("Skin"), named("SKIN")],
+            &[],
+        );
+        assert_eq!(got, [Some((1, 0)), Some((0, 0))]);
         // 2 つのセットが同じスロットを指しても、1 つだけが付く
         let s0 = MaterialRef::PendingSlot(0);
         let s0b = MaterialRef::PendingSlot(0);
-        let got = match_materials(&[&s0, &s0b], &[named("Body")], &[0]);
-        assert_eq!(got, [Some(0)]);
+        let got = match_materials(
+            &[&s0, &s0b].map(std::slice::from_ref),
+            &[named("Body")],
+            &[0],
+        );
+        assert_eq!(got, [Some((0, 0))]);
         // 識別子の違うアセットは名前で付く（アセットを複製して GUID が変わった など）
         let old = material_from_link(&asset("Body", 'c', 1));
-        let got = match_materials(&[&old], &[asset("Body", 'd', 1)], &[]);
-        assert_eq!(got, [Some(0)]);
+        let got = match_materials(&[std::slice::from_ref(&old)], &[asset("Body", 'd', 1)], &[]);
+        assert_eq!(got, [Some((0, 0))]);
     }
 
     fn info(key: LinkKey, size: u32) -> MaterialInfo {
@@ -1245,14 +1604,14 @@ mod tests {
         assert_eq!(unique_name("SKIN", taken.iter().copied()), "SKIN 3");
         assert_eq!(unique_name("Eye", taken.iter().copied()), "Eye");
         let mut s = AppState::new(64, 64);
-        s.model = Some(scene(vec![
+        s.session.model = Some(scene(vec![
             info(named("Skin"), 256),
             info(named("skin"), 256),
         ]));
         s.bind_model();
-        let names: Vec<&str> = s.sets.iter().map(|x| x.name.as_str()).collect();
+        let names: Vec<&str> = s.session.sets.iter().map(|x| x.name.as_str()).collect();
         assert_eq!(names, ["Skin", "skin 2"], "同じ名前の別のマテリアル");
-        let uid = s.sets.get(1).unwrap().uid;
+        let uid = s.session.sets.get(1).unwrap().uid;
         assert!(s.rename_set(uid, "SKIN").is_err());
         assert!(s.rename_set(uid, "Skin2").is_ok());
     }
@@ -1260,8 +1619,8 @@ mod tests {
     #[test]
     fn the_first_set_takes_slot_zero_and_keeps_what_was_painted() {
         let mut s = AppState::new(64, 64);
-        let painted = s.doc.id();
-        s.model = Some(scene(vec![
+        let painted = s.session.doc.id();
+        s.session.model = Some(scene(vec![
             info(asset("Skin", 'a', 5), 512),
             info(LinkKey::Unassigned, 0),
         ]));
@@ -1269,75 +1628,166 @@ mod tests {
         assert_eq!(report.matched, 1);
         assert_eq!(report.created, ["Unassigned"]);
         assert!(report.unmatched.is_empty());
-        assert_eq!(s.sets.len(), 2);
-        let first = s.sets.get(0).unwrap();
+        assert_eq!(s.session.sets.len(), 2);
+        let first = s.session.sets.get(0).unwrap();
         assert_eq!(first.name, "Skin", "自動の名前はマテリアルの名前に付け直す");
-        assert_eq!(first.material, material_from_link(&asset("Skin", 'a', 5)));
-        assert_eq!(first.bound, Some(0));
         assert_eq!(
-            s.doc.id(),
+            first.materials[0],
+            material_from_link(&asset("Skin", 'a', 5))
+        );
+        assert_eq!(first.bound, [0]);
+        assert_eq!(
+            s.session.doc.id(),
             painted,
             "最初のセットの文書（描いたもの）はそのまま"
         );
-        assert_eq!(s.doc.width(), 64, "大きさも変えない");
-        let second = s.sets.get(1).unwrap();
-        assert_eq!(second.bound, Some(1));
+        assert_eq!(s.session.doc.width(), 64, "大きさも変えない");
+        let second = s.session.sets.get(1).unwrap();
+        assert_eq!(second.bound, [1]);
         assert_eq!(s.set_doc(1).width(), DEFAULT_DOCUMENT_SIZE);
         assert_eq!(s.set_for_material(1), Some(1));
     }
 
     #[test]
+    fn a_set_keeps_the_keys_of_its_materials_and_binds_only_those_the_model_has() {
+        let mut s = AppState::new(64, 64);
+        s.session.model = Some(scene(vec![
+            info(named("Face"), 256),
+            info(named("Ear"), 256),
+            info(named("Body"), 256),
+        ]));
+        s.bind_model();
+        assert_eq!(s.session.sets.len(), 3);
+        // Ear を Face のセットへ移し、Ear のセットを外す
+        let ear = s.session.sets.get(1).unwrap().materials[0].clone();
+        s.session.sets.get_mut(0).unwrap().materials.push(ear);
+        let uid = s.session.sets.get(1).unwrap().uid;
+        s.remove_sets(&[uid]).unwrap();
+        s.bind_model_only();
+        assert_eq!(s.session.sets.get(0).unwrap().bound, [0, 1]);
+        assert_eq!(s.session.sets.current().bound_set().as_slice(), [0, 1]);
+        assert_eq!(s.set_for_material(1), Some(0), "Ear の面はこのセット");
+        assert_eq!(s.bound_material_names(0), ["Face", "Ear"]);
+        // Ear の無いモデルに替える: 組から Ear だけが外れ、鍵は残る（Ear のあるモデルに戻せば付く）
+        s.session.model = Some(scene(vec![
+            info(named("Body"), 256),
+            info(named("Face"), 256),
+        ]));
+        let report = s.bind_model_only();
+        assert!(report.unmatched.is_empty());
+        let face = s.session.sets.get(0).unwrap();
+        assert_eq!(face.bound, [1]);
+        assert_eq!(face.materials.len(), 2, "見つからない鍵も残す");
+        assert_eq!(s.session.sets.get(1).unwrap().bound, [0]);
+        // どれも無いモデル: 全部外れてマテリアルなしの行（描いた物は消さない）
+        s.session.model = Some(scene(vec![info(named("Tail"), 256)]));
+        let report = s.bind_model_only();
+        assert_eq!(report.unmatched, ["Face", "Body"]);
+        assert!(s.session.sets.get(0).unwrap().bound.is_empty());
+        assert_eq!(s.session.sets.len(), 2);
+        // 戻すと、両方にまた付く
+        s.session.model = Some(scene(vec![
+            info(named("Face"), 256),
+            info(named("Ear"), 256),
+            info(named("Body"), 256),
+        ]));
+        s.bind_model_only();
+        assert_eq!(s.session.sets.get(0).unwrap().bound, [0, 1]);
+    }
+
+    #[test]
+    fn the_closed_form_lists_up_to_three_names_and_shortens_the_rest() {
+        let fits = |_: &str| true;
+        assert_eq!(
+            materials_label(crate::lang::Lang::Ja, &["Face"], fits),
+            "Face"
+        );
+        assert_eq!(
+            materials_label(crate::lang::Lang::Ja, &["Face", "Ear"], fits),
+            "Face, Ear"
+        );
+        assert_eq!(
+            materials_label(
+                crate::lang::Lang::Ja,
+                &["Body", "Cloth", "Hair", "Tongue"],
+                fits
+            ),
+            "Body ほか 3"
+        );
+        assert_eq!(
+            materials_label(
+                crate::lang::Lang::En,
+                &["Body", "Cloth", "Hair", "Tongue"],
+                fits
+            ),
+            "Body +3"
+        );
+        // 入りきらなければ、3 つまででも短く
+        assert_eq!(
+            materials_label(crate::lang::Lang::En, &["Face", "Ear"], |_| false),
+            "Face +1"
+        );
+    }
+
+    #[test]
     fn switching_swaps_the_document_and_remembers_the_view() {
         let mut s = AppState::new(64, 64);
-        s.model = Some(scene(vec![info(named("A"), 256), info(named("B"), 512)]));
+        s.session.model = Some(scene(vec![info(named("A"), 256), info(named("B"), 512)]));
         s.bind_model();
-        let a = s.doc.id();
+        let a = s.session.doc.id();
         s.view.zoom = 3.0;
         s.apply(crate::state::Action::NewLayer);
-        let a_layer = s.selected_layer;
+        let a_layer = s.session.selected_layer;
         assert_eq!(s.switch_set(1), Ok(()));
-        assert_eq!(s.sets.current_index(), 1);
-        assert_eq!(s.doc.width(), 512);
-        assert_ne!(s.doc.id(), a);
+        assert_eq!(s.session.sets.current_index(), 1);
+        assert_eq!(s.session.doc.width(), 512);
+        assert_ne!(s.session.doc.id(), a);
         assert_eq!(s.view.zoom, 1.0, "新しいセットは画面に合わせた表示");
-        assert_eq!(s.doc.layers().len(), 1);
-        assert!(s.selected_layer.is_some());
+        assert!(
+            crate::state::is_starter_shape(&s.session.doc),
+            "モデルのマテリアルから作るセットは初めの形"
+        );
+        assert_eq!(
+            s.session.selected_layer,
+            s.session.doc.layers().last().map(|l| l.id()),
+            "選ぶのは空のレイヤー"
+        );
         assert_eq!(s.set_doc(0).id(), a);
         s.switch_set(0).unwrap();
-        assert_eq!(s.doc.id(), a);
+        assert_eq!(s.session.doc.id(), a);
         assert_eq!(s.view.zoom, 3.0);
-        assert_eq!(s.selected_layer, a_layer);
+        assert_eq!(s.session.selected_layer, a_layer);
         assert!(s.switch_set(5).is_err());
     }
 
     #[test]
     fn switching_is_refused_while_stroking() {
         let mut s = AppState::new(64, 64);
-        s.model = Some(scene(vec![info(named("A"), 256), info(named("B"), 256)]));
+        s.session.model = Some(scene(vec![info(named("A"), 256), info(named("B"), 256)]));
         s.bind_model();
-        let layer = s.selected_layer.unwrap();
+        let layer = s.session.selected_layer.unwrap();
         let brush = s.stroke_settings(false);
-        s.stroke = Some(s.doc.begin_stroke(layer, &brush).unwrap());
+        s.session.stroke = Some(s.session.doc.begin_stroke(layer, &brush).unwrap());
         assert!(s.switch_set(1).is_err());
-        assert_eq!(s.sets.current_index(), 0);
-        let stroke = s.stroke.take().unwrap();
-        s.doc.cancel_stroke(stroke);
+        assert_eq!(s.session.sets.current_index(), 0);
+        let stroke = s.session.stroke.take().unwrap();
+        s.session.doc.cancel_stroke(stroke);
         assert!(s.switch_set(1).is_ok());
     }
 
     #[test]
     fn unmatched_sets_stay_with_their_keys() {
         let mut s = AppState::new(64, 64);
-        s.model = Some(scene(vec![info(named("A"), 256)]));
+        s.session.model = Some(scene(vec![info(named("A"), 256)]));
         s.bind_model();
-        s.model = Some(scene(vec![info(named("B"), 256)]));
+        s.session.model = Some(scene(vec![info(named("B"), 256)]));
         let report = s.bind_model();
         assert_eq!(report.created, ["B"]);
         assert_eq!(report.unmatched, ["A"]);
-        let a = s.sets.get(0).unwrap();
-        assert_eq!(a.bound, None);
+        let a = s.session.sets.get(0).unwrap();
+        assert_eq!(a.bound, Vec::<u32>::new());
         assert_eq!(
-            a.material,
+            a.materials[0],
             MaterialRef::Material {
                 name: "A".into(),
                 asset: None
@@ -1345,22 +1795,26 @@ mod tests {
             "合わないセットの鍵は変えない"
         );
         // モデルを戻せばまた付く（新しいセットは作らない）
-        s.model = Some(scene(vec![info(named("A"), 256)]));
+        s.session.model = Some(scene(vec![info(named("A"), 256)]));
         let report = s.bind_model();
         assert_eq!((report.matched, report.created.len()), (1, 0));
-        assert_eq!(s.sets.get(0).unwrap().bound, Some(0));
+        assert_eq!(s.session.sets.get(0).unwrap().bound, [0]);
     }
 
     #[test]
     fn renaming_stops_the_automatic_name() {
         let mut s = AppState::new(64, 64);
-        let uid = s.sets.current().uid;
+        let uid = s.session.sets.current().uid;
         assert!(s.rename_set(uid, "  ").is_err());
         s.rename_set(uid, "顔").unwrap();
-        s.model = Some(scene(vec![info(named("Skin"), 256)]));
+        s.session.model = Some(scene(vec![info(named("Skin"), 256)]));
         s.bind_model();
-        assert_eq!(s.sets.current().name, "顔", "利用者の付けた名前は残す");
-        assert_eq!(s.sets.current().bound, Some(0));
+        assert_eq!(
+            s.session.sets.current().name,
+            "顔",
+            "利用者の付けた名前は残す"
+        );
+        assert_eq!(s.session.sets.current().bound, [0]);
     }
 
     // ───────── 今の文書を替える口 ─────────
@@ -1371,11 +1825,11 @@ mod tests {
     fn with_second_set() -> AppState {
         let mut s = AppState::new(32, 32);
         let (doc, _) = crate::state::blank_document(64, 64);
-        s.sets.push(
+        s.session.sets.push(
             guid_string(doc.id()),
             "B".into(),
             false,
-            MaterialRef::Unassigned,
+            vec![MaterialRef::Unassigned],
             None,
             doc,
         );
@@ -1395,7 +1849,7 @@ mod tests {
             "入れ替え先の表示"
         );
         assert_eq!(s.ui.layer_scroll, 0.0, "入れ替え先のスクロール");
-        assert!(s.selected_layer.is_some(), "選び直す");
+        assert!(s.session.selected_layer.is_some(), "選び直す");
         stir(&mut s);
         s.switch_set(0).unwrap();
         assert_settled(&s, "switch_set（戻す）");
@@ -1409,11 +1863,11 @@ mod tests {
         zoom(&mut s);
         stir(&mut s);
         let (doc, _) = crate::state::blank_document(64, 64);
-        s.swap_untouched_set_document(s.sets.current_index(), doc);
+        s.swap_untouched_set_document(s.session.sets.current_index(), doc);
         assert_settled(&s, "swap_untouched_set_document");
         assert_eq!(s.view, crate::canvas::view::ViewState::default());
         assert_eq!(s.ui.layer_scroll, 0.0);
-        assert_eq!(s.doc.width(), 64);
+        assert_eq!(s.session.doc.width(), 64);
     }
 
     #[test]
@@ -1421,7 +1875,7 @@ mod tests {
         let mut s = AppState::new(32, 32);
         zoom(&mut s);
         stir(&mut s);
-        s.ui.renaming_set = Some(s.sets.current().uid);
+        s.ui.renaming_set = Some(s.session.sets.current().uid);
         let (doc, _) = crate::state::blank_document(64, 64);
         let sets = TextureSets::first(&doc);
         s.replace_sets_with(sets, doc, true);
@@ -1429,6 +1883,6 @@ mod tests {
         assert!(s.ui.renaming_set.is_none(), "セットの名前の変更");
         assert_eq!(s.view, crate::canvas::view::ViewState::default());
         assert_eq!(s.ui.layer_scroll, 0.0);
-        assert!(s.selected_layer.is_some());
+        assert!(s.session.selected_layer.is_some());
     }
 }

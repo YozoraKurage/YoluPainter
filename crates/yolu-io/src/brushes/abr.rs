@@ -8,8 +8,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use yolu_core::{
-    brush::MAX_FADE, Brush, BrushSettings, BrushTip, DualBrush, DualBrushMode, PaperTexture,
-    PressureResponse, TextureMode,
+    brush::MAX_FADE, Brush, BrushSettings, BrushTip, DualBrush, DualBrushMode, FlipRule,
+    Influences, InputResponse, PaperTexture, PressureSwitches, TextureMode,
 };
 
 use super::descriptor::{self, Object, Value};
@@ -46,6 +46,14 @@ fn clamp_i(value: i16, min: i32, max: i32) -> i32 {
 
 // ---------------- 版 1・2 ----------------
 
+/// 筆圧で不透明度を変えない影響元（大きさは筆圧に従う）。取り込んだ筆先のブラシの始めの形。
+fn pressure_without_opacity() -> Influences {
+    Influences::from_switches(PressureSwitches {
+        opacity: false,
+        ..PressureSwitches::default()
+    })
+}
+
 fn read_old(
     r: &mut Reader,
     version: i16,
@@ -75,9 +83,9 @@ fn read_old(
                         radius: clamp_i(diameter, 1, 2000) as f64 / 2.0,
                         spacing: clamp_i(spacing, 1, 400) as f64 / 100.0,
                         hardness: clamp_i(hardness, 0, 100) as f64 / 100.0,
-                        pressure_opacity: false,
                         ..BrushSettings::default()
                     },
+                    influences: pressure_without_opacity(),
                     ..Brush::default()
                 };
                 b.tip.roundness = (clamp_i(roundness, 1, 100) as f64 / 100.0).max(0.01);
@@ -114,9 +122,9 @@ fn read_old(
                     base: BrushSettings {
                         radius: tip.width().max(tip.height()) as f64 / 2.0,
                         spacing: clamp_i(spacing, 1, 400) as f64 / 100.0,
-                        pressure_opacity: false,
                         ..BrushSettings::default()
                     },
+                    influences: pressure_without_opacity(),
                     ..Brush::default()
                 };
                 b.tip.image = Some(Arc::new(tip));
@@ -272,9 +280,9 @@ fn read_new(
             base: BrushSettings {
                 radius: sample.tip.width().max(sample.tip.height()) as f64 / 2.0,
                 spacing: 0.25,
-                pressure_opacity: false,
                 ..BrushSettings::default()
             },
+            influences: pressure_without_opacity(),
             ..Brush::default()
         };
         b.tip.image = Some(sample.tip.clone());
@@ -442,8 +450,8 @@ fn preset(
         }));
     };
     let mut b = Brush::default();
-    b.base.pressure_opacity = false;
-    b.base.pressure_size = false;
+    b.influences.opacity.pressure.on = false;
+    b.influences.size.pressure.on = false;
     let (diameter, angle, roundness, spacing, hardness) = (
         shape.number("Dmtr"),
         shape.number("Angl"),
@@ -478,20 +486,20 @@ fn preset(
     b.tip.angle = angle.unwrap_or(0.0).clamp(-180.0, 180.0);
     b.tip.roundness = clamp01(roundness.unwrap_or(100.0), 100.0).max(0.01);
     b.base.spacing = (spacing.unwrap_or(25.0) / 100.0).clamp(0.01, 4.0);
-    b.tip.flip_x = shape.bool("flipX") == Some(true);
-    b.tip.flip_y = shape.bool("flipY") == Some(true);
+    b.tip.flip_x = flip_rule(shape.bool("flipX") == Some(true));
+    b.tip.flip_y = flip_rule(shape.bool("flipY") == Some(true));
 
     if preset.bool("useTipDynamics") == Some(true) {
         let size = preset.object("szVr");
         b.jitter.size = jitter(size);
-        b.base.pressure_size = false;
+        b.influences.size.pressure.on = false;
         control(size, Setting::Size, &mut notes, &mut b, Target::Size);
         if let Some(min) = preset.number("minimumDiameter") {
             if min > 0.0 {
-                if b.base.pressure_size {
+                if b.influences.size.pressure.on {
                     // 筆圧で大きさを変えるなら、最小の直径は筆圧 0 のときの大きさの割合（Photoshop と同じ式: 最小 + (1 − 最小) × 筆圧）
-                    if let Ok(r) = PressureResponse::new(clamp01(min, 100.0), Vec::new()) {
-                        b.pressure.size = r;
+                    if let Ok(r) = InputResponse::new(clamp01(min, 100.0), Vec::new()) {
+                        b.influences.size.pressure.response = r;
                     }
                 } else {
                     // フェード・傾きなどの最小は表せない（効いていない設定の最小も知らせる）
@@ -535,7 +543,7 @@ fn preset(
         let opacity = preset.object("opVr");
         let flow = preset.object("prVr");
         b.jitter.opacity = jitter(opacity);
-        b.base.pressure_opacity = false;
+        b.influences.opacity.pressure.on = false;
         control(
             opacity,
             Setting::Opacity,
@@ -544,7 +552,7 @@ fn preset(
             Target::Opacity,
         );
         b.jitter.flow = jitter(flow);
-        b.base.pressure_flow = false;
+        b.influences.flow.pressure.on = false;
         control(flow, Setting::Flow, &mut notes, &mut b, Target::Flow);
     }
     if let Some(options) = preset.object("toolOptions") {
@@ -781,6 +789,7 @@ fn texture(
         depth,
         scale: used_scale,
         mode,
+        angle: 0.0,
     });
     if preset.bool("TxtC") == Some(true) {
         notes.push(Unrepresented::Texture(TextureNote::EachTip));
@@ -829,9 +838,9 @@ fn control(
     let scalar = matches!(target, Target::Size | Target::Opacity | Target::Flow);
     if code == 2 && scalar {
         match target {
-            Target::Size => b.base.pressure_size = true,
-            Target::Opacity => b.base.pressure_opacity = true,
-            _ => b.base.pressure_flow = true,
+            Target::Size => b.influences.size.pressure.on = true,
+            Target::Opacity => b.influences.opacity.pressure.on = true,
+            _ => b.influences.flow.pressure.on = true,
         }
         return;
     }
@@ -851,9 +860,9 @@ fn control(
     }
     if code == 3 && (scalar || target == Target::Angle) {
         match target {
-            Target::Size => b.controls.tilt_size = true,
-            Target::Opacity => b.controls.tilt_opacity = true,
-            Target::Flow => b.controls.tilt_flow = true,
+            Target::Size => b.influences.size.tilt.on = true,
+            Target::Opacity => b.influences.opacity.tilt.on = true,
+            Target::Flow => b.influences.flow.tilt.on = true,
             _ => b.controls.tilt_angle = true,
         }
         return;
@@ -870,6 +879,15 @@ fn control(
         setting,
         control: ControlKind::from_code(code),
     });
+}
+
+/// 反転の有無（ABR は固定の入切だけ）を筆先の反転の規則にする。
+fn flip_rule(on: bool) -> FlipRule {
+    if on {
+        FlipRule::On
+    } else {
+        FlipRule::Off
+    }
 }
 
 fn clamp01(value: f64, scale: f64) -> f64 {

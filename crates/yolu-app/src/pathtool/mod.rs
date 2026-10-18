@@ -29,6 +29,7 @@ use yolu_core::paths::{
 use yolu_core::{CoreError, LayerId, LayerPath};
 
 use self::edit::{Place, PointOp};
+use crate::features::Feature;
 use crate::lang::Lang;
 use crate::notice::Source;
 use crate::state::{AppState, StrokeSource};
@@ -279,7 +280,7 @@ pub struct SurfaceCtx {
     /// 編集する形（点を置く・動かす・重ね表示。ポーズを付けた形）。
     pub model: Arc<ViewModel>,
     pub fingerprint: Arc<str>,
-    pub material: i32,
+    pub material: yolu_core::geometry::MaterialSet,
     /// 描く形（休みの形）。ポーズを変えてもテクスチャのパスの絵が変わらないよう、描く・描き直す・ブラシの大きさの換算はこの形で。
     pub render: Arc<yolu_core::geometry::SurfaceGeometry>,
 }
@@ -304,7 +305,7 @@ fn is_unplaced(entries: &[LayerPathEntry]) -> bool {
 
 /// パスを持つレイヤーの名前。
 fn layer_name(lang: Lang, n: usize) -> String {
-    format!("{} {n}", lang.pick("パス", "Path"))
+    format!("{} {n}", lang.t("pathtool-path"))
 }
 
 /// パスの描き方の設定を替えた新しいパス。
@@ -358,13 +359,17 @@ impl AppState {
     /// 選んでいるレイヤーと、編集しているパス（無い・編集を抜けたときは None）。
     pub fn path_layer(&self) -> Option<(LayerId, &LayerPath)> {
         let (layer, index) = self.path_active_index()?;
-        Some((layer, &self.doc.layer(layer)?.paths().get(index)?.path))
+        Some((
+            layer,
+            &self.session.doc.layer(layer)?.paths().get(index)?.path,
+        ))
     }
 
     /// レイヤーのパスを画素にできるか（パスがあり、塗りつぶしレイヤーでない。塗りつぶしレイヤーは画素を持たず、パスを外すと絵が消えるので、
     /// core が断る）。ボタン・メニューの有効の条件。
     pub fn path_can_rasterize(&self, id: LayerId) -> bool {
-        self.doc
+        self.session
+            .doc
             .layer(id)
             .is_some_and(|l| l.has_paths() && l.kind() != yolu_core::LayerKind::Fill)
     }
@@ -372,8 +377,8 @@ impl AppState {
     /// 選んでいるレイヤーと、編集しているパスの一覧の中の番号（下から）。一覧で選んだパスが無ければ、一覧のいちばん上のパス。
     /// 編集を抜けたレイヤー（`fresh`）では None（次の点は新しいパスを始める）。
     pub fn path_active_index(&self) -> Option<(LayerId, usize)> {
-        let layer = self.selected_layer?;
-        let entries = self.doc.layer(layer)?.paths();
+        let layer = self.session.selected_layer?;
+        let entries = self.session.doc.layer(layer)?.paths();
         if entries.is_empty() {
             return None;
         }
@@ -390,8 +395,9 @@ impl AppState {
 
     /// 選んでいるレイヤーのパスの一覧（無ければ空）。
     pub fn path_entries(&self) -> &[LayerPathEntry] {
-        self.selected_layer
-            .and_then(|id| self.doc.layer(id))
+        self.session
+            .selected_layer
+            .and_then(|id| self.session.doc.layer(id))
             .map_or(&[], |l| l.paths())
     }
 
@@ -457,14 +463,37 @@ impl AppState {
     /// パスレイヤーが描くときの予算（文書のもの）と、リボンが読むアセットの画像（文書へ渡してある入力）。
     fn path_options(&self) -> Options<'static> {
         Options {
-            width: self.doc.width(),
-            height: self.doc.height(),
-            tile_size: self.doc.tile_size(),
-            source_budget_bytes: self.doc.source_budget_bytes(),
-            stroke_budget_bytes: self.doc.stroke_budget_bytes(),
-            images: self.doc.effect_inputs().images().clone(),
+            width: self.session.doc.width(),
+            height: self.session.doc.height(),
+            tile_size: self.session.doc.tile_size(),
+            source_budget_bytes: self.session.doc.source_budget_bytes(),
+            stroke_budget_bytes: self.session.doc.stroke_budget_bytes(),
+            images: self.session.doc.effect_inputs().images().clone(),
             ..Options::default()
         }
+    }
+
+    /// 3D のパスを描き直すときに描かない面（`g` の三角形ごと）: 今のビューで隠している面（UV アイランド・ボーン・シェルフの目を開けて
+    /// いるとき）と、目を閉じたテクスチャセットのマテリアルの面。何も隠していなければ None（隠す面を持たない描き方と同じバイト）。
+    /// どのビューの隠し方を使うかは、描き直すときの今のビュー（描いて確かめているビュー）。
+    pub fn path_hidden(&self, g: &yolu_core::geometry::SurfaceGeometry) -> Option<Vec<bool>> {
+        let same = self
+            .view3d
+            .full_model()
+            .is_some_and(|m| m.triangle_count() == g.triangle_count());
+        let mut any = false;
+        let hidden: Vec<bool> = g
+            .triangles()
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                let h = self.view3d.is_material_hidden(t.material)
+                    || (same && self.view3d.is_face_hidden(i as u32));
+                any |= h;
+                h
+            })
+            .collect();
+        any.then_some(hidden)
     }
 
     /// 3D のモデルの指紋（形が替わるまで作り直さない）。
@@ -491,14 +520,14 @@ impl AppState {
     /// 3D のパスの文脈。モデルが無い・今のテクスチャセットがモデルに無いときは、その理由。
     pub fn path_surface_ctx(&self) -> Result<SurfaceCtx, String> {
         let Some(model) = self.view3d.full_model().cloned() else {
-            return Err(self.lang.pick("モデルがありません", "No model").into());
+            return Err(self.lang.t("pathtool-no-model").into());
         };
-        if self.view3d.material < 0 {
+        if self.view3d.material.is_empty() {
             return Err(self.region_missing_reason());
         }
         Ok(SurfaceCtx {
             fingerprint: self.path_fingerprint(&model.geometry),
-            material: self.view3d.material,
+            material: self.view3d.material.clone(),
             render: model.rest_geometry().clone(),
             model,
         })
@@ -519,17 +548,20 @@ impl AppState {
                 let r = yolu_core::geometry::world_radius(
                     &ctx.render,
                     self.brush.radius as f64,
-                    self.doc.width(),
+                    self.session.doc.width(),
                 );
                 (r as f64).max(0.000001)
             }
         };
         // 画面の間隔は f32 なので、下限の 1% は core の範囲（0.01 以上）をわずかに下回って渡る
-        PathBrush(yolu_core::BrushSettings {
-            radius,
-            spacing: b.spacing.max(0.01),
-            ..b
-        })
+        PathBrush(
+            yolu_core::BrushSettings {
+                radius,
+                spacing: b.spacing.max(0.01),
+                ..b
+            },
+            self.brush.pressure,
+        )
     }
 
     /// 点の無い 1 本のパスを持つパスレイヤーを、選んでいるレイヤーのすぐ上（グループの中ならその中）に作り、選んで、パスのツールへ替える（1 回の Undo。
@@ -562,19 +594,21 @@ impl AppState {
                 return;
             }
         };
-        let n = self.doc.layers().iter().filter(|l| l.has_paths()).count() + 1;
-        let above = self
-            .selected_layer
-            .filter(|id| self.doc.layer(*id).is_some());
+        let n = self
+            .session
+            .doc
+            .layers()
+            .iter()
+            .filter(|l| l.has_paths())
+            .count()
+            + 1;
         let id = path.id;
-        match self.doc.add_path_layer(
-            &layer_name(lang, n),
-            LayerPath::Canvas(path),
-            rendered.channels,
-            above,
-        ) {
+        let name = layer_name(lang, n);
+        match self.add_in_current_set(|d, above| {
+            d.add_path_layer(&name, LayerPath::Canvas(path), rendered.channels, above)
+        }) {
             Ok(layer) => {
-                self.modified = true;
+                self.session.mark_modified();
                 self.select_new(layer);
                 // ツールを替えると、ほかのツールの途中の状態を捨てる。編集するパスは、そのあとで決める
                 self.switch_tool(crate::state::Tool::Path, false);
@@ -646,29 +680,21 @@ impl AppState {
             return None;
         }
         if self.m2.edit_mask {
-            self.refuse(
-                Source::Path,
-                lang.pick(
-                    "パスはマスクに描けません",
-                    "A path cannot be drawn on a mask",
-                ),
-            );
+            self.refuse(Source::Path, lang.t("pathtool-a-path-cannot-be-drawn"));
             return None;
         }
-        let Some(layer) = self
-            .selected_layer
-            .filter(|id| self.doc.layer(*id).is_some())
-        else {
-            self.refuse(
-                Source::Path,
-                lang.pick("描くレイヤーがありません。", "No layer to paint on."),
-            );
-            return None;
+        let layer = match crate::stroke_gate::selected(self) {
+            Ok(id) => id,
+            Err(reason) => {
+                self.refuse(Source::Path, reason);
+                return None;
+            }
         };
         let existing = self.path_layer().map(|(_, p)| p.clone());
         // 一覧のパスはどれも同じ側（2D か 3D）。編集を抜けて新しいパスを始めるときも、レイヤーの一覧の側で断る。
         // 点が 1 つも無い 1 本だけのレイヤー（新規パスレイヤー・点を全部消したレイヤー）は、まだ側が決まっていない
         let side = self
+            .session
             .doc
             .layer(layer)
             .filter(|l| !is_unplaced(l.paths()))
@@ -676,23 +702,11 @@ impl AppState {
             .map(|e| e.path.clone());
         match (&side, surface) {
             (Some(LayerPath::Surface(_)), Some(false)) => {
-                self.refuse(
-                    Source::Path,
-                    lang.pick(
-                        "このレイヤーにはモデルの上のパスがあります",
-                        "This layer has a path on the model",
-                    ),
-                );
+                self.refuse(Source::Path, lang.t("pathtool-this-layer-has-a-path"));
                 None
             }
             (Some(LayerPath::Canvas(_)), Some(true)) => {
-                self.refuse(
-                    Source::Path,
-                    lang.pick(
-                        "このレイヤーにはキャンバスのパスがあります",
-                        "This layer has a canvas path",
-                    ),
-                );
+                self.refuse(Source::Path, lang.t("pathtool-this-layer-has-a-canvas"));
                 None
             }
             _ => Some((layer, existing)),
@@ -711,6 +725,7 @@ impl AppState {
         let options = self.path_options();
         if let Some(l) = layer {
             let mut entries = self
+                .session
                 .doc
                 .layer(l)
                 .map(|x| x.paths().to_vec())
@@ -733,19 +748,29 @@ impl AppState {
             }
             LayerPath::Surface(s) => {
                 let ctx = self.path_surface_ctx_for(s)?;
+                let hidden = self.path_hidden(&ctx.render);
+                let options = Options {
+                    hidden: hidden.as_deref(),
+                    material: Some(&ctx.material),
+                    ..options
+                };
                 let r = render_surface(s, &ctx.render, &options)
                     .map_err(|e| crate::lang::path_error(lang, &e))?;
                 let gaps = r.gaps;
                 (r.channels, gaps)
             }
         };
-        let n = self.doc.layers().iter().filter(|l| l.has_paths()).count() + 1;
-        let above = self
-            .selected_layer
-            .filter(|id| self.doc.layer(*id).is_some());
-        let id = self
+        let n = self
+            .session
             .doc
-            .add_path_layer(&layer_name(lang, n), path.clone(), channels, above)
+            .layers()
+            .iter()
+            .filter(|l| l.has_paths())
+            .count()
+            + 1;
+        let name = layer_name(lang, n);
+        let id = self
+            .add_in_current_set(|d, above| d.add_path_layer(&name, path.clone(), channels, above))
             .map_err(core)?;
         Ok((id, gaps))
     }
@@ -754,13 +779,7 @@ impl AppState {
     fn path_surface_ctx_for(&self, s: &SurfacePath) -> Result<SurfaceCtx, String> {
         let ctx = self.path_surface_ctx()?;
         if s.model_fingerprint != *ctx.fingerprint {
-            return Err(self
-                .lang
-                .pick(
-                    "別のモデルで描かれたパスです",
-                    "The path was drawn on another model",
-                )
-                .into());
+            return Err(self.lang.t("pathtool-the-path-was-drawn-on-2").into());
         }
         Ok(ctx)
     }
@@ -776,7 +795,7 @@ impl AppState {
         let core = |e: CoreError| lang.core_error(&e);
         // 点が 1 つも無い 1 本だけのレイヤーを、別の側（2D・3D）のパスにするときは、core が「パスは種類を変えない」と断るので、
         // 先にパスを外してから付け直す（1 回の Undo。外すのは点の無いパスなので、画素は変わらない）
-        let swaps_side = self.doc.layer(layer).is_some_and(|l| {
+        let swaps_side = self.session.doc.layer(layer).is_some_and(|l| {
             is_unplaced(l.paths())
                 && entries
                     .first()
@@ -788,30 +807,42 @@ impl AppState {
         });
         let Some(first) = surface else {
             if swaps_side {
-                self.doc
+                self.session
+                    .doc
                     .batch(|d| {
                         d.set_paths(layer, Vec::new(), Vec::new())?;
                         d.set_canvas_paths(layer, entries)
                     })
                     .map_err(core)?;
             } else {
-                self.doc.set_canvas_paths(layer, entries).map_err(core)?;
+                self.session
+                    .doc
+                    .set_canvas_paths(layer, entries)
+                    .map_err(core)?;
             }
             return Ok(0);
         };
         let ctx = self.path_surface_ctx_for(&first)?;
-        let rendered = render_list(&entries, Some(&ctx.render), &self.path_options())
+        let hidden = self.path_hidden(&ctx.render);
+        let options = Options {
+            hidden: hidden.as_deref(),
+            material: Some(&ctx.material),
+            ..self.path_options()
+        };
+        let rendered = render_list(&entries, Some(&ctx.render), &options)
             .map_err(|e| crate::lang::path_error(lang, &e))?;
         let gaps = rendered.gaps;
         if swaps_side {
-            self.doc
+            self.session
+                .doc
                 .batch(|d| {
                     d.set_paths(layer, Vec::new(), Vec::new())?;
                     d.set_paths(layer, entries, rendered.channels)
                 })
                 .map_err(core)?;
         } else {
-            self.doc
+            self.session
+                .doc
                 .set_paths(layer, entries, rendered.channels)
                 .map_err(core)?;
         }
@@ -829,7 +860,7 @@ impl AppState {
         match self.path_write(layer, &path) {
             Ok((id, gaps)) => {
                 if layer.is_none() {
-                    self.selected_layer = Some(id);
+                    self.session.selected_layer = Some(id);
                     self.set_edit_mask(false);
                 }
                 self.path.active = Some(ActivePath {
@@ -842,7 +873,7 @@ impl AppState {
                     path: path.id(),
                     index,
                 });
-                self.modified = true;
+                self.session.mark_modified();
                 if gaps > 0 {
                     self.warn(Source::Path, gaps_message(lang, gaps));
                 }
@@ -878,6 +909,7 @@ impl AppState {
         // 点が 1 つも無い 1 本だけのレイヤー（新規パスレイヤー・点を全部消したレイヤー）は、抜けても次の点がその 1 本に入る
         // （空のパスを残して 2 本目を始めない。側（2D・3D）も、その点で決まる）
         let unplaced = self
+            .session
             .doc
             .layer(layer)
             .is_some_and(|l| is_unplaced(l.paths()));
@@ -906,11 +938,7 @@ impl AppState {
         self.path.pending = None;
         let any = if self.path.drag.take().is_some() {
             self.path.pen_down = None;
-            self.info(
-                Source::Path,
-                self.lang
-                    .pick("点の移動をやめました。", "Point move cancelled."),
-            );
+            self.info(Source::Path, self.lang.t("pathtool-point-move-cancelled"));
             true
         } else if self.path.rect.take().is_some() {
             true
@@ -1000,7 +1028,7 @@ impl AppState {
             return;
         }
         if let Some(side) = d.handle {
-            let same = self.selected_layer == Some(d.layer)
+            let same = self.session.selected_layer == Some(d.layer)
                 && self
                     .path_layer()
                     .is_some_and(|(_, p)| p.id() == d.path && d.index < p.point_count());
@@ -1020,7 +1048,7 @@ impl AppState {
             return;
         };
         // 押している間にレイヤー・パスが替わっていたら当てない
-        let same = self.selected_layer == Some(d.layer)
+        let same = self.session.selected_layer == Some(d.layer)
             && self
                 .path_layer()
                 .is_some_and(|(_, p)| p.id() == d.path && d.index < p.point_count());
@@ -1118,7 +1146,7 @@ impl AppState {
             PathAction::Kind(kind) => self.path_set_kind(kind),
             PathAction::Style(edit) => self.path_style_edit(edit),
             PathAction::BeginRename(id) => {
-                if let Some(layer) = self.selected_layer {
+                if let Some(layer) = self.session.selected_layer {
                     self.path_select_path(Some(id));
                     self.path_begin_rename(layer, id);
                 }
@@ -1190,17 +1218,19 @@ impl AppState {
                     );
                     return;
                 }
-                if self.doc.layer(id).is_none_or(|l| l.path().is_none()) {
+                if self
+                    .session
+                    .doc
+                    .layer(id)
+                    .is_none_or(|l| l.path().is_none())
+                {
                     return;
                 }
-                match self.doc.rasterize(id) {
+                match self.session.doc.rasterize(id) {
                     Ok(()) => {
                         self.path.selected = None;
-                        self.modified = true;
-                        self.info(
-                            Source::Path,
-                            lang.pick("ラスタライズしました。", "Rasterized."),
-                        );
+                        self.session.mark_modified();
+                        self.info(Source::Path, lang.t("pathtool-rasterized"));
                     }
                     Err(e) => self.notify(
                         crate::notice::Kind::of_core(&e),
@@ -1228,6 +1258,7 @@ impl AppState {
             Some(path)
                 if path.point_count() == 0
                     && self
+                        .session
                         .doc
                         .layer(layer)
                         .is_some_and(|l| is_unplaced(l.paths()))
@@ -1254,7 +1285,8 @@ impl AppState {
                 // 編集を抜けたパスレイヤーなら、その一覧に新しいパスを始める（パスの無いレイヤーなら、新しいパスレイヤー）
                 PointOp::Add(place) => match self.path_new(
                     place,
-                    self.doc
+                    self.session
+                        .doc
                         .layer(layer)
                         .and_then(|l| l.paths().first())
                         .map(|e| e.path.channel()),
@@ -1263,7 +1295,8 @@ impl AppState {
                     Ok(p) => (
                         p,
                         Some(0),
-                        self.doc
+                        self.session
+                            .doc
                             .layer(layer)
                             .is_some_and(|l| {
                                 l.has_paths() || l.kind() == yolu_core::LayerKind::Fill
@@ -1338,10 +1371,7 @@ impl AppState {
                 if posed {
                     self.refuse(
                         Source::Path,
-                        lang.pick(
-                            "ポーズを付けているときは入れられません",
-                            "Not available while the model is posed",
-                        ),
+                        lang.t("pathtool-not-available-while-the-model"),
                     );
                     return;
                 }
@@ -1358,13 +1388,7 @@ impl AppState {
                             normal: plane.normal,
                         },
                         _ => {
-                            self.refuse(
-                                Source::Path,
-                                lang.pick(
-                                    "3D のパスの対称は鏡の面 1 枚だけです",
-                                    "A 3D path can mirror across one plane only",
-                                ),
-                            );
+                            self.refuse(Source::Path, lang.t("pathtool-a-3d-path-can-mirror"));
                             return;
                         }
                     },
@@ -1419,9 +1443,9 @@ impl AppState {
                 BrushEdit::Spacing(v) => b.spacing = v.clamp(0.01, 1.0) as f32,
                 BrushEdit::Opacity(v) => b.opacity = v.clamp(0.0, 1.0) as f32,
                 BrushEdit::Flow(v) => b.flow = v.clamp(0.0, 1.0) as f32,
-                BrushEdit::PressureSize(on) => b.pressure_size = on,
-                BrushEdit::PressureOpacity(on) => b.pressure_opacity = on,
-                BrushEdit::PressureFlow(on) => b.pressure_flow = on,
+                BrushEdit::PressureSize(on) => b.pressure.size = on,
+                BrushEdit::PressureOpacity(on) => b.pressure.opacity = on,
+                BrushEdit::PressureFlow(on) => b.pressure.flow = on,
                 BrushEdit::AntiAlias(level) => b.anti_alias = level,
             }
             return;
@@ -1430,7 +1454,7 @@ impl AppState {
             return;
         };
         let mut brush = path_brush(&path);
-        let b = &mut brush.0;
+        let PathBrush(b, pressure) = &mut brush;
         match e {
             BrushEdit::Diameter(d) => {
                 let radius = match &path {
@@ -1440,7 +1464,7 @@ impl AppState {
                             let unit = yolu_core::geometry::world_radius(
                                 &ctx.render,
                                 1.0,
-                                self.doc.width(),
+                                self.session.doc.width(),
                             );
                             d / 2.0 * unit as f64
                         }
@@ -1459,9 +1483,9 @@ impl AppState {
             BrushEdit::Spacing(v) => b.spacing = v.clamp(0.01, 4.0),
             BrushEdit::Opacity(v) => b.opacity = v.clamp(0.0, 1.0),
             BrushEdit::Flow(v) => b.flow = v.clamp(0.0, 1.0),
-            BrushEdit::PressureSize(on) => b.pressure_size = on,
-            BrushEdit::PressureOpacity(on) => b.pressure_opacity = on,
-            BrushEdit::PressureFlow(on) => b.pressure_flow = on,
+            BrushEdit::PressureSize(on) => pressure.size = on,
+            BrushEdit::PressureOpacity(on) => pressure.opacity = on,
+            BrushEdit::PressureFlow(on) => pressure.flow = on,
             BrushEdit::AntiAlias(level) => b.anti_alias = level,
         }
         if brush == path_brush(&path) {
@@ -1491,27 +1515,21 @@ impl AppState {
             if self.path.pen_down.is_some_and(|p| p.surface) {
                 self.path.pen_down = None;
             }
-            self.warn(
-                Source::Path,
-                lang.pick(
-                    "モデルが替わったので、点の移動をやめました。",
-                    "The model changed, so the point move was cancelled.",
-                ),
-            );
+            self.warn(Source::Path, lang.t("pathtool-the-model-changed-so-the"));
         }
         let mut all = Vec::new();
-        for i in 0..self.sets.len() {
-            let Some(set) = self.sets.get(i) else {
+        for i in 0..self.session.sets.len() {
+            let Some(set) = self.session.sets.get(i) else {
                 continue;
             };
             if set.read_only.is_some() {
                 continue;
             }
             // 今のセットは 3D ビューが描くマテリアル（試しの立方体は 0）、ほかのセットは結び付いたマテリアル
-            let material = if i == self.sets.current_index() {
-                self.view3d.material
+            let material = if i == self.session.sets.current_index() {
+                self.view3d.material.clone()
             } else {
-                set.bound.map_or(-1, |m| m as i32)
+                set.bound_set()
             };
             let doc = self.set_doc_mut(i);
             if doc
@@ -1522,16 +1540,19 @@ impl AppState {
                 continue;
             }
             // 位置は両方のモデルの休みの形で比べる（前のモデルにポーズが付いていても、その形へ置き直さない）
+            let hidden = self.path_hidden(new.rest_geometry());
+            let doc = self.set_doc_mut(i);
             all.extend(rebind::rebind_document(
                 doc,
                 old.rest_geometry(),
                 new.rest_geometry(),
-                material,
+                &material,
+                hidden.as_deref(),
                 lang,
             ));
         }
         if !all.is_empty() {
-            self.modified = true;
+            self.session.mark_modified();
             // 全部を描き直せたなら済んだ知らせ。画素にした・残したパスがあれば気をつけること
             let text = rebind_message(lang, &all);
             if all.iter().all(|r| r.outcome == rebind::Outcome::Redrawn) {
@@ -1546,37 +1567,37 @@ impl AppState {
 
 /// 面に投影できなかった標本の知らせ。
 fn gaps_message(lang: Lang, gaps: usize) -> String {
-    lang.pick(
-        format!("{gaps} 個の標本が面から外れて、描いていません"),
-        format!("{gaps} sample(s) were off the surface and skipped"),
-    )
+    lang.f("pathtool-sample-s-were-off-the", &[("gaps", &gaps)])
 }
 
 /// モデルの差し替えの知らせ: 結果ごとの件数（0 は出さない）と、最初の 1 件の理由（レイヤー名つき。画素にした・残したものを先に）。
 fn rebind_message(lang: Lang, reports: &[rebind::PathReport]) -> String {
     let count = |outcome: rebind::Outcome| reports.iter().filter(|r| r.outcome == outcome).count();
     let mut parts: Vec<String> = Vec::new();
-    for (outcome, ja, en) in [
-        (rebind::Outcome::Redrawn, "描き直し", "redrawn"),
-        (rebind::Outcome::Rasterized, "画素にし", "rasterized"),
-        (rebind::Outcome::KeptLocked, "残し", "kept"),
+    for outcome in [
+        rebind::Outcome::Redrawn,
+        rebind::Outcome::Rasterized,
+        rebind::Outcome::KeptLocked,
     ] {
         let n = count(outcome);
         if n == 0 {
             continue;
         }
-        parts.push(lang.pick(
-            format!("{n} 本を{ja}"),
-            if parts.is_empty() {
-                format!("{n} path(s) {en}")
-            } else {
-                format!("{n} {en}")
-            },
-        ));
+        // 英語は、最初の 1 つだけ「path(s)」を付ける
+        parts.push(match (outcome, parts.is_empty()) {
+            (rebind::Outcome::Redrawn, true) => lang.f("pathtool-n-paths-redrawn", &[("n", &n)]),
+            (rebind::Outcome::Redrawn, false) => lang.f("pathtool-n-redrawn", &[("n", &n)]),
+            (rebind::Outcome::Rasterized, true) => {
+                lang.f("pathtool-n-paths-rasterized", &[("n", &n)])
+            }
+            (rebind::Outcome::Rasterized, false) => lang.f("pathtool-n-rasterized", &[("n", &n)]),
+            (_, true) => lang.f("pathtool-n-paths-kept", &[("n", &n)]),
+            (_, false) => lang.f("pathtool-n-kept", &[("n", &n)]),
+        });
     }
-    let mut text = lang.pick(
-        format!("モデルを差し替えて、パス {}ました。", parts.join("、")),
-        format!("After the model change, {}.", parts.join(", ")),
+    let mut text = lang.f(
+        "pathtool-after-the-model-change",
+        &[("parts", &parts.join(lang.t("pathtool-part-separator")))],
     );
     let first = reports
         .iter()
@@ -1584,14 +1605,18 @@ fn rebind_message(lang: Lang, reports: &[rebind::PathReport]) -> String {
         .or_else(|| reports.iter().find(|r| r.reason.is_some()));
     if let Some((name, reason)) = first.and_then(|r| Some((&r.name, r.reason.as_deref()?))) {
         let name = lang.quote(name);
-        text.push_str(lang.pick("", " "));
+        text.push_str(lang.t("pathtool-text"));
         text.push_str(&lang.with_reason(
-            lang.pick(
-                format!("レイヤー{name}のパスは描き直せません"),
-                format!("Cannot redraw the path of layer {name}"),
-            ),
+            lang.f("pathtool-cannot-redraw-the-path-of", &[("name", &name)]),
             reason,
         ));
     }
     text
 }
+
+/// 機能の表の行（パスの点のドラッグの最中か。ツールを替えたときだけ途中の物を捨てる。ペイントのモードを出ても残す）。
+pub(crate) const FEATURE: Feature = Feature {
+    stroking: Some(|app| app.path.drag.is_some()),
+    tool_left: Some(AppState::path_tool_changed),
+    ..Feature::new("path")
+};

@@ -1,7 +1,9 @@
 //! バケツの色領域と入力の回帰試験。合成素材はすべて試験内で作る。
+use crate::common::drive::Drive;
 use egui::{pos2, vec2, Rect};
 use std::sync::atomic::AtomicBool;
 use yolu_app::{
+    notice::{Kind, Source},
     region::{
         bucket,
         color::{self, Distance, Reference},
@@ -13,12 +15,12 @@ use yolu_core::{Channel, CoreError, LayerId, Rgba8, SelectionMask};
 
 fn app() -> AppState {
     let mut app = AppState::new(16, 16);
-    app.region.by_color = true;
-    app.region.tolerance = 0;
+    app.region_mut().by_color = true;
+    app.region_mut().tolerance = 0;
     app
 }
 fn paint(s: &mut AppState, id: LayerId, x: u32, y: u32, c: Rgba8) {
-    s.doc.set_pixel(id, x, y, c).unwrap();
+    s.doc_mut().set_pixel(id, x, y, c).unwrap();
 }
 fn wall(s: &mut AppState, id: LayerId) {
     for i in 3..13 {
@@ -28,80 +30,81 @@ fn wall(s: &mut AppState, id: LayerId) {
     }
 }
 fn get(s: &AppState, x: f64, y: f64) -> Result<SelectionMask, CoreError> {
-    let req = bucket::request(s, s.selected_layer.unwrap(), vec![(x, y)]);
-    color::compute(&s.doc, &req, &AtomicBool::new(false))
+    let req = bucket::request(s, s.selected_layer().unwrap(), vec![(x, y)]);
+    color::compute(s.doc(), &req, &AtomicBool::new(false))
 }
 #[test]
 fn references_choose_different_regions_and_multiple_marks() {
     let mut s = app();
-    let editing = s.selected_layer.unwrap();
-    let lines = s.doc.add_layer("線").unwrap();
+    let editing = s.selected_layer().unwrap();
+    let lines = s.doc_mut().add_layer("線").unwrap();
     wall(&mut s, lines);
-    let divider = s.doc.add_layer("仕切り").unwrap();
+    let divider = s.doc_mut().add_layer("仕切り").unwrap();
     for y in 4..12 {
         paint(&mut s, divider, 8, y, Rgba8::new(0, 0, 0, 255));
     }
     assert_eq!(get(&s, 5.0, 5.0).unwrap().amount(0, 0), 255);
-    s.region.color.reference = Reference::Visible;
+    s.region_mut().color.reference = Reference::Visible;
     let all = get(&s, 5.0, 5.0).unwrap();
     assert_eq!(all.amount(10, 5), 0);
-    s.region.color.reference = Reference::Marked;
-    s.apply(Action::Region(RegionAction::ReferenceLayer(lines)));
+    s.region_mut().color.reference = Reference::Marked;
+    s.act(Action::Region(RegionAction::ReferenceLayer(lines)));
     let marked = get(&s, 5.0, 5.0).unwrap();
     assert_eq!(marked.amount(10, 5), 255);
     assert_eq!(marked.amount(0, 0), 0);
-    s.apply(Action::Region(RegionAction::ReferenceLayer(divider)));
+    s.act(Action::Region(RegionAction::ReferenceLayer(divider)));
     assert_eq!(get(&s, 5.0, 5.0).unwrap(), all);
-    assert_eq!(s.selected_layer, Some(editing));
+    assert_eq!(s.selected_layer(), Some(editing));
 }
 #[test]
 fn marks_do_not_modify_document_and_are_scoped_to_its_identity() {
     let mut s = app();
-    let id = s.selected_layer.unwrap();
-    let rev = s.doc.revision();
-    s.apply(Action::Region(RegionAction::ReferenceLayer(id)));
-    assert_eq!(s.doc.revision(), rev);
-    let other = app();
-    s.doc = other.doc;
+    let id = s.selected_layer().unwrap();
+    let rev = s.doc().revision();
+    s.act(Action::Region(RegionAction::ReferenceLayer(id)));
+    assert_eq!(s.doc().revision(), rev);
+    let mut other = app();
+    std::mem::swap(s.doc_mut(), other.doc_mut());
     assert!(bucket::request(&s, id, vec![(1.0, 1.0)]).marked.is_empty());
 }
 #[test]
 fn marked_group_preserves_hidden_ancestor() {
     let mut s = app();
-    let id = s.selected_layer.unwrap();
+    let id = s.selected_layer().unwrap();
     wall(&mut s, id);
-    let group = s.doc.group_layers(&[id], "組").unwrap();
-    s.region.references.insert((s.doc.id(), group));
-    s.region.color.reference = Reference::Marked;
+    let group = s.doc_mut().group_layers(&[id], "組").unwrap();
+    let doc_id = s.doc().id();
+    s.region_mut().references.insert((doc_id, group));
+    s.region_mut().color.reference = Reference::Marked;
     assert_eq!(get(&s, 6.0, 6.0).unwrap().amount(0, 0), 0);
-    s.doc.set_layer_visible(group, false).unwrap();
+    s.doc_mut().set_layer_visible(group, false).unwrap();
     assert_eq!(get(&s, 6.0, 6.0).unwrap().amount(0, 0), 255);
 }
 #[test]
 fn gap_width_boundary_and_source_unchanged() {
     let mut s = app();
-    let id = s.selected_layer.unwrap();
+    let id = s.selected_layer().unwrap();
     wall(&mut s, id);
     for x in 7..9 {
         paint(&mut s, id, x, 12, Rgba8::TRANSPARENT);
     }
-    let rev = s.doc.revision();
-    s.region.color.gap = 1;
+    let rev = s.doc().revision();
+    s.region_mut().color.gap = 1;
     assert_eq!(get(&s, 6.0, 6.0).unwrap().amount(0, 0), 255);
-    s.region.color.gap = 2;
+    s.region_mut().color.gap = 2;
     assert_eq!(get(&s, 6.0, 6.0).unwrap().amount(0, 0), 0);
-    assert_eq!(s.doc.revision(), rev);
+    assert_eq!(s.doc().revision(), rev);
 }
 #[test]
 fn area_expands_and_contracts() {
     let mut s = app();
-    let id = s.selected_layer.unwrap();
+    let id = s.selected_layer().unwrap();
     wall(&mut s, id);
-    s.region.color.margin = 1;
+    s.region_mut().color.margin = 1;
     let m = get(&s, 6.0, 6.0).unwrap();
     assert_eq!(m.amount(3, 6), 255);
     assert_eq!(m.amount(2, 6), 0);
-    s.region.color.margin = -1;
+    s.region_mut().color.margin = -1;
     let m = get(&s, 6.0, 6.0).unwrap();
     assert_eq!(m.amount(4, 6), 0);
     assert_eq!(m.amount(5, 6), 255);
@@ -109,12 +112,12 @@ fn area_expands_and_contracts() {
 #[test]
 fn perceptual_difference_changes_membership_but_alpha_is_independent() {
     let mut s = app();
-    let id = s.selected_layer.unwrap();
+    let id = s.selected_layer().unwrap();
     paint(&mut s, id, 1, 0, Rgba8::new(40, 0, 0, 0));
     paint(&mut s, id, 2, 0, Rgba8::new(0, 0, 0, 40));
-    s.region.tolerance = 25;
+    s.region_mut().tolerance = 25;
     assert_eq!(get(&s, 0.0, 0.0).unwrap().amount(1, 0), 0);
-    s.region.color.distance = Distance::Perceptual;
+    s.region_mut().color.distance = Distance::Perceptual;
     let m = get(&s, 0.0, 0.0).unwrap();
     assert_eq!(m.amount(1, 0), 255);
     assert_eq!(m.amount(2, 0), 0);
@@ -122,30 +125,30 @@ fn perceptual_difference_changes_membership_but_alpha_is_independent() {
 #[test]
 fn leftovers_require_enclosure_area_and_brush_contact() {
     let mut s = app();
-    let target = s.selected_layer.unwrap();
-    let lines = s.doc.add_layer("線").unwrap();
+    let target = s.selected_layer().unwrap();
+    let lines = s.doc_mut().add_layer("線").unwrap();
     wall(&mut s, lines);
-    s.region.color.reference = Reference::Visible;
-    s.region.color.leftovers = true;
-    s.brush.radius = 1.0;
+    s.region_mut().color.reference = Reference::Visible;
+    s.region_mut().color.leftovers = true;
+    s.brush_mut().radius = 1.0;
     assert_eq!(get(&s, 6.5, 6.5).unwrap().amount(10, 10), 255);
     assert!(get(&s, 0.5, 0.5).unwrap().is_empty());
-    s.region.color.max_area = 63;
+    s.region_mut().color.max_area = 63;
     assert!(get(&s, 6.5, 6.5).unwrap().is_empty());
-    s.region.color.max_area = 64;
+    s.region_mut().color.max_area = 64;
     paint(&mut s, target, 10, 10, Rgba8::new(255, 0, 0, 255));
     assert_eq!(get(&s, 6.5, 6.5).unwrap().amount(10, 10), 0);
 }
 #[test]
 fn leftovers_interpolate_stroke_and_are_one_undo_or_cancel() {
     let mut s = app();
-    let id = s.selected_layer.unwrap();
-    let lines = s.doc.add_layer("線").unwrap();
+    let id = s.selected_layer().unwrap();
+    let lines = s.doc_mut().add_layer("線").unwrap();
     wall(&mut s, lines);
-    s.region.color.reference = Reference::Visible;
-    s.region.color.leftovers = true;
-    s.brush.radius = 0.8;
-    let view = s.view.view(
+    s.region_mut().color.reference = Reference::Visible;
+    s.region_mut().color.leftovers = true;
+    s.brush_mut().radius = 0.8;
+    let view = s.view().view(
         Rect::from_min_size(pos2(0.0, 0.0), vec2(160.0, 160.0)),
         16,
         16,
@@ -154,7 +157,7 @@ fn leftovers_interpolate_stroke_and_are_one_undo_or_cancel() {
     bucket::drag(&mut s, &view, view.to_screen(14.5, 6.5));
     assert!(bucket::finish(&mut s, true));
     assert_eq!(
-        s.doc
+        s.doc()
             .layer(id)
             .unwrap()
             .pixel(Channel::Color, 6, 6)
@@ -166,7 +169,7 @@ fn leftovers_interpolate_stroke_and_are_one_undo_or_cancel() {
     bucket::drag(&mut s, &view, view.to_screen(14.5, 6.5));
     bucket::finish(&mut s, false);
     assert!(
-        s.doc
+        s.doc()
             .layer(id)
             .unwrap()
             .pixel(Channel::Color, 6, 6)
@@ -174,9 +177,9 @@ fn leftovers_interpolate_stroke_and_are_one_undo_or_cancel() {
             .a
             > 0
     );
-    s.doc.undo().unwrap();
+    s.doc_mut().undo().unwrap();
     assert_eq!(
-        s.doc
+        s.doc()
             .layer(id)
             .unwrap()
             .pixel(Channel::Color, 6, 6)
@@ -184,9 +187,9 @@ fn leftovers_interpolate_stroke_and_are_one_undo_or_cancel() {
             .a,
         0
     );
-    s.doc.redo().unwrap();
+    s.doc_mut().redo().unwrap();
     assert!(
-        s.doc
+        s.doc()
             .layer(id)
             .unwrap()
             .pixel(Channel::Color, 6, 6)
@@ -198,15 +201,14 @@ fn leftovers_interpolate_stroke_and_are_one_undo_or_cancel() {
 #[test]
 fn selection_is_applied_after_expansion_and_fill_undo_restores_pixels() {
     let mut s = app();
-    let id = s.selected_layer.unwrap();
+    let id = s.selected_layer().unwrap();
     wall(&mut s, id);
-    s.region.color.margin = 2;
-    s.doc
-        .set_selection(Some(SelectionMask::rectangle(&s.doc, 5, 5, 7, 7)))
-        .unwrap();
+    s.region_mut().color.margin = 2;
+    let rect = SelectionMask::rectangle(s.doc(), 5, 5, 7, 7);
+    s.doc_mut().set_selection(Some(rect)).unwrap();
     bucket::start(&mut s, vec![(6.0, 6.0)]);
     assert!(
-        s.doc
+        s.doc()
             .layer(id)
             .unwrap()
             .pixel(Channel::Color, 6, 6)
@@ -215,7 +217,7 @@ fn selection_is_applied_after_expansion_and_fill_undo_restores_pixels() {
             > 0
     );
     assert_eq!(
-        s.doc
+        s.doc()
             .layer(id)
             .unwrap()
             .pixel(Channel::Color, 8, 6)
@@ -223,9 +225,9 @@ fn selection_is_applied_after_expansion_and_fill_undo_restores_pixels() {
             .a,
         0
     );
-    s.doc.undo().unwrap();
+    s.doc_mut().undo().unwrap();
     assert_eq!(
-        s.doc
+        s.doc()
             .layer(id)
             .unwrap()
             .pixel(Channel::Color, 6, 6)
@@ -233,29 +235,29 @@ fn selection_is_applied_after_expansion_and_fill_undo_restores_pixels() {
             .a,
         0
     );
-    assert!(s.doc.selection().is_some());
+    assert!(s.doc().selection().is_some());
 }
 #[test]
 fn budget_and_cancel_publish_no_partial_mask() {
     let s = app();
-    let mut req = bucket::request(&s, s.selected_layer.unwrap(), vec![(1.0, 1.0)]);
+    let mut req = bucket::request(&s, s.selected_layer().unwrap(), vec![(1.0, 1.0)]);
     req.budget = 1;
     assert_eq!(
-        color::compute(&s.doc, &req, &AtomicBool::new(false)).unwrap_err(),
+        color::compute(s.doc(), &req, &AtomicBool::new(false)).unwrap_err(),
         CoreError::WorkingBudgetExceeded
     );
     req.budget = u64::MAX;
     assert_eq!(
-        color::compute(&s.doc, &req, &AtomicBool::new(true)).unwrap_err(),
+        color::compute(s.doc(), &req, &AtomicBool::new(true)).unwrap_err(),
         CoreError::Cancelled
     );
 }
 #[test]
 fn noncontiguous_mode_includes_separate_matching_regions() {
     let mut s = app();
-    let id = s.selected_layer.unwrap();
+    let id = s.selected_layer().unwrap();
     wall(&mut s, id);
-    s.region.contiguous = false;
+    s.region_mut().contiguous = false;
     let m = get(&s, 6.0, 6.0).unwrap();
     assert_eq!(m.amount(0, 0), 255);
     assert_eq!(m.amount(3, 6), 0);
@@ -263,33 +265,32 @@ fn noncontiguous_mode_includes_separate_matching_regions() {
 #[test]
 fn locks_types_and_source_budget_refuse_without_history() {
     let mut s = app();
-    let id = s.selected_layer.unwrap();
-    s.doc
+    let id = s.selected_layer().unwrap();
+    s.doc_mut()
         .set_layer_locks(id, yolu_core::LayerLocks::PIXELS)
         .unwrap();
-    s.doc.clear_history().unwrap();
+    s.doc_mut().clear_history().unwrap();
     bucket::start(&mut s, vec![(1.0, 1.0)]);
-    assert_eq!(s.doc.undo_count(), 0);
-    assert!(!s.modified);
-    s.doc
+    assert_eq!(s.doc().undo_count(), 0);
+    assert!(!s.modified());
+    s.doc_mut()
         .set_layer_locks(id, yolu_core::LayerLocks::NONE)
         .unwrap();
-    let fill = s.doc.add_fill_layer("塗り", &[], None).unwrap();
-    s.selected_layer = Some(fill);
-    s.doc.clear_history().unwrap();
+    let fill = s.doc_mut().add_fill_layer("塗り", &[], None).unwrap();
+    s.set_selected_layer(Some(fill));
+    s.doc_mut().clear_history().unwrap();
     bucket::start(&mut s, vec![(1.0, 1.0)]);
-    assert_eq!(s.doc.undo_count(), 0);
-    s.selected_layer = Some(id);
-    s.doc
-        .set_source_budget_bytes(s.doc.allocated_bytes())
-        .unwrap();
+    assert_eq!(s.doc().undo_count(), 0);
+    s.set_selected_layer(Some(id));
+    let bytes = s.doc().allocated_bytes();
+    s.doc_mut().set_source_budget_bytes(bytes).unwrap();
     bucket::start(&mut s, vec![(1.0, 1.0)]);
-    assert_eq!(s.doc.undo_count(), 0);
+    assert_eq!(s.doc().undo_count(), 0);
 }
 fn wait(s: &mut AppState) {
     let ctx = egui::Context::default();
     let start = std::time::Instant::now();
-    while s.region.job.is_some() {
+    while s.region().job.is_some() {
         assert!(start.elapsed().as_secs() < 20, "処理待ちの上限");
         bucket::poll(s, &ctx);
         std::thread::sleep(std::time::Duration::from_millis(5));
@@ -298,29 +299,29 @@ fn wait(s: &mut AppState) {
 #[test]
 fn asynchronous_fill_keeps_pressed_color_and_one_undo() {
     let mut s = AppState::new(257, 257);
-    s.region.by_color = true;
-    s.color.set_main([1.0, 0.0, 0.0, 1.0]);
-    let id = s.selected_layer.unwrap();
-    let before = s.doc.undo_count();
+    s.region_mut().by_color = true;
+    s.color_mut().set_main([1.0, 0.0, 0.0, 1.0]);
+    let id = s.selected_layer().unwrap();
+    let before = s.doc().undo_count();
     bucket::start(&mut s, vec![(1.0, 1.0)]);
-    assert!(s.region.job.is_some());
+    assert!(s.region().job.is_some());
     assert!(s.is_stroking());
-    s.color.set_main([0.0, 1.0, 0.0, 1.0]);
-    s.brush.opacity = 0.0;
+    s.color_mut().set_main([0.0, 1.0, 0.0, 1.0]);
+    s.brush_mut().opacity = 0.0;
     wait(&mut s);
     assert!(!s.is_stroking());
-    assert_eq!(s.doc.undo_count(), before + 1);
+    assert_eq!(s.doc().undo_count(), before + 1);
     assert_eq!(
-        s.doc
+        s.doc()
             .layer(id)
             .unwrap()
             .pixel(Channel::Color, 0, 0)
             .unwrap(),
         Rgba8::new(255, 0, 0, 255)
     );
-    s.doc.undo().unwrap();
+    s.doc_mut().undo().unwrap();
     assert_eq!(
-        s.doc
+        s.doc()
             .layer(id)
             .unwrap()
             .pixel(Channel::Color, 0, 0)
@@ -332,15 +333,15 @@ fn asynchronous_fill_keeps_pressed_color_and_one_undo() {
 #[test]
 fn asynchronous_result_is_discarded_after_document_changes() {
     let mut s = AppState::new(257, 257);
-    s.region.by_color = true;
-    let id = s.selected_layer.unwrap();
+    s.region_mut().by_color = true;
+    let id = s.selected_layer().unwrap();
     bucket::start(&mut s, vec![(1.0, 1.0)]);
     paint(&mut s, id, 0, 0, Rgba8::new(0, 255, 0, 255));
-    let count = s.doc.undo_count();
+    let count = s.doc().undo_count();
     wait(&mut s);
-    assert_eq!(s.doc.undo_count(), count);
+    assert_eq!(s.doc().undo_count(), count);
     assert_eq!(
-        s.doc
+        s.doc()
             .layer(id)
             .unwrap()
             .pixel(Channel::Color, 1, 1)
@@ -352,8 +353,8 @@ fn asynchronous_result_is_discarded_after_document_changes() {
 #[test]
 fn asynchronous_escape_cancels_without_undo() {
     let mut s = AppState::new(257, 257);
-    s.region.by_color = true;
-    let before = s.doc.undo_count();
+    s.region_mut().by_color = true;
+    let before = s.doc().undo_count();
     bucket::start(&mut s, vec![(1.0, 1.0)]);
     let ctx = egui::Context::default();
     let input = egui::RawInput {
@@ -368,9 +369,9 @@ fn asynchronous_escape_cancels_without_undo() {
     };
     let mut out = ctx.run_ui(input, |ui| bucket::poll(&mut s, ui.ctx()));
     out.textures_delta.clear();
-    assert!(s.region.job.is_none());
+    assert!(s.region().job.is_none());
     assert!(!s.is_stroking());
-    assert_eq!(s.doc.undo_count(), before);
+    assert_eq!(s.doc().undo_count(), before);
 }
 #[test]
 fn bucket_properties_draw_new_labels_in_both_languages() {
@@ -407,8 +408,8 @@ fn bucket_properties_draw_new_labels_in_both_languages() {
         ),
     ] {
         let mut s = app();
-        s.tool = Tool::Fill;
-        s.lang = lang;
+        s.set_tool(Tool::Fill);
+        s.set_lang(lang);
         let ctx = egui::Context::default();
         YoluApp::setup(&ctx);
         let mut labels = Vec::new();
@@ -437,7 +438,7 @@ fn bucket_properties_draw_new_labels_in_both_languages() {
 #[test]
 fn leftovers_also_fill_white_paper_without_repainting_colored_pixels() {
     let mut s = app();
-    let id = s.selected_layer.unwrap();
+    let id = s.selected_layer().unwrap();
     for y in 0..16 {
         for x in 0..16 {
             paint(&mut s, id, x, y, Rgba8::new(255, 255, 255, 255));
@@ -445,7 +446,7 @@ fn leftovers_also_fill_white_paper_without_repainting_colored_pixels() {
     }
     wall(&mut s, id);
     paint(&mut s, id, 10, 10, Rgba8::new(255, 0, 0, 255));
-    s.region.color.leftovers = true;
+    s.region_mut().color.leftovers = true;
     let m = get(&s, 6.5, 6.5).unwrap();
     assert_eq!(m.amount(6, 6), 255);
     assert_eq!(m.amount(10, 10), 0);
@@ -454,13 +455,13 @@ fn leftovers_also_fill_white_paper_without_repainting_colored_pixels() {
 fn missing_reference_marks_refuse_in_both_languages() {
     for lang in [yolu_app::lang::Lang::Ja, yolu_app::lang::Lang::En] {
         let mut s = app();
-        s.lang = lang;
-        s.region.color.reference = Reference::Marked;
-        let before = s.doc.undo_count();
+        s.set_lang(lang);
+        s.region_mut().color.reference = Reference::Marked;
+        let before = s.doc().undo_count();
         bucket::start(&mut s, vec![(1.0, 1.0)]);
-        assert_eq!(s.doc.undo_count(), before);
+        assert_eq!(s.doc().undo_count(), before);
         assert_eq!(
-            s.message,
+            s.message(),
             lang.pick("参照レイヤーがありません", "No reference layers")
         );
     }
@@ -470,19 +471,20 @@ fn missing_reference_marks_refuse_in_both_languages() {
 fn review_marked_clipped_lines_keep_the_unmarked_base() {
     let mut s = app();
     let base = s
-        .doc
+        .doc_mut()
         .add_fill_layer(
             "下地",
             &[(Channel::Color, Rgba8::new(255, 255, 255, 255))],
             None,
         )
         .unwrap();
-    let lines = s.doc.add_layer("線").unwrap();
+    let lines = s.doc_mut().add_layer("線").unwrap();
     wall(&mut s, lines);
-    s.doc.set_layer_clipping(lines, true).unwrap();
-    s.region.color.reference = Reference::Marked;
-    s.region.references.insert((s.doc.id(), lines));
-    assert!(!s.region.references.contains(&(s.doc.id(), base)));
+    s.doc_mut().set_layer_clipping(lines, true).unwrap();
+    s.region_mut().color.reference = Reference::Marked;
+    let doc_id = s.doc().id();
+    s.region_mut().references.insert((doc_id, lines));
+    assert!(!s.region().references.contains(&(s.doc().id(), base)));
     let m = get(&s, 6.0, 6.0).unwrap();
     assert_eq!(m.amount(6, 6), 255);
     assert_eq!(
@@ -490,25 +492,25 @@ fn review_marked_clipped_lines_keep_the_unmarked_base() {
         0,
         "印のない下地にクリップした線も境界になる"
     );
-    assert!(s.doc.layer(base).unwrap().visible());
+    assert!(s.doc().layer(base).unwrap().visible());
 }
 
 #[test]
 fn review_a_second_leftover_stroke_is_refused_until_the_first_finishes() {
     let mut s = AppState::new(64, 64);
-    s.region.by_color = true;
-    s.region.color.leftovers = true;
-    let id = s.selected_layer.unwrap();
-    let lines = s.doc.add_layer("線").unwrap();
+    s.region_mut().by_color = true;
+    s.region_mut().color.leftovers = true;
+    let id = s.selected_layer().unwrap();
+    let lines = s.doc_mut().add_layer("線").unwrap();
     wall(&mut s, lines);
     for i in 3..13 {
         for (x, y) in [(i + 20, 3), (i + 20, 12), (23, i), (32, i)] {
             paint(&mut s, lines, x, y, Rgba8::new(0, 0, 0, 255));
         }
     }
-    s.doc.clear_history().unwrap();
-    s.region.color.reference = Reference::Visible;
-    let view = s.view.view(
+    s.doc_mut().clear_history().unwrap();
+    s.region_mut().color.reference = Reference::Visible;
+    let view = s.view().view(
         Rect::from_min_size(pos2(0.0, 0.0), vec2(640.0, 640.0)),
         64,
         64,
@@ -516,19 +518,19 @@ fn review_a_second_leftover_stroke_is_refused_until_the_first_finishes() {
     let p = view.to_screen(6.5, 6.5);
     assert!(bucket::begin(&mut s, &view, p));
     assert!(bucket::finish(&mut s, false));
-    assert!(s.region.job.is_some());
+    assert!(s.region().job.is_some());
     let next = view.to_screen(26.5, 6.5);
     for _ in 0..2 {
         assert!(
             !bucket::begin(&mut s, &view, next),
             "前の処理中に新しいドラッグを受け付けない"
         );
-        assert!(s.region.leftover_drag.is_none());
-        assert_eq!(s.message, "塗りつぶし中");
+        assert!(s.region().leftover_drag.is_none());
+        assert_eq!(s.message(), "塗りつぶし中");
     }
     wait(&mut s);
     assert!(
-        s.doc
+        s.doc()
             .layer(id)
             .unwrap()
             .pixel(Channel::Color, 6, 6)
@@ -536,9 +538,9 @@ fn review_a_second_leftover_stroke_is_refused_until_the_first_finishes() {
             .a
             > 0
     );
-    assert_eq!(s.doc.undo_count(), 1);
+    assert_eq!(s.doc().undo_count(), 1);
     assert_eq!(
-        s.doc
+        s.doc()
             .layer(id)
             .unwrap()
             .pixel(Channel::Color, 26, 6)
@@ -549,9 +551,9 @@ fn review_a_second_leftover_stroke_is_refused_until_the_first_finishes() {
     assert!(bucket::begin(&mut s, &view, next), "完了後は次を受け付ける");
     bucket::finish(&mut s, false);
     wait(&mut s);
-    assert_eq!(s.doc.undo_count(), 2);
+    assert_eq!(s.doc().undo_count(), 2);
     assert!(
-        s.doc
+        s.doc()
             .layer(id)
             .unwrap()
             .pixel(Channel::Color, 26, 6)
@@ -559,9 +561,9 @@ fn review_a_second_leftover_stroke_is_refused_until_the_first_finishes() {
             .a
             > 0
     );
-    s.doc.undo().unwrap();
+    s.doc_mut().undo().unwrap();
     assert_eq!(
-        s.doc
+        s.doc()
             .layer(id)
             .unwrap()
             .pixel(Channel::Color, 26, 6)
@@ -570,7 +572,7 @@ fn review_a_second_leftover_stroke_is_refused_until_the_first_finishes() {
         0
     );
     assert!(
-        s.doc
+        s.doc()
             .layer(id)
             .unwrap()
             .pixel(Channel::Color, 6, 6)
@@ -587,24 +589,24 @@ fn focus_loss_commits(size: u32) {
         YoluApp,
     };
     let mut s = AppState::new(size, size);
-    s.tool = Tool::Fill;
-    s.region.by_color = true;
-    s.region.color.leftovers = true;
-    s.region.color.reference = Reference::Visible;
-    let id = s.selected_layer.unwrap();
-    let lines = s.doc.add_layer("線").unwrap();
+    s.set_tool(Tool::Fill);
+    s.region_mut().by_color = true;
+    s.region_mut().color.leftovers = true;
+    s.region_mut().color.reference = Reference::Visible;
+    let id = s.selected_layer().unwrap();
+    let lines = s.doc_mut().add_layer("線").unwrap();
     wall(&mut s, lines);
-    s.doc.clear_history().unwrap();
+    s.doc_mut().clear_history().unwrap();
     let ctx = egui::Context::default();
     YoluApp::setup(&ctx);
     let mut display = CanvasDisplay::default();
-    let view = s.view.view(
+    let view = s.view().view(
         Rect::from_min_size(pos2(0.0, 0.0), vec2(320.0, 320.0)),
         size,
         size,
     );
     assert!(bucket::begin(&mut s, &view, view.to_screen(6.5, 6.5)));
-    s.canvas.stroke = Some(StrokeSource::Mouse);
+    s.canvas_mut().stroke = Some(StrokeSource::Mouse);
     let deadline = std::time::Instant::now();
     let mut first = true;
     loop {
@@ -626,21 +628,21 @@ fn focus_loss_commits(size: u32) {
         });
         out.textures_delta.clear();
         first = false;
-        if s.region.job.is_none() {
+        if s.region().job.is_none() {
             break;
         }
         assert!(deadline.elapsed().as_secs() < 10);
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    assert!(s.region.leftover_drag.is_none());
-    assert!(s.canvas.stroke.is_none());
+    assert!(s.region().leftover_drag.is_none());
+    assert!(s.canvas().stroke.is_none());
     assert_eq!(
-        s.doc.undo_count(),
+        s.doc().undo_count(),
         1,
         "サイズ {size}: フォーカスを失ってもそこまでを確定"
     );
     assert!(
-        s.doc
+        s.doc()
             .layer(id)
             .unwrap()
             .pixel(Channel::Color, 6, 6)
@@ -648,9 +650,9 @@ fn focus_loss_commits(size: u32) {
             .a
             > 0
     );
-    s.doc.undo().unwrap();
+    s.doc_mut().undo().unwrap();
     assert_eq!(
-        s.doc
+        s.doc()
             .layer(id)
             .unwrap()
             .pixel(Channel::Color, 6, 6)
@@ -679,39 +681,43 @@ fn review_saved_bucket_pixels_survive_but_session_marks_do_not() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("bucket.ylp");
     let mut s = app();
-    let id = s.selected_layer.unwrap();
-    let lines = s.doc.add_layer("線").unwrap();
+    let id = s.selected_layer().unwrap();
+    let lines = s.doc_mut().add_layer("線").unwrap();
     wall(&mut s, lines);
     paint(&mut s, lines, 8, 12, Rgba8::TRANSPARENT);
-    s.region.references.insert((s.doc.id(), lines));
-    s.region.color.reference = Reference::Marked;
-    s.region.color.gap = 1;
-    s.region.color.margin = 1;
-    s.region.color.distance = Distance::Perceptual;
-    s.region.color.leftovers = true;
-    s.color.set_main([1.0, 0.0, 0.0, 1.0]);
+    let doc_id = s.doc().id();
+    s.region_mut().references.insert((doc_id, lines));
+    s.region_mut().color.reference = Reference::Marked;
+    s.region_mut().color.gap = 1;
+    s.region_mut().color.margin = 1;
+    s.region_mut().color.distance = Distance::Perceptual;
+    s.region_mut().color.leftovers = true;
+    s.color_mut().set_main([1.0, 0.0, 0.0, 1.0]);
     bucket::start(&mut s, vec![(6.5, 6.5)]);
     assert_eq!(
-        s.doc
+        s.doc()
             .layer(id)
             .unwrap()
             .pixel(Channel::Color, 6, 6)
             .unwrap(),
         Rgba8::new(255, 0, 0, 255)
     );
-    let before = s.doc.composite(yolu_core::Rect::new(0, 0, 16, 16)).unwrap();
-    s.apply(Action::SaveProjectAs(path.clone()));
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    let before = s
+        .doc()
+        .composite(yolu_core::Rect::new(0, 0, 16, 16))
+        .unwrap();
+    s.act(Action::SaveProjectAs(path.clone()));
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
     let mut opened = AppState::new(8, 8);
-    opened.apply(Action::OpenProject(path));
+    opened.act(Action::OpenProject(path));
     assert!(
-        opened.message.starts_with("開きました"),
+        opened.message().starts_with("開きました"),
         "{}",
-        opened.message
+        opened.message()
     );
     assert_eq!(
         opened
-            .doc
+            .doc()
             .composite(yolu_core::Rect::new(0, 0, 16, 16))
             .unwrap(),
         before
@@ -720,12 +726,12 @@ fn review_saved_bucket_pixels_survive_but_session_marks_do_not() {
         for x in 0..16 {
             assert_eq!(
                 opened
-                    .doc
+                    .doc()
                     .layer(id)
                     .unwrap()
                     .pixel(Channel::Color, x, y)
                     .unwrap(),
-                s.doc
+                s.doc()
                     .layer(id)
                     .unwrap()
                     .pixel(Channel::Color, x, y)
@@ -733,7 +739,7 @@ fn review_saved_bucket_pixels_survive_but_session_marks_do_not() {
             );
         }
     }
-    assert!(opened.region.references.is_empty());
+    assert!(opened.region().references.is_empty());
 }
 
 #[test]
@@ -741,29 +747,30 @@ fn review_clipping_dependencies_keep_groups_but_not_unmarked_clips() {
     for clipped_parent in [false, true] {
         let mut s = app();
         let base = s
-            .doc
+            .doc_mut()
             .add_fill_layer(
                 "下地",
                 &[(Channel::Color, Rgba8::new(255, 255, 255, 255))],
                 None,
             )
             .unwrap();
-        let base_group = s.doc.group_layers(&[base], "下地の組").unwrap();
-        let other = s.doc.add_layer("別の線").unwrap();
+        let base_group = s.doc_mut().group_layers(&[base], "下地の組").unwrap();
+        let other = s.doc_mut().add_layer("別の線").unwrap();
         for y in 4..12 {
             paint(&mut s, other, 8, y, Rgba8::new(0, 0, 0, 255));
         }
-        s.doc.set_layer_clipping(other, true).unwrap();
-        let lines = s.doc.add_layer("参照の線").unwrap();
+        s.doc_mut().set_layer_clipping(other, true).unwrap();
+        let lines = s.doc_mut().add_layer("参照の線").unwrap();
         wall(&mut s, lines);
         let clipped = if clipped_parent {
-            s.doc.group_layers(&[lines], "線の組").unwrap()
+            s.doc_mut().group_layers(&[lines], "線の組").unwrap()
         } else {
             lines
         };
-        s.doc.set_layer_clipping(clipped, true).unwrap();
-        s.region.color.reference = Reference::Marked;
-        s.region.references.insert((s.doc.id(), lines));
+        s.doc_mut().set_layer_clipping(clipped, true).unwrap();
+        s.region_mut().color.reference = Reference::Marked;
+        let doc_id = s.doc().id();
+        s.region_mut().references.insert((doc_id, lines));
         let m = get(&s, 6.0, 6.0).unwrap();
         assert_eq!(m.amount(0, 0), 0, "下地グループの子孫を残す");
         assert_eq!(
@@ -771,7 +778,7 @@ fn review_clipping_dependencies_keep_groups_but_not_unmarked_clips() {
             255,
             "印のない別のクリッピング線は参照しない"
         );
-        s.doc.set_layer_visible(base_group, false).unwrap();
+        s.doc_mut().set_layer_visible(base_group, false).unwrap();
         assert_eq!(
             get(&s, 6.0, 6.0).unwrap().amount(0, 0),
             255,
@@ -798,18 +805,19 @@ mod in_3d {
     /// 試しの立方体を、右と手前の面が見えるカメラで読んだ文書。近い色のバケツ。
     fn cube() -> AppState {
         let mut s = app();
-        s.view3d.load_demo();
-        s.view3d.camera.yaw = -40.0;
-        s.view3d.camera.pitch = 15.0;
-        s.tool = Tool::Fill;
-        s.region.tolerance = 0;
-        s.color.set_main([0.0, 1.0, 0.0, 1.0]);
+        s.view3d_mut().load_demo();
+        s.view3d_mut().view.camera.yaw = -40.0;
+        s.view3d_mut().view.camera.pitch = 15.0;
+        s.set_tool(Tool::Fill);
+        s.region_mut().tolerance = 0;
+        s.color_mut().set_main([0.0, 1.0, 0.0, 1.0]);
         s
     }
 
     fn screen_of(s: &AppState, p: Vec3) -> egui::Pos2 {
         let view = s
-            .view3d
+            .view3d()
+            .view
             .camera
             .view(viewport().width(), viewport().height());
         let q = view.to_screen(p).expect("カメラの前");
@@ -818,15 +826,15 @@ mod in_3d {
 
     /// 画面の点の下の面の UV が指す画素（今のテクスチャセットの面だけ）。
     fn texel_under(s: &AppState, at: egui::Pos2) -> Option<(u32, u32)> {
-        let model = s.view3d.model.as_ref()?;
+        let model = s.view3d().model.as_ref()?;
         let rect = viewport();
-        let view = s.view3d.camera.view(rect.width(), rect.height());
+        let view = s.view3d().view.camera.view(rect.width(), rect.height());
         let hit = pick(
             &model.geometry,
             &view,
             Vec2::new(at.x - rect.left(), at.y - rect.top()),
         )?;
-        (hit.material == s.view3d.material).then_some((
+        s.view3d().material.contains(hit.material).then_some((
             (hit.uv.x * SIZE as f32) as u32,
             (hit.uv.y * SIZE as f32) as u32,
         ))
@@ -854,19 +862,19 @@ mod in_3d {
 
     /// 縦の仕切りを 2 本（画素の列 `x - 2` と `x + 2`）立てた線のレイヤー。仕切りの間の 3 列が、押した画素と同じ近い色の範囲。
     fn walls(s: &mut AppState, x: u32) {
-        let id = s.selected_layer.unwrap();
+        let id = s.selected_layer().unwrap();
         for column in [x - 2, x + 2] {
             for y in 0..SIZE {
                 paint(s, id, column, y, Rgba8::new(0, 0, 0, 255));
             }
         }
-        s.doc.clear_history().unwrap();
+        s.doc_mut().clear_history().unwrap();
     }
 
     fn pixels(s: &AppState) -> Vec<[u8; 4]> {
         (0..SIZE)
             .flat_map(|y| (0..SIZE).map(move |x| (x, y)))
-            .map(|(x, y)| yolu_app::engine::composite_pixel(&s.doc, x, y))
+            .map(|(x, y)| yolu_app::engine::composite_pixel(s.doc(), x, y))
             .collect()
     }
 
@@ -879,7 +887,7 @@ mod in_3d {
         let mut s2 = cube();
         walls(&mut s2, x);
         let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(160.0, 160.0));
-        let view = s2.view.view(rect, SIZE, SIZE);
+        let view = s2.view().view(rect, SIZE, SIZE);
         let before = pixels(&s3);
         tools::bucket(&mut s3, Where::Surface(viewport()), at);
         tools::bucket(
@@ -887,15 +895,18 @@ mod in_3d {
             Where::Canvas(&view),
             view.to_screen(x as f64 + 0.5, y as f64 + 0.5),
         );
-        assert_eq!(s3.doc.undo_count(), 1, "1 回の Undo");
+        assert_eq!(s3.doc().undo_count(), 1, "1 回の Undo");
         assert_eq!(pixels(&s3), pixels(&s2), "2D と同じ範囲");
         assert_ne!(pixels(&s3), before);
         let green = [0, 255, 0, 255];
         for column in [x - 1, x, x + 1] {
-            assert_eq!(yolu_app::engine::composite_pixel(&s3.doc, column, 0), green);
+            assert_eq!(
+                yolu_app::engine::composite_pixel(s3.doc(), column, 0),
+                green
+            );
         }
-        assert_ne!(yolu_app::engine::composite_pixel(&s3.doc, x - 3, 0), green);
-        s3.doc.undo().unwrap();
+        assert_ne!(yolu_app::engine::composite_pixel(s3.doc(), x - 3, 0), green);
+        s3.doc_mut().undo().unwrap();
         assert_eq!(pixels(&s3), before, "1 回の Undo で戻る");
     }
 
@@ -906,7 +917,7 @@ mod in_3d {
         let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(160.0, 160.0));
         for s in [&mut s3, &mut s2] {
             // 押した列だけ少し違う色（許し幅 40 なら同じ範囲、0 なら別）。仕切りの外にも同じ色
-            let id = s.selected_layer.unwrap();
+            let id = s.selected_layer().unwrap();
             for yy in 0..SIZE {
                 for xx in 0..SIZE {
                     let shade = if xx == x { 20 } else { 0 };
@@ -916,10 +927,10 @@ mod in_3d {
             for yy in 0..SIZE {
                 paint(s, id, x + 2, yy, Rgba8::new(255, 255, 255, 255));
             }
-            s.region.tolerance = 40;
-            s.doc.clear_history().unwrap();
+            s.region_mut().tolerance = 40;
+            s.doc_mut().clear_history().unwrap();
         }
-        let view = s2.view.view(rect, SIZE, SIZE);
+        let view = s2.view().view(rect, SIZE, SIZE);
         tools::bucket(&mut s3, Where::Surface(viewport()), at);
         tools::bucket(
             &mut s2,
@@ -929,17 +940,17 @@ mod in_3d {
         assert_eq!(pixels(&s3), pixels(&s2));
         // 白い仕切りの向こうは、つながっていないので塗られない
         assert_ne!(
-            yolu_app::engine::composite_pixel(&s3.doc, x + 3, 0),
+            yolu_app::engine::composite_pixel(s3.doc(), x + 3, 0),
             [0, 255, 0, 255]
         );
         assert_eq!(
-            yolu_app::engine::composite_pixel(&s3.doc, x + 1, 0),
+            yolu_app::engine::composite_pixel(s3.doc(), x + 1, 0),
             [0, 255, 0, 255]
         );
         // つながりを切ると、仕切りの向こうも同じ色なら塗る（2D と同じ）
         for s in [&mut s3, &mut s2] {
-            s.doc.undo().unwrap();
-            s.region.contiguous = false;
+            s.doc_mut().undo().unwrap();
+            s.region_mut().contiguous = false;
         }
         tools::bucket(&mut s3, Where::Surface(viewport()), at);
         tools::bucket(
@@ -949,7 +960,7 @@ mod in_3d {
         );
         assert_eq!(pixels(&s3), pixels(&s2));
         assert_eq!(
-            yolu_app::engine::composite_pixel(&s3.doc, x + 3, 0),
+            yolu_app::engine::composite_pixel(s3.doc(), x + 3, 0),
             [0, 255, 0, 255]
         );
     }
@@ -960,43 +971,47 @@ mod in_3d {
         // 面の無い所
         let before = pixels(&s);
         tools::bucket(&mut s, Where::Surface(viewport()), pos2(101.0, 101.0));
-        assert!(s.message.contains("三角形がありません"), "{}", s.message);
-        assert_eq!(s.doc.undo_count(), 0);
+        assert!(
+            s.message().contains("三角形がありません"),
+            "{}",
+            s.message()
+        );
+        assert_eq!(s.doc().undo_count(), 0);
         assert_eq!(pixels(&s), before);
         // モデルが無い
         let mut none = app();
-        none.tool = Tool::Fill;
+        none.set_tool(Tool::Fill);
         tools::bucket(&mut none, Where::Surface(viewport()), pos2(300.0, 300.0));
-        assert_eq!(none.message, "モデルがありません");
-        assert_eq!(none.doc.undo_count(), 0);
+        assert_eq!(none.message(), "モデルがありません");
+        assert_eq!(none.doc().undo_count(), 0);
         // 英語でも
-        s.apply(Action::M2Ui(yolu_app::m2::UiOp::Language(
+        s.act(Action::M2Ui(yolu_app::m2::UiOp::Language(
             yolu_app::lang::Lang::En,
         )));
         tools::bucket(&mut s, Where::Surface(viewport()), pos2(101.0, 101.0));
         assert_eq!(
-            s.message,
+            s.message(),
             "No triangle of this texture set under the pointer"
         );
     }
 
     /// 一周が壁の部屋（外周の 1 画素内側が壁）。部屋の中のどこかに触れた線は、部屋の塗り残しを塗る。
     fn room(s: &mut AppState) {
-        let lines = s.doc.add_layer("線").unwrap();
+        let lines = s.doc_mut().add_layer("線").unwrap();
         for i in 1..15 {
             for (x, y) in [(i, 1), (i, 14), (1, i), (14, i)] {
                 paint(s, lines, x, y, Rgba8::new(0, 0, 0, 255));
             }
         }
-        s.region.color.reference = Reference::Visible;
-        s.region.color.leftovers = true;
-        s.brush.radius = 0.8;
-        s.doc.clear_history().unwrap();
+        s.region_mut().color.reference = Reference::Visible;
+        s.region_mut().color.leftovers = true;
+        s.brush_mut().radius = 0.8;
+        s.doc_mut().clear_history().unwrap();
     }
 
     fn filled(s: &AppState, x: u32, y: u32) -> bool {
-        s.doc
-            .layer(s.selected_layer.unwrap())
+        s.doc()
+            .layer(s.selected_layer().unwrap())
             .unwrap()
             .pixel(Channel::Color, x, y)
             .unwrap()
@@ -1012,13 +1027,13 @@ mod in_3d {
         let rect = viewport();
         // 押した面の UV が部屋の中なら、ドラッグは始まる
         assert!(tools::surface_press(&mut s, rect, at, StrokeSource::Mouse));
-        assert!(s.region.leftover_drag.is_some());
+        assert!(s.region().leftover_drag.is_some());
         bucket::drag_surface(&mut s, rect, at + vec2(6.0, 2.0));
         // Esc で捨てる: 何も塗らない
         assert!(tools::finish_drag(&mut s, true));
-        assert!(s.region.leftover_drag.is_none());
+        assert!(s.region().leftover_drag.is_none());
         assert!(!filled(&s, x, y));
-        assert_eq!(s.doc.undo_count(), 0);
+        assert_eq!(s.doc().undo_count(), 0);
         // 離す: 部屋が塗られ、1 回の Undo で戻る
         assert!(tools::surface_press(&mut s, rect, at, StrokeSource::Mouse));
         bucket::drag_surface(&mut s, rect, at + vec2(6.0, 2.0));
@@ -1026,9 +1041,9 @@ mod in_3d {
         assert!(filled(&s, x, y), "押した画素を含む部屋");
         assert!(filled(&s, 7, 7) && filled(&s, 12, 12), "部屋の中の塗り残し");
         assert!(!filled(&s, 0, 0), "壁の外は塗らない");
-        let undo = s.doc.undo_count();
-        s.doc.undo().unwrap();
-        assert_eq!(s.doc.undo_count(), undo - 1);
+        let undo = s.doc().undo_count();
+        s.doc_mut().undo().unwrap();
+        assert_eq!(s.doc().undo_count(), undo - 1);
         assert!(!filled(&s, 7, 7));
     }
 
@@ -1044,13 +1059,17 @@ mod in_3d {
             pos2(101.0, 101.0),
             StrokeSource::Mouse
         ));
-        assert!(s.message.contains("三角形がありません"), "{}", s.message);
-        assert!(s.region.leftover_drag.is_none());
+        assert!(
+            s.message().contains("三角形がありません"),
+            "{}",
+            s.message()
+        );
+        assert!(s.region().leftover_drag.is_none());
         // 始めている間は、ほかの押しを断る
         let (_, at, _) = spot(&s);
         assert!(tools::surface_press(&mut s, rect, at, StrokeSource::Mouse));
         assert!(!tools::surface_press(&mut s, rect, at, StrokeSource::Mouse));
-        assert!(s.region.leftover_drag.is_some(), "最初のドラッグは続く");
+        assert!(s.region().leftover_drag.is_some(), "最初のドラッグは続く");
         assert!(tools::finish_drag(&mut s, true));
     }
 
@@ -1064,26 +1083,26 @@ mod in_3d {
         to: Vec3,
     ) -> Vec<(f64, f64)> {
         let mut s = AppState::new(size, size);
-        s.view3d.load_demo();
-        s.view3d.camera.yaw = -40.0;
-        s.view3d.camera.pitch = 15.0;
-        s.view3d.camera.distance = distance;
-        s.tool = Tool::Fill;
-        s.region.by_color = true;
-        s.region.color.leftovers = true;
-        s.brush.radius = radius;
+        s.view3d_mut().load_demo();
+        s.view3d_mut().view.camera.yaw = -40.0;
+        s.view3d_mut().view.camera.pitch = 15.0;
+        s.view3d_mut().view.camera.distance = distance;
+        s.set_tool(Tool::Fill);
+        s.region_mut().by_color = true;
+        s.region_mut().color.leftovers = true;
+        s.brush_mut().radius = radius;
         let rect = viewport();
         let (a, b) = (screen_of(&s, from), screen_of(&s, to));
         assert!(
             tools::surface_press(&mut s, rect, a, StrokeSource::Mouse),
             "{}",
-            s.message
+            s.message()
         );
         for i in 1..=8 {
             bucket::drag_surface(&mut s, rect, a + (b - a) * (i as f32 / 8.0));
         }
         let points = s
-            .region
+            .region()
             .leftover_drag
             .as_ref()
             .expect("ドラッグ")
@@ -1142,7 +1161,7 @@ mod in_3d {
         // 挟めば、間の部屋には触れない
         let touched = |points: Vec<(f64, f64)>| {
             let mut c = app();
-            let lines = c.doc.add_layer("線").unwrap();
+            let lines = c.doc_mut().add_layer("線").unwrap();
             for i in 1..15 {
                 paint(&mut c, lines, i, 1, Rgba8::new(0, 0, 0, 255));
                 paint(&mut c, lines, i, 14, Rgba8::new(0, 0, 0, 255));
@@ -1152,11 +1171,11 @@ mod in_3d {
                     paint(&mut c, lines, x, y, Rgba8::new(0, 0, 0, 255));
                 }
             }
-            c.region.color.reference = Reference::Visible;
-            c.region.color.leftovers = true;
-            c.brush.radius = 0.8;
-            let request = bucket::request(&c, c.selected_layer.unwrap(), points);
-            color::compute(&c.doc, &request, &AtomicBool::new(false)).unwrap()
+            c.region_mut().color.reference = Reference::Visible;
+            c.region_mut().color.leftovers = true;
+            c.brush_mut().radius = 0.8;
+            let request = bucket::request(&c, c.selected_layer().unwrap(), points);
+            color::compute(c.doc(), &request, &AtomicBool::new(false)).unwrap()
         };
         let joined = touched(vec![(3.5, 7.5), (12.5, 7.5)]);
         assert!(joined.amount(3, 7) > 0 && joined.amount(7, 7) > 0 && joined.amount(12, 7) > 0);
@@ -1171,4 +1190,156 @@ mod in_3d {
         let after = touched(vec![(3.5, 7.5), nan, (7.5, 7.5)]);
         assert!(after.amount(7, 7) > 0 && after.amount(12, 7) == 0);
     }
+}
+
+// ───────── 結果を文書へ入れる入口 ─────────
+
+/// その場で塗る小さな文書（16）と、裏の仕事で塗る文書（257）。
+const SIZES: [u32; 2] = [16, 257];
+
+fn by_color(size: u32) -> AppState {
+    let mut s = AppState::new(size, size);
+    s.region_mut().by_color = true;
+    s
+}
+
+/// 結果は 1 回の Undo で、変更の印を付け、塗りつぶしの出どころで知らせる（その場でも裏の仕事でも同じ）。
+#[test]
+fn the_bucket_result_is_one_undo_with_the_fill_notice() {
+    for size in SIZES {
+        let mut s = by_color(size);
+        let before = s.doc().undo_count();
+        bucket::start(&mut s, vec![(1.0, 1.0)]);
+        wait(&mut s);
+        assert_eq!(s.doc().undo_count(), before + 1, "{size}");
+        assert_eq!(
+            s.doc().history().last(),
+            Some(yolu_app::engine::HistoryKind::Brush),
+            "{size}: 段の名前"
+        );
+        assert!(s.modified(), "{size}");
+        let notice = s.last_notice().clone().expect("知らせ");
+        assert_eq!(notice.source, Source::Fill, "{size}");
+        assert_eq!(notice.kind, Kind::Info, "{size}");
+        assert_eq!(notice.text, s.message(), "{size}");
+    }
+}
+
+/// 読むだけのセットは、始めるときに 1 回、塗りつぶしの出どころで断る（仕事を始めない・履歴に積まない）。
+#[test]
+fn a_read_only_set_refuses_the_bucket_at_the_start_with_the_fill_source() {
+    for size in SIZES {
+        let mut s = by_color(size);
+        s.sets_mut().get_mut(0).unwrap().read_only = Some("理由".into());
+        bucket::start(&mut s, vec![(1.0, 1.0)]);
+        assert!(s.region().job.is_none(), "{size}");
+        assert_eq!(s.doc().undo_count(), 0, "{size}");
+        assert!(!s.modified(), "{size}");
+        let notice = s.last_notice().clone().expect("断り");
+        assert_eq!(
+            (notice.source, notice.kind),
+            (Source::Fill, Kind::Refusal),
+            "{size}"
+        );
+        assert!(notice.text.contains("読むだけ"), "{}", notice.text);
+    }
+}
+
+/// 裏の仕事の途中で今のセットが読むだけになったら、結果を入れずにやめたと知らせる。セットを替えるのは、仕事の途中は断る
+/// （仕事は元のセットに 1 回の Undo で入る）。
+#[test]
+fn a_set_that_becomes_read_only_or_is_switched_during_the_job_keeps_its_rules() {
+    let mut s = by_color(257);
+    bucket::start(&mut s, vec![(1.0, 1.0)]);
+    assert!(s.region().job.is_some());
+    s.sets_mut().get_mut(0).unwrap().read_only = Some("理由".into());
+    wait(&mut s);
+    assert_eq!(s.doc().undo_count(), 0);
+    let notice = s.last_notice().clone().unwrap();
+    assert_eq!((notice.source, notice.kind), (Source::Fill, Kind::Warning));
+    s.sets_mut().get_mut(0).unwrap().read_only = None;
+    // セットを替える
+    s.act(Action::Project(yolu_app::newproject::NpAction::AddSet));
+    assert_eq!(s.sets().len(), 2, "{}", s.message());
+    let first = s.sets().iter().next().unwrap().uid;
+    let second = s.sets().iter().nth(1).unwrap().uid;
+    s.act(Action::SelectSet(first));
+    let doc = s.doc().id();
+    let before = s.doc().undo_count();
+    bucket::start(&mut s, vec![(1.0, 1.0)]);
+    assert!(s.region().job.is_some());
+    s.act(Action::SelectSet(second));
+    assert_eq!(s.doc().id(), doc, "仕事の途中はセットを替えない");
+    assert!(s.message().contains("描いている間"), "{}", s.message());
+    wait(&mut s);
+    assert_eq!(s.doc().undo_count(), before + 1);
+}
+
+/// 記録を始める（記録の外の変更の印 `skipped` を見るため。記録のウィンドウは開かない）。
+fn record(s: &mut AppState) {
+    let recorder = yolu_app::automation::record::Recorder::start(s);
+    s.automation_mut().recorder = Some(recorder);
+}
+
+/// 結果は、ほかの操作と同じ入口（`AppState::apply` の `RegionAction::Bucket`）から文書へ入る: 記録中なら、その場で記録しなかった変更の
+/// 印が付く（`apply` の外で文書を変えると、記録のウィンドウが次に見るまで付かない）。
+#[test]
+fn the_bucket_result_goes_through_the_region_action() {
+    for size in SIZES {
+        let mut s = by_color(size);
+        record(&mut s);
+        bucket::start(&mut s, vec![(1.0, 1.0)]);
+        wait(&mut s);
+        assert_eq!(s.doc().undo_count(), 1, "{size}");
+        assert!(
+            s.automation().recorder.as_ref().unwrap().skipped,
+            "{size}: apply を通っていない"
+        );
+    }
+}
+
+/// 操作として直に当てても同じに塗り（1 回の Undo）、文書を変える操作として、読むだけのセットと描いている最中は断る。
+#[test]
+fn the_bucket_action_paints_once_and_refuses_read_only_sets_and_strokes() {
+    let mut s = by_color(16);
+    let layer = s.selected_layer().unwrap();
+    let action = Action::Region(RegionAction::Bucket(Box::new(bucket::BucketFill {
+        layer,
+        mask: SelectionMask::rectangle(s.doc(), 0, 0, 4, 4),
+        style: bucket::Style::capture(&s, layer),
+    })));
+    assert!(action.edits_document());
+    s.sets_mut().get_mut(0).unwrap().read_only = Some("理由".into());
+    s.act(action.clone());
+    assert_eq!(s.doc().undo_count(), 0);
+    assert!(s.message().contains("読むだけ"), "{}", s.message());
+    s.sets_mut().get_mut(0).unwrap().read_only = None;
+    let brush = s.stroke_settings(false);
+    let stroke = s.doc_mut().begin_stroke(layer, &brush).unwrap();
+    s.act(action.clone());
+    // 断るのは core（自分のストロークの最中）。文は描いている間の断りと同じ
+    assert_eq!(s.message(), "描いている間はできません。");
+    s.doc_mut().cancel_stroke(stroke);
+    assert_eq!(s.doc().undo_count(), 0);
+    s.act(action);
+    assert_eq!(s.doc().undo_count(), 1);
+    assert!(s.modified());
+    assert!(
+        s.doc()
+            .layer(layer)
+            .unwrap()
+            .pixel(Channel::Color, 1, 1)
+            .unwrap()
+            .a
+            > 0
+    );
+    assert_eq!(
+        s.doc()
+            .layer(layer)
+            .unwrap()
+            .pixel(Channel::Color, 8, 8)
+            .unwrap()
+            .a,
+        0
+    );
 }

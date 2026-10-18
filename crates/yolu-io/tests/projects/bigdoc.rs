@@ -99,7 +99,7 @@ fn spec(id: &str, name: &str, slot: u16, doc: &Document) -> SetSpec {
     SetSpec {
         id: id.into(),
         name: name.into(),
-        material: MaterialRef::PendingSlot(slot),
+        materials: vec![MaterialRef::PendingSlot(slot)],
         document: Some(DocumentSource::Core(Arc::new(
             doc.capture_snapshot().unwrap(),
         ))),
@@ -366,7 +366,9 @@ fn a_distribution_copy_of_a_big_project_keeps_the_split_document() {
     let a = painted(7, 6);
     small().scoped(|| {
         let p = project_of(&[(SET_A, &a)]);
-        let copy = p.for_distribution(writer(), &Removal::ALL).unwrap();
+        let copy = p
+            .for_distribution(writer(), &Removal::ALL, &p.unused_resources(&Removal::ALL))
+            .unwrap();
         assert!(copy.sets()[0].document.is_split());
         let path = dir.path("copy.ylp");
         SaveTarget::create(&path).unwrap().save(&copy).unwrap();
@@ -613,7 +615,7 @@ fn measure_a_large_document() {
     let spec = SetSpec {
         id: SET_A.into(),
         name: "セット".into(),
-        material: MaterialRef::PendingSlot(0),
+        materials: vec![MaterialRef::PendingSlot(0)],
         document: Some(DocumentSource::Core(snapshot.clone())),
         composites: Vec::new(),
     };
@@ -662,7 +664,7 @@ fn measure_a_large_document() {
     let spec = SetSpec {
         id: SET_A.into(),
         name: "セット".into(),
-        material: MaterialRef::PendingSlot(0),
+        materials: vec![MaterialRef::PendingSlot(0)],
         document: Some(DocumentSource::Core(snap.clone())),
         composites: Vec::new(),
     };

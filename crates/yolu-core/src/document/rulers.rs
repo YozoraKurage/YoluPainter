@@ -8,6 +8,7 @@
 //! - レイヤーの操作との関係: 削除は定規ごと（取り消しで戻る）、複製は新しい ID の写し、並べ替え・グループへの出し入れは付いたまま、
 //!   結合は結果のレイヤーへ全部移す、画像・キャンバスのサイズ変更は 2D の点だけ動かす、スマートマテリアルは外して知らせる。
 
+use crate::Reason;
 use std::collections::{HashMap, HashSet};
 
 use super::merge::MergeRefusal;
@@ -35,16 +36,14 @@ fn change_cost(changes: &[RulerChange]) -> u64 {
 /// 一覧の確かめ（上限・各定規の値・一覧の中の ID の重なり）と、`up` を単位にした一覧。
 fn checked(list: Vec<Ruler>) -> Result<Vec<Ruler>, CoreError> {
     if list.len() > MAX_RULERS_PER_LAYER {
-        return Err(CoreError::InvalidArgument(
-            "レイヤーに付けられる定規は 64 個まで",
-        ));
+        return Err(CoreError::InvalidArgument(Reason::TooManyRulers));
     }
     let list: Vec<Ruler> = list.into_iter().map(Ruler::normalized).collect();
     let mut seen = HashSet::new();
     for r in &list {
         r.validate()?;
         if !seen.insert(r.id) {
-            return Err(CoreError::InvalidArgument("定規の ID が重なっている"));
+            return Err(CoreError::InvalidArgument(Reason::RulerIdsOverlap));
         }
     }
     Ok(list)
@@ -93,9 +92,7 @@ impl Document {
         let new = checked(rulers)?;
         let elsewhere = self.ruler_ids_outside(&[layer]);
         if new.iter().any(|r| elsewhere.contains(&r.id)) {
-            return Err(CoreError::InvalidArgument(
-                "定規の ID がほかのレイヤーの定規と重なっている",
-            ));
+            return Err(CoreError::InvalidArgument(Reason::RulerIdUsedOnOtherLayer));
         }
         let old = self.layers[index].rulers.clone();
         if old == new {
@@ -122,14 +119,14 @@ impl Document {
         let fi = self.index_of(from)?;
         let ti = self.index_of(to)?;
         if from == to {
-            return Err(CoreError::InvalidArgument("移し先が同じレイヤー"));
+            return Err(CoreError::InvalidArgument(Reason::TargetIsSameLayer));
         }
         if ids.is_empty() {
             return Ok(());
         }
         let source = &self.layers[fi].rulers;
         if ids.iter().any(|id| !source.iter().any(|r| r.id == *id)) {
-            return Err(CoreError::InvalidArgument("移す定規がそのレイヤーに無い"));
+            return Err(CoreError::InvalidArgument(Reason::RulerToMoveNotOnLayer));
         }
         let moved: Vec<Ruler> = source
             .iter()
@@ -143,9 +140,7 @@ impl Document {
             .collect();
         let mut target = self.layers[ti].rulers.clone();
         if target.len() + moved.len() > MAX_RULERS_PER_LAYER {
-            return Err(CoreError::InvalidArgument(
-                "レイヤーに付けられる定規は 64 個まで",
-            ));
+            return Err(CoreError::InvalidArgument(Reason::TooManyRulers));
         }
         let (old_from, old_to) = (self.layers[fi].rulers.clone(), target.clone());
         target.extend(moved);
@@ -165,12 +160,10 @@ impl Document {
         self.ensure_no_stroke()?;
         let oi = self.index_of(owner)?;
         let Some(target) = self.layers[oi].rulers.iter().find(|r| r.id == id) else {
-            return Err(CoreError::InvalidArgument("その定規がそのレイヤーに無い"));
+            return Err(CoreError::InvalidArgument(Reason::RulerNotOnLayer));
         };
         if !target.is_special() {
-            return Err(CoreError::InvalidArgument(
-                "直線定規はスナップする特殊定規にならない",
-            ));
+            return Err(CoreError::InvalidArgument(Reason::StraightRulerCannotSnap));
         }
         let space = target.space();
         let others: HashSet<RulerId> = self
@@ -342,9 +335,7 @@ impl Document {
         let new = checked(rulers)?;
         let elsewhere = self.ruler_ids_outside(&[layer]);
         if new.iter().any(|r| elsewhere.contains(&r.id)) {
-            return Err(CoreError::InvalidArgument(
-                "定規の ID がほかのレイヤーの定規と重なっている",
-            ));
+            return Err(CoreError::InvalidArgument(Reason::RulerIdUsedOnOtherLayer));
         }
         self.layers[index].rulers = new;
         self.external_mutation();

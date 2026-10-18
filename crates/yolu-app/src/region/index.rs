@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use yolu_core::geometry::{SurfaceGeometry, SurfaceRegionKind, SurfaceTriangle};
+use yolu_core::geometry::{MaterialSet, SurfaceGeometry, SurfaceRegionKind, SurfaceTriangle};
 use yolu_core::glam::Vec2;
 
 type Vertex = (i64, i64, i64);
@@ -154,6 +154,39 @@ impl RegionIndex {
             SurfaceRegionKind::Material => {
                 (4 << 60) | self.geometry.triangles()[i].material as u32 as u64
             }
+        }
+    }
+
+    /// [`region`](Self::region) の、テクスチャセットのマテリアルの組 `set` を見る形: マテリアルの範囲は、`triangle` のマテリアルが組に
+    /// 入っていれば組の全部のマテリアルの三角形（昇順。同じテクスチャに描く面の全部）。ほかの種類は `region` と同じ。
+    pub fn region_in(
+        &self,
+        triangle: u32,
+        kind: SurfaceRegionKind,
+        set: &MaterialSet,
+    ) -> std::borrow::Cow<'_, [u32]> {
+        let m = self.geometry.triangles()[triangle as usize].material;
+        if kind != SurfaceRegionKind::Material || set.len() < 2 || !set.contains(m) {
+            return std::borrow::Cow::Borrowed(self.region(triangle, kind));
+        }
+        let mut out: Vec<u32> = self
+            .materials
+            .iter()
+            .filter(|(k, _)| set.contains(*k))
+            .flat_map(|(_, v)| v.iter().copied())
+            .collect();
+        out.sort_unstable();
+        std::borrow::Cow::Owned(out)
+    }
+
+    /// [`key`](Self::key) の、`region_in` と同じ範囲で同じになる形。
+    pub fn key_in(&self, triangle: u32, kind: SurfaceRegionKind, set: &MaterialSet) -> u64 {
+        let m = self.geometry.triangles()[triangle as usize].material;
+        match (kind, set.first()) {
+            (SurfaceRegionKind::Material, Some(first)) if set.len() > 1 && set.contains(m) => {
+                (4 << 60) | first as u32 as u64
+            }
+            _ => self.key(triangle, kind),
         }
     }
 
@@ -312,7 +345,7 @@ mod tests {
     #[test]
     fn uv_grid_finds_the_lowest_triangle_under_the_point_of_one_material() {
         let g = model(false);
-        let grid0 = UvGrid::new(&g, 0);
+        let grid0 = UvGrid::new(&g, &yolu_core::geometry::MaterialSet::one(0));
         // 最初の板の下の三角形（頂点 0・1・2）の中
         let hit = grid0.find(Vec2::new(0.04, 0.05)).expect("三角形の中");
         assert!(g.triangles()[hit as usize].material == 0);
@@ -321,7 +354,7 @@ mod tests {
         assert_eq!(grid0.find(Vec2::new(0.95, 0.95)), None);
         assert_eq!(grid0.find(Vec2::new(-0.1, 0.5)), None);
         // 別のマテリアル（スロット 1 の板）の UV は、マテリアル 0 の格子には出ない
-        let grid1 = UvGrid::new(&g, 1);
+        let grid1 = UvGrid::new(&g, &yolu_core::geometry::MaterialSet::one(1));
         let other = grid1.find(Vec2::new(0.5 + 0.25, 0.1));
         assert!(other.is_some_and(|i| g.triangles()[i as usize].material == 1));
         assert_eq!(

@@ -11,19 +11,19 @@ use yolu_core::{
 const SIZE: u32 = 64;
 
 fn brush(level: AntiAlias, radius: f64, hardness: f64) -> Brush {
-    Brush::from(BrushSettings {
-        radius,
-        hardness,
-        spacing: 0.1,
-        opacity: 1.0,
-        flow: 1.0,
-        color: Rgba8::new(0, 0, 0, 255),
-        pressure_size: false,
-        pressure_opacity: false,
-        pressure_flow: false,
-        erase: false,
-        anti_alias: level,
-    })
+    Brush::simple(
+        BrushSettings {
+            radius,
+            hardness,
+            spacing: 0.1,
+            opacity: 1.0,
+            flow: 1.0,
+            color: Rgba8::new(0, 0, 0, 255),
+            erase: false,
+            anti_alias: level,
+        },
+        yolu_core::PressureSwitches::NONE,
+    )
 }
 
 /// 点の列を 1 本のストロークで描いた、レイヤーの全バイト。

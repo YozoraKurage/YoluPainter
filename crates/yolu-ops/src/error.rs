@@ -162,8 +162,8 @@ impl OpError {
             ),
             CoreError::InvalidArgument(what) => (
                 ErrorCode::InvalidValue,
-                if what.is_ascii() {
-                    format!("Invalid value: {what}")
+                if what.ja().is_ascii() {
+                    format!("Invalid value: {}", what.ja())
                 } else {
                     "A value is out of range or not allowed".into()
                 },
@@ -183,8 +183,8 @@ impl OpError {
             ),
             CoreError::Unsupported(what) => (
                 ErrorCode::Unsupported,
-                if what.is_ascii() {
-                    format!("Unsupported: {what}")
+                if what.ja().is_ascii() {
+                    format!("Unsupported: {}", what.ja())
                 } else {
                     "This operation is not supported here".into()
                 },

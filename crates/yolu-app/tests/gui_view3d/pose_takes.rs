@@ -2,12 +2,13 @@
 //! ポップアップ・フレームのつまみ・「ポーズにする」・日英（英語に日本語が残らない・文字が切れない・「…」に詰められない）。試験のモデルは
 //! コードで組んだ ASCII の FBX（`fbx_ascii::arm_takes_scene`。ユーザーの FBX は使わない）。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::livelink::fbx_ascii;
 use common::*;
 use egui::{epaint::Shape, pos2, vec2, Rect};
 use egui_kittest::kittest::Queryable;
-use egui_kittest::{Harness, SnapshotResults};
+use egui_kittest::Harness;
 use yolu_app::lang::Lang;
 use yolu_app::pen::PenInput;
 use yolu_app::state::{Action, AppState};
@@ -46,11 +47,7 @@ fn load(h: &mut H, scene: &fbx_ascii::Scene, file: &str) -> std::path::PathBuf {
     let dir = common::tmp::test_dir("pose-takes");
     let path = dir.join(file);
     std::fs::write(&path, scene.to_ascii()).unwrap();
-    let job = pose::prepare_fbx(
-        &mut h.state_mut().state.view3d,
-        &path,
-        ModelLimits::default(),
-    );
+    let job = pose::prepare_fbx(h.view3d_mut(), &path, ModelLimits::default());
     let start = std::time::Instant::now();
     let prepared = loop {
         if let Some(r) = job.poll() {
@@ -59,28 +56,36 @@ fn load(h: &mut H, scene: &fbx_ascii::Scene, file: &str) -> std::path::PathBuf {
         assert!(start.elapsed().as_secs() < 120, "読み込みが終わらない");
         std::thread::sleep(std::time::Duration::from_millis(2));
     };
-    pose::install_prepared(&mut h.state_mut().state.view3d, prepared);
+    pose::install_prepared(h.view3d_mut(), prepared);
     // プロジェクトのモデルのファイル（ポーズと欄の選びは、そのモデルのものだけ .ylp に残る）
-    h.state_mut().state.np.model_file = Some(path.clone());
+    h.np_mut().model_file = Some(path.clone());
     h.run();
     path
 }
 
 /// ポーズのタブをドックから外して、左の上に浮いたウィンドウにする。
+/// ポーズのタブを外すときに渡す矩形（egui_dock は外したウィンドウの大きさをこの 0.8 倍にする）。
+fn float_rect() -> Rect {
+    Rect::from_min_size(pos2(8.0, 40.0), vec2(400.0, 760.0))
+}
+
+/// `float_pose_tab` で浮かせたポーズのウィンドウの範囲（余白つき）。
+fn pose_window() -> Rect {
+    let r = float_rect();
+    Rect::from_min_size(r.min, r.size() * 0.8).expand(6.0)
+}
+
 fn float_pose_tab(h: &mut H) {
     {
         let dock = &mut h.state_mut().dock;
         let path = dock.find_tab(&Tab::Pose).expect("ポーズのタブ");
-        dock.detach_tab(
-            path,
-            Rect::from_min_size(pos2(8.0, 40.0), vec2(400.0, 760.0)),
-        );
+        dock.detach_tab(path, float_rect());
     }
     h.run();
 }
 
 fn session(h: &H) -> &pose::PoseSession {
-    h.state().state.view3d.pose.session.as_ref().unwrap()
+    h.view3d().pose.session.as_ref().unwrap()
 }
 
 fn drawn(shape: &Shape, out: &mut Vec<String>) {
@@ -129,30 +134,29 @@ fn clipped_texts(h: &H) -> Vec<String> {
 /// テイクの節の見え方（ボーンの節を閉じ、テイクの節の下にプリセットの節が続く。Raise のフレーム 40 を当てた 3D ビュー）。日英。
 #[test]
 fn pose_takes_snapshots() {
-    let mut snapshots = SnapshotResults::new();
-    for (lang, name) in [
-        (Lang::Ja, "pose_tab_takes"),
-        (Lang::En, "pose_tab_takes_en"),
-    ] {
+    for lang in Lang::ALL {
         let mut h = app_in(1280.0, 860.0, lang);
         load(&mut h, &fbx_ascii::arm_takes_scene(), "腕.fbx");
         float_pose_tab(&mut h);
         for section in ["pose.bones", "pose.hide"] {
-            h.state_mut().state.ui.sections.insert(section, false);
+            h.ui_mut().sections.insert(section, false);
         }
         h.state_mut()
             .apply(Action::Pose(PoseAction::ChooseTake(0, 1)));
-        takes::set_frame(&mut h.state_mut().state, 40);
+        takes::set_frame(h.app_mut(), 40);
         h.state_mut().apply(Action::Pose(PoseAction::ApplyTake));
-        takes::wait(&mut h.state_mut().state);
+        takes::wait(h.app_mut());
         click_tab(&mut h, Tab::View3d);
         h.run();
-        snapshots.add(h.try_snapshot(name));
+        // 浮かせたポーズのタブと、フレーム 40 を当てた 3D ビュー。英語の絵は撮らない（節の並びは文字の長さで変わらない）
+        let shown = pose_window().union(crate::view3d_area(&h));
         if lang == Lang::Ja {
+            crate::common::shot::region(&mut h, "pose_tab_takes", shown);
             // テイクを選ぶポップアップ
             h.get_by_label("Raise").click();
             h.run();
-            snapshots.add(h.try_snapshot("pose_tab_takes_menu"));
+            let menu = crate::common::shot::with_popup(&h, shown);
+            crate::common::shot::region(&mut h, "pose_tab_takes_menu", menu);
         }
     }
 }
@@ -186,7 +190,7 @@ fn a_take_is_chosen_from_the_box_and_applied_with_the_button() {
     let mut h = app_in(1280.0, 860.0, Lang::Ja);
     load(&mut h, &fbx_ascii::arm_takes_scene(), "腕.fbx");
     float_pose_tab(&mut h);
-    h.state_mut().state.ui.sections.insert("pose.bones", false);
+    h.ui_mut().sections.insert("pose.bones", false);
     h.run();
     // 箱は最初のテイク
     assert_eq!(session(&h).takes.chosen(), Some((0, 0)));
@@ -197,14 +201,14 @@ fn a_take_is_chosen_from_the_box_and_applied_with_the_button() {
     h.run();
     assert_eq!(session(&h).takes.chosen(), Some((0, 1)));
     assert_eq!(session(&h).takes.frame(), 15, "範囲（15〜60）へ寄せる");
-    assert!(h.state().state.modified, "選びを変えたら変更あり");
-    takes::set_frame(&mut h.state_mut().state, 50);
+    assert!(h.modified(), "選びを変えたら変更あり");
+    takes::set_frame(h.app_mut(), 50);
     h.run();
     let before = session(&h).pose().clone();
     let steps = session(&h).undo_len();
     h.get_by_label("ポーズにする").click();
     h.run();
-    takes::wait(&mut h.state_mut().state);
+    takes::wait(h.app_mut());
     h.run();
     let s = session(&h);
     assert_ne!(s.pose(), &before);
@@ -217,9 +221,9 @@ fn a_take_is_chosen_from_the_box_and_applied_with_the_button() {
         .unwrap();
     assert!((s.pose().locals[upper].translation.y - 1.2).abs() < 1e-5);
     assert!(
-        h.state().state.message.contains("「Raise」のフレーム 50"),
+        h.message().contains("「Raise」のフレーム 50"),
         "{}",
-        h.state().state.message
+        h.message()
     );
     h.get_by_label("取り消し").click();
     h.run();
@@ -235,7 +239,7 @@ fn the_takes_section_fits_in_both_languages_and_english_has_no_japanese() {
             let mut h = app_in(width, height, lang);
             load(&mut h, &fbx_ascii::arm_takes_scene(), "腕.fbx");
             click_tab(&mut h, Tab::Pose);
-            h.state_mut().state.ui.sections.insert("pose.bones", false);
+            h.ui_mut().sections.insert("pose.bones", false);
             h.run();
             let clipped = clipped_texts(&h);
             assert!(

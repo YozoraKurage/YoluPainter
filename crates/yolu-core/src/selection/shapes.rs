@@ -1,5 +1,6 @@
 //! 選択範囲の形: 全選択・矩形・楕円・投げ縄と多角形・自動選択（C# の Selection.cs）。
 
+use crate::Reason;
 use std::collections::HashMap;
 
 use glam::DVec2;
@@ -72,10 +73,10 @@ impl SelectionMask {
         rx: f64,
         ry: f64,
     ) -> Result<SelectionMask, CoreError> {
-        require_finite(cx, "cx")?;
-        require_finite(cy, "cy")?;
-        require_finite(rx, "rx")?;
-        require_finite(ry, "ry")?;
+        require_finite(cx, Reason::Cx)?;
+        require_finite(cy, Reason::Cy)?;
+        require_finite(rx, Reason::Rx)?;
+        require_finite(ry, Reason::Ry)?;
         let (rx, ry) = (rx.abs(), ry.abs());
         if rx <= 0.0 || ry <= 0.0 {
             return Ok(Self::none(doc));
@@ -116,14 +117,12 @@ impl SelectionMask {
             return Ok(Self::none(doc));
         }
         if points.len() > MAX_POLYGON_POINTS {
-            return Err(CoreError::InvalidArgument(
-                "多角形の点が多すぎる（100000 まで）",
-            ));
+            return Err(CoreError::InvalidArgument(Reason::TooManyPolygonPoints));
         }
         let (mut min_x, mut min_y, mut max_x, mut max_y) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
         for p in points {
-            require_finite(p.x, "x")?;
-            require_finite(p.y, "y")?;
+            require_finite(p.x, Reason::X)?;
+            require_finite(p.y, Reason::Y)?;
             min_x = min_x.min(p.x);
             max_x = max_x.max(p.x);
             min_y = min_y.min(p.y);
@@ -211,7 +210,7 @@ impl SelectionMask {
         };
         let (w, h, ts) = (doc.width(), doc.height(), doc.tile_size());
         if seed_x >= w || seed_y >= h {
-            return Err(CoreError::InvalidArgument("種がキャンバスの外"));
+            return Err(CoreError::InvalidArgument(Reason::SeedOutsideCanvas));
         }
         let reader = Reference {
             doc,

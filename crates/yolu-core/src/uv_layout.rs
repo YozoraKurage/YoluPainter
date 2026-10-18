@@ -1,5 +1,6 @@
 //! UV の配置の比較。三角形の順と頂点の回転を正規化し、違う場合はテクセル被覆を比べる。
 use crate::CoreError;
+use crate::Reason;
 /// 反時計回り・時計回りを区別する三頂点。UV は正規化座標。
 pub type UvTriangle = [[f64; 2]; 3];
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -42,7 +43,7 @@ pub fn compare(
     resolution: u32,
 ) -> Result<UvComparison, CoreError> {
     if !(1..=MAX_RESOLUTION).contains(&resolution) {
-        return Err(CoreError::InvalidArgument("UV 比較の解像度"));
+        return Err(CoreError::InvalidArgument(Reason::UvComparisonResolution));
     }
     if same_triangles(before, after) {
         return Ok(UvComparison {

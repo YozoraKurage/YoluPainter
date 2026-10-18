@@ -268,6 +268,40 @@ pub fn effector_slots(
     out
 }
 
+/// 実物の .sut の形の影響元の BLOB で、頭の長さ（44 か 48）と、4〜7 番目の整数（筆圧・傾き・速さ・ランダムの最小値、%）を選べるもの。
+/// 9・10 番目の整数は筆圧の曲線と傾きの曲線のバイト数（曲線が無ければ 0）で、曲線はその順に並ぶ。
+pub fn effector_full(
+    header_len: usize,
+    flags: u32,
+    minimums: [u32; 4],
+    pressure: Option<&[(f64, f64)]>,
+    tilt: Option<&[(f64, f64)]>,
+) -> Vec<u8> {
+    let bytes = |c: Option<&[(f64, f64)]>| c.map_or(0, |c| 12 + 16 * c.len() as u32);
+    let mut ints = vec![0u32; header_len / 4];
+    ints[0] = header_len as u32;
+    ints[1] = 0x1f0;
+    ints[2] = flags;
+    ints[3..7].copy_from_slice(&minimums);
+    ints[8] = bytes(pressure);
+    ints[9] = bytes(tilt);
+    ints[10] = 100;
+    let mut out = Vec::new();
+    for i in ints {
+        out.extend_from_slice(&i.to_be_bytes());
+    }
+    for curve in [pressure, tilt].into_iter().flatten() {
+        for i in [12u32, curve.len() as u32, 16] {
+            out.extend_from_slice(&i.to_be_bytes());
+        }
+        for (x, y) in curve {
+            out.extend_from_slice(&x.to_be_bytes());
+            out.extend_from_slice(&y.to_be_bytes());
+        }
+    }
+    out
+}
+
 /// 入り抜きの影響先の BLOB（実物の .sut の形: 12・項目の数・12 と、項目ごとに「項目の番号・旗・旗」）。`flagged` の番号の項目は旗を立てる。
 pub fn in_out_targets(flagged: &[u32]) -> Vec<u8> {
     let ids = [112u32, 1001, 1021, 1041, 1051, 1082, 51001, 51134];
@@ -278,6 +312,28 @@ pub fn in_out_targets(flagged: &[u32]) -> Vec<u8> {
     for id in ids {
         let on = u32::from(flagged.contains(&id));
         for w in [id, on, 0] {
+            out.extend_from_slice(&w.to_be_bytes());
+        }
+    }
+    out
+}
+
+/// 入り抜きの影響先の BLOB で、`on` の「番号・最小値（%）」の項目の旗を立て、最小値を入れる（`in_out_targets` と同じ形。実物の 21 項目の並び）。
+pub fn in_out_targets_on(on: &[(u32, u32)]) -> Vec<u8> {
+    let ids = [
+        112u32, 1001, 1021, 1041, 1051, 1082, 1084, 1093, 1100, 1104, 1106, 1108, 1132, 1134,
+        50112, 51001, 51021, 51041, 51051, 51132, 51134,
+    ];
+    let mut out = Vec::new();
+    for w in [12u32, ids.len() as u32, 12] {
+        out.extend_from_slice(&w.to_be_bytes());
+    }
+    for id in ids {
+        let (flag, min) = on
+            .iter()
+            .find(|(i, _)| *i == id)
+            .map_or((0, 0), |(_, m)| (1u32, *m));
+        for w in [id, flag, min] {
             out.extend_from_slice(&w.to_be_bytes());
         }
     }

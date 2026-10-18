@@ -11,6 +11,7 @@ use egui::{
 
 use super::icons;
 use super::theme::{self as t, TextStyle};
+use crate::engine::unit_f32_to_byte;
 
 // ───────── 描くだけの部品 ─────────
 
@@ -320,6 +321,42 @@ pub fn enabled_scope<R>(
 
 // ───────── 押せる部品 ─────────
 
+/// この部品を押した最初のボタンが左ボタン（ペンの接触・指も、egui では左ボタンのポインタ）で、いま押している間か。値を動かす部品は、
+/// 右ボタンの押し（一覧の右ドラッグのスクロール・右クリック）では動かさない。押し始めのボタンは部品ごとに覚える（左ボタンで動かして
+/// いる途中に右ボタンを押しても、右ボタンを押したまま別の所で左ボタンを押しても、押し始めのボタンのまま）。
+pub fn pressed_by_primary(response: &egui::Response) -> bool {
+    let ctx = &response.ctx;
+    let id = response.id.with("by_primary");
+    let touched = response.is_pointer_button_down_on() || response.interact_pointer_pos().is_some();
+    if touched {
+        let (primary, secondary, primary_down, origin) = ctx.input(|i| {
+            (
+                i.pointer.button_pressed(egui::PointerButton::Primary),
+                i.pointer.button_pressed(egui::PointerButton::Secondary),
+                i.pointer.primary_down(),
+                i.pointer.press_origin(),
+            )
+        });
+        if origin.is_some_and(|o| response.rect.contains(o)) {
+            if primary {
+                ctx.data_mut(|d| d.insert_temp(id, true));
+            } else if secondary && !primary_down {
+                ctx.data_mut(|d| d.insert_temp(id, false));
+            }
+        }
+    }
+    response.is_pointer_button_down_on() && press_started_by_primary(response)
+}
+
+/// この部品の直近の押しが、左ボタンで始まったか（押していなければ、直近の押しについて）。右ボタンで始めたドラッグの離しを「値を決めた」にしない
+/// ために、離したフレームにも読める。
+pub fn press_started_by_primary(response: &egui::Response) -> bool {
+    response
+        .ctx
+        .data(|d| d.get_temp::<bool>(response.id.with("by_primary")))
+        .unwrap_or(true)
+}
+
 fn interact(ui: &mut Ui, r: Rect, id: Id, enabled: bool, sense: Sense) -> Response {
     ui.interact(r, id, if enabled { sense } else { Sense::hover() })
 }
@@ -441,7 +478,7 @@ pub fn corner_bottom(view: Rect, items: usize) -> f32 {
 /// 別のレイヤー（`egui::Area`）に置くので、下のビューの入力（描く・回す）は、アイコンの上では始まらない。
 pub fn corner_icons(
     ui: &mut Ui,
-    id: &'static str,
+    id: impl std::hash::Hash + std::fmt::Debug + Copy,
     view: Rect,
     items: &[CornerIcon],
 ) -> CornerOutcome {
@@ -940,6 +977,9 @@ impl<'a> NumberFormat<'a> {
     }
 }
 
+/// スライダーで、押した位置の近くにいるあいだはクリックとして扱う距離（点）。
+const SLIDER_CLICK_SLOP: f32 = 3.0;
+
 pub struct SliderSpec<'a> {
     pub label: &'a str,
     pub min: f32,
@@ -951,6 +991,10 @@ pub struct SliderSpec<'a> {
     pub track_inset: f32,
     /// 溝の位置と値の曲線（Unity の `PowerSlider` と同じ: 溝の位置は値の 1/power 乗に比例。1 なら等間隔）。
     pub power: f32,
+    /// テスト・読み上げのための部品の名前。見える名前（`label`）が空で、名前を溝の外に出す行（ブラシの詳細）が付ける。
+    pub access_name: Option<&'a str>,
+    /// 押した位置の値にして動かす（既定は、横に動かした量で値を変える）。
+    pub absolute: bool,
 }
 
 impl<'a> SliderSpec<'a> {
@@ -964,7 +1008,19 @@ impl<'a> SliderSpec<'a> {
             enabled: true,
             track_inset: 0.0,
             power: 1.0,
+            access_name: None,
+            absolute: false,
         }
+    }
+    /// 押した位置を値にして、押したまま動かすとその位置に付いていく（既定は、押した位置へ飛ばさず、横に動かした量で値を変える）。
+    pub fn absolute(mut self) -> Self {
+        self.absolute = true;
+        self
+    }
+    /// 見えない部品の名前（見える名前が空のとき）。
+    pub fn named(mut self, name: &'a str) -> Self {
+        self.access_name = Some(name);
+        self
     }
     pub fn tooltip(mut self, tip: &'a str) -> Self {
         self.tooltip = Some(tip);
@@ -1038,7 +1094,8 @@ pub fn two_line_value_box(r: Rect, value_width: f32) -> Rect {
     )
 }
 
-/// スライダー。押した位置の値になり、ドラッグで動かす。高さで形が決まる: 1 行（値が中に出る。ダブルクリックで数値を打つ）と、
+/// スライダー。ドラッグは横に動かした量で値を変え（溝の幅いっぱいで範囲いっぱい、Shift を押しているあいだは 10 分の 1）、動かさずに離すと押した位置の値になる
+/// （`SliderSpec::absolute` なら押した位置の値で、押したまま動かすと付いていく）。高さで形が決まる: 1 行（値が中に出る。ダブルクリックで数値を打つ）と、
 /// 2 行（1 行目に名前と値の箱、2 行目に細い溝とつまみ。値の箱を押すと数値を打つ）。Enter で決め、Esc か外を押すとやめる。
 pub fn slider(
     ui: &mut Ui,
@@ -1172,6 +1229,7 @@ pub fn slider(
     let on_box = two && press_origin.is_some_and(|o| box_rect.contains(o));
     let in_inset = two && press_origin.is_some_and(|o| o.x > track.right() && o.y > track.top());
     let (start_id, cancel_id) = (id.with("start"), id.with("cancelled"));
+    let by_primary = pressed_by_primary(&response);
     let start_edit =
         enabled && ((two && on_box && response.clicked()) || (!two && response.double_clicked()));
     if start_edit {
@@ -1186,29 +1244,30 @@ pub fn slider(
             d.insert_temp(edit_id.with("focus"), true);
         });
         ui.ctx().request_repaint();
-    } else if enabled && response.is_pointer_button_down_on() && !on_box && !in_inset {
+    } else if enabled && by_primary && !on_box && !in_inset {
         let cancelled = ui.data(|d| d.get_temp::<bool>(cancel_id)).unwrap_or(false);
         if !cancelled {
             // 押し始めの値を覚える（Esc で戻す先）
             if ui.data(|d| d.get_temp::<f32>(start_id)).is_none() {
                 ui.data_mut(|d| d.insert_temp(start_id, value));
             }
-            if let Some(pointer) = response.interact_pointer_pos() {
-                let next = spec.value_at((pointer.x - track.left()) / track.width().max(1.0));
+            let pointer_x = response.interact_pointer_pos().map(|p| p.x);
+            if let Some(next) =
+                drag_value(ui, id, track.left(), track.width(), pointer_x, value, spec)
+            {
                 if next != value {
                     out.value = next;
                     out.changed = true;
                 }
+                out.active = true;
             }
-            out.active = true;
         }
     }
     // Esc でドラッグを止めた: egui は Esc でドラッグを中断して押下を手放す（応答からは分からない）ので、押しているあいだに覚えた
     // 押し始めの値へ戻し、ボタンを離すまで残りのドラッグは受けない
-    let mut escaped = false;
-    if enabled && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-        if let Some(start) = ui.data(|d| d.get_temp::<f32>(start_id)) {
-            escaped = true;
+    let escaped = enabled && ui.input(|i| i.key_pressed(egui::Key::Escape)) && {
+        let start = ui.data(|d| d.get_temp::<f32>(start_id));
+        if let Some(start) = start {
             ui.data_mut(|d| {
                 d.remove::<f32>(start_id);
                 d.insert_temp(cancel_id, true);
@@ -1219,17 +1278,32 @@ pub fn slider(
             }
             out.active = false;
         }
-    }
+        start.is_some()
+    };
+    // 動かした（または Esc で止めた）押下の離しは、クリックの値にしない
+    let moved = ui.data(|d| {
+        d.get_temp::<bool>(id.with("moved")).unwrap_or(false)
+            || d.get_temp::<bool>(cancel_id).unwrap_or(false)
+    });
     if !ui.input(|i| i.pointer.primary_down()) {
-        ui.data_mut(|d| {
-            d.remove::<f32>(start_id);
-            d.remove::<bool>(cancel_id);
-        });
+        forget_press(ui, id);
+    }
+    // 動かさずに離した（クリック）: 押した位置の値にする
+    if enabled && !spec.absolute && !escaped && !moved && !on_box && !in_inset && response.clicked()
+    {
+        if let Some(next) = click_value(ui, &response, track, spec) {
+            if next != value {
+                out.value = next;
+                out.changed = true;
+            }
+        }
     }
     // Esc で止めたドラッグは「決めた」ではない（呼び手が、まとめていた変更を確定せずに捨てられるように released にしない）
     if enabled
         && !escaped
-        && ((response.drag_stopped() || response.clicked()) && !on_box && !in_inset)
+        && ((response.drag_stopped() && press_started_by_primary(&response) || response.clicked())
+            && !on_box
+            && !in_inset)
     {
         out.released = true;
     }
@@ -1252,60 +1326,154 @@ pub fn slider(
                 active,
             );
         } else {
-            let tv = fraction(out.value);
-            let color = if shown_look.enabled {
-                t::TEXT
-            } else {
-                t::TEXT_DISABLED
-            };
-            rounded(p, r, t::CONTROL_BG, 3.0);
-            let fill_rect = Rect::from_min_size(
-                pos2(r.left() + r.width() * from.min(tv), r.top()),
-                vec2((r.width() * (tv - from).abs()).max(0.0), r.height()),
-            );
-            if fill_rect.width() > 0.0 {
-                rounded(
-                    p,
-                    fill_rect,
-                    if !shown_look.enabled {
-                        t::CONTROL_HOVER
-                    } else if active || hover {
-                        t::SLIDER_FILL_HOVER
-                    } else {
-                        t::SLIDER_FILL
-                    },
-                    3.0,
-                );
-            }
-            outline(
+            draw_one_line(
                 p,
                 r,
-                if hover || active {
-                    t::ACCENT_DIM
-                } else {
-                    t::BORDER
-                },
-                1.0,
-                3.0,
-            );
-            let inner = r.shrink2(vec2(7.0, 0.0));
-            // 値（幅広の数字）に重ならないよう、名前は値の左の幅に詰める
-            let value_width = text_width(p, &shown, t::VALUE);
-            let label = fit(
-                p,
                 spec.label,
-                (inner.width() - value_width - 8.0).max(0.0),
-                t::LABEL,
+                &shown,
+                from,
+                fraction(out.value),
+                shown_look.enabled,
+                hover,
+                active,
             );
-            text(p, inner, &label, t::LABEL.with_color(color), Align::Left);
-            text(p, inner, &shown, t::VALUE.with_color(color), Align::Right);
         }
     }
-    let label = spec.label;
+    let label = spec.access_name.unwrap_or(spec.label);
     let current = out.value as f64;
     response.widget_info(|| WidgetInfo::slider(enabled, current, label));
     let _ = with_tooltip(response, spec.tooltip);
     out
+}
+
+/// 押している途中の覚え（押し始めの値・Esc で止めた印・動かした量）を、ボタンを離したフレームで忘れる。
+fn forget_press(ui: &Ui, id: Id) {
+    ui.data_mut(|d| {
+        d.remove::<f32>(id.with("start"));
+        d.remove::<bool>(id.with("cancelled"));
+        d.remove::<f32>(id.with("from"));
+        d.remove::<bool>(id.with("moved"));
+        d.remove::<(f32, f32)>(id.with("track"));
+    });
+}
+
+/// 動かさずに離した（クリック）ときの値。押した位置の割合がそのまま値になる。
+fn click_value(ui: &Ui, response: &Response, track: Rect, spec: &SliderSpec) -> Option<f32> {
+    let pointer = response
+        .interact_pointer_pos()
+        .or_else(|| ui.input(|i| i.pointer.latest_pos()))?;
+    Some(spec.value_at((pointer.x - track.left()) / track.width().max(1.0)))
+}
+
+/// 1 行の形のスライダーの見た目（溝の塗り・枠・名前・値）。`tv` は値の位置（0〜1）。
+#[allow(clippy::too_many_arguments)]
+fn draw_one_line(
+    p: &Painter,
+    r: Rect,
+    label: &str,
+    shown: &str,
+    from: f32,
+    tv: f32,
+    enabled: bool,
+    hover: bool,
+    active: bool,
+) {
+    let color = if enabled { t::TEXT } else { t::TEXT_DISABLED };
+    rounded(p, r, t::CONTROL_BG, 3.0);
+    let fill_rect = Rect::from_min_size(
+        pos2(r.left() + r.width() * from.min(tv), r.top()),
+        vec2((r.width() * (tv - from).abs()).max(0.0), r.height()),
+    );
+    if fill_rect.width() > 0.0 {
+        rounded(
+            p,
+            fill_rect,
+            if !enabled {
+                t::CONTROL_HOVER
+            } else if active || hover {
+                t::SLIDER_FILL_HOVER
+            } else {
+                t::SLIDER_FILL
+            },
+            3.0,
+        );
+    }
+    outline(
+        p,
+        r,
+        if hover || active {
+            t::ACCENT_DIM
+        } else {
+            t::BORDER
+        },
+        1.0,
+        3.0,
+    );
+    let inner = r.shrink2(vec2(7.0, 0.0));
+    // 値（幅広の数字）に重ならないよう、名前は値の左の幅に詰める
+    let value_width = text_width(p, shown, t::VALUE);
+    let label = fit(
+        p,
+        label,
+        (inner.width() - value_width - 8.0).max(0.0),
+        t::LABEL,
+    );
+    text(p, inner, &label, t::LABEL.with_color(color), Align::Left);
+    text(p, inner, shown, t::VALUE.with_color(color), Align::Right);
+}
+
+/// 押している間のドラッグの 1 フレーム分の値。`None` は、まだ動かし始めていない（離すとクリックとして押した位置の値になる）。
+/// `SliderSpec::absolute` なら押した位置の値で、付いていく。
+fn drag_value(
+    ui: &Ui,
+    id: Id,
+    track_left: f32,
+    track_width: f32,
+    pointer_x: Option<f32>,
+    value: f32,
+    spec: &SliderSpec,
+) -> Option<f32> {
+    if spec.absolute {
+        return Some(pointer_x.map_or(value, |x| {
+            spec.value_at((x - track_left) / track_width.max(1.0))
+        }));
+    }
+    relative_drag(ui, id, track_width, pointer_x?, value, spec)
+}
+
+/// 横に動かした量で値を変えるドラッグの 1 フレーム分。押した位置の近く（`SLIDER_CLICK_SLOP` の内）にいるあいだは `None`（離すとクリックとして押した位置の値になる）。
+/// 動かし始めたら、溝の位置（0〜1）を 1 フレームごとの移動量で進めた値を返す（Shift の入り切りで値が飛ばず、端で止めた分は戻さなくてよい。
+/// 呼び手が値を丸めても、進めた分は失われない）。
+fn relative_drag(
+    ui: &Ui,
+    id: Id,
+    track_width: f32,
+    x: f32,
+    value: f32,
+    spec: &SliderSpec,
+) -> Option<f32> {
+    let from_id = id.with("from");
+    let from: f32 = ui.data(|d| d.get_temp(from_id)).unwrap_or(x);
+    if ui.data(|d| d.get_temp::<f32>(from_id)).is_none() {
+        ui.data_mut(|d| d.insert_temp(from_id, from));
+    }
+    let moved_id = id.with("moved");
+    let past = ui.data(|d| d.get_temp::<bool>(moved_id)).unwrap_or(false);
+    if !past && (x - from).abs() <= SLIDER_CLICK_SLOP {
+        return None;
+    }
+    let track_id = id.with("track");
+    let (last_x, frac): (f32, f32) = ui
+        .data(|d| d.get_temp(track_id))
+        .unwrap_or((from, spec.fraction(value)));
+    let fine = ui.input(|i| i.modifiers.shift);
+    let scale = if fine { 0.1 } else { 1.0 };
+    let frac = (frac + (x - last_x) / track_width.max(1.0) * scale).clamp(0.0, 1.0);
+    ui.data_mut(|d| {
+        d.insert_temp(track_id, (x, frac));
+        d.insert_temp(moved_id, true);
+    });
+    Some(spec.value_at(frac))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1672,10 +1840,10 @@ pub fn color_swatch(
     let p = ui.painter();
     let c = |a: f32| {
         Color32::from_rgba_unmultiplied(
-            to_byte(color[0]),
-            to_byte(color[1]),
-            to_byte(color[2]),
-            to_byte(a),
+            unit_f32_to_byte(color[0]),
+            unit_f32_to_byte(color[1]),
+            unit_f32_to_byte(color[2]),
+            unit_f32_to_byte(a),
         )
     };
     rounded(p, r, Color32::WHITE, 3.0);
@@ -1713,10 +1881,6 @@ pub fn color_swatch(
     outline(p, r, if hover { t::ACCENT } else { t::BORDER }, 1.0, 3.0);
     response.widget_info(|| WidgetInfo::labeled(WidgetType::ColorButton, enabled, tooltip));
     with_tooltip(response, Some(tooltip))
-}
-
-pub fn to_byte(v: f32) -> u8 {
-    (v.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
 /// 縦に行を積むだけの配置の補助（Unity 版の `UiRows`）。

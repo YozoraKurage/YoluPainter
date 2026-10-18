@@ -12,6 +12,7 @@
 //! - レイヤーの重ね（[`blend`]・[`clip_onto`]・[`fade`] と行の核）は f32 の式で、道（スカラー・SSE4.1・AVX2・NEON）とスレッド数によらず同じバイト
 //!   （`rows`）。出力の式と、ほかの計算が使う [`decode`]・[`encode`]・[`rnm`] は f64。
 
+use crate::Reason;
 use rayon::prelude::*;
 
 mod output;
@@ -74,9 +75,11 @@ impl NormalSettings {
         edges: HeightEdgeMode,
         file_direction: NormalYDirection,
     ) -> Result<Self, CoreError> {
-        require_finite(strength, "strength")?;
+        require_finite(strength, Reason::Strength)?;
         if !(-Self::MAX_STRENGTH..=Self::MAX_STRENGTH).contains(&strength) {
-            return Err(CoreError::InvalidArgument("Height → Normal の強さ（±256）"));
+            return Err(CoreError::InvalidArgument(
+                Reason::HeightToNormalStrengthRange,
+            ));
         }
         Ok(NormalSettings {
             derive_from_height,
@@ -345,24 +348,18 @@ pub fn output_from_composites(
     settings: &NormalSettings,
 ) -> Result<Vec<u8>, CoreError> {
     if width == 0 || height == 0 {
-        return Err(CoreError::InvalidArgument("大きさ"));
+        return Err(CoreError::InvalidArgument(Reason::Size));
     }
     let (w, h) = (width as usize, height as usize);
     let length = w * h * 4;
     if normal_composite.len() != length {
-        return Err(CoreError::InvalidArgument(
-            "Normal の合成は幅 × 高さ × 4 バイト",
-        ));
+        return Err(CoreError::InvalidArgument(Reason::NormalBufferSizeMismatch));
     }
     let derive = settings.derive_from_height;
     let heights_src = if derive {
         match height_composite {
             Some(hc) if hc.len() == length => Some(hc),
-            _ => {
-                return Err(CoreError::InvalidArgument(
-                    "Height の合成は幅 × 高さ × 4 バイト",
-                ))
-            }
+            _ => return Err(CoreError::InvalidArgument(Reason::HeightBufferSizeMismatch)),
         }
     } else {
         None
@@ -450,9 +447,7 @@ impl Document {
     ) -> Result<Vec<u8>, CoreError> {
         self.require_channel(source)?;
         if source != Channel::Height {
-            return Err(CoreError::Unsupported(
-                "Height → Normal が読むのは Height のチャンネルだけ",
-            ));
+            return Err(CoreError::Unsupported(Reason::HeightToNormalNeedsHeight));
         }
         let (w, h) = (self.width() as u64, self.height() as u64);
         let needed = 4 * w * h + (4 + 8) * w * ((self.tile_size() as u64).min(h) + 2);

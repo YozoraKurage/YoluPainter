@@ -277,7 +277,7 @@ fn resources_serve_the_bundled_docs_the_command_list_and_the_effect_kinds() {
     assert_eq!(
         guide["contents"][0]["text"].as_str().unwrap(),
         include_str!("../../../docs/en/GUIDE.md"),
-        "入れてある版の文書そのまま"
+        "入れてあるバージョンの文書そのまま"
     );
     let ja = mcp.result(
         "resources/read",

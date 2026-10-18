@@ -1,6 +1,7 @@
 //! ログのパネル（ドックのタブ「ログ」）: 起動してからの注意と失敗だけを、古い物を上に並べる。絞る・写す・消す・まとめ・上限と、
 //! 日英の見た目。
 use crate::common;
+use crate::common::drive::Drive;
 use egui::{vec2, Event, Key, Modifiers, OutputCommand};
 use egui_kittest::{kittest::Queryable, Harness};
 use std::time::{Duration, UNIX_EPOCH};
@@ -34,7 +35,7 @@ fn harness(app: AppState, size: egui::Vec2) -> Harness<'static, AppState> {
 
 /// 決まった時刻の知らせ（画面の絵を、走らせた時刻・机の時間帯によらず同じにする）。
 fn at(app: &mut AppState, kind: Kind, source: Source, text: &str, seconds: u64) {
-    app.notice_log.push(Notice {
+    app.notice_log_mut().push(Notice {
         kind,
         source,
         text: text.into(),
@@ -93,7 +94,7 @@ fn sample(lang: Lang) -> AppState {
 }
 
 fn row_labels(h: &Harness<'_, AppState>) -> Vec<String> {
-    let lang = h.state().lang;
+    let lang = h.state().lang();
     log::visible_entries(h.state())
         .into_iter()
         .map(|e| log::row_text(lang, e))
@@ -168,7 +169,7 @@ fn the_same_notice_in_a_row_is_one_line_with_a_count_and_the_oldest_rows_go_past
         h.state_mut().warn(Source::Bake, format!("note {i}"));
     }
     h.run();
-    assert_eq!(h.state().notice_log.len(), LOG_LIMIT);
+    assert_eq!(h.state().notice_log().len(), LOG_LIMIT);
     let rows = row_labels(&h);
     assert!(rows[0].contains("note 10"), "{}", rows[0]);
     assert!(rows
@@ -186,7 +187,7 @@ fn errors_only_copy_and_clear() {
         h.get_by_label(lang.pick("エラーだけ", "Errors Only"))
             .click();
         h.run();
-        assert!(h.state().log_view.errors_only);
+        assert!(h.state().log_view().errors_only);
         let rows = row_labels(&h);
         assert_eq!(rows.len(), 2, "{rows:?}");
         assert!(rows
@@ -200,7 +201,7 @@ fn errors_only_copy_and_clear() {
         let first = rows[0].clone();
         h.get_by_label(&first).click();
         h.run();
-        assert_eq!(h.state().log_view.selected.len(), 1);
+        assert_eq!(h.state().log_view().selected.len(), 1);
         h.get_by_label(lang.pick("選んだ行を写す", "Copy Selected"))
             .click();
         h.step();
@@ -227,8 +228,8 @@ fn errors_only_copy_and_clear() {
         assert_eq!(row_labels(&h).len(), 4);
         h.get_by_label(lang.pick("ログを消す", "Clear Log")).click();
         h.run();
-        assert!(h.state().notice_log.is_empty());
-        assert!(h.state().log_view.selected.is_empty());
+        assert!(h.state().notice_log().is_empty());
+        assert!(h.state().log_view().selected.is_empty());
     }
 }
 
@@ -251,9 +252,9 @@ fn shift_and_ctrl_extend_the_selection() {
         .collect();
     log::click_row(h.state_mut(), ids[0], Modifiers::NONE);
     log::click_row(h.state_mut(), ids[2], Modifiers::SHIFT);
-    assert_eq!(h.state().log_view.selected.len(), 3);
+    assert_eq!(h.state().log_view().selected.len(), 3);
     log::click_row(h.state_mut(), ids[1], Modifiers::COMMAND);
-    assert_eq!(h.state().log_view.selected.len(), 2);
+    assert_eq!(h.state().log_view().selected.len(), 2);
     assert_eq!(
         log::copy_text(h.state(), true),
         [rows[0].clone(), rows[2].clone()].join("\n")

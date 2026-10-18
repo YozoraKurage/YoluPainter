@@ -386,7 +386,11 @@ mod tests {
         assert_ne!(local(&app, hand), rest(&app, hand), "子はそのまま");
         reset(&mut app, Reset::Subtree(lower));
         assert_eq!(local(&app, hand), rest(&app, hand), "子まで戻る");
-        assert_ne!(local(&app, spine), rest(&app, spine), "ほかの枝は動かない");
+        assert_ne!(
+            local(&app, spine),
+            rest(&app, spine),
+            "ほかの分岐は動かない"
+        );
         // 戻す余地が無ければ積まない
         let n = undo_len(&app);
         reset(&mut app, Reset::Bone(upper));
@@ -449,19 +453,19 @@ mod tests {
     fn edits_and_resets_are_refused_while_stroking_and_while_a_drag_is_open() {
         let mut app = app();
         let upper = bone(&app, "右上腕");
-        let layer = app.selected_layer.unwrap();
+        let layer = app.session.selected_layer.unwrap();
         let settings = app.stroke_settings(false);
-        let stroke = app.doc.begin_stroke(layer, &settings).unwrap();
-        app.stroke = Some(stroke);
-        app.view3d.input.stroke = Some(crate::state::StrokeSource::Mouse);
+        let stroke = app.session.doc.begin_stroke(layer, &settings).unwrap();
+        app.session.stroke = Some(stroke);
+        app.view3d.view.input.stroke = Some(crate::state::StrokeSource::Mouse);
         set_field(&mut app, upper, Field::Position(Vec3::X));
         assert_eq!(app.message, super::super::ViewError::Stroking.to_string());
         assert_eq!(local(&app, upper), rest(&app, upper));
         app.message.clear();
         reset(&mut app, Reset::AllBones);
         assert_eq!(app.message, super::super::ViewError::Stroking.to_string());
-        let stroke = app.stroke.take().unwrap();
-        app.doc.cancel_stroke(stroke);
+        let stroke = app.session.stroke.take().unwrap();
+        app.session.doc.cancel_stroke(stroke);
         app.view3d.stroke_ended();
         // 続けて変えている途中は、戻しで段を割らない
         set_field(&mut app, upper, Field::Position(Vec3::X));

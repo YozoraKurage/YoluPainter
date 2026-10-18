@@ -41,7 +41,7 @@ The `yolupainter` tools talk to the YoluPainter app running on this PC (`http://
 
 ## Not available
 
-Drawing strokes, fills, selections, baking and opening another document. Point the user to the app for those.
+Drawing strokes, fills, selections, baking, layer set operations and opening another document. Point the user to the app for those. A texture set can hold several layer sets; `set_info` lists their layers together without saying which layer set a layer is in, and `layer_add` without `above` adds to the first layer set.
 
 ## More
 

@@ -24,25 +24,25 @@ fn format7_all_material_variants_roundtrip_every_entry() {
     let p = Project::read(original).unwrap();
     assert_eq!(p.info().format, 7);
     assert_ne!(p.current_set(), p.sets()[0].id);
-    assert_eq!(p.sets()[0].material, MaterialRef::Unassigned);
+    assert_eq!(p.sets()[0].materials, [MaterialRef::Unassigned]);
     assert_eq!(
-        p.sets()[1].material,
-        MaterialRef::Material {
+        p.sets()[1].materials,
+        [MaterialRef::Material {
             name: "同名".into(),
             asset: None
-        }
+        }]
     );
     assert_eq!(
-        p.sets()[2].material,
-        MaterialRef::Material {
+        p.sets()[2].materials,
+        [MaterialRef::Material {
             name: "同名".into(),
             asset: Some(MaterialAsset {
                 guid: "a".repeat(32),
                 file_id: i64::MIN
             })
-        }
+        }]
     );
-    assert_eq!(p.sets()[3].material, MaterialRef::PendingSlot(65535));
+    assert_eq!(p.sets()[3].materials, [MaterialRef::PendingSlot(65535)]);
     let rewritten = Archive::read(&p.to_bytes().unwrap()).unwrap();
     let original = Archive::read(original).unwrap();
     assert_eq!(original.entries(), rewritten.entries());
@@ -71,10 +71,10 @@ fn format6_and_shared_materials_migrate_slots_preserving_other_entries() {
         assert_eq!(upgraded.info().format, 7);
         for (i, set) in upgraded.sets().iter().enumerate() {
             assert_eq!(
-                set.material,
-                MaterialRef::PendingSlot(
+                set.materials,
+                [MaterialRef::PendingSlot(
                     original["sets"][i]["materialSlot"].as_u64().unwrap() as u16
-                )
+                )]
             );
         }
         for (name, bytes) in p.original_archive().entries() {
@@ -95,7 +95,7 @@ fn legacy_accepts_material_first_but_format7_refuses_slot_only() {
     info["format"] = 6.into();
     files.insert("ylp.json".into(), serde_json::to_vec(&info).unwrap());
     let p = open(files, |p| p["sets"][0]["materialSlot"] = json!(-1)).unwrap();
-    assert_eq!(p.sets()[0].material, MaterialRef::Unassigned);
+    assert_eq!(p.sets()[0].materials, [MaterialRef::Unassigned]);
     assert!(open(fixture(), |p| {
         p["sets"][0].as_object_mut().unwrap().remove("material");
         p["sets"][0]["materialSlot"] = json!(0);
@@ -174,8 +174,10 @@ fn material_edit_is_validated_and_preserves_other_files_and_unknown_keys() {
             file_id: 9007199254740993,
         }),
     };
-    let updated = p.with_material(&p.sets()[0].id, material.clone()).unwrap();
-    assert_eq!(updated.sets()[0].material, material);
+    let updated = p
+        .with_materials(&p.sets()[0].id, std::slice::from_ref(&material))
+        .unwrap();
+    assert_eq!(updated.sets()[0].materials, [material]);
     for (name, bytes) in p.original_archive().entries() {
         if name != "project.json" {
             assert_eq!(updated.original_archive().entries()[name], *bytes);
@@ -191,23 +193,25 @@ fn material_edit_is_validated_and_preserves_other_files_and_unknown_keys() {
     assert_eq!(j["sets"][0]["future"], "kept");
     assert_eq!(j["sets"][0]["material"]["future"]["extension"], 17);
     assert!(p
-        .with_material(&p.sets()[0].id, MaterialRef::PendingSlot(65535))
+        .with_materials(&p.sets()[0].id, &[MaterialRef::PendingSlot(65535)])
         .is_err());
-    assert!(p.with_material("missing", MaterialRef::Unassigned).is_err());
     assert!(p
-        .with_material(
+        .with_materials("missing", &[MaterialRef::Unassigned])
+        .is_err());
+    assert!(p
+        .with_materials(
             &p.sets()[0].id,
-            MaterialRef::Material {
+            &[MaterialRef::Material {
                 name: "x".into(),
                 asset: Some(MaterialAsset {
                     guid: "invalid".into(),
                     file_id: 0
                 })
-            }
+            }]
         )
         .is_err());
     let legacy = Project::read(include_bytes!("../fixtures/format6.ylp")).unwrap();
     assert!(legacy
-        .with_material(legacy.current_set(), MaterialRef::Unassigned)
+        .with_materials(legacy.current_set(), &[MaterialRef::Unassigned])
         .is_err());
 }

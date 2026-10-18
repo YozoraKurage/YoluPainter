@@ -7,7 +7,7 @@
 //! ファイルから写せた項目（`SutMapped`）も、同じく ID の文字でブラシのファイルに残す（`import.mapped`）。取り込みの結果をそのまま残すので、
 //! 取り込んだあとに利用者が傾きや筆圧を入れても、ファイルから写した項目には並ばない。
 
-use yolu_io::brushes::{DualNote, SutMapped, SutNote, TextureNote, Unrepresented};
+use yolu_io::brushes::{DualNote, SutInput, SutMapped, SutNote, TextureNote, Unrepresented};
 
 use crate::lang::Lang;
 
@@ -65,10 +65,24 @@ pub enum Gap {
     TiltCurve,
     StartEndDetail,
     StabilizerStrength,
+    PostCorrection,
+    VectorTools,
+    TipFlip,
+    TiltMax,
+    SettingsTable,
+    AntiAliasing,
+    LengthUnit,
+    IntervalType,
+    ReferenceLines,
+    PostCorrectionStrength,
+    PostCorrectionBezier,
+    Sweep,
+    SharpCorners,
+    ContinuousSpraying,
 }
 
 impl Gap {
-    pub const ALL: [Gap; 49] = [
+    pub const ALL: [Gap; 63] = [
         Gap::ColorTip,
         Gap::HoseSelection,
         Gap::HoseDimensions,
@@ -118,6 +132,20 @@ impl Gap {
         Gap::TiltCurve,
         Gap::StartEndDetail,
         Gap::StabilizerStrength,
+        Gap::PostCorrection,
+        Gap::VectorTools,
+        Gap::TipFlip,
+        Gap::TiltMax,
+        Gap::SettingsTable,
+        Gap::AntiAliasing,
+        Gap::LengthUnit,
+        Gap::IntervalType,
+        Gap::ReferenceLines,
+        Gap::PostCorrectionStrength,
+        Gap::PostCorrectionBezier,
+        Gap::Sweep,
+        Gap::SharpCorners,
+        Gap::ContinuousSpraying,
     ];
 
     /// ファイルに書く名前。
@@ -160,6 +188,8 @@ impl Gap {
             Gap::TipImage => "tip-image",
             Gap::TipOrder => "tip-order",
             Gap::TextureRotation => "texture-rotation",
+            Gap::TipFlip => "tip-flip",
+            Gap::ReferenceLines => "reference-lines",
             Gap::TipDirection => "tip-direction",
             Gap::ColorMixing => "color-mixing",
             Gap::Spray => "spray",
@@ -170,8 +200,20 @@ impl Gap {
             Gap::BlendMode => "blend-mode",
             Gap::PressureCurve => "pressure-curve",
             Gap::TiltCurve => "tilt-curve",
+            Gap::TiltMax => "tilt-max",
+            Gap::SettingsTable => "settings-table",
+            Gap::AntiAliasing => "anti-aliasing",
+            Gap::LengthUnit => "length-unit",
+            Gap::IntervalType => "interval-type",
             Gap::StartEndDetail => "start-end-detail",
             Gap::StabilizerStrength => "stabilizer-strength",
+            Gap::PostCorrection => "post-correction",
+            Gap::VectorTools => "vector-tools",
+            Gap::PostCorrectionStrength => "post-correction-strength",
+            Gap::PostCorrectionBezier => "post-correction-bezier",
+            Gap::Sweep => "sweep",
+            Gap::SharpCorners => "sharp-corners",
+            Gap::ContinuousSpraying => "continuous-spraying",
         }
     }
 
@@ -182,58 +224,69 @@ impl Gap {
     /// 項目の名前（短い名詞句。文にしない）。
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            Gap::ColorTip => lang.pick("色つきの筆先", "Colored tip"),
-            Gap::HoseSelection => lang.pick("セルの選び方", "Cell selection"),
-            Gap::HoseDimensions => lang.pick("多次元のホース", "Multi-dimensional hose"),
-            Gap::HoseCells => lang.pick("ホースのセル数", "Hose cell count"),
-            Gap::TrailingData => lang.pick("末尾のデータ", "Trailing data"),
-            Gap::TipEdge => lang.pick("筆先の縁", "Tip edge"),
-            Gap::Tip16Bit => lang.pick("16 bit の筆先", "16-bit tip"),
-            Gap::PresetSettings => lang.pick("ブラシの設定", "Brush settings"),
-            Gap::PatternSection => lang.pick("模様の節", "Pattern section"),
-            Gap::Sections => lang.pick("未対応の節", "Unsupported sections"),
-            Gap::TipKind => lang.pick("筆先の種類", "Tip kind"),
-            Gap::MinimumDiameter => lang.pick("最小の直径", "Minimum diameter"),
-            Gap::Controls => lang.pick("コントロール", "Controls"),
-            Gap::ForegroundBackground => lang.pick(
-                "描画色/背景色のコントロール",
-                "Foreground/background control",
-            ),
-            Gap::FadeLength => lang.pick("フェードの長さ", "Fade length"),
-            Gap::ScatterAxis => lang.pick("1 軸の散布", "One-axis scatter"),
-            Gap::CountJitter => lang.pick("数のゆらぎ", "Count jitter"),
-            Gap::Noise => lang.pick("ノイズ", "Noise"),
-            Gap::WetEdges => lang.pick("ウェットエッジ", "Wet edges"),
-            Gap::MixerBrush => lang.pick("混合ブラシ", "Mixer brush"),
-            Gap::TexturePattern => lang.pick("質感の模様", "Texture pattern"),
-            Gap::TextureScale => lang.pick("質感の拡大", "Texture scale"),
-            Gap::TextureMode => lang.pick("質感の合わせ方", "Texture mode"),
-            Gap::TextureEachTip => lang.pick("描点ごとの質感", "Texture per dab"),
-            Gap::TextureDepth => lang.pick("質感の深さのゆらぎ", "Texture depth jitter"),
-            Gap::TextureBrightness => lang.pick("質感の明るさ", "Texture brightness"),
-            Gap::TextureContrast => lang.pick("質感のコントラスト", "Texture contrast"),
-            Gap::PatternConversion => lang.pick("模様の変換", "Pattern conversion"),
-            Gap::DualTip => lang.pick("デュアルブラシの筆先", "Dual brush tip"),
-            Gap::DualMode => lang.pick("デュアルブラシの合わせ方", "Dual brush mode"),
-            Gap::DualScatter => lang.pick("デュアルブラシの散布", "Dual brush scatter"),
-            Gap::DualCount => lang.pick("デュアルブラシの数", "Dual brush count"),
-            Gap::DualFlip => lang.pick("デュアルブラシの反転", "Dual brush flip"),
-            Gap::ImageResolution => lang.pick("画像の解像度", "Image resolution"),
-            Gap::TipImage => lang.pick("筆先の画像", "Tip image"),
-            Gap::TipOrder => lang.pick("筆先の順序", "Tip order"),
-            Gap::TextureRotation => lang.pick("質感の回転", "Texture rotation"),
-            Gap::TipDirection => lang.pick("筆先の向き", "Tip direction"),
-            Gap::ColorMixing => lang.pick("色の混ぜ", "Color mixing"),
-            Gap::Spray => lang.pick("吹き付け", "Spray"),
-            Gap::DualBrush => lang.pick("デュアルブラシ", "Dual brush"),
-            Gap::StartEnd => lang.pick("入り抜き", "Start and end"),
-            Gap::Stabilizer => lang.pick("手ぶれ補正", "Stabilization"),
-            Gap::ColorChange => lang.pick("色の変化", "Color change"),
-            Gap::BlendMode => lang.pick("合成モード", "Blend mode"),
-            Gap::PressureCurve => lang.pick("筆圧の曲線", "Pressure curve"),
-            Gap::TiltCurve => lang.pick("傾きの曲線", "Tilt curve"),
-            Gap::StartEndDetail => lang.pick("入り抜きの速さ・割合", "Start/end speed and ratio"),
-            Gap::StabilizerStrength => lang.pick("手ぶれ補正の強さ", "Stabilization strength"),
+            Gap::ColorTip => lang.t("brushes-colored-tip-text"),
+            Gap::HoseSelection => lang.t("brushes-cell-selection"),
+            Gap::HoseDimensions => lang.t("brushes-multi-dimensional-hose"),
+            Gap::HoseCells => lang.t("brushes-hose-cell-count"),
+            Gap::TrailingData => lang.t("brushes-trailing-data"),
+            Gap::TipEdge => lang.t("brushes-tip-edge"),
+            Gap::Tip16Bit => lang.t("brushes-16-bit-tip-text"),
+            Gap::PresetSettings => lang.t("brushes-brush-settings"),
+            Gap::PatternSection => lang.t("brushes-pattern-section"),
+            Gap::Sections => lang.t("brushes-unsupported-sections"),
+            Gap::TipKind => lang.t("brushes-tip-kind"),
+            Gap::MinimumDiameter => lang.t("brushes-minimum-diameter"),
+            Gap::Controls => lang.t("brushes-controls"),
+            Gap::ForegroundBackground => lang.t("brushes-foreground-background-control"),
+            Gap::FadeLength => lang.t("brushes-fade-length"),
+            Gap::ScatterAxis => lang.t("brushes-one-axis-scatter"),
+            Gap::CountJitter => lang.t("brushes-count-jitter"),
+            Gap::Noise => lang.t("brushes-noise"),
+            Gap::WetEdges => lang.t("brushes-wet-edges"),
+            Gap::MixerBrush => lang.t("brushes-mixer-brush"),
+            Gap::TexturePattern => lang.t("brushes-texture-pattern"),
+            Gap::TextureScale => lang.t("brushes-texture-scale"),
+            Gap::TextureMode => lang.t("brushes-texture-mode"),
+            Gap::TextureEachTip => lang.t("brushes-texture-per-dab"),
+            Gap::TextureDepth => lang.t("brushes-texture-depth-jitter"),
+            Gap::TextureBrightness => lang.t("brushes-texture-brightness"),
+            Gap::TextureContrast => lang.t("brushes-texture-contrast"),
+            Gap::PatternConversion => lang.t("brushes-pattern-conversion"),
+            Gap::DualTip => lang.t("brushes-dual-brush-tip-text"),
+            Gap::DualMode => lang.t("brushes-dual-brush-mode"),
+            Gap::DualScatter => lang.t("brushes-dual-brush-scatter"),
+            Gap::DualCount => lang.t("brushes-dual-brush-count"),
+            Gap::DualFlip => lang.t("brushes-dual-brush-flip"),
+            Gap::ImageResolution => lang.t("brushes-image-resolution"),
+            Gap::TipImage => lang.t("brushes-tip-image"),
+            Gap::TipOrder => lang.t("brushes-tip-order"),
+            Gap::TextureRotation => lang.t("brushes-texture-rotation"),
+            Gap::TipFlip => lang.t("brushes-tip-flip"),
+            Gap::ReferenceLines => lang.t("brushes-reference-lines"),
+            Gap::TipDirection => lang.t("brushes-tip-direction"),
+            Gap::ColorMixing => lang.t("brushes-color-mixing"),
+            Gap::Spray => lang.t("brushes-spray"),
+            Gap::DualBrush => lang.t("brushes-dual-brush"),
+            Gap::StartEnd => lang.t("brushes-start-and-end"),
+            Gap::Stabilizer => lang.t("brushes-stabilization"),
+            Gap::ColorChange => lang.t("brushes-color-change"),
+            Gap::BlendMode => lang.t("brushes-blend-mode"),
+            Gap::PressureCurve => lang.t("brushes-pressure-curve"),
+            Gap::TiltCurve => lang.t("brushes-tilt-curve"),
+            Gap::TiltMax => lang.t("brushes-tilt-max"),
+            Gap::SettingsTable => lang.t("brushes-settings-table"),
+            Gap::AntiAliasing => lang.t("brushes-anti-aliasing"),
+            Gap::LengthUnit => lang.t("brushes-length-unit"),
+            Gap::IntervalType => lang.t("brushes-interval-type"),
+            Gap::StartEndDetail => lang.t("brushes-start-end-speed-and-ratio"),
+            Gap::StabilizerStrength => lang.t("brushes-stabilization-strength"),
+            Gap::PostCorrection => lang.t("brushes-post-correction"),
+            Gap::VectorTools => lang.t("brushes-vector-eraser-and-magnet"),
+            Gap::PostCorrectionStrength => lang.t("brushes-post-correction-strength"),
+            Gap::PostCorrectionBezier => lang.t("brushes-post-correction-bezier"),
+            Gap::Sweep => lang.t("brushes-sweep"),
+            Gap::SharpCorners => lang.t("brushes-sharp-corners"),
+            Gap::ContinuousSpraying => lang.t("brushes-continuous-spraying"),
         }
     }
 }
@@ -287,29 +340,49 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
         U::ClipStudio(note) => match note {
             SutNote::PreviewImage => Gap::ImageResolution,
             SutNote::TipMissing | SutNote::TipGuessed | SutNote::ProprietaryImage => Gap::TipImage,
-            SutNote::TipOrder => Gap::TipOrder,
+            SutNote::TipOrder | SutNote::TipOrderApprox => Gap::TipOrder,
+            SutNote::TipFlip => Gap::TipFlip,
+            SutNote::TextureToneApprox => Gap::TextureBrightness,
             SutNote::TextureMissing | SutNote::TextureGuessed => Gap::TexturePattern,
             SutNote::TextureRotation => Gap::TextureRotation,
             SutNote::TextureBrightness => Gap::TextureBrightness,
             SutNote::TextureContrast => Gap::TextureContrast,
             SutNote::TextureMode => Gap::TextureMode,
             SutNote::TextureEachTip => Gap::TextureEachTip,
-            SutNote::Direction => Gap::TipDirection,
-            SutNote::ColorMixing { .. } => Gap::ColorMixing,
-            SutNote::Spray => Gap::Spray,
-            SutNote::DualBrush => Gap::DualBrush,
-            SutNote::StartEnd => Gap::StartEnd,
+            SutNote::Direction | SutNote::ThicknessDirection => Gap::TipDirection,
+            SutNote::ColorMixing { .. }
+            | SutNote::ColorMixingMethod(_)
+            | SutNote::ColorMixingMode(_)
+            | SutNote::LuminanceCorrection(_)
+            | SutNote::MixBlur(_) => Gap::ColorMixing,
+            SutNote::PostCorrection => Gap::PostCorrection,
+            SutNote::VectorTools => Gap::VectorTools,
+            SutNote::Spray | SutNote::SprayApprox(_) => Gap::Spray,
+            SutNote::DualBrush | SutNote::DualApprox(_) => Gap::DualBrush,
+            SutNote::StartEnd | SutNote::StartEndTargets(_) => Gap::StartEnd,
             SutNote::Stabilizer => Gap::Stabilizer,
-            SutNote::ColorChange => Gap::ColorChange,
+            SutNote::ColorChange | SutNote::ColorApprox(_) => Gap::ColorChange,
             SutNote::BlendMode => Gap::BlendMode,
-            SutNote::Influence { .. }
-            | SutNote::InfluenceUnreadable(_)
-            | SutNote::ThicknessPressure => Gap::Controls,
-            SutNote::CurveSimplified(_) => Gap::PressureCurve,
+            SutNote::InfluenceCurve { .. } | SutNote::InfluenceUnreadable(_) => Gap::Controls,
+            SutNote::CurveSimplified(_, SutInput::Tilt) => Gap::TiltCurve,
+            SutNote::CurveSimplified(..) => Gap::PressureCurve,
             SutNote::TiltCurve(_) => Gap::TiltCurve,
+            SutNote::TiltMax(_) => Gap::TiltMax,
             SutNote::StartEndDetail => Gap::StartEndDetail,
             SutNote::StabilizerStrength => Gap::StabilizerStrength,
-            SutNote::SettingsMissing | SutNote::AntiAliasing(_) => Gap::PresetSettings,
+            SutNote::SettingsMissing => Gap::SettingsTable,
+            SutNote::AntiAliasing(_) => Gap::AntiAliasing,
+            SutNote::LengthUnit => Gap::LengthUnit,
+            SutNote::IntervalType(_) => Gap::IntervalType,
+            SutNote::WaterEdgeUnit | SutNote::WaterEdgeRange => Gap::PresetSettings,
+            SutNote::ExpandMode(_) | SutNote::ExpandUnit(_) | SutNote::ReferenceRange => {
+                Gap::ReferenceLines
+            }
+            SutNote::PostCorrectionStrength => Gap::PostCorrectionStrength,
+            SutNote::PostCorrectionBezier => Gap::PostCorrectionBezier,
+            SutNote::SweepApprox => Gap::Sweep,
+            SutNote::SharpenCorner => Gap::SharpCorners,
+            SutNote::ContinuousWithPost => Gap::ContinuousSpraying,
             // ファイル全体の数。どのブラシの項目でもない（使えなかった筆先・質感は、そのブラシの `TipMissing`・`TextureMissing` が
             // 項目になり、読まなかったブラシは取り込めなかった数に入れる。素材が上限を超えて読み切れなければ、並びで当てる推定をしない
             // ので、そのブラシの筆先・質感が欠けたことは `TipMissing`・`TextureMissing` に出る）
@@ -322,7 +395,7 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
 }
 
 /// 写せた項目（`SutMapped`）の並び。ブラシのファイルへ書く順。
-pub const MAPPED_ALL: [SutMapped; 10] = [
+pub const MAPPED_ALL: [SutMapped; 31] = [
     SutMapped::TipImage,
     SutMapped::Texture,
     SutMapped::Pressure,
@@ -331,8 +404,29 @@ pub const MAPPED_ALL: [SutMapped; 10] = [
     SutMapped::Stabilizer,
     SutMapped::TipAngle,
     SutMapped::AngleRandom,
+    SutMapped::AngleSource,
+    SutMapped::ThicknessDirection,
+    SutMapped::MinOnePixel,
+    SutMapped::SizeByScreen,
     SutMapped::ColorMixing,
     SutMapped::AntiAliasing,
+    SutMapped::Speed,
+    SutMapped::Random,
+    SutMapped::TipOrder,
+    SutMapped::TipFlip,
+    SutMapped::TipDarken,
+    SutMapped::TextureRotation,
+    SutMapped::TextureTone,
+    SutMapped::ColorChange,
+    SutMapped::Spray,
+    SutMapped::DualBrush,
+    SutMapped::WaterEdge,
+    SutMapped::ReferenceLines,
+    SutMapped::PostCorrection,
+    SutMapped::Sweep,
+    SutMapped::StabilizerSpeed,
+    SutMapped::Continuous,
+    SutMapped::Ribbon,
 ];
 
 /// 写せた項目のファイルに書く名前（項目を足すと、ここの対応がコンパイルで止まる）。
@@ -346,8 +440,29 @@ pub fn mapped_id(item: SutMapped) -> &'static str {
         SutMapped::Stabilizer => "stabilizer",
         SutMapped::TipAngle => "tip-angle",
         SutMapped::AngleRandom => "angle-random",
+        SutMapped::AngleSource => "angle-source",
+        SutMapped::ThicknessDirection => "thickness-direction",
+        SutMapped::MinOnePixel => "min-one-pixel",
+        SutMapped::SizeByScreen => "size-by-screen",
         SutMapped::ColorMixing => "color-mixing",
         SutMapped::AntiAliasing => "anti-aliasing",
+        SutMapped::Speed => "speed",
+        SutMapped::Random => "random",
+        SutMapped::TipOrder => "tip-order",
+        SutMapped::TipFlip => "tip-flip",
+        SutMapped::TipDarken => "tip-darken",
+        SutMapped::TextureRotation => "texture-rotation",
+        SutMapped::TextureTone => "texture-tone",
+        SutMapped::ColorChange => "color-change",
+        SutMapped::Spray => "spray",
+        SutMapped::DualBrush => "dual-brush",
+        SutMapped::WaterEdge => "water-edge",
+        SutMapped::ReferenceLines => "reference-lines",
+        SutMapped::PostCorrection => "post-correction",
+        SutMapped::Sweep => "sweep",
+        SutMapped::StabilizerSpeed => "stabilizer-speed",
+        SutMapped::Continuous => "continuous",
+        SutMapped::Ribbon => "ribbon",
     }
 }
 
@@ -360,7 +475,7 @@ pub fn mapped_from_id(id: &str) -> Option<SutMapped> {
 /// 写した項目と表せなかった項目は、どちらも取り込みのときに決めてファイルに残した一覧をそのまま出す（今のブラシの設定からは導かない）。
 pub fn row_tooltip(lang: Lang, name: &str, modified: bool, import: Option<&ImportMeta>) -> String {
     let mut tooltip = if modified {
-        lang.pick(format!("{name}（変更あり）"), format!("{name} (modified)"))
+        lang.f("brushes-modified-tip", &[("name", &name)])
     } else {
         name.to_owned()
     };
@@ -371,7 +486,7 @@ pub fn row_tooltip(lang: Lang, name: &str, modified: bool, import: Option<&Impor
         tooltip.push('\n');
         tooltip.push_str(text);
     };
-    let join = |names: Vec<&str>| names.join(lang.pick("、", ", "));
+    let join = |names: Vec<&str>| names.join(lang.t("brushes-text-tip"));
     if !meta.source.is_empty() {
         push(&meta.source);
     }
@@ -382,14 +497,14 @@ pub fn row_tooltip(lang: Lang, name: &str, modified: bool, import: Option<&Impor
         });
         push(&format!(
             "{}{}",
-            lang.pick("写した項目: ", "Carried over: "),
+            lang.t("brushes-carried-over-tip"),
             join(names.collect())
         ));
     }
     if !meta.gaps.is_empty() {
         push(&format!(
             "{}{}",
-            lang.pick("表せなかった項目: ", "Not represented: "),
+            lang.t("brushes-not-represented-tip"),
             join(meta.gaps.iter().map(|g| g.name(lang)).collect())
         ));
     }
@@ -432,6 +547,24 @@ mod tests {
             );
         }
         assert_eq!(Gap::from_id("no-such-gap"), None);
+    }
+
+    #[test]
+    fn settings_notes_of_a_sut_fold_to_their_own_items_and_the_old_name_is_still_read() {
+        let one = |note| of_note(&Unrepresented::ClipStudio(note));
+        assert_eq!(one(SutNote::SettingsMissing), Some(Gap::SettingsTable));
+        assert_eq!(one(SutNote::AntiAliasing(9.0)), Some(Gap::AntiAliasing));
+        assert_eq!(one(SutNote::LengthUnit), Some(Gap::LengthUnit));
+        assert_eq!(one(SutNote::IntervalType(9.0)), Some(Gap::IntervalType));
+        // ABR の読めないブラシの設定は、前の名前の項目のまま。前のファイルの `preset-settings` も読み続ける
+        assert_eq!(
+            of_note(&Unrepresented::PresetsUnreadable(
+                yolu_io::brushes::Fault::NotPng
+            )),
+            Some(Gap::PresetSettings)
+        );
+        assert_eq!(Gap::from_id("preset-settings"), Some(Gap::PresetSettings));
+        assert_eq!(Gap::PresetSettings.id(), "preset-settings");
     }
 
     #[test]

@@ -103,7 +103,7 @@ class Parse(unittest.TestCase):
             self.assertEqual(kind(inet6(ip, 80)), expected, ip)
 
     def test_name_resolution_is_not_hidden_by_a_loopback_resolver(self):
-        for addr in (inet('127.0.0.53', 53), inet('192.168.65.7', 53), inet('8.8.8.8', 853), inet6('::1', 53), inet('224.0.0.251', 5353)):
+        for addr in (inet('127.0.0.53', 53), inet('192.0.2.53', 53), inet('8.8.8.8', 853), inet6('::1', 53), inet('224.0.0.251', 5353)):
             self.assertEqual(entries_of(connect(APP, 0, addr))[0].dests[0].kind, 'dns', addr)
         e = entries_of(line(APP, 0, 'connect(3, {sa_family=AF_UNIX, sun_path="/run/systemd/resolve/io.systemd.Resolve"}, 110) = 0'))
         self.assertEqual(e[0].dests[0].kind, 'dns')
@@ -224,7 +224,7 @@ class Judge(unittest.TestCase):
             line(APP, 1, 'clone(child_stack=NULL, flags=CLONE_VM|CLONE_VFORK|SIGCHLD) = 2000'),
             line(2000, 1.1, f'execve("/usr/bin/curl", {argv}, 0x7f /* 9 vars */) = 0'),
             line(2000, 1.2, 'clone3({flags=CLONE_VM|CLONE_THREAD}, 88) = 2001'),
-            line(2001, 1.3, 'connect(5, ' + inet('192.168.65.7', 53) + ', 16) = 0'),
+            line(2001, 1.3, 'connect(5, ' + inet('192.0.2.53', 53) + ', 16) = 0'),
             line(2000, 1.4, 'connect(6, ' + inet6('2606:50c0:8000::154', 443) + ', 28) = -1 ENETUNREACH (Network is unreachable)'),
             *extra,
         ]

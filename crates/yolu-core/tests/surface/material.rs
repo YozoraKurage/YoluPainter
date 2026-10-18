@@ -1133,17 +1133,21 @@ const EFFECTS: [BrushEffect; 3] = [BLUR, SMUDGE, CLONE];
 fn effect_brush(effect: BrushEffect) -> Brush {
     Brush {
         effect,
-        ..Brush::from(BrushSettings {
-            radius: 3.0,
-            hardness: 0.6,
-            spacing: 0.2,
-            opacity: 0.7,
-            flow: 0.6,
-            pressure_size: false,
-            pressure_opacity: true,
-            pressure_flow: true,
-            ..BrushSettings::default()
-        })
+        ..Brush::simple(
+            BrushSettings {
+                radius: 3.0,
+                hardness: 0.6,
+                spacing: 0.2,
+                opacity: 0.7,
+                flow: 0.6,
+                ..BrushSettings::default()
+            },
+            yolu_core::PressureSwitches {
+                size: false,
+                opacity: true,
+                flow: true,
+            },
+        )
     }
 }
 fn at(x: f64, y: f64, time: f64) -> BrushSample {

@@ -1,7 +1,7 @@
 //! マウスと修飾キーの組み合わせの一覧（`keymap::GESTURES` の表から作る）。一覧と実際の入力（3D ビューの回す・パン、ステンシルの移動、選択範囲の
 //! 作り方、2D のパン・回転・スポイト）は同じ表を読む。
 use crate::lang::Lang;
-use egui::{Key, Modifiers, PointerButton};
+use crate::state::key::{Key, Modifiers, PointerButton};
 
 pub use crate::keymap::Operation;
 
@@ -57,20 +57,17 @@ pub fn key_label_with(binding: &Binding, lang: Lang, mac: bool) -> String {
     if binding.modifiers.shift {
         text.push_str("Shift+");
     }
-    let (ja, en) = match binding.button {
-        PointerButton::Primary => ("左ボタン", "Left Button"),
-        PointerButton::Secondary => ("右ボタン", "Right Button"),
-        PointerButton::Middle => ("中ボタン", "Middle Button"),
-        PointerButton::Extra1 => ("戻るボタン", "Back Button"),
-        PointerButton::Extra2 => ("進むボタン", "Forward Button"),
+    let button = match binding.button {
+        PointerButton::Primary => lang.t("shortcuts-left-button"),
+        PointerButton::Secondary => lang.t("shortcuts-right-button"),
+        PointerButton::Middle => lang.t("shortcuts-middle-button"),
+        PointerButton::Extra1 => lang.t("shortcuts-back-button"),
+        PointerButton::Extra2 => lang.t("shortcuts-forward-button"),
     };
     if binding.click {
-        text.push_str(&lang.pick(
-            format!("{ja}を動かさずに離す"),
-            format!("{en} Released without Moving"),
-        ));
+        text.push_str(&lang.f("shortcuts-released-without-moving", &[("button", &button)]));
     } else {
-        text.push_str(lang.pick(ja, en));
+        text.push_str(button);
     }
     text
 }

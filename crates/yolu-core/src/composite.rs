@@ -4,9 +4,11 @@
 //! - 計画（[`plan`]）: 兄弟の中で一番下でなくクリッピングの印のあるレイヤーは、すぐ下の印の無い兄弟（下地）の組に入る。見えない下地
 //!   （非表示・そのチャンネルの不透明度 0・中身が無い）は組ごと落とす。調整レイヤーは下地にならない（その上のクリッピングは描かない）。
 //!   グループは中身の計画を持ち、見えないグループ・中身の無いグループは落とす。
-//! - 通過のグループ（PassThrough でクリッピングの組を持たない）は中身を下の結果へ重ね、不透明度 × マスクで下とフェードする
+//! - 通過のグループ（PassThrough で、すぐ上にクリッピングされたレイヤーが無い）は中身を下の結果へ重ね、不透明度 × マスクで下とフェードする
 //!   （不透明度 1 でマスクが効かなければ、フェードは中身そのものなので下へそのまま重ねる）。ほかのグループは中身を透明から
-//!   合成して、レイヤーと同じように重ねる（クリッピングされたグループは通過の指定でも透明から）。
+//!   合成して、レイヤーと同じように重ねる（クリッピングされたグループは通過の指定でも透明から）。通過のグループに上からクリッピングされた
+//!   レイヤーが 1 枚でもあれば、そのレイヤーが見えるか（非表示・そのチャンネルの不透明度 0・チャンネルを切った・中身が無い）によらず、
+//!   グループは分離する（Photoshop と同じ。見えないレイヤー自体は何も描かない）。
 //! - マスクの量はレイヤーのアルファに掛ける（不透明度 × マスクの値）。何も変えないマスク（無効・濃度 0・空）は掛けない（値はちょうど 1）。
 //! - タイルの経路は、そのタイルに何も無いレイヤー（グループは中身に画素も調整も無いもの）を飛ばす（C# と同じ）。
 //! - Normal の種類のチャンネルは [`crate::normal`] のベクトルの式で、ほかは色の式で重ねる。調整はどちらも色の式。
@@ -26,7 +28,7 @@ use crate::adjust::AdjustKernel;
 use crate::blend::{blend, blend_row, clip_onto, clip_row, fade, fade_row, RowAmount};
 use crate::document::EvalSet;
 use crate::error::CoreError;
-use crate::layer::{Layer, LayerId};
+use crate::layer::{Layer, LayerId, LayerSetId};
 use crate::normal;
 use crate::surface::{Readers, Surface, Tile};
 use crate::types::{BlendMode, Channel, ChannelKind, LayerKind, Rect, Rgba8, RowOrder, TileCoord};
@@ -39,7 +41,10 @@ pub(crate) struct Entry {
     pub opacity: f64,
     /// そのチャンネルでのモード（[`Layer::blend_mode_in`]）。PassThrough はグループだけ。
     pub mode: BlendMode,
+    /// 下地の組に入る（描かれる）クリッピングされたレイヤー。
     pub clips: Vec<Entry>,
+    /// すぐ上にクリッピングされた兄弟が 1 枚でもある（見えるかどうかによらない。描かれない兄弟は `clips` に入らない）。通過のグループを分離させる。
+    pub clipped_above: bool,
     pub children: Vec<Entry>,
 }
 
@@ -52,11 +57,9 @@ impl Entry {
             self.mode
         }
     }
-    /// 通過のグループ（クリッピングの組を持たない）: 中身を下へ直に重ねる。
+    /// 通過のグループ（上にクリッピングされた兄弟が無い）: 中身を下へ直に重ねる。
     fn passes_through(&self, layers: &[Layer]) -> bool {
-        layers[self.layer].is_group()
-            && self.mode == BlendMode::PassThrough
-            && self.clips.is_empty()
+        layers[self.layer].is_group() && self.mode == BlendMode::PassThrough && !self.clipped_above
     }
 }
 
@@ -88,8 +91,30 @@ pub(crate) struct Stack<'a> {
 }
 
 impl<'a> Stack<'a> {
+    /// 並びの全部のレイヤーの計画（結合の準備のように、1 つのレイヤーセットの中から写した並び）。
     pub(crate) fn new(
         layers: &'a [Layer],
+        channel: Channel,
+        kind: ChannelKind,
+        eval: Option<&'a EvalSet>,
+    ) -> Self {
+        Self::build(layers, None, channel, kind, eval)
+    }
+
+    /// 文書の並びのうち、レイヤーセット `set` のレイヤーだけの計画（ほかのレイヤーセットのレイヤーは段に入れない。番号は並びのまま）。
+    pub(crate) fn in_set(
+        layers: &'a [Layer],
+        set: LayerSetId,
+        channel: Channel,
+        kind: ChannelKind,
+        eval: Option<&'a EvalSet>,
+    ) -> Self {
+        Self::build(layers, Some(set), channel, kind, eval)
+    }
+
+    fn build(
+        layers: &'a [Layer],
+        set: Option<LayerSetId>,
         channel: Channel,
         kind: ChannelKind,
         eval: Option<&'a EvalSet>,
@@ -97,7 +122,9 @@ impl<'a> Stack<'a> {
         let mut children: std::collections::HashMap<Option<LayerId>, Vec<usize>> =
             std::collections::HashMap::new();
         for (i, l) in layers.iter().enumerate() {
-            children.entry(l.parent).or_default().push(i);
+            if set.is_none_or(|s| l.set == s) {
+                children.entry(l.parent).or_default().push(i);
+            }
         }
         Stack {
             layers,
@@ -183,6 +210,7 @@ impl<'a> Stack<'a> {
                 opacity: l.opacity_in(self.channel),
                 mode: l.blend_mode_in(self.channel),
                 clips: Vec::new(),
+                clipped_above: false,
                 children,
             });
         }
@@ -191,6 +219,7 @@ impl<'a> Stack<'a> {
             opacity: l.opacity_in(self.channel),
             mode: l.blend_mode_in(self.channel),
             clips: Vec::new(),
+            clipped_above: false,
             children: Vec::new(),
         })
     }
@@ -209,6 +238,7 @@ impl<'a> Stack<'a> {
             if self.layers[i].kind != LayerKind::Adjustment {
                 let mut m = k + 1;
                 while m < siblings.len() && self.layers[siblings[m]].clipping {
+                    entry.clipped_above = true;
                     if let Some(clip) = self.make_entry(siblings[m]) {
                         entry.clips.push(clip);
                     }

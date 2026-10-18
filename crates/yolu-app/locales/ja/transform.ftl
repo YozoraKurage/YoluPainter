@@ -1,0 +1,36 @@
+# 画面の文（transform）。キーは「transform-」と英語の文から作った短い名前、ツールチップの文はキーの終わりが -tip。
+
+transform-liquify-input-limit-reached = ゆがみの入力数が上限です
+transform-no-layer-with-pixels-to = 動かす画素のあるレイヤーがありません。
+transform-no-pixels-to-move-inside = 選択範囲の中に動かす画素がありません。
+transform-no-pixels-to-move = 動かす画素がありません。
+transform-that-would-collapse-the-layer = 潰れてしまうので変形しません。
+transform-transform-cancelled = 変形をやめました。
+transform-bilinear = バイリニア
+transform-nearest = ニアレストネイバー
+transform-flip-horizontal = 左右反転
+transform-flip-vertical = 上下反転
+transform-rotate-90-counter-clockwise = 反時計回りに 90° 回転
+transform-rotate-90-clockwise = 時計回りに 90° 回転
+transform-resampling = 補間
+transform-bilinear-smooths-nearest-keeps-hard-tip = バイリニアはなめらか、ニアレストネイバーは画素の硬さを保つ。整数画素の移動・90° 回転・反転はどちらでも画素をそのまま写す
+transform-mesh = メッシュ
+transform-columns = 列
+transform-rows = 行
+transform-numeric = 数値
+transform-horizontal-offset-is-right-tip = 横にずらす量（+ は右）
+transform-vertical-offset-is-up-tip = 縦にずらす量（+ は上）
+transform-width = 幅
+transform-horizontal-scale-a-negative-value-tip = 横の拡大率（負は左右反転）
+transform-height = 高さ
+transform-vertical-scale-a-negative-value-tip = 縦の拡大率（負は上下反転）
+transform-angle = 角度
+transform-counter-clockwise-about-the-centre-tip = 反時計回り。動かすものの中心を軸にする
+transform-bilinear-smooths-nearest-keeps-hard-2-tip = バイリニアはなめらか、ニアレストネイバーは画素の硬さを保つ
+transform-apply = 適用
+transform-transform-by-these-numbers-one-tip = この数値で変形する（1 回の取り消し）
+transform-reset = 戻す
+transform-back-to-no-change-tip = 数値を初めに戻す
+transform-diameter = 直径
+transform-strength = 強さ
+transform-restore-how-strongly-pixels-go-tip = 戻す: このゆがみを始めた時の画素へ戻す強さ

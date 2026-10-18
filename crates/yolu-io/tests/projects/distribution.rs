@@ -14,7 +14,7 @@ use yolu_io::{
 
 fn writer() -> WriterInfo {
     WriterInfo {
-        app: "試験の書き手".into(),
+        app: "テストの書き手".into(),
         version: "0.0.1".into(),
         unity: "standalone".into(),
     }
@@ -74,10 +74,10 @@ fn spec(id: &str, name: &str, doc: &Document) -> SetSpec {
     SetSpec {
         id: id.into(),
         name: name.into(),
-        material: MaterialRef::Material {
+        materials: vec![MaterialRef::Material {
             name: name.into(),
             asset: None,
-        },
+        }],
         document: Some(NativeDocument::from_core(doc).unwrap().into()),
         composites: composite_pngs(doc).unwrap(),
     }
@@ -293,8 +293,15 @@ fn the_inventory_lists_each_kind_with_names_and_leaves_out_empty_kinds() {
     // ウィンドウに並べる順（Unity 版が作った .ylp は、名前を付けて残した選択範囲を持たない）
     assert_eq!(inventory.kinds(), unity_kinds());
     assert_eq!(names(&project, Removal::PsdOriginals), ["Body"]);
+    let unused: Vec<String> = project
+        .distribution_inventory(&Removal::ALL)
+        .shelf
+        .iter()
+        .filter(|i| !i.used)
+        .map(|i| i.name.clone())
+        .collect();
     assert_eq!(
-        names(&project, Removal::UnusedShelf),
+        unused,
         ["Received", "Spare", "Sketch", "Bundled", "Smart", "Brush"],
         "Unity の値も除くので、その中の割り当てだけが指す画像（Received）も使っていない"
     );
@@ -315,9 +322,16 @@ fn the_inventory_lists_each_kind_with_names_and_leaves_out_empty_kinds() {
         project.unknown_entries()
     );
     // 何も無い写しの目録は空（0 件の種類は出さない）
-    let clean = project.for_distribution(writer(), &Removal::ALL).unwrap();
+    let clean = project
+        .for_distribution(
+            writer(),
+            &Removal::ALL,
+            &project.unused_resources(&Removal::ALL),
+        )
+        .unwrap();
     let left = clean.distribution_inventory(&Removal::ALL);
-    assert!(left.is_empty(), "{left:?}");
+    assert!(left.found.is_empty(), "{left:?}");
+    assert!(left.shelf.iter().all(|i| i.used), "{left:?}");
     let plain =
         Project::create(writer(), &[spec(SET_A, "Body", &doc_reading(&[]))], SET_A).unwrap();
     assert!(plain.distribution_inventory(&Removal::ALL).is_empty());
@@ -326,26 +340,26 @@ fn the_inventory_lists_each_kind_with_names_and_leaves_out_empty_kinds() {
 #[test]
 fn what_counts_as_unused_follows_the_kinds_that_are_chosen() {
     let project = unity_style();
-    let unused = |remove: &[Removal]| {
+    let unused = |remove: &[Removal]| -> Vec<String> {
         project
             .distribution_inventory(remove)
-            .get(Removal::UnusedShelf)
-            .map(|f| f.names.clone())
-            .unwrap_or_default()
+            .shelf
+            .iter()
+            .filter(|i| !i.used)
+            .map(|i| i.name.clone())
+            .collect()
     };
     // Unity の値を残す（除かない）なら、その中の割り当てが指す画像は使っている
     assert_eq!(
-        unused(&[Removal::UnusedShelf, Removal::SourcePaths]),
+        unused(&[Removal::SourcePaths]),
         ["Spare", "Sketch", "Bundled", "Smart", "Brush"]
     );
-    // 除くなら使っていない。写しも同じ結果になる（目録と写しで食い違わない）
-    for remove in [
-        vec![Removal::UnusedShelf],
-        vec![Removal::UnusedShelf, Removal::UnityValues],
-        Removal::ALL.to_vec(),
-    ] {
+    // 除くなら使っていない。既定の選び（使っていない物）で書いた写しも同じ結果になる（目録と写しで食い違わない）
+    for remove in [vec![], vec![Removal::UnityValues], Removal::ALL.to_vec()] {
         let listed = unused(&remove);
-        let copy = project.for_distribution(writer(), &remove).unwrap();
+        let copy = project
+            .for_distribution(writer(), &remove, &project.unused_resources(&remove))
+            .unwrap();
         let kept: BTreeSet<String> = copy.resources().iter().map(|r| r.name.clone()).collect();
         let all: BTreeSet<String> = project.resources().iter().map(|r| r.name.clone()).collect();
         let dropped: BTreeSet<String> = all.difference(&kept).cloned().collect();
@@ -355,9 +369,182 @@ fn what_counts_as_unused_follows_the_kinds_that_are_chosen() {
             "{remove:?}"
         );
     }
-    // 使っていない物の名前の種類そのものも、選びで出入りしてよい: 何も除かないなら、除く物は目録に出るが残る
-    let none = project.for_distribution(writer(), &[]).unwrap();
+    // 何も外さない（アセットの選びが空）なら、使っていない物も残る
+    let none = project
+        .for_distribution(writer(), &[], &BTreeSet::new())
+        .unwrap();
     assert_eq!(none.resources().len(), project.resources().len());
+}
+
+/// セットの文書を core で開き、`project` のアセットの画像を効果の入力にして、チャンネルの 1 画素目（RGBA）を返す。
+fn first_pixel(project: &Project, set: &str, channel: Channel) -> [u8; 4] {
+    let set = project.sets().iter().find(|s| s.id == set).unwrap();
+    let mut doc = set.document.to_core().unwrap();
+    let mut inputs = EffectInputs::new();
+    for (id, input) in project.image_inputs().unwrap() {
+        inputs = inputs.with_image(id, input);
+    }
+    doc.set_effect_inputs(inputs).unwrap();
+    let rgba = doc.composite_channel(channel, doc.bounds()).unwrap();
+    rgba[..4].try_into().unwrap()
+}
+
+#[test]
+fn a_used_shelf_item_can_be_left_out_and_the_copy_opens_with_what_pointed_at_it_missing() {
+    let project = unity_style();
+    // セット A のレイヤーが色・高さで読む画像 1・2、セット B のレイヤーが読む画像 3、B の見た目の割り当て 4（全部、使っている物）
+    let left_out: BTreeSet<String> = (1..=4).map(rid).collect();
+    assert!(left_out.is_subset(&project.used_resource_ids()));
+    let copy = project.for_distribution(writer(), &[], &left_out).unwrap();
+    // 索引と中身が揃い、外した物だけが無い。書いて読み直せる
+    let reread = Project::read(&copy.to_bytes().unwrap()).unwrap();
+    let ids: BTreeSet<String> = reread.resources().iter().map(|r| r.id.clone()).collect();
+    let want: BTreeSet<String> = project
+        .resources()
+        .iter()
+        .map(|r| r.id.clone())
+        .filter(|id| !left_out.contains(id))
+        .collect();
+    assert_eq!(ids, want);
+    let files = entries(&reread);
+    for r in project
+        .resources()
+        .iter()
+        .filter(|r| left_out.contains(&r.id))
+    {
+        assert!(!files.contains_key(&r.entry), "{}", r.name);
+    }
+    let remaining: BTreeSet<_> = reread
+        .image_inputs()
+        .unwrap()
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    assert!((1..=4).all(|n| !remaining.contains(&image_id(&rid(n)))));
+    // 外した物を指すレイヤーと見た目は書き換えない（無い ID を指したまま開ける）
+    let before = entries(&project);
+    for set in [SET_A, SET_B] {
+        for leaf in ["document.utpaint", "look.json"] {
+            let name = format!("sets/{set}/{leaf}");
+            assert_eq!(before.get(&name), files.get(&name), "{name}");
+        }
+    }
+    assert_eq!(
+        reread.look(SET_B).unwrap().unwrap().textures["_MainTex"],
+        TextureSource::Image(image_id(&rid(4)))
+    );
+    // 画像を読んでいたレイヤーは、画像が無い物として開く: 合成は落ちず、レイヤー自身の固定の色（10, 20, 30）と高さ（255）になる
+    // （元は画像の画素が混ざる）
+    assert_ne!(
+        first_pixel(&project, SET_A, Channel::Color),
+        [10, 20, 30, 255]
+    );
+    assert_eq!(
+        first_pixel(&reread, SET_A, Channel::Color),
+        [10, 20, 30, 255]
+    );
+    assert_eq!(
+        first_pixel(&reread, SET_A, Channel::Height),
+        [255, 255, 255, 255]
+    );
+    // 開いた写しをもう一度写せる（残ったアセットは使っているものだけでなく、全部が目録に出る）
+    let again = reread.distribution_inventory(&Removal::ALL);
+    assert_eq!(again.shelf.len(), reread.resources().len());
+    reread
+        .for_distribution(
+            writer(),
+            &Removal::ALL,
+            &reread.unused_resources(&Removal::ALL),
+        )
+        .unwrap();
+}
+
+#[test]
+fn the_shelf_items_can_be_left_out_one_at_a_time_and_the_index_follows() {
+    let project = unity_style();
+    let all: Vec<String> = project.resources().iter().map(|r| r.id.clone()).collect();
+    let before = entries(&project);
+    for id in &all {
+        let one: BTreeSet<String> = [id.clone()].into();
+        let copy = project.for_distribution(writer(), &[], &one).unwrap();
+        // 並びは元のまま、外した 1 つだけが抜ける
+        let want: Vec<&String> = all.iter().filter(|x| *x != id).collect();
+        let got: Vec<String> = copy.resources().iter().map(|r| r.id.clone()).collect();
+        assert_eq!(got.iter().collect::<Vec<_>>(), want, "{id}");
+        // 索引にある物は、中身が揃う（読み直せる）
+        let reread = Project::read(&copy.to_bytes().unwrap()).unwrap();
+        assert_eq!(reread.resources().len(), all.len() - 1);
+        let files = entries(&reread);
+        let gone = project.resources().iter().find(|r| &r.id == id).unwrap();
+        assert!(!files.contains_key(&gone.entry), "{id}");
+        for r in reread.resources() {
+            assert_eq!(files[&r.entry], before[&r.entry], "{}", r.name);
+        }
+    }
+    // 外す物がプロジェクトに無い ID なら、何も変わらない
+    let none: BTreeSet<String> = [rid(900)].into();
+    let copy = project.for_distribution(writer(), &[], &none).unwrap();
+    assert_eq!(copy.resources().len(), all.len());
+}
+
+#[test]
+fn the_inventory_lists_each_shelf_item_with_its_id_kind_name_size_and_whether_it_is_used() {
+    let project = unity_style();
+    let inventory = project.distribution_inventory(&Removal::ALL);
+    assert_eq!(inventory.shelf.len(), project.resources().len());
+    let before = entries(&project);
+    for (item, r) in inventory.shelf.iter().zip(project.resources()) {
+        assert_eq!(item.id, r.id);
+        assert_eq!(item.name, r.name);
+        assert_eq!(item.bytes, before[&r.entry].len() as u64, "{}", r.name);
+        assert_eq!(
+            item.kind,
+            ResourceKind::parse(&r.kind).unwrap(),
+            "{}",
+            r.name
+        );
+    }
+    let kind_of = |id: u32| inventory.shelf_item(&rid(id)).unwrap().kind;
+    assert_eq!(kind_of(1), ResourceKind::Image);
+    assert_eq!(kind_of(20), ResourceKind::SmartMaterial);
+    assert_eq!(kind_of(21), ResourceKind::Brush);
+    // 使っているかは used_resource_ids と同じ集め方（Unity の値を残せば、その中の割り当ても使っている）
+    let used: BTreeSet<String> = inventory
+        .shelf
+        .iter()
+        .filter(|i| i.used)
+        .map(|i| i.id.clone())
+        .collect();
+    assert_eq!(
+        used,
+        (1..=4).map(rid).collect(),
+        "Unity の値を除く選びでは 5 は使っていない"
+    );
+    let kept = project.distribution_inventory(&[]);
+    assert_eq!(
+        kept.shelf.iter().filter(|i| i.used).count(),
+        5,
+        "何も除かない選びでは、Unity の値の中の 5 も使っている"
+    );
+    assert_eq!(
+        project.unused_resources(&Removal::ALL),
+        [5, 6, 7, 8, 20, 21].map(rid).into()
+    );
+    // 種類ごとの大きさ: 除く・書き直すエントリの長さの合計
+    let size = |removal: Removal| inventory.get(removal).map(|f| f.bytes);
+    assert_eq!(
+        size(Removal::PsdOriginals),
+        Some(b"8BPS-fake-original".len() as u64)
+    );
+    assert_eq!(
+        size(Removal::MeshMaps),
+        Some((b"mesh-a".len() + b"mesh-b".len()) as u64)
+    );
+    assert_eq!(
+        size(Removal::StaleEntries),
+        Some((b"old-thumbnail".len() + b"{\"schema\":3}".len() + b"{}".len()) as u64)
+    );
+    assert!(inventory.found.iter().all(|f| f.bytes > 0));
 }
 
 #[test]
@@ -398,10 +585,10 @@ fn text_project(name: &str, look: Option<Vec<u8>>) -> Project {
         &[SetSpec {
             id: SET_A.into(),
             name: "Body".into(),
-            material: MaterialRef::Material {
+            materials: vec![MaterialRef::Material {
                 name: "Body".into(),
                 asset: None,
-            },
+            }],
             document: Some(native.into()),
             composites: composite_pngs(&doc).unwrap(),
         }],
@@ -451,7 +638,7 @@ fn an_id_inside_a_string_is_found_even_with_hex_characters_or_hyphens_beside_it(
             "{name} の中の ID を見落とした"
         );
         let copy = project
-            .for_distribution(writer(), &[Removal::UnusedShelf])
+            .for_distribution(writer(), &[], &project.unused_resources(&[]))
             .unwrap();
         assert_eq!(
             copy.resources().len(),
@@ -525,11 +712,6 @@ fn each_kind_removes_only_its_own_things_and_the_toggle_keeps_them() {
             vec![a("imported-original.psd")],
             vec![],
         ),
-        (
-            Removal::UnusedShelf,
-            [6, 7, 8, 20, 21].map(content).to_vec(),
-            vec!["resources.json".into()],
-        ),
         (Removal::SourcePaths, vec![], vec!["resources.json".into()]),
         (Removal::ModelReference, vec![], vec!["view.json".into()]),
         (
@@ -559,25 +741,35 @@ fn each_kind_removes_only_its_own_things_and_the_toggle_keeps_them() {
     ];
     assert_eq!(cases.len(), unity_kinds().len());
     for (removal, removed, modified) in cases {
-        let copy = project.for_distribution(writer(), &[removal]).unwrap();
+        let copy = project
+            .for_distribution(writer(), &[removal], &BTreeSet::new())
+            .unwrap();
         let (gone, replaced) = changed(&project, &copy);
         let want_gone: BTreeSet<String> = removed.into_iter().collect();
         let want_replaced: BTreeSet<String> = modified.into_iter().collect();
         assert_eq!(gone, want_gone, "{removal:?} で消えるもの");
         assert_eq!(replaced, want_replaced, "{removal:?} で書き直すもの");
         // 切り替えを外した（何も除かない）写しは、保存したアプリ以外が元と同じ
-        let kept = project.for_distribution(writer(), &[]).unwrap();
+        let kept = project
+            .for_distribution(writer(), &[], &BTreeSet::new())
+            .unwrap();
         let (gone, replaced) = changed(&project, &kept);
         assert!(gone.is_empty(), "{gone:?}");
         assert!(replaced.is_empty(), "{replaced:?}");
     }
+    // アセットは種類でなく ID で選ぶ: 使っていない 5 つを渡すと、その中身が消え、索引だけが書き直される
+    let ids: BTreeSet<String> = [6, 7, 8, 20, 21].map(rid).into();
+    let copy = project.for_distribution(writer(), &[], &ids).unwrap();
+    let (gone, replaced) = changed(&project, &copy);
+    assert_eq!(gone, [6, 7, 8, 20, 21].map(content).into());
+    assert_eq!(replaced, ["resources.json".to_string()].into());
 }
 
 #[test]
-fn removing_the_used_shelf_items_never_happens_but_the_unused_ones_and_their_pixels_go() {
+fn the_default_shelf_choice_keeps_the_used_items_and_drops_the_unused_ones_and_their_pixels() {
     let project = unity_style();
     let copy = project
-        .for_distribution(writer(), &[Removal::UnusedShelf])
+        .for_distribution(writer(), &[], &project.unused_resources(&[]))
         .unwrap();
     let ids: BTreeSet<String> = copy.resources().iter().map(|r| r.id.clone()).collect();
     assert_eq!(
@@ -610,7 +802,7 @@ fn removing_the_used_shelf_items_never_happens_but_the_unused_ones_and_their_pix
 fn source_paths_are_cleared_from_every_kept_item_but_built_in_keys_stay() {
     let project = unity_style();
     let copy = project
-        .for_distribution(writer(), &[Removal::SourcePaths])
+        .for_distribution(writer(), &[Removal::SourcePaths], &BTreeSet::new())
         .unwrap();
     for r in copy.resources() {
         let kind = r.metadata["origin"]["type"].as_str().unwrap();
@@ -632,13 +824,22 @@ fn source_paths_are_cleared_from_every_kept_item_but_built_in_keys_stay() {
 fn the_full_copy_has_no_path_original_or_unity_value_and_opens_again() {
     let project = unity_style();
     let before = entries(&project);
-    let copy = project.for_distribution(writer(), &Removal::ALL).unwrap();
+    let copy = project
+        .for_distribution(
+            writer(),
+            &Removal::ALL,
+            &project.unused_resources(&Removal::ALL),
+        )
+        .unwrap();
     let bytes = copy.to_bytes().unwrap();
     // もう一度開ける（Unity 版の読み手と同じ決まり: 並びの物は全部そろい、知らないエントリも無い）
     let again = Project::read(&bytes).unwrap();
     assert!(again.unknown_entries().is_empty());
     assert_eq!(again.info().format, 7);
-    assert_eq!(again.info().saved_by.as_ref().unwrap().app, "試験の書き手");
+    assert_eq!(
+        again.info().saved_by.as_ref().unwrap().app,
+        "テストの書き手"
+    );
     assert_eq!(again.sets().len(), 2);
     assert_eq!(again.current_set(), SET_A);
     // 取り込んだ元のパス・モデルの場所・PSD・古い状態は、どこにも残らない
@@ -720,7 +921,13 @@ fn the_full_copy_has_no_path_original_or_unity_value_and_opens_again() {
     );
     assert_eq!(again.view_model().unwrap(), None);
     // 写しを写しても同じ（もう除くものは無い）
-    let twice = again.for_distribution(writer(), &Removal::ALL).unwrap();
+    let twice = again
+        .for_distribution(
+            writer(),
+            &Removal::ALL,
+            &again.unused_resources(&Removal::ALL),
+        )
+        .unwrap();
     assert_eq!(
         entries(&twice).keys().collect::<Vec<_>>(),
         all.keys().collect::<Vec<_>>()
@@ -732,7 +939,13 @@ fn the_open_project_does_not_change() {
     let project = unity_style();
     let before = entries(&project);
     let bytes = project.to_bytes().unwrap();
-    let _ = project.for_distribution(writer(), &Removal::ALL).unwrap();
+    let _ = project
+        .for_distribution(
+            writer(),
+            &Removal::ALL,
+            &project.unused_resources(&Removal::ALL),
+        )
+        .unwrap();
     let _ = project.distribution_inventory(&Removal::ALL);
     let _ = project.used_resource_ids();
     assert_eq!(entries(&project), before);
@@ -750,7 +963,7 @@ fn an_unused_only_shelf_leaves_no_index_and_no_resource_entries() {
     let project = base.with_shelf(&shelf, writer()).unwrap();
     assert!(entries(&project).contains_key("resources.json"));
     let copy = project
-        .for_distribution(writer(), &[Removal::UnusedShelf])
+        .for_distribution(writer(), &[], &project.unused_resources(&[]))
         .unwrap();
     let files = entries(&copy);
     assert!(!files.contains_key("resources.json"));
@@ -784,7 +997,7 @@ fn a_content_shared_with_a_kept_item_stays_when_the_unused_item_goes() {
     assert_eq!(project.resources().len(), 2);
     assert_eq!(project.resources()[0].entry, project.resources()[1].entry);
     let copy = project
-        .for_distribution(writer(), &[Removal::UnusedShelf])
+        .for_distribution(writer(), &[], &project.unused_resources(&[]))
         .unwrap();
     assert_eq!(copy.resources().len(), 1);
     assert_eq!(copy.resources()[0].name, "Used");
@@ -820,7 +1033,7 @@ fn a_view_that_cannot_be_read_goes_with_the_model_reference_and_an_unreadable_lo
     let broken = reopened(files);
     assert_eq!(names(&broken, Removal::ModelReference), ["view.json"]);
     let copy = broken
-        .for_distribution(writer(), &[Removal::ModelReference])
+        .for_distribution(writer(), &[Removal::ModelReference], &BTreeSet::new())
         .unwrap();
     assert!(!entries(&copy).contains_key("view.json"));
     // 読めない見た目に Unity の値があれば、中を確かめられないので除けない（利用者の設定を黙って消さない）。理由はセットの名前つき
@@ -834,12 +1047,14 @@ fn a_view_that_cannot_be_read_goes_with_the_model_reference_and_an_unreadable_lo
     );
     let unreadable = reopened(files);
     let error = unreadable
-        .for_distribution(writer(), &[Removal::UnityValues])
+        .for_distribution(writer(), &[Removal::UnityValues], &BTreeSet::new())
         .unwrap_err()
         .to_string();
     assert!(error.contains("Prop"), "{error}");
     // 切り替えを外せば、そのまま写せる
-    unreadable.for_distribution(writer(), &[]).unwrap();
+    unreadable
+        .for_distribution(writer(), &[], &BTreeSet::new())
+        .unwrap();
 }
 
 #[test]
@@ -852,9 +1067,21 @@ fn only_a_format_7_project_can_be_copied() {
         .unwrap(),
     )
     .unwrap();
-    assert!(old.for_distribution(writer(), &Removal::ALL).is_err());
+    assert!(old
+        .for_distribution(
+            writer(),
+            &Removal::ALL,
+            &old.unused_resources(&Removal::ALL)
+        )
+        .is_err());
     let upgraded = old.upgraded(writer()).unwrap();
-    upgraded.for_distribution(writer(), &Removal::ALL).unwrap();
+    upgraded
+        .for_distribution(
+            writer(),
+            &Removal::ALL,
+            &upgraded.unused_resources(&Removal::ALL),
+        )
+        .unwrap();
 }
 
 /// スタンドアロン版が書く、名前を付けて残した選択範囲とポーズを持つプロジェクト。
@@ -905,16 +1132,20 @@ fn the_remembered_selections_are_their_own_kind_and_removing_them_takes_the_copy
     assert_eq!(names(&project, Removal::SavedSelections), ["Body", "Prop"]);
     // 残す写し: 形式 8 のまま、残した選択範囲も今の選択範囲も元のとおり
     let kept = project
-        .for_distribution(writer(), &[Removal::ModelReference])
+        .for_distribution(writer(), &[Removal::ModelReference], &BTreeSet::new())
         .unwrap();
     assert_eq!(kept.info().format, 8);
     assert_eq!(kept.saved_selections(SET_A).unwrap().items.len(), 2);
     assert_eq!(kept.saved_selections(SET_B).unwrap().items.len(), 1);
     // 除く写し: 残した選択範囲のエントリが全部無くなり、形式は 7。今の選択範囲（絵の一部）は残る
     let copy = project
-        .for_distribution(writer(), &[Removal::SavedSelections])
+        .for_distribution(writer(), &[Removal::SavedSelections], &BTreeSet::new())
         .unwrap();
-    assert_eq!(copy.info().format, 7, "Unity 版が開ける形式に戻る");
+    assert_eq!(
+        copy.info().format,
+        7,
+        "0.4.x までの Unity ブリッジが開ける形式に戻る"
+    );
     assert!(copy.saved_selections(SET_A).unwrap().items.is_empty());
     assert!(!entries(&copy)
         .keys()
@@ -937,13 +1168,13 @@ fn the_pose_goes_with_the_model_reference_and_stays_otherwise() {
     assert!(entries(&project).contains_key("pose.json"));
     // モデルの参照を残すなら、ポーズも残る
     let kept = project
-        .for_distribution(writer(), &[Removal::SavedSelections])
+        .for_distribution(writer(), &[Removal::SavedSelections], &BTreeSet::new())
         .unwrap();
     assert!(entries(&kept).contains_key("pose.json"));
     assert!(kept.view_model().unwrap().is_some());
     // モデルの参照を除くなら、ポーズも除く（どのモデルのポーズか分からなくなる）
     let copy = project
-        .for_distribution(writer(), &[Removal::ModelReference])
+        .for_distribution(writer(), &[Removal::ModelReference], &BTreeSet::new())
         .unwrap();
     assert!(!entries(&copy).contains_key("pose.json"));
     assert!(copy.view_model().unwrap().is_none());
@@ -965,7 +1196,7 @@ fn the_live_link_record_goes_with_the_model_reference_and_stays_otherwise() {
     );
     // モデルの参照を残すなら、記録も残る（バイト列のまま）
     let kept = project
-        .for_distribution(writer(), &[Removal::SavedSelections])
+        .for_distribution(writer(), &[Removal::SavedSelections], &BTreeSet::new())
         .unwrap();
     assert_eq!(
         kept.livelink().unwrap().as_deref(),
@@ -973,7 +1204,7 @@ fn the_live_link_record_goes_with_the_model_reference_and_stays_otherwise() {
     );
     // モデルの参照を除くなら、記録も除く（絶対の場所とポーズが写しに残らない）
     let copy = project
-        .for_distribution(writer(), &[Removal::ModelReference])
+        .for_distribution(writer(), &[Removal::ModelReference], &BTreeSet::new())
         .unwrap();
     assert!(!entries(&copy).contains_key("livelink.json"));
     assert_eq!(copy.livelink().unwrap(), None);
@@ -1012,7 +1243,7 @@ fn a_live_link_record_without_a_view_still_counts_as_a_model_reference() {
     let project = base.with_livelink(Some(LIVE_LINK.as_bytes())).unwrap();
     assert_eq!(names(&project, Removal::ModelReference), ["livelink.json"]);
     let copy = project
-        .for_distribution(writer(), &[Removal::ModelReference])
+        .for_distribution(writer(), &[Removal::ModelReference], &BTreeSet::new())
         .unwrap();
     assert_eq!(copy.livelink().unwrap(), None);
     assert!(copy.distribution_inventory(&Removal::ALL).is_empty());
@@ -1102,7 +1333,7 @@ fn the_font_path_of_a_text_layer_is_cut_to_the_file_name_and_the_rest_of_the_fon
     let listed = names(&project, Removal::SourcePaths);
     assert_eq!(listed, ["Example Sans.ttf", "Other Face.ttf"]);
     let copy = project
-        .for_distribution(writer(), &[Removal::SourcePaths])
+        .for_distribution(writer(), &[Removal::SourcePaths], &BTreeSet::new())
         .unwrap();
     let after = fonts_of(&copy, SET_A);
     assert_eq!(after.len(), before.len());
@@ -1146,7 +1377,7 @@ fn the_font_path_of_a_text_layer_is_cut_to_the_file_name_and_the_rest_of_the_fon
     assert!(names(&again, Removal::SourcePaths).is_empty());
     // 外さない選びなら、道はそのまま
     let kept = project
-        .for_distribution(writer(), &[Removal::UnityValues])
+        .for_distribution(writer(), &[Removal::UnityValues], &BTreeSet::new())
         .unwrap();
     assert_eq!(fonts_of(&kept, SET_A), before);
     // 開いているプロジェクトは変わらない
@@ -1156,7 +1387,13 @@ fn the_font_path_of_a_text_layer_is_cut_to_the_file_name_and_the_rest_of_the_fon
 #[test]
 fn a_copy_has_no_path_of_the_author_in_any_entry() {
     let project = unity_style_with_text();
-    let copy = project.for_distribution(writer(), &Removal::ALL).unwrap();
+    let copy = project
+        .for_distribution(
+            writer(),
+            &Removal::ALL,
+            &project.unused_resources(&Removal::ALL),
+        )
+        .unwrap();
     let all = entries(&Project::read(&copy.to_bytes().unwrap()).unwrap());
     let mut text = String::new();
     for (name, bytes) in &all {

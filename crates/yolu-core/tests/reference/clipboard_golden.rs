@@ -1,7 +1,6 @@
-//! レイヤーの画素のコピー・カット・結合してコピー・ペースト・置き換えと、まとめ（batch）を、実 C# Core の出力と全バイトで照らす。
-//! 台本・人工の文書・出力の並びは tools/csharp-golden/ClipboardGolden.cs と対。C# は事例ごとの出力の SHA-256 を index.txt に
-//! 書く（`tools/csharp-golden/run.sh clipboard`）。食い違ったときは `CLIPBOARD_GOLDEN_DUMP=フォルダ` で Rust の出力を書き出し、
-//! C# の `GOLDEN_FULL=フォルダ` の出力と比べる。並列度 1 と 4 の両方で同じ結果になる。
+//! レイヤーの画素のコピー・カット・結合してコピー・ペースト・置き換えと、まとめ（batch）を、前の Unity 版の C# Core の出力と全バイトで照らす。
+//! 正解は事例ごとの出力の SHA-256 を index.txt に持つ（C# の出力を引き継いだ物。作り直すときは Rust の出力から作る）。
+//! 食い違ったときは `CLIPBOARD_GOLDEN_DUMP=フォルダ` で Rust の出力を書き出して調べる。並列度 1 と 4 の両方で同じ結果になる。
 
 // 画素の格子を (x, y) の添字で見比べる試験なので、添字の範囲の繰り返しの方が読みやすい。
 #![allow(clippy::needless_range_loop)]
@@ -12,7 +11,7 @@ use yolu_core::*;
 
 const MAX: u64 = u64::MAX;
 
-// ───────── 人工の文書（DocOpsGolden.cs と同じ） ─────────
+// ───────── 人工の文書 ─────────
 fn pattern(x: u32, y: u32, c: u32, seed: u32) -> Rgba8 {
     let n = x * 17 + y * 31 + c * 13 + seed * 7;
     Rgba8::new(
@@ -55,7 +54,7 @@ fn make(seed: u32) -> Document {
     d.clear_history().unwrap();
     d
 }
-/// 貼り先の文書（ClipboardGolden.cs の MakeTarget）。
+/// 貼り先の文書。
 fn make_target(kind: u32, seed: u32, grouped: bool) -> (Document, LayerId) {
     let (w, h) = [(17, 13), (9, 7), (25, 21), (17, 13)][kind as usize];
     let tile = if kind == 0 || kind == 3 {
@@ -163,7 +162,7 @@ fn write_clip(out: &mut Vec<u8>, c: &PixelClipboard) {
     i32b(out, c.channel().index() as i32);
     out.extend_from_slice(c.pixels());
 }
-/// 断りの型（ClipboardGolden.cs の Fail）: 1 ロック、2 レイヤーの操作の断り、3 そのほかの InvalidOperation、4 引数の誤り。
+/// 断りの型: 1 ロック、2 レイヤーの操作の断り、3 そのほかの InvalidOperation、4 引数の誤り。
 fn fail(out: &mut Vec<u8>, d: &Document, e: CoreError) {
     match e {
         CoreError::LayerLocked {
@@ -524,7 +523,7 @@ fn batch_case(n: u32, seed: u32, o: &mut Vec<u8>) {
                 false,
             )?;
             d.add_layer("doomed")?;
-            Err(CoreError::Unsupported("boom"))
+            Err(CoreError::Unsupported(Reason::CannotPaintGroup))
         }),
         2 => d.batch(|d| {
             let clip = d.cut_pixels(a, Channel::Color, false, MAX)?;

@@ -165,7 +165,7 @@ const SRGB_TO_LINEAR: [u64; 256] = [
     0x3fef2676bcd69ade, 0x3fef6e98b4c51466, 0x3fefb71bbec33ab2, 0x3ff0000000000000,
 ];
 
-fn to_linear(byte: u8) -> f64 {
+pub(crate) fn to_linear(byte: u8) -> f64 {
     f64::from_bits(SRGB_TO_LINEAR[byte as usize])
 }
 
@@ -221,7 +221,7 @@ fn cbrt(x: f64) -> f64 {
 }
 
 /// 線形の光（0〜1 の外は収める）から sRGB の 0〜255 の実数。`c^(1/2.4) = c^(5/12) = r·√√r`（r = ∛c）。
-fn to_srgb(linear: f64) -> f64 {
+pub(crate) fn to_srgb(linear: f64) -> f64 {
     let c = clamp01(linear);
     let v = if c <= 0.003_130_8 {
         c * 12.92

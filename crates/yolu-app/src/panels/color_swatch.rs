@@ -64,10 +64,7 @@ pub fn draw(ui: &mut Ui, app: &mut AppState, area: Rect) {
         app.color.sub,
         &format!(
             "{} #{}",
-            lang.pick(
-                "サブの色（背景色）。押すとメインの色と入れ替えます",
-                "Background color. Click to swap with the foreground color."
-            ),
+            lang.t("panels-background-color-click-to-swap-tip"),
             to_hex(app.color.sub)
         ),
         true,
@@ -84,10 +81,7 @@ pub fn draw(ui: &mut Ui, app: &mut AppState, area: Rect) {
         app.color.main,
         &format!(
             "{} #{}",
-            lang.pick(
-                "メインの色（描画色。ブラシで塗る色）",
-                "Foreground color (the color the brush paints)"
-            ),
+            lang.t("panels-foreground-color-the-color-the-tip"),
             to_hex(app.color.main)
         ),
         true,
@@ -126,10 +120,7 @@ pub fn draw(ui: &mut Ui, app: &mut AppState, area: Rect) {
 pub fn swap_tip(lang: crate::lang::Lang, mode: crate::mode::EditorMode) -> String {
     crate::shortcuts::named_with_keys(
         lang,
-        lang.pick(
-            "メインとサブの色を入れ替え",
-            "Swap foreground and background colors",
-        ),
+        lang.t("panels-swap-foreground-and-background-colors-tip"),
         &[crate::shortcuts::key_in("color.swap", mode)],
     )
 }
@@ -138,7 +129,7 @@ pub fn swap_tip(lang: crate::lang::Lang, mode: crate::mode::EditorMode) -> Strin
 pub fn default_tip(lang: crate::lang::Lang, mode: crate::mode::EditorMode) -> String {
     crate::shortcuts::named_with_keys(
         lang,
-        lang.pick("初期設定の色", "Default colors"),
+        lang.t("panels-default-colors-tip"),
         &[crate::shortcuts::key_in("color.default", mode)],
     )
 }

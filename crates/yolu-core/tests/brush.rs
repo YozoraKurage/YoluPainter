@@ -13,8 +13,8 @@ use yolu_core::brush::{curve, pen_tilt, set_parallel_dab_pixels};
 use yolu_core::glam::DVec2;
 use yolu_core::{
     builtin_presets, builtin_tip, Brush, BrushEffect, BrushPixel, BrushSample, BrushSettings,
-    BrushTip, Channel, ColorDynamics, CoreError, Document, DualBrush, DualBrushMode, LayerId,
-    PaperTexture, Rgba8, RowOrder, TextureMode, TipSelection,
+    BrushTip, Channel, ColorDynamics, CoreError, Document, DualBrush, DualBrushMode, FlipRule,
+    LayerId, PaperTexture, Rgba8, RowOrder, TextureMode, TipSelection,
 };
 
 const BLACK: Rgba8 = Rgba8::new(0, 0, 0, 255);
@@ -92,15 +92,16 @@ fn a(d: &Document, x: u32, y: u32) -> u8 {
 }
 /// C# の BrushTests.Fixed: 半径 8・硬さ 1・黒・筆圧の割り当てなし・間隔 0.1。
 fn fixed() -> Brush {
-    Brush::from(BrushSettings {
-        radius: 8.0,
-        hardness: 1.0,
-        color: BLACK,
-        pressure_size: false,
-        pressure_opacity: false,
-        spacing: 0.1,
-        ..BrushSettings::default()
-    })
+    Brush::simple(
+        BrushSettings {
+            radius: 8.0,
+            hardness: 1.0,
+            color: BLACK,
+            spacing: 0.1,
+            ..BrushSettings::default()
+        },
+        yolu_core::PressureSwitches::NONE,
+    )
 }
 /// 時刻 0.01 ずつの点で描いて確定する（C# の BrushTests.Stroke）。
 fn stroke(d: &mut Document, l: LayerId, brush: &Brush, points: &[(f64, f64)]) {
@@ -356,15 +357,16 @@ fn every_builtin_brush_paints_deterministically() {
 
 /// C# の BrushDynamicsTests.Hard: 硬さ 1・間隔 0.25・INK・筆圧の割り当てなし。
 fn hard(radius: f64) -> Brush {
-    Brush::from(BrushSettings {
-        radius,
-        hardness: 1.0,
-        spacing: 0.25,
-        color: INK,
-        pressure_size: false,
-        pressure_opacity: false,
-        ..BrushSettings::default()
-    })
+    Brush::simple(
+        BrushSettings {
+            radius,
+            hardness: 1.0,
+            spacing: 0.25,
+            color: INK,
+            ..BrushSettings::default()
+        },
+        yolu_core::PressureSwitches::NONE,
+    )
 }
 /// 96×64・タイル 32 の文書にストローク 1 本を描いた合成（C# の BrushDynamicsTests.Draw）。
 fn draw_in(brush: &Brush, channel: Channel, samples: &[BrushSample]) -> Vec<u8> {
@@ -387,14 +389,14 @@ fn default_brush_has_no_dynamics_and_paints_like_the_m1_settings() {
     assert!(b.color.per_tip);
     let c = b.controls;
     assert_eq!([c.fade_size, c.fade_opacity, c.fade_flow], [0, 0, 0]);
-    assert!(!(c.tilt_size || c.tilt_opacity || c.tilt_flow || c.tilt_angle));
+    assert!(!c.tilt_angle);
+    assert_eq!(b.influences, yolu_core::Influences::default());
     // M1 の口（BrushSettings）と全部入りの口（Brush::from）は同じ画素
     let s = BrushSettings {
         radius: 9.0,
         hardness: 0.3,
         spacing: 0.1,
         flow: 0.5,
-        pressure_flow: true,
         color: INK,
         ..BrushSettings::default()
     };
@@ -409,12 +411,37 @@ fn default_brush_has_no_dynamics_and_paints_like_the_m1_settings() {
         })
         .collect();
     let (mut d1, l1) = doc(96, 64, 32);
-    let mut s1 = d1.begin_stroke(l1, &s).unwrap();
+    let mut s1 = d1
+        .begin_brush_stroke(
+            l1,
+            &yolu_core::Brush::simple(
+                s,
+                yolu_core::PressureSwitches {
+                    size: true,
+                    opacity: true,
+                    flow: true,
+                },
+            ),
+        )
+        .unwrap();
     for p in &path {
         s1.add_sample(&mut d1, *p).unwrap();
     }
     d1.end_stroke(s1).unwrap();
-    assert_eq!(all(&d1), draw(&Brush::from(s), &path));
+    assert_eq!(
+        all(&d1),
+        draw(
+            &Brush::simple(
+                s,
+                yolu_core::PressureSwitches {
+                    size: true,
+                    opacity: true,
+                    flow: true
+                }
+            ),
+            &path
+        )
+    );
 }
 
 #[test]
@@ -713,7 +740,7 @@ fn pen_tilt_is_measured_from_upright_and_samples_are_clamped() {
 #[test]
 fn tilt_scales_size_and_opacity_and_turns_the_tip() {
     let mut t = hard(8.0);
-    t.controls.tilt_size = true;
+    t.influences.size.tilt.on = true;
     assert_eq!(
         draw(&t, &[tilted(20.0, 20.0, PI / 4.0, 0.0)]),
         draw(&hard(4.0), &[sample(20.0, 20.0)]),
@@ -725,7 +752,7 @@ fn tilt_scales_size_and_opacity_and_turns_the_tip() {
         "傾きの無い入力（マウス）は何も変えない"
     );
     let mut flat = hard(8.0);
-    flat.controls.tilt_opacity = true;
+    flat.influences.opacity.tilt.on = true;
     assert!(
         alphas(&draw(&flat, &[tilted(20.0, 20.0, PI / 2.0, 0.0)]))
             .iter()
@@ -750,7 +777,7 @@ fn every_dynamic() -> Brush {
     s.color.hue = 1.0;
     s.color.foreground_background = 0.5;
     s.controls.fade_opacity = 30;
-    s.controls.tilt_size = true;
+    s.influences.size.tilt.on = true;
     s.dual = Some(DualBrush {
         radius: 3.0,
         hardness: 0.5,
@@ -923,15 +950,16 @@ fn the_stroke_freezes_its_brush() {
 // ───────── StrokeAssistTests ─────────
 
 fn assist_hard(radius: f64) -> Brush {
-    Brush::from(BrushSettings {
-        radius,
-        hardness: 1.0,
-        spacing: 0.1,
-        color: Rgba8::new(0, 0, 0, 255),
-        pressure_size: false,
-        pressure_opacity: false,
-        ..BrushSettings::default()
-    })
+    Brush::simple(
+        BrushSettings {
+            radius,
+            hardness: 1.0,
+            spacing: 0.1,
+            color: Rgba8::new(0, 0, 0, 255),
+            ..BrushSettings::default()
+        },
+        yolu_core::PressureSwitches::NONE,
+    )
 }
 fn assist_draw(b: &Brush, points: &[(f64, f64)]) -> Vec<u8> {
     let (mut d, l) = doc(128, 64, 16);
@@ -987,6 +1015,196 @@ fn the_stabilizer_smooths_jitter_and_finishes_at_the_last_point() {
     );
 }
 
+/// 直線の終わり（`Stroke::end_line`）: 終わりの点（角）まで、その場で補正 0 と同じ直線を描く。詰めなければ、筆は糸の長さだけ手前から続きの点へ
+/// 向かい、角を切る。詰めた後の入力にも補正は効く。補正も曲線も無いブラシでは何も変わらない。
+#[test]
+fn end_line_draws_the_stabilized_pen_to_the_corner_and_the_rest_stays_stabilized() {
+    let draw = |stabilizer: f64, end_line: bool| {
+        let mut b = assist_hard(2.0);
+        b.assist.stabilizer = stabilizer;
+        let (mut d, l) = doc(128, 64, 16);
+        let mut s = d.begin_brush_stroke(l, &b).unwrap();
+        s.add_sample(&mut d, sample(10.0, 10.0)).unwrap();
+        s.add_sample(&mut d, sample(100.0, 10.0)).unwrap();
+        if end_line {
+            s.end_line(&mut d).unwrap();
+        }
+        let during = all(&d);
+        // 角から上へ、左右に揺れながら続ける
+        for i in 1..=10 {
+            let x = 100.0 + if i % 2 == 0 { 4.0 } else { -4.0 };
+            s.add_sample(&mut d, sample(x, 10.0 + 4.0 * i as f64))
+                .unwrap();
+        }
+        d.end_stroke(s).unwrap();
+        (during, all(&d))
+    };
+    let (_, cut) = draw(30.0, false);
+    assert_eq!(a128(&cut, 99, 10), 0, "詰めなければ角を切る");
+    let (during, caught) = draw(30.0, true);
+    let (plain_during, plain) = draw(0.0, false);
+    assert!(a128(&during, 99, 10) > 0, "詰めると、その場で角まで描く");
+    assert_eq!(during, plain_during, "角までの直線は補正 0 と同じ");
+    assert_ne!(caught, plain, "続きには補正が効く");
+    assert_eq!(draw(0.0, true), draw(0.0, false), "補正 0 では何もしない");
+}
+
+/// 曲線を入れたブラシの直線の終わり（`Stroke::end_line`）: 待たせている曲線の区間は、続きの点で形が決まるので、そのままでは続きの向きへ膨らむ。
+/// 直線の終わりで描き切れば、補正 0 でも 40 でも、角までの直線は曲線を切ったときと同じ画素で、まっすぐ。角からは曲線を始め直し、前の直線の向きを
+/// 引きずらない（まっすぐな続きは、曲線を切ったときと同じ画素。欠け・折れ・二重の点が出ない）。
+#[test]
+fn end_line_keeps_a_curved_line_straight_and_restarts_the_curve_at_the_corner() {
+    // 水平な直線 (10,10) → (100,10) の後、角からまっすぐ続ける: 真上（曲がり角 90°）と、左上へ戻る向き（曲がり角 135°）。曲線の区間 1 つが 6 画素
+    let up: Vec<(f64, f64)> = (1..=8).map(|i| (100.0, 10.0 + 6.0 * i as f64)).collect();
+    let back: Vec<(f64, f64)> = (1..=8)
+        .map(|i| (100.0 - 5.0 * i as f64, 10.0 + 5.0 * i as f64))
+        .collect();
+    let draw = |curve: bool, stabilizer: f64, end_line: bool, tail: &[(f64, f64)]| {
+        let mut b = assist_hard(2.0);
+        b.assist.curve = curve;
+        b.assist.stabilizer = stabilizer;
+        let (mut d, l) = doc(128, 64, 16);
+        let mut s = d.begin_brush_stroke(l, &b).unwrap();
+        s.add_sample(&mut d, sample(10.0, 10.0)).unwrap();
+        s.add_sample(&mut d, sample(100.0, 10.0)).unwrap();
+        if end_line {
+            s.end_line(&mut d).unwrap();
+        }
+        let during = all(&d);
+        for &(x, y) in tail {
+            s.add_sample(&mut d, sample(x, y)).unwrap();
+        }
+        d.end_stroke(s).unwrap();
+        (during, all(&d))
+    };
+    // 線の中心（アルファの重みつき）の、直線 y = 10 からのずれの、列ごとの最大
+    let bend = |c: &[u8]| -> f64 {
+        (14..=96usize)
+            .map(|x| {
+                let (sum, weighted) = (0..64usize).fold((0.0, 0.0), |(s, w), y| {
+                    let a = a128(c, x, y) as f64;
+                    (s + a, w + a * (y as f64 + 0.5))
+                });
+                (weighted / sum - 10.0).abs()
+            })
+            .fold(0.0, f64::max)
+    };
+    let (_, straight) = draw(false, 0.0, false, &[]);
+    let base = bend(&straight);
+    assert!(base < 0.6, "曲線なしの直線の中心のずれ {base}");
+    // 直線の終わりを呼ばなければ（補正 0）、待たせている区間は続きの点で形が決まり、直線が曲がる
+    let (_, bulged) = draw(true, 0.0, false, &up);
+    assert!(
+        bend(&bulged) > base + 1.0,
+        "呼ばなければ膨らむ ({})",
+        bend(&bulged)
+    );
+    for stabilizer in [0.0, 40.0] {
+        let (during, _) = draw(true, stabilizer, true, &up);
+        assert_eq!(
+            during, straight,
+            "補正 {stabilizer}: 直線の終わりで、角までの直線は曲線を切ったときと同じ画素"
+        );
+        for (name, tail) in [("真上", &up), ("戻る向き", &back)] {
+            // 続きもまっすぐ（曲線を切ったときと同じ画素）。前の直線の向きを引き継げば、角の後の最初の区間が曲がって違う画素になる
+            assert_eq!(
+                draw(true, stabilizer, true, tail).1,
+                draw(false, stabilizer, true, tail).1,
+                "補正 {stabilizer}・{name}: 角からの続きは曲線を切ったときと同じ画素"
+            );
+        }
+        // 揺れながらの続きは、角から新しく始めたストロークと同じ画素（角の点の周りの画素を除く。角から曲線を始め直す）
+        let wiggle: Vec<(f64, f64)> = (1..=10)
+            .map(|i| {
+                let x = 100.0 + if i % 2 == 0 { 6.0 } else { -6.0 };
+                (x, 10.0 + 4.0 * i as f64)
+            })
+            .collect();
+        let after_line = draw(true, stabilizer, true, &wiggle).1;
+        let fresh = {
+            let mut b = assist_hard(2.0);
+            b.assist.curve = true;
+            b.assist.stabilizer = stabilizer;
+            let (mut d, l) = doc(128, 64, 16);
+            let mut s = d.begin_brush_stroke(l, &b).unwrap();
+            s.add_sample(&mut d, sample(100.0, 10.0)).unwrap();
+            for &(x, y) in &wiggle {
+                s.add_sample(&mut d, sample(x, y)).unwrap();
+            }
+            d.end_stroke(s).unwrap();
+            all(&d)
+        };
+        let above = |c: &[u8]| c[(13 * 128) * 4..].to_vec();
+        assert_eq!(
+            above(&after_line),
+            above(&fresh),
+            "補正 {stabilizer}: 揺れる続きは、角から新しく始めたストロークと同じ画素"
+        );
+        // 押してすぐ離したときは、直線の終わりを呼んでも呼ばなくても同じ
+        assert_eq!(
+            draw(true, stabilizer, true, &[]).1,
+            draw(true, stabilizer, false, &[]).1,
+            "補正 {stabilizer}: 続きが無ければ変わらない"
+        );
+    }
+}
+
+/// 直線の終わり（`Stroke::end_line`）の角に、余分なダブ（二重の点）が出ない: 流量の低い透明なブラシは、重なったダブの数が濃さに出る（硬いブラシは
+/// 重なりで飽和して、余分なダブが画素に出ない）。曲線を入れても切っても同じ画素なら、直線の終わりで区間を描き切っても、角の後で区間を始め直しても、
+/// ダブの数は変わらない。
+#[test]
+fn end_line_places_no_extra_dab_at_the_corner_with_a_translucent_brush() {
+    let up: Vec<(f64, f64)> = (1..=8).map(|i| (100.0, 10.0 + 6.0 * i as f64)).collect();
+    let back: Vec<(f64, f64)> = (1..=8)
+        .map(|i| (100.0 - 5.0 * i as f64, 10.0 + 5.0 * i as f64))
+        .collect();
+    let draw = |curve: bool, stabilizer: f64, tail: &[(f64, f64)]| {
+        let mut b = Brush::simple(
+            BrushSettings {
+                radius: 2.0,
+                hardness: 0.5,
+                spacing: 0.25,
+                flow: 0.1,
+                color: Rgba8::new(0, 0, 0, 255),
+                ..BrushSettings::default()
+            },
+            yolu_core::PressureSwitches::NONE,
+        );
+        b.assist.curve = curve;
+        b.assist.stabilizer = stabilizer;
+        let (mut d, l) = doc(128, 64, 16);
+        let mut s = d.begin_brush_stroke(l, &b).unwrap();
+        s.add_sample(&mut d, sample(10.0, 10.0)).unwrap();
+        s.add_sample(&mut d, sample(100.0, 10.0)).unwrap();
+        s.end_line(&mut d).unwrap();
+        for &(x, y) in tail {
+            s.add_sample(&mut d, sample(x, y)).unwrap();
+        }
+        d.end_stroke(s).unwrap();
+        all(&d)
+    };
+    for stabilizer in [0.0, 40.0] {
+        for (name, tail) in [
+            ("真上", &up),
+            ("戻る向き", &back),
+            ("続き無し", &Vec::new()),
+        ] {
+            let curved = draw(true, stabilizer, tail);
+            assert_eq!(
+                curved,
+                draw(false, stabilizer, tail),
+                "補正 {stabilizer}・{name}: 曲線を入れても切っても同じ濃さ（ダブの数が同じ）"
+            );
+            // 濃さが飽和していない（余分なダブがあれば、濃さに出る）
+            let corner = a128(&curved, 100, 10).max(a128(&curved, 100, 9));
+            assert!(
+                (30..200).contains(&corner),
+                "補正 {stabilizer}・{name}: 角の濃さ {corner} は重なりで飽和していない"
+            );
+        }
+    }
+}
+
 #[test]
 fn the_stabilizer_does_not_depend_on_the_input_rate() {
     let mut s = assist_hard(4.0);
@@ -1007,7 +1225,9 @@ fn tapers_thin_both_ends_and_the_end_waits_for_the_stroke_to_finish() {
     s.assist.taper_out = 30.0;
     let (mut d, l) = doc(128, 64, 16);
     let mut st = d.begin_brush_stroke(l, &s).unwrap();
+    // 入りのあるブラシは、3 つ目の入力で手で描いた線と分かるまでダブを待たせる（2 つの入力の直線は Shift の直線かもしれない）
     st.add_sample(&mut d, sample(10.0, 32.0)).unwrap();
+    st.add_sample(&mut d, sample(60.0, 32.0)).unwrap();
     st.add_sample(&mut d, sample(110.0, 32.0)).unwrap();
     let during = all(&d);
     assert_eq!(
@@ -1075,15 +1295,16 @@ const CY: f64 = 63.7;
 const R: f64 = 40.0;
 
 fn soft(curve: bool) -> Brush {
-    let mut b = Brush::from(BrushSettings {
-        radius: 4.0,
-        hardness: 0.0,
-        spacing: 0.05,
-        color: Rgba8::new(0, 0, 0, 255),
-        pressure_size: false,
-        pressure_opacity: false,
-        ..BrushSettings::default()
-    });
+    let mut b = Brush::simple(
+        BrushSettings {
+            radius: 4.0,
+            hardness: 0.0,
+            spacing: 0.05,
+            color: Rgba8::new(0, 0, 0, 255),
+            ..BrushSettings::default()
+        },
+        yolu_core::PressureSwitches::NONE,
+    );
     b.assist.curve = curve;
     b
 }
@@ -1420,17 +1641,21 @@ fn read(d: &Document, l: LayerId) -> Vec<Rgba8> {
 fn effect_brush(effect: BrushEffect) -> Brush {
     Brush {
         effect,
-        ..Brush::from(BrushSettings {
-            radius: 3.0,
-            hardness: 0.6,
-            spacing: 0.2,
-            opacity: 0.7,
-            flow: 0.6,
-            pressure_size: false,
-            pressure_opacity: true,
-            pressure_flow: true,
-            ..BrushSettings::default()
-        })
+        ..Brush::simple(
+            BrushSettings {
+                radius: 3.0,
+                hardness: 0.6,
+                spacing: 0.2,
+                opacity: 0.7,
+                flow: 0.6,
+                ..BrushSettings::default()
+            },
+            yolu_core::PressureSwitches {
+                size: false,
+                opacity: true,
+                flow: true,
+            },
+        )
     }
 }
 const BLUR: BrushEffect = BrushEffect::Blur { radius: 2 };
@@ -1777,14 +2002,15 @@ fn clone_reads_the_stroke_start_when_source_and_destination_overlap() {
         effect: BrushEffect::Clone {
             offset: DVec2::new(-1.0, 0.0),
         },
-        ..Brush::from(BrushSettings {
-            radius: 0.5,
-            hardness: 1.0,
-            spacing: 1.0,
-            pressure_size: false,
-            pressure_opacity: false,
-            ..BrushSettings::default()
-        })
+        ..Brush::simple(
+            BrushSettings {
+                radius: 0.5,
+                hardness: 1.0,
+                spacing: 1.0,
+                ..BrushSettings::default()
+            },
+            yolu_core::PressureSwitches::NONE,
+        )
     };
     paint(
         &mut d,
@@ -1983,8 +2209,9 @@ fn flipping_mirrors_the_tip_image() {
         let (mut d, l) = canvas(64);
         let mut b = fixed();
         b.tip.image = Some(tip.clone());
-        b.tip.flip_x = flip_x;
-        b.tip.flip_y = flip_y;
+        let rule = |on: bool| if on { FlipRule::On } else { FlipRule::Off };
+        b.tip.flip_x = rule(flip_x);
+        b.tip.flip_y = rule(flip_y);
         b.tip.angle = angle;
         paint(&mut d, l, &b, &[sample(32.0, 32.0)]);
         d
@@ -2008,8 +2235,8 @@ fn flipping_mirrors_the_tip_image() {
     b.tip.roundness = 0.5;
     b.tip.angle = 20.0;
     paint(&mut r1, l1, &b, &[sample(32.0, 32.0)]);
-    b.tip.flip_x = true;
-    b.tip.flip_y = true;
+    b.tip.flip_x = FlipRule::On;
+    b.tip.flip_y = FlipRule::On;
     paint(&mut r2, l2, &b, &[sample(32.0, 32.0)]);
     assert_eq!(all(&r1), all(&r2));
 }
@@ -2158,8 +2385,8 @@ fn pen_rotation_is_interpolated_the_short_way_round() {
 fn speed_thins_fast_segments_and_needs_time() {
     let mut b = hard(6.0);
     b.base.spacing = 0.1;
-    b.controls.speed_size = true;
-    b.controls.speed_max = 1000.0;
+    b.influences.size.speed.on = true;
+    b.influences.speed_max = 1000.0;
     let column = |c: &[u8], x: usize| (0..64).filter(|&y| a96(c, x, y) > 0).count();
     // 左の区間は 40 px を 0.4 秒（100 px/s）、右の区間は 40 px を 0.05 秒（800 px/s）
     let timed = [
@@ -2177,19 +2404,19 @@ fn speed_thins_fast_segments_and_needs_time() {
     // 時刻が進まない入力では速さは 0 のまま（何も変えない）
     let untimed = [sample(8.0, 32.0), sample(48.0, 32.0), sample(88.0, 32.0)];
     let mut plain = b.clone();
-    plain.controls.speed_size = false;
+    plain.influences.size.speed.on = false;
     assert_eq!(draw(&b, &untimed), draw(&plain, &untimed));
     // 切っていれば時刻があっても同じ
     assert_eq!(draw(&plain, &timed), draw(&plain, &untimed));
     // 速さの上限は 0 より大きい
     let mut bad = b.clone();
-    bad.controls.speed_max = 0.0;
+    bad.influences.speed_max = 0.0;
     assert!(bad.validate().is_err());
     // 不透明度と流量も（速い区間ほど薄い）
     let mut op = hard(6.0);
     op.base.spacing = 0.1;
-    op.controls.speed_opacity = true;
-    op.controls.speed_max = 1000.0;
+    op.influences.opacity.speed.on = true;
+    op.influences.speed_max = 1000.0;
     let c = draw(&op, &timed);
     assert!(a96(&c, 70, 32) < a96(&c, 30, 32));
 }

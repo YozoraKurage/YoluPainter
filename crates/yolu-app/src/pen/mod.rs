@@ -9,7 +9,7 @@
 //! winit とアプリがいつもどおり受ける。値の直しは `tablet`（OS に依らない）。
 //! ほかの OS では何も入らず、キャンバスはマウスと egui の Touch の筆圧（winit が出せば）で描く。
 //!
-//! ペンの押し（触れてから離すまで）の行き先は、触れた最初の点で決めて離すまで変えない（`PenPress`）: 描くツールの押し・ビューを動かす操作
+//! ペンの押し（触れてから離すまで）の行き先は、触れた最初の点で決めて離すまで変えない（`input::Press`。決めるのは `input::owner`）: 描くツールの押し・ビューを動かす操作
 //! （回す・パン・拡縮。Alt・Space・Ctrl+Space、3D ではサイドボタン）・スポイト（2D のサイドボタン）・何もしない（押した所がビューの外や別の部品）。
 //! 描くのは、修飾もサイドボタンも無いペン先の接触だけ。winit はペンを egui のポインタ（左ボタン）にも変えて同じ押しを二重に届けるので、ペンの点が持つ押しの間は、
 //! egui のポインタの押しをビューが使わない。サイドボタンを押した接触は、egui の部品にも右ボタンとして届ける（`ButtonMap`）。
@@ -20,6 +20,10 @@
 
 pub mod adjust;
 pub mod capture;
+pub mod drop_point;
+pub mod ink;
+pub mod join;
+pub mod log;
 #[cfg(target_os = "macos")]
 mod mac_tablet;
 pub mod tablet;
@@ -35,29 +39,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::engine::Tilt;
 
+pub use join::PointerJoin;
 pub use wintab::Unavailable;
-
-/// ペンの押しの行き先。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PressKind {
-    /// ツールの押し（ブラシ・消しゴム・範囲のツール・選択のツール）。始められなかった押し（読むだけ・Alt の予約など）も、離すまでここに留まる。
-    Tool,
-    /// ビューを動かす操作（2D は回す・パン・拡縮、3D は回す・パン・拡縮・クローンの元）。
-    View,
-    /// 2D のサイドボタン（右ボタンと同じ）: 押した所の色を見本にして、離して取るスポイト。
-    Eyedrop,
-    /// 何もしない（押した所がビューの外・別の部品の上・ポップアップの下、ポリゴン塗りつぶしの 2D のサイドボタン、修飾を押した描くツール）。
-    Ignored,
-}
-
-/// ビューが持つ、ペンの今の押し（触れてから離すまで）。
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PenPress {
-    pub id: u32,
-    pub kind: PressKind,
-    /// このペンの前の点（ビューを動かす量を求める）。
-    pub last: egui::Pos2,
-}
 
 /// ペンの 1 点（位置はウィンドウのクライアント領域の物理の画素、左上が原点）。
 #[derive(Clone, Copy, Debug, PartialEq)]

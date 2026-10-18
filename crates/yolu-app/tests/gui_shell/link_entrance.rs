@@ -2,6 +2,7 @@
 //! 合わない物があれば警告の色・フォルダを使えなければ赤。押すと小さなウィンドウ（「Live Link: 状態」・「Unity: 名前」と、受け付ける／受け付けない）。
 //! 頼みを開いたら 3D ビューを前に出す（送り直しでは出し直さない）。文は名前と状態だけで、案内は書かない。
 use crate::common;
+use crate::common::drive::Drive;
 use crate::common::wait;
 
 use std::time::{Duration, Instant};
@@ -28,8 +29,8 @@ fn step_until(h: &mut Harness<'_, YoluApp>, what: &str, mut cond: impl FnMut(&Yo
         assert!(
             Instant::now() < deadline,
             "{what} を待ったが来ない: {:?} {}",
-            h.state().state.link.status,
-            h.state().state.message
+            h.link().status,
+            h.message()
         );
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -41,9 +42,9 @@ fn accept(h: &mut Harness<'_, YoluApp>, ex: &Exchange) {
         .link_mut()
         .set_folder(ex.root.clone())
         .unwrap();
-    h.state_mut().state.prefs.settings.livelink_on_startup = true;
+    h.prefs_mut().settings.livelink_on_startup = true;
     step_until(h, "受付", |a| {
-        a.state.link.status == LinkStatus::Accepting
+        a.state.link().status == LinkStatus::Accepting
     });
 }
 
@@ -65,12 +66,12 @@ fn open_arm(h: &mut Harness<'_, YoluApp>, ex: &Exchange, id: &str, key: &str) {
 }
 
 fn popup_kind(h: &Harness<'_, YoluApp>) -> Option<PopupKind> {
-    h.state().state.popup.as_ref().map(|p| p.kind)
+    h.popup().as_ref().map(|p| p.kind)
 }
 
 /// 入口の印の矩形（ボタンで、名前はツールチップの文。ウィンドウの見出し「Live Link: 状態」と同じ文になることがあるので、役でも絞る）。
 fn icon_rect(h: &Harness<'_, YoluApp>) -> Rect {
-    let tip = h.state().state.link.tooltip(h.state().state.lang);
+    let tip = h.link().tooltip(h.lang());
     h.get_by_role_and_label(egui::accesskit::Role::Button, &tip)
         .rect()
 }
@@ -95,28 +96,12 @@ fn pixels_near(h: &mut Harness<'_, YoluApp>, rect: Rect, color: Color32) -> usiz
 
 /// 開いているウィンドウ（ポップアップ）と入口の印のあたりを撮る。
 fn shot_popup(h: &mut Harness<'_, YoluApp>, name: &str) {
-    let body = h
-        .state()
-        .state
-        .popup
-        .as_ref()
-        .expect("ウィンドウ")
-        .state
-        .rect;
+    let body = h.popup().as_ref().expect("ウィンドウ").state.rect;
     let icon = icon_rect(h);
-    let area = body.union(icon).expand(6.0);
+    let area = body.union(icon);
     h.event(egui::Event::PointerGone);
     h.step();
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        area.left().max(0.0) as u32,
-        area.top().max(0.0) as u32,
-        area.width() as u32,
-        area.height() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+    common::shot::region(h, name, area);
 }
 
 const KEY: &str = "GlobalObjectId_V1-2-0123-4567-0";
@@ -125,7 +110,7 @@ const KEY: &str = "GlobalObjectId_V1-2-0123-4567-0";
 fn the_mark_changes_color_with_the_state_and_sits_left_of_the_project_name() {
     let mut h = app(1280.0, 800.0, 256);
     // ウィンドウを作っただけでは受け付けない（利用者のフォルダに触らない）。受けないは灰
-    assert_eq!(h.state().state.link.indicator(), LinkIndicator::Off);
+    assert_eq!(h.link().indicator(), LinkIndicator::Off);
     let rect = icon_rect(&h);
     assert!(
         rect.top() < t::MENU_BAR_HEIGHT && rect.right() < 1280.0 - 60.0,
@@ -136,41 +121,36 @@ fn the_mark_changes_color_with_the_state_and_sits_left_of_the_project_name() {
     let ex = Exchange::new("mark");
     accept(&mut h, &ex);
     h.run();
-    assert_eq!(h.state().state.link.indicator(), LinkIndicator::Waiting);
+    assert_eq!(h.link().indicator(), LinkIndicator::Waiting);
     let rect = icon_rect(&h);
     assert!(pixels_near(&mut h, rect, t::ACCENT_DIM) > 8);
     // 相手の文書は緑（Unity が送れなかった物があれば警告の色）
     open_arm(&mut h, &ex, "r1", KEY);
     h.run();
-    assert_eq!(h.state().state.link.indicator(), LinkIndicator::Problems);
+    assert_eq!(h.link().indicator(), LinkIndicator::Problems);
     let rect = icon_rect(&h);
     assert!(pixels_near(&mut h, rect, t::WARNING) > 8);
     assert!(h
-        .state()
-        .state
-        .link
+        .link()
         .tooltip(Lang::Ja)
         .contains("Accessory: FBX のメッシュではありません"));
     assert_eq!(shell::link_indicator_color(LinkIndicator::Linked), t::OK);
     assert_eq!(shell::link_indicator_color(LinkIndicator::Failed), t::ERROR);
     // 状態の帯には Live Link の文字を出さない（直前の操作の結果の message だけ）
-    assert_eq!(
-        shell::status_text(&h.state().state),
-        h.state().state.message
-    );
+    assert_eq!(shell::status_text(h.app()), h.message());
 }
 
 #[test]
 fn pressing_the_mark_opens_a_small_window_that_accepts_and_stops() {
     for lang in Lang::ALL {
         let mut h = app(1280.0, 800.0, 256);
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         let ex = Exchange::new("window");
         h.state_mut()
             .link_mut()
             .set_folder(ex.root.clone())
             .unwrap();
-        h.state_mut().state.prefs.settings.livelink_on_startup = false;
+        h.prefs_mut().settings.livelink_on_startup = false;
         h.run();
         let at = icon_rect(&h).center();
         click(&mut h, at);
@@ -181,9 +161,9 @@ fn pressing_the_mark_opens_a_small_window_that_accepts_and_stops() {
         let at = popup_item(&h, lang.pick("受け付ける", "Accept")).center();
         click(&mut h, at);
         step_until(&mut h, "受付", |a| {
-            a.state.link.status == LinkStatus::Accepting
+            a.state.link().status == LinkStatus::Accepting
         });
-        assert!(h.state().state.prefs.settings.livelink_on_startup);
+        assert!(h.prefs().settings.livelink_on_startup);
         assert_eq!(popup_kind(&h), None);
         assert!(ex.root.join("presence.json").is_file());
         // もう一度押すとウィンドウが開き、押した印をもう一度押すと閉じる
@@ -198,7 +178,7 @@ fn pressing_the_mark_opens_a_small_window_that_accepts_and_stops() {
         click(&mut h, at);
         let at = popup_item(&h, lang.pick("受け付けない", "Don't accept")).center();
         click(&mut h, at);
-        assert_eq!(h.state().state.link.status, LinkStatus::Off, "{lang:?}");
+        assert_eq!(h.link().status, LinkStatus::Off, "{lang:?}");
         assert!(!ex.root.join("presence.json").exists());
         // Esc でも閉じる
         let at = icon_rect(&h).center();
@@ -213,7 +193,7 @@ fn pressing_the_mark_opens_a_small_window_that_accepts_and_stops() {
 fn the_window_names_the_target_and_the_3d_view_comes_forward_once() {
     for lang in Lang::ALL {
         let mut h = app(1280.0, 800.0, 256);
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         let ex = Exchange::new("target");
         accept(&mut h, &ex);
         h.run();
@@ -256,7 +236,7 @@ fn the_window_names_the_target_and_the_3d_view_comes_forward_once() {
 }
 
 /// プロジェクトの名前が長くても、印は見えている名前の左に付き、メニューの見出しに重ならない。名前は後ろを詰め、全体はツールチップに出す。
-/// ウィンドウの最小の幅（960）と、それより狭いウィンドウの両方で、日本語（幅広の書体）の長い名前と、保存していない印（•）つきを確かめる。
+/// ウィンドウの最小の幅（960）と、それより狭いウィンドウの両方で、日本語（幅広のフォント）の長い名前と、保存していない印（•）つきを確かめる。
 #[test]
 fn a_long_project_name_is_cut_short_and_the_mark_stays_clear_of_the_menu_titles() {
     let long = "とても長いプロジェクトの名前をつけたときの見え方を確かめるための名前その二十三十四十五十六十七十八十九百";
@@ -264,9 +244,9 @@ fn a_long_project_name_is_cut_short_and_the_mark_stays_clear_of_the_menu_titles(
         let last_title = *shell::menu_titles(lang).last().unwrap();
         for width in [960.0, 700.0] {
             let mut h = app(width, 800.0, 256);
-            h.state_mut().state.lang = lang;
-            h.state_mut().state.project_name = long.to_owned();
-            h.state_mut().state.modified = true;
+            h.set_lang(lang);
+            *h.project_name_mut() = long.to_owned();
+            h.set_modified(true);
             h.run();
             let icon = icon_rect(&h);
             let menu_end = menu_title(&h, last_title).right();
@@ -307,7 +287,7 @@ fn a_long_project_name_is_cut_short_and_the_mark_stays_clear_of_the_menu_titles(
 #[test]
 fn a_short_project_name_is_shown_whole_without_a_tooltip() {
     let mut h = app(960.0, 800.0, 256);
-    h.state_mut().state.project_name = "短い名前".to_owned();
+    *h.project_name_mut() = "短い名前".to_owned();
     h.run();
     hover_and_wait(&mut h, egui::pos2(960.0 - 20.0, t::MENU_BAR_HEIGHT / 2.0));
     assert!(h.query_by_label("短い名前").is_none());

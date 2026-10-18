@@ -1867,6 +1867,19 @@
         }
       ]
     },
+    "lhash@1.1.0": {
+      "declared": "BSL-1.0",
+      "selected": [
+        "BSL-1.0"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/DoumanAsh/lhash/403834764cadd9c47928c5e70219fec1e1b10857/LICENSE",
+          "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566"
+        }
+      ]
+    },
     "libc@0.2.190": {
       "declared": "MIT OR Apache-2.0",
       "selected": [
@@ -2002,6 +2015,28 @@
         }
       ]
     },
+    "mach-dxcompiler-rs@0.1.6+2026.09.16-48d5a66.1": {
+      "declared": "MIT",
+      "selected": [
+        "MIT",
+        "NCSA"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "af4eb183430de6f39fd3e5dbd957b71e1c956b564b7c19a01305c580d2356cb8"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/hexops/DirectXShaderCompiler/4190bb0c90d374c6b4d0b0f2c7b45b604eda24b6/LICENSE.TXT",
+          "sha256": "27a49e35d1da96eba18fba54bc882667ff0ff8c0254f16f2b6e165d605ba7df8"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/hexops/DirectXShaderCompiler/4190bb0c90d374c6b4d0b0f2c7b45b604eda24b6/ThirdPartyNotices.txt",
+          "sha256": "19512a5d0a015ef16d167272c164da49a604614a786206212a80ad486ed0be6d"
+        }
+      ]
+    },
     "memchr@2.8.3": {
       "declared": "Unlicense OR MIT",
       "selected": [
@@ -2103,6 +2138,19 @@
         {
           "path": "LICENSE.MIT",
           "sha256": "dc0d97139e8205818c703741c7be7cb3b96888bd5917b8d6fc6133731e403c21"
+        }
+      ]
+    },
+    "nix@0.31.3": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "66e3ee1fa7f909ad3c612d556f2a0cdabcd809ad6e66f3b0605015ac64841b70"
         }
       ]
     },
@@ -3379,6 +3427,19 @@
         }
       ]
     },
+    "typed-path@0.12.3": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
     "typenum@1.20.1": {
       "declared": "MIT OR Apache-2.0",
       "selected": [
@@ -4316,7 +4377,7 @@
         }
       ]
     },
-    "zip@2.4.2": {
+    "zip@9.0.4": {
       "declared": "MIT",
       "selected": [
         "MIT"
@@ -4325,7 +4386,20 @@
       "files": [
         {
           "path": "LICENSE",
-          "sha256": "04dc52136d82400b11df5f474949863a70a5d05d2278dec45b99c479494450a6"
+          "sha256": "58545fed1565e42d687aecec6897d35c6d37ccb71479a137c0deb2203e125c79"
+        }
+      ]
+    },
+    "zlib-rs@0.6.8": {
+      "declared": "Zlib",
+      "selected": [
+        "Zlib"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "e72111c52b7d96ebe25348dee19f0744f444d3c95ae6b1ecb6ccaecc5bce05ba"
         }
       ]
     },
@@ -5338,6 +5412,110 @@
           "sha256": "dc0d97139e8205818c703741c7be7cb3b96888bd5917b8d6fc6133731e403c21"
         }
       ]
+    },
+    "fluent-bundle@0.16.0": {
+      "declared": "Apache-2.0 OR MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "49c0b000c03731d9e3970dc059ad4ca345d773681f4a612b0024435b663e0220"
+        }
+      ]
+    },
+    "fluent-langneg@0.13.1": {
+      "declared": "Apache-2.0 OR MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/projectfluent/fluent-langneg-rs/7fdc590466ea63ca2367ac10fb1b881fe561f1a8/LICENSE-MIT",
+          "sha256": "016fcc02048817d628b04b140c54db290fd9d29a5e8a55b77871194e810716ac"
+        }
+      ]
+    },
+    "fluent-syntax@0.12.0": {
+      "declared": "Apache-2.0 OR MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "49c0b000c03731d9e3970dc059ad4ca345d773681f4a612b0024435b663e0220"
+        }
+      ]
+    },
+    "intl-memoizer@0.5.3": {
+      "declared": "Apache-2.0 OR MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "49c0b000c03731d9e3970dc059ad4ca345d773681f4a612b0024435b663e0220"
+        }
+      ]
+    },
+    "intl_pluralrules@7.0.2": {
+      "declared": "Apache-2.0/MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/zbraniecki/pluralrules/d0715d5b7cca72e228d6e6c4de154bd30dfdd06a/intl_pluralrules/LICENSE-MIT",
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
+    "tinystr@0.8.4": {
+      "declared": "Unicode-3.0",
+      "selected": [
+        "Unicode-3.0"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "f367c1b8e1aa262435251e442901da4607b4650e0e63a026f5044473ecfb90f2"
+        }
+      ]
+    },
+    "unic-langid@0.9.6": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
+    "unic-langid-impl@0.9.6": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
     }
   },
   "bundled": {
@@ -5439,6 +5617,10 @@
             "sha256": "1f90affdef876f917b4514e7aae2f3ddfe5621fbf4a8695f6f7a3d065e77e7b5"
           },
           {
+            "path": "crates/yolu-app/assets/icons/clip_below.png",
+            "sha256": "7b80c92500238c5eda8b415860dc62899b60c780a6a49bfd53f014ad9274b2e1"
+          },
+          {
             "path": "crates/yolu-app/assets/icons/close.png",
             "sha256": "de0e51781b3e8eada35ad79bcbae58e1d626a00ec202b7c152320bf010bddc2f"
           },
@@ -5513,6 +5695,10 @@
           {
             "path": "crates/yolu-app/assets/icons/format_color_fill.png",
             "sha256": "701b463e26416de775d3d2c4be2d8bec960ad7366ccd3de78366e187a03e8212"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/generator.png",
+            "sha256": "b6a217336d17eecd8d3913402fbcbb9a84203a7f7dc093c51b86b036ea0d8723"
           },
           {
             "path": "crates/yolu-app/assets/icons/grid_dots.png",
@@ -5851,6 +6037,10 @@
             "sha256": "18c12d0493735b3997edb04bbc6db9519df9e512bca3387778c24bfd15b301c8"
           },
           {
+            "path": "crates/yolu-app/assets/icons/warning_circle.png",
+            "sha256": "6c70ce6181f8e989838331f5284ea44376bb2fef490dd9cb293065ac5618dfd8"
+          },
+          {
             "path": "crates/yolu-app/assets/icons/window_maximize.png",
             "sha256": "f44bc1a5d4b6abf4fc77d1e2bf044947f6bce07ec52a165825b49b14722cb173"
           },
@@ -5868,7 +6058,7 @@
         ],
         "license_file": {
           "path": "crates/yolu-app/assets/icons/THIRD-PARTY-NOTICES.md",
-          "sha256": "67ac446a0824fe992fc06695d6dd7c2f7c553184cf9ff1dd8bad74a78ceddf61"
+          "sha256": "1069e6fc1332e520f65ed64dcac7d5f68d99b1e373e5f471587cb82f305e8afc"
         }
       },
       {
@@ -6216,12 +6406,12 @@
         "files": [
           {
             "path": "crates/yolu-app/src/view3d/shaders/THIRD-PARTY-NOTICES.md",
-            "sha256": "c7f7e12a10dbadf0fdde76b86b12b6ec3351fd69916ff58604014cb671223d48"
+            "sha256": "5d289c57f0ffda16e8aa5b1eec476d2903bc783d173e12b31944f7177b1cb4ab"
           }
         ],
         "license_file": {
           "path": "crates/yolu-app/src/view3d/shaders/THIRD-PARTY-NOTICES.md",
-          "sha256": "c7f7e12a10dbadf0fdde76b86b12b6ec3351fd69916ff58604014cb671223d48"
+          "sha256": "5d289c57f0ffda16e8aa5b1eec476d2903bc783d173e12b31944f7177b1cb4ab"
         }
       }
     ]

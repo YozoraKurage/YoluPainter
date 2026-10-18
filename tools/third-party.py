@@ -23,6 +23,8 @@ COMPONENTS = {'universal-apple-darwin': ('aarch64-apple-darwin', 'x86_64-apple-d
 ALLOWED = {'MIT', 'Apache-2.0', '0BSD', 'BSD-2-Clause', 'BSD-3-Clause', 'Zlib',
            'ISC', 'Unicode-DFS-2016', 'Unicode-3.0', 'OFL-1.1', 'Ubuntu-font-1.0',
            'BSL-1.0', 'Bitstream-Vera',
+           # D3D12 のシェーダーのコンパイラー DXC（mach-dxcompiler-rs が静的にリンクする。LLVM 由来の University of Illinois/NCSA）。全文を同梱する
+           'NCSA',
            # Linux の wayland-protocols-plasma・misc の protocol XML（生成された結びつきが入る）。本文と元の入手先を同梱する
            'LGPL-2.1-or-later'}
 
@@ -192,7 +194,7 @@ def review_packages(keys, normal, metadata, config, offline):
     for item in metadata['packages']:
         key = item['name'] + '@' + item['version']
         if key in keys and key in packages:
-            raise ValueError('同じ名前・版で取得元が異なる依存は要確認: ' + key)
+            raise ValueError('同じ名前・バージョンで取得元が異なる依存は要確認: ' + key)
         packages[key] = item
     records, texts, errors = [], [], []
     for key in sorted(keys):
@@ -206,7 +208,7 @@ def review_packages(keys, normal, metadata, config, offline):
         if not p['source'] or not p['source'].startswith('registry+'):
             record['issues'].append('未確認の取得元（path/git 依存）')
         if not review or review['declared'] != p['license']:
-            record['issues'].append('版または宣言した許諾が未確認')
+            record['issues'].append('バージョンまたは宣言した許諾が未確認')
         else:
             record['selected'] = review['selected']
             record['issues'].extend(review['blocked'])
@@ -230,13 +232,13 @@ def review_packages(keys, normal, metadata, config, offline):
 
 
 def audit_lock(metadata, config, offline):
-    """lock 全件を、対象の通常・ビルド依存、試験依存、対象外に分類する。"""
+    """lock 全件を、対象の通常・ビルド依存、テスト依存、対象外に分類する。"""
     targets = config['targets']
     runtime, development = set(), set()
     membership = {}
     for target in targets:
         membership[target] = {}
-        for role, edges in [('通常・ビルド', 'normal,build'), ('試験込み', 'normal,build,dev')]:
+        for role, edges in [('通常・ビルド', 'normal,build'), ('テスト込み', 'normal,build,dev')]:
             output = cargo('tree', '--locked', *(['--offline'] if offline else []),
                            '--workspace', '--target', target, '-e', edges,
                            '--prefix', 'none', '--format', '{p}')
@@ -258,14 +260,14 @@ def audit_lock(metadata, config, offline):
             continue
         key = p['name'] + '@' + p['version']
         if key in all_keys:
-            raise ValueError('同じ名前・版で取得元が異なる依存は要確認: ' + key)
+            raise ValueError('同じ名前・バージョンで取得元が異なる依存は要確認: ' + key)
         all_keys.add(key)
         if key not in reviewed:
             reviewed[key] = {'crate': p['name'], 'version': p['version'], 'declared': p['license'],
                              'selected': [], 'issues': [], 'role': '対象外（未承認）'}
         r = reviewed[key]
-        r['scope'] = '通常・ビルド' if key in runtime else '試験のみ' if key in development else '対象外'
-        r['targets'] = [t for t in targets if key in membership[t]['試験込み']]
+        r['scope'] = '通常・ビルド' if key in runtime else 'テストのみ' if key in development else '対象外'
+        r['targets'] = [t for t in targets if key in membership[t]['テスト込み']]
     # metadata の対象外が黙って欠落したときも、lock 全件を確認した扱いにしない。
     lock_keys = set()
     for block in (ROOT / 'Cargo.lock').read_text(encoding='utf-8').split('[[package]]')[1:]:
@@ -304,13 +306,13 @@ def merged_metadata(offline):
 def markdown(package, records, errors, lock_hash, built_with=None):
     counts = Counter(' AND '.join(r['selected']) or '未確認' for r in records)
     lines = [f'## {package} の依存一覧', '', f'対象: `{TARGET}`、通常の機能。Cargo.lock SHA-256: `{lock_hash}`。', '',
-             f'外部クレート {len(records)} 件（同名の別版は別件）。実行時 {sum(r["role"] == "実行時" for r in records)} 件。', '',
-             'ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。', '',
+             f'外部クレート {len(records)} 件（同名の別バージョンは別件）。実行時 {sum(r["role"] == "実行時" for r in records)} 件。', '',
+             'ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。テスト用の依存は除く。', '',
              *([f'`{built_with}` と同じ cargo のビルド（`-p {built_with} -p {package}`）で機能が合わさった、`{package}` の部分木。', ''] if built_with else []),
              '| 選択した許諾（追加条件を含む） | 件数 |', '|---|---:|']
     lines += [f'| {license_id} | {count} |' for license_id, count in sorted(counts.items())]
     lines += ['', '状態: ' + ('要確認。配布用全文束は生成しない。' if errors else 'クレートの許諾照合は成功。'), '',
-              '| クレート | 版 | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |', '|---|---|---|---|---|---|']
+              '| クレート | バージョン | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |', '|---|---|---|---|---|---|']
     for r in records:
         lines.append(f'| {r["crate"]} | {r["version"]} | {r["role"]} | {r["declared"]} | {" AND ".join(r["selected"])} | {" / ".join(r["issues"]) or "確認済み"} |')
     return '\n'.join(lines) + '\n'
@@ -329,7 +331,7 @@ def main():
     use_utf8_output()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--package', choices=['yolu-app', 'yolu-update', 'yolu-cli', 'xtask', 'all'], default='all')
-    parser.add_argument('--audit-lock', action='store_true', help='登録した全ターゲット（Windows・Linux・macOS）の試験依存も照合し、lock 全件の分類を lock-inventory.json に記録する（配布用全文束は作らない）')
+    parser.add_argument('--audit-lock', action='store_true', help='登録した全ターゲット（Windows・Linux・macOS）のテスト依存も照合し、lock 全件の分類を lock-inventory.json に記録する（配布用全文束は作らない）')
     parser.add_argument('--bundle', action='store_true', help='照合成功時だけ配布用 THIRD_PARTY_LICENSES.txt を作る')
     parser.add_argument('--offline', action='store_true', help='取得済みの原文だけを使う')
     parser.add_argument('--target', choices=['x86_64-pc-windows-gnu', 'x86_64-pc-windows-msvc', 'x86_64-unknown-linux-gnu',
@@ -351,7 +353,7 @@ def main():
             parser.error('--audit-lock は --offline 以外と併用できません')
         config = json.loads(CONFIG.read_text(encoding='utf-8'))
         if config['schema'] != 1:
-            raise ValueError('設定の版が違います')
+            raise ValueError('設定のバージョンが違います')
         metadata = json.loads(cargo('metadata', '--locked', '--format-version', '1',
                                    *(['--offline'] if args.offline else [])))
         return audit_lock(metadata, config, args.offline)
@@ -361,7 +363,7 @@ def main():
     config = json.loads(CONFIG.read_text(encoding='utf-8'))
     registered = config.get('targets', [config.get('target')])
     if config['schema'] != 1 or any(triple not in registered for triple in triples(TARGET)):
-        raise ValueError('設定の版または対象が違います')
+        raise ValueError('設定のバージョンまたは対象が違います')
     metadata = merged_metadata(args.offline)
     lock_hash = digest((ROOT / 'Cargo.lock').read_bytes())
     failures = 0

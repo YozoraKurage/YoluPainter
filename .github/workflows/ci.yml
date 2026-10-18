@@ -48,7 +48,7 @@ jobs:
             libegl1 libgl1-mesa-dri libglx-mesa0 libvulkan1 mesa-vulkan-drivers \
             xvfb xauth nsis python3-yaml
       - name: 描画しないクレートの試験（並列）
-        run: cargo test --workspace --exclude yolu-app --exclude yolu-gpu --locked --no-fail-fast
+        run: cargo test --workspace --exclude yolu-app --exclude yolu-gpu --exclude yolu-mock --locked --no-fail-fast
       - name: 配る物のツールの試験（tools/dist.py・tools/check-workflows.py）、画面の試験を並べるツールの試験、通信の見張りのツールの試験
         if: ${{ !cancelled() }}
         run: |
@@ -104,6 +104,14 @@ jobs:
           mkdir -p "$XDG_RUNTIME_DIR"
           chmod 700 "$XDG_RUNTIME_DIR"
           xvfb-run -a python3 tools/render-tests.py --log-dir "$RUNNER_TEMP/render-logs"
+      # 開発用のモック（yolu-mock。配らないクレート）は yolu-app に依存し、GPU で撮るので、描画しないクレートの段から外してここで回す
+      # （上の段のビルドを使う。ウィンドウは開かないので xvfb は要らない）
+      - name: 開発用のモックの試験（GPU で撮る）
+        if: ${{ !cancelled() }}
+        env:
+          WGPU_BACKEND: vulkan
+          YOLUPAINTER_REQUIRE_GPU: "1"
+        run: cargo test -p yolu-mock --locked -- --test-threads=1
       - name: 画面の正解との差の画像を残す
         if: failure()
         shell: bash

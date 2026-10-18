@@ -43,21 +43,12 @@ pub enum PictureError {
 impl PictureError {
     pub fn text(&self, lang: crate::lang::Lang) -> String {
         match self {
-            PictureError::Io(e) => lang.pick(
-                format!("ファイルを読めません（{e}）"),
-                format!("Cannot read the file ({e})"),
-            ),
-            PictureError::Format => lang.pick("読めない形式です", "Unsupported format").into(),
-            PictureError::Decode(e) => lang.pick(
-                format!("絵として読めません（{e}）"),
-                format!("Cannot decode the picture ({e})"),
-            ),
-            PictureError::TooLarge(w, h) => lang.pick(
-                format!("大きすぎます（{w}×{h}）"),
-                format!("Too large ({w}×{h})"),
-            ),
+            PictureError::Io(e) => lang.f("livelink-cannot-read-the-file", &[("e", &e)]),
+            PictureError::Format => lang.t("livelink-unsupported-format").into(),
+            PictureError::Decode(e) => lang.f("livelink-cannot-decode-the-picture", &[("e", &e)]),
+            PictureError::TooLarge(w, h) => lang.f("livelink-too-large", &[("w", &w), ("h", &h)]),
             PictureError::Psd(why) => crate::lang::psd_copy_refusal(lang, why),
-            PictureError::Cancelled => lang.pick("取り消しました", "Cancelled").into(),
+            PictureError::Cancelled => lang.t("livelink-cancelled").into(),
         }
     }
 }

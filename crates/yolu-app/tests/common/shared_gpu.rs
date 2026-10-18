@@ -21,7 +21,7 @@ pub fn renderer_with(options: RendererOptions) -> WgpuTestRenderer {
     static CONNECTION: OnceLock<RenderState> = OnceLock::new();
     let connection = CONNECTION.get_or_init(|| {
         egui_kittest::wgpu::create_render_state(
-            egui_kittest::wgpu::default_wgpu_setup(),
+            crate::common::default_wgpu_setup(),
             crate::common::render_options(),
         )
     });
@@ -40,7 +40,7 @@ pub fn renderer_with(options: RendererOptions) -> WgpuTestRenderer {
 pub fn renderer_with_adapter_limits() -> WgpuTestRenderer {
     static CONNECTION: OnceLock<RenderState> = OnceLock::new();
     let connection = CONNECTION.get_or_init(|| {
-        let mut setup = egui_kittest::wgpu::default_wgpu_setup();
+        let mut setup = crate::common::default_wgpu_setup();
         if let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut setup {
             let base = create.device_descriptor.clone();
             create.device_descriptor = Arc::new(move |adapter| {

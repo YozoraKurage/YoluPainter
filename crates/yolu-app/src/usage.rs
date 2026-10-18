@@ -56,10 +56,7 @@ fn is_beta_label(text: &str) -> bool {
 /// 「について」の知らせ。試験版には、版のあとに試験版の印を付ける（正式版は製品名と版だけ）。
 pub fn about_text(lang: Lang, version: &str) -> String {
     if is_beta_label(version) {
-        format!(
-            "YoluPainter {version}{}",
-            lang.pick("（試験版）", " (beta)")
-        )
+        format!("YoluPainter {version}{}", lang.t("usage-beta"))
     } else {
         format!("YoluPainter {version}")
     }
@@ -130,22 +127,22 @@ impl AppState {
     /// 時刻 `now`（egui の時刻）に、測る頃なら使っているメモリを測り直す。`gpu` は wgpu の確保済みの量（分からなければ None）を
     /// 返す関数（測る頃にだけ呼ぶ）。測ったら true。
     pub fn refresh_usage(&mut self, now: f64, gpu: impl FnOnce() -> Option<u64>) -> bool {
-        if !self.usage.due(now) {
+        if !self.services.usage.due(now) {
             return false;
         }
         let (mut layers, mut history) = (0u64, 0u64);
-        let current = self.sets.current_index();
-        for i in 0..self.sets.len() {
+        let current = self.session.sets.current_index();
+        for i in 0..self.session.sets.len() {
             let doc = if i == current {
-                &self.doc
+                &self.session.doc
             } else {
                 self.set_doc(i)
             };
             layers = layers.saturating_add(doc.allocated_bytes());
             history = history.saturating_add(doc.history_bytes());
         }
-        self.usage = Usage {
-            build: self.usage.build.clone(),
+        self.services.usage = Usage {
+            build: self.services.usage.build.clone(),
             process: process_bytes(),
             gpu: gpu(),
             layers,
@@ -173,18 +170,15 @@ impl Usage {
             items.push(Item {
                 key: "build",
                 text: build.clone(),
-                tip: lang.pick("版とビルド", "Version and build").to_owned(),
+                tip: lang.t("usage-version-and-build-tip").to_owned(),
             });
             // 試験版には、版の左に印（「試験版」「Beta」）。正式版は何も足さない。
             if is_beta_label(build) {
                 items.push(Item {
                     key: "beta",
-                    text: lang.pick("試験版", "Beta").to_owned(),
+                    text: lang.t("usage-beta-2").to_owned(),
                     tip: lang
-                        .pick(
-                            "試験版（正式版より前の版）",
-                            "Beta version (before the stable release)",
-                        )
+                        .t("usage-beta-version-before-the-stable-tip")
                         .to_owned(),
                 });
             }
@@ -216,18 +210,18 @@ pub fn tooltip(usage: &Usage, lang: Lang) -> String {
     if let Some(bytes) = usage.process {
         lines.push(format!(
             "{}: {}",
-            lang.pick("アプリ全体（実メモリ）", "App (resident)"),
+            lang.t("usage-app-resident-tip"),
             format_size(bytes)
         ));
     }
     lines.push(format!(
         "{}: {}",
-        lang.pick("レイヤーのメモリ", "Layer memory"),
+        lang.t("usage-layer-memory-tip"),
         format_size(usage.layers)
     ));
     lines.push(format!(
         "{}: {}",
-        lang.pick("取り消しの履歴", "Undo history"),
+        lang.t("usage-undo-history-tip"),
         format_size(usage.history)
     ));
     if let Some(bytes) = usage.gpu {
@@ -270,7 +264,7 @@ mod tests {
             ..Usage::default()
         };
         for lang in Lang::ALL {
-            let mark = lang.pick("試験版", "Beta");
+            let mark = lang.pick("ベータ版", "Beta");
             // 試験版: 版とビルドの左に印が付く（右端が版とビルド）
             let items = usage("0.4.0-rc.1 · a1b2c3d").items(lang);
             let keys: Vec<_> = items.iter().map(|i| (i.key, i.text.as_str())).collect();
@@ -295,7 +289,7 @@ mod tests {
         }
         assert_eq!(
             about_text(Lang::Ja, "0.4.0-rc.1"),
-            "YoluPainter 0.4.0-rc.1（試験版）"
+            "YoluPainter 0.4.0-rc.1（ベータ版）"
         );
         assert_eq!(
             about_text(Lang::En, "0.4.0-rc.1"),

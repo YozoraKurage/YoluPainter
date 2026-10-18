@@ -1,4 +1,5 @@
-//! モード（ペイント・編集・ポーズ）。描くのはペイントだけで、編集とポーズは置いた物（ポーズはボーン）を選んで動かす。
+//! モード（ペイント・編集・ポーズ・ハイド）。描くのはペイントだけで、編集とポーズは置いた物（ポーズはボーン）を選んで動かし、ハイドは
+//! 3D ビューごとに面を隠す（`view3d::hide`）。
 //!
 //! - 状態は `AppState::mode` の 1 つ。替えるのは `AppState::set_mode` だけ（描いている間は断る。ギズモ・点のドラッグの途中なら、そこまでを
 //!   確定してから替える。ポーズはボーンのあるモデルが要る）。
@@ -27,16 +28,19 @@ pub enum EditorMode {
     Edit,
     /// ボーンを選んで動かす。描かない。
     Pose,
+    /// 3D ビューごとに面を隠す（UV アイランド・ボーン・プリセット）。描かない。
+    Hide,
 }
 
 impl EditorMode {
-    pub const ALL: [EditorMode; 3] = [Self::Paint, Self::Edit, Self::Pose];
+    pub const ALL: [EditorMode; 4] = [Self::Paint, Self::Edit, Self::Pose, Self::Hide];
 
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            Self::Paint => lang.pick("ペイント", "Paint"),
-            Self::Edit => lang.pick("編集", "Edit"),
-            Self::Pose => lang.pick("ポーズ", "Pose"),
+            Self::Paint => lang.t("mode-paint"),
+            Self::Edit => lang.t("mode-edit"),
+            Self::Pose => lang.t("mode-pose"),
+            Self::Hide => lang.t("mode-hide"),
         }
     }
 
@@ -46,6 +50,7 @@ impl EditorMode {
             Self::Paint => "paint_brush",
             Self::Edit => "arrow_move",
             Self::Pose => "accessibility",
+            Self::Hide => "visibility_off",
         }
     }
 
@@ -55,6 +60,7 @@ impl EditorMode {
             Self::Paint => "mode.paint",
             Self::Edit => "mode.edit",
             Self::Pose => "mode.pose",
+            Self::Hide => "mode.hide",
         }
     }
 
@@ -79,10 +85,10 @@ impl EditTool {
 
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            Self::Select => lang.pick("選択", "Select"),
-            Self::Move => lang.pick("移動", "Move"),
-            Self::Rotate => lang.pick("回転", "Rotate"),
-            Self::Scale => lang.pick("拡縮", "Scale"),
+            Self::Select => lang.t("mode-select"),
+            Self::Move => lang.t("mode-move"),
+            Self::Rotate => lang.t("mode-rotate"),
+            Self::Scale => lang.t("mode-scale"),
         }
     }
 
@@ -138,12 +144,17 @@ pub enum ModeAction {
 
 /// ポーズにできない理由（ボーンのあるモデルが無い）。
 pub fn no_rig(lang: Lang) -> &'static str {
-    lang.pick("ボーンのあるモデルがありません", "No model with bones")
+    lang.t("mode-no-model-with-bones")
+}
+
+/// ハイドにできない理由（モデルが無い）。
+pub fn no_model(lang: Lang) -> &'static str {
+    lang.t("region-no-model")
 }
 
 /// ブラシ・色の欄を編集・ポーズのモードで押せない理由。
 pub fn paint_only(lang: Lang) -> &'static str {
-    lang.pick("ペイントのモードで使います", "Used in Paint mode")
+    lang.t("mode-used-in-paint-mode")
 }
 
 impl AppState {
@@ -165,11 +176,18 @@ impl AppState {
         }
         if mode == EditorMode::Pose && self.view3d.pose.session.is_none() {
             let text = self.lang.with_reason(
-                self.lang
-                    .pick("ポーズのモードにできません", "Cannot enter Pose mode"),
+                self.lang.t("mode-cannot-enter-pose-mode"),
                 no_rig(self.lang),
             );
             self.refuse(Source::Pose, text);
+            return false;
+        }
+        if mode == EditorMode::Hide && self.view3d.full_model().is_none() {
+            let text = self.lang.with_reason(
+                self.lang.t("hide-cannot-enter-hide-mode"),
+                no_model(self.lang),
+            );
+            self.refuse(Source::View3d, text);
             return false;
         }
         // キーを押している間だけのツールは、離したものとして、押す前のツールへ戻してから替える（ペイントへ戻ったとき、一時のツールのまま残さない）
@@ -182,12 +200,10 @@ impl AppState {
         crate::fillfx::gizmo::release(self, true);
         crate::fillfx::points::release(self, true);
         if self.mode == EditorMode::Paint {
-            self.sel_tool_changed();
-            self.transform_cancel_drag();
-            self.gradient_cancel_drag();
-            self.drafting_cancel();
-            self.text_commit();
-            self.text.press = None;
+            crate::features::paint_left(self);
+        }
+        if self.mode == EditorMode::Hide {
+            crate::view3d::hide::leave(self);
         }
         self.mode = mode;
         true
@@ -209,14 +225,19 @@ impl AppState {
     }
 }
 
-/// ポーズのセッションが無くなったら（ほかのモデルに替わった）、ポーズのモードを出る（フレームの初め）。
+/// ポーズのセッションが無くなったら（ほかのモデルに替わった）、ポーズのモードを出る。モデルが無くなったら、ハイドのモードを出る（フレームの初め）。
 pub fn leave_pose_without_rig(app: &mut AppState) {
     if app.mode == EditorMode::Pose && app.view3d.pose.session.is_none() {
         app.mode = EditorMode::Paint;
     }
+    if app.mode == EditorMode::Hide && app.view3d.full_model().is_none() {
+        crate::view3d::hide::leave(app);
+        app.mode = EditorMode::Paint;
+    }
 }
 
-/// モードを選ぶ項目（ドロップダウン・表示のメニュー。アイコンつきの 3 行。今のモードに印）。ポーズはボーンのあるモデルが無ければ押せず、理由を出す。
+/// モードを選ぶ項目（ドロップダウン・表示のメニュー。アイコンつきの 4 行。今のモードに印）。ポーズはボーンのあるモデルが無ければ、ハイドは
+/// モデルが無ければ押せず、理由を出す。
 pub fn entries(app: &AppState) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
@@ -229,6 +250,9 @@ pub fn entries(app: &AppState) -> Vec<Entry<Action>> {
                 EditorMode::Pose if app.view3d.pose.session.is_none() => {
                     entry.enabled(false).tooltip(no_rig(lang))
                 }
+                EditorMode::Hide if app.view3d.full_model().is_none() => {
+                    entry.enabled(false).tooltip(no_model(lang))
+                }
                 _ if !free && app.mode != mode => entry
                     .enabled(false)
                     .tooltip(crate::lang::refusals::during_stroke(lang)),
@@ -238,22 +262,22 @@ pub fn entries(app: &AppState) -> Vec<Entry<Action>> {
         .collect()
 }
 
-/// 表示のメニューの「モード」（入れ子の 3 行）。
+/// 表示のメニューの「モード」（入れ子の 4 行）。
 pub fn view_menu_entry(app: &AppState) -> Entry<Action> {
-    Entry::submenu(app.lang.pick("モード", "Mode"), entries(app))
+    Entry::submenu(app.lang.t("mode-mode"), entries(app))
 }
 
 /// オプションバーの左端のドロップダウンの幅。
 pub const DROPDOWN_WIDTH: f32 = 132.0;
 
-/// オプションバーの左端のドロップダウン（今のモードのアイコンと名前と ▼。押すとアイコンつきの 3 行が開く）。右の端の x を返す。
+/// オプションバーの左端のドロップダウン（今のモードのアイコンと名前と ▼。押すとアイコンつきの 4 行が開く）。右の端の x を返す。
 pub fn dropdown(ui: &mut Ui, app: &mut AppState, bar: Rect, x: f32) -> f32 {
     let lang = app.lang;
     let r = Rect::from_min_size(
         pos2(x, bar.top() + 5.0),
         vec2(DROPDOWN_WIDTH, bar.height() - 10.0),
     );
-    let open = matches!(app.popup.as_ref().map(|p| p.kind), Some(PopupKind::Mode));
+    let open = matches!(app.ui.popup.as_ref().map(|p| p.kind), Some(PopupKind::Mode));
     let id = ui.make_persistent_id("options.mode");
     let response = ui.interact(r, id, Sense::click());
     let live = !w::stroke_held(ui.ctx());
@@ -299,22 +323,22 @@ pub fn dropdown(ui: &mut Ui, app: &mut AppState, bar: Rect, x: f32) -> f32 {
         if open { color } else { t::TEXT_DIM },
         16.0,
     );
-    let name = format!("{}: {}", lang.pick("モード", "Mode"), mode.name(lang));
+    let name = format!("{}: {}", lang.t("mode-mode"), mode.name(lang));
     response.widget_info(|| WidgetInfo::labeled(WidgetType::ComboBox, true, &name));
     let tip = match crate::shortcuts::menu_key("mode.pie") {
-        Some(key) => lang.pick(format!("モード（{key}）"), format!("Mode ({key})")),
-        None => lang.pick("モード", "Mode").to_owned(),
+        Some(key) => lang.f("mode-mode-tip", &[("key", &key)]),
+        None => lang.t("mode-mode-2-tip").to_owned(),
     };
     let clicked = response.on_hover_text(tip).clicked();
     if clicked {
         if open {
-            app.popup = None;
+            app.ui.popup = None;
         } else {
             let anchor =
                 Rect::from_min_size(pos2(r.left(), r.bottom() + 2.0), vec2(r.width(), 0.0));
             let mut state = PopupState::new(ui.ctx(), anchor).with_min_width(r.width());
             state.selected = EditorMode::ALL.iter().position(|m| *m == mode);
-            app.popup = Some(OpenPopup {
+            app.ui.popup = Some(OpenPopup {
                 kind: PopupKind::Mode,
                 state,
             });
@@ -326,11 +350,25 @@ pub fn dropdown(ui: &mut Ui, app: &mut AppState, bar: Rect, x: f32) -> f32 {
 /// 編集・ポーズのモードのツールの帯（選択・移動・回転・拡縮）。`bottom` は使える下の端。
 pub fn edit_strip(ui: &mut Ui, app: &mut AppState, r: Rect, bottom: f32) {
     let lang = app.lang;
+    let area = Rect::from_min_max(r.min, pos2(r.right(), bottom));
+    // 右ボタンを帯で押し始めて動かしたら、ポインタの下のツールを選ぶ（帯の外・ツールの間では選ばない。戻れば選ぶ）。ポインタの下の
+    // ツールが替わった時だけ選ぶ。G/R/S の最中は選ばない（帯は変形の種類を光らせているため）
+    let strip_id = ui.make_persistent_id("mode.strip.right");
+    let right = crate::ui::right_drag::drag(ui, strip_id, area.intersect(ui.clip_rect()))
+        .filter(|_| app.objects.transform.is_none())
+        .map(|d| d.pos)
+        .filter(|p| area.contains(*p));
     let mut y = r.top() + 6.0;
     for tool in EditTool::ALL {
         let at = Rect::from_min_size(pos2(r.left() + 5.0, y), vec2(r.width() - 10.0, 32.0));
         if at.bottom() > bottom {
             break;
+        }
+        let now = right.filter(|p| at.contains(*p)).map(|_| tool);
+        if crate::ui::right_drag::entered(ui, strip_id.with(tool.key()), now).is_some()
+            && EditTool::shown(app) != tool
+        {
+            app.apply(Action::Mode(ModeAction::Tool(tool)));
         }
         if w::icon_button(
             ui,
@@ -358,18 +396,10 @@ pub fn snap_options(ui: &mut Ui, app: &mut AppState, bar: Rect, x: f32) {
     let mut x = x + 4.0;
     let key = crate::shortcuts::menu_key("object.snap_toggle");
     let tip = match key {
-        Some(k) => lang.pick(
-            format!("スナップを常にする（{k}）。Ctrl を押している間は逆"),
-            format!("Always snap ({k}). Hold Ctrl for the opposite"),
-        ),
-        None => lang
-            .pick(
-                "スナップを常にする。Ctrl を押している間は逆",
-                "Always snap. Hold Ctrl for the opposite",
-            )
-            .to_owned(),
+        Some(k) => lang.f("mode-always-snap-hold-ctrl-for-tip", &[("k", &k)]),
+        None => lang.t("mode-always-snap-hold-ctrl-for-2-tip").to_owned(),
     };
-    let label = lang.pick("スナップ", "Snap");
+    let label = lang.t("mode-snap");
     let width = 23.0 + w::text_width(ui.painter(), label, t::LABEL) + 8.0;
     let on = w::toggle(
         ui,
@@ -388,7 +418,7 @@ pub fn snap_options(ui: &mut Ui, app: &mut AppState, bar: Rect, x: f32) {
     for (id, name, value, min, max, format) in [
         (
             "options.snap.move",
-            lang.pick("移動", "Move"),
+            lang.t("mode-move"),
             &mut steps.movement,
             0.001,
             100.0,
@@ -400,7 +430,7 @@ pub fn snap_options(ui: &mut Ui, app: &mut AppState, bar: Rect, x: f32) {
         ),
         (
             "options.snap.rotate",
-            lang.pick("回転", "Rotate"),
+            lang.t("mode-rotate"),
             &mut steps.rotation,
             0.1,
             90.0,
@@ -412,7 +442,7 @@ pub fn snap_options(ui: &mut Ui, app: &mut AppState, bar: Rect, x: f32) {
         ),
         (
             "options.snap.scale",
-            lang.pick("拡縮", "Scale"),
+            lang.t("mode-scale"),
             &mut steps.scale,
             0.001,
             10.0,
@@ -467,16 +497,16 @@ mod tests {
     }
 
     fn begin_stroke(app: &mut AppState) {
-        let layer = app.selected_layer.unwrap();
+        let layer = app.session.selected_layer.unwrap();
         let settings = app.stroke_settings(false);
-        let stroke = app.doc.begin_stroke(layer, &settings).unwrap();
-        app.stroke = Some(stroke);
+        let stroke = app.session.doc.begin_stroke(layer, &settings).unwrap();
+        app.session.stroke = Some(stroke);
         app.canvas.stroke = Some(crate::state::StrokeSource::Mouse);
     }
 
     fn end_stroke(app: &mut AppState) {
-        let stroke = app.stroke.take().unwrap();
-        app.doc.cancel_stroke(stroke);
+        let stroke = app.session.stroke.take().unwrap();
+        app.session.doc.cancel_stroke(stroke);
         app.canvas.stroke = None;
     }
 
@@ -616,7 +646,7 @@ mod tests {
         for lang in Lang::ALL {
             app.lang = lang;
             let entries = entries(&app);
-            assert_eq!(entries.len(), 3);
+            assert_eq!(entries.len(), 4);
             for (entry, mode) in entries.iter().zip(EditorMode::ALL) {
                 let Entry::Item {
                     label,
@@ -636,11 +666,14 @@ mod tests {
                         on: mode == EditorMode::Paint
                     }
                 );
-                assert_eq!(*enabled, mode != EditorMode::Pose);
-                assert_eq!(
-                    tooltip.as_deref(),
-                    (mode == EditorMode::Pose).then(|| no_rig(lang))
-                );
+                // ポーズはボーンのあるモデル、ハイドはモデルが要る
+                let missing = match mode {
+                    EditorMode::Pose => Some(no_rig(lang)),
+                    EditorMode::Hide => Some(no_model(lang)),
+                    _ => None,
+                };
+                assert_eq!(*enabled, missing.is_none());
+                assert_eq!(tooltip.as_deref(), missing);
             }
         }
     }

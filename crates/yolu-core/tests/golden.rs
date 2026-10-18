@@ -1,10 +1,9 @@
 //! 正解の出力（tests/golden）とのバイト一致。台本（golden/cases.txt）を走らせ、出来事の行（ダブの数・Undo の結果・断られた命令）と
-//! 出力の画素を比べる。正解はもと Unity 版の C# の Core の出力（tools/csharp-golden/run.sh）で、合成の式が f32 のこの crate の
+//! 出力の画素を比べる。正解はもと Unity 版の C# の Core の出力を引き継いだ物（作り直すときは Rust の出力から作る）で、合成の式が f32 のこの crate の
 //! 式になってから、合成を通る出力（.rgba と sweeps の行）はこの crate で撮り直した（`YOLU_GOLDEN_UPDATE=1` で違った正解だけを
 //! 書き直す。撮り直したら差分を見て、意図した変化だけかを確かめる）。Normal のチャンネルの合成も f32 の式になってから撮り直した
 //! （normal_stack・channels・sweeps の nblend・nclip・nfade）。ブラシの画素も f32 の式になってから撮り直した（brush_*・dyn_texture・
 //! fx_blur・stencil_parallel の 1 段の差）。ダブの数・位置・Undo などの出来事の行は C# と同じ。
-//! 乱数・台本の読み方は tools/csharp-golden/Golden.cs と揃えてある（片方を変えたら両方を変える）。
 //! 一致を確かめたのは同じ libm（Linux の glibc）の上だけ。exp・sin・cos・tan・atan・pow などを通る事例（ブラシの回転・傾き、ぼかしの小さい
 //! 半径、放射状の対称など）は、別の libm（Windows など）では 1 ULP ずれ得る。
 //! 束に入れず直下の 1 本: ワーカーの閾値（`yolu_core::brush::set_parallel_dab_pixels`。プロセスで 1 つ）を最初の試験で 1 にして戻さず、並列の経路を通ったダブがあることを確かめる。束のほかの試験の経路を変え、ほかの試験が閾値を変えると外れる。
@@ -13,6 +12,7 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+use yolu_core::Reason;
 
 use std::sync::Arc;
 
@@ -146,7 +146,7 @@ type Index = HashMap<String, (String, Vec<String>)>;
 /// index.txt: 事例ごとの params の指紋と出来事の行。
 fn read_index() -> (Vec<String>, Index) {
     let text = std::fs::read_to_string(golden_dir().join("index.txt"))
-        .expect("index.txt が無い（tools/csharp-golden/run.sh で作る）");
+        .expect("index.txt が無い（Rust の出力から作る）");
     let mut order = Vec::new();
     let mut map: HashMap<String, (String, Vec<String>)> = HashMap::new();
     let mut current: Option<String> = None;
@@ -238,6 +238,7 @@ impl BrushBuild {
             depth: self.depth,
             scale: self.scale,
             mode: yolu_core::TextureMode::Multiply,
+            angle: 0.0,
         });
         self.brush.effect = match self.effect {
             None | Some("Paint") => BrushEffect::Paint,
@@ -256,7 +257,7 @@ fn dual(b: &mut BrushBuild) -> &mut DualBrush {
     b.brush.dual.as_mut().expect("dual= の前に d のキー")
 }
 
-/// M1 より後のブラシのキー（tools/csharp-golden/Golden.cs の BrushKey と同じ並び・同じ読み方）。
+/// M1 より後のブラシのキー。
 fn brush_key(c: &mut CaseRun, b: &mut BrushBuild, k: &str, v: &str) -> bool {
     let br = &mut b.brush;
     match k {
@@ -297,9 +298,9 @@ fn brush_key(c: &mut CaseRun, b: &mut BrushBuild, k: &str, v: &str) -> bool {
         "fadesize" => br.controls.fade_size = int(v) as u32,
         "fadeop" => br.controls.fade_opacity = int(v) as u32,
         "fadeflow" => br.controls.fade_flow = int(v) as u32,
-        "tiltsize" => br.controls.tilt_size = flag(v),
-        "tiltop" => br.controls.tilt_opacity = flag(v),
-        "tiltflow" => br.controls.tilt_flow = flag(v),
+        "tiltsize" => br.influences.size.tilt.on = flag(v),
+        "tiltop" => br.influences.opacity.tilt.on = flag(v),
+        "tiltflow" => br.influences.flow.tilt.on = flag(v),
         "tiltangle" => br.controls.tilt_angle = flag(v),
         "effect" => {
             b.effect = Some(match v {
@@ -538,7 +539,7 @@ fn channel_word(ch: Channel) -> String {
     }
 }
 
-/// ステンシルの画像（Golden.cs の StencilPixels と同じ）: grey:種:W:H、color:種:W:H、varied:W:H、half:W:H。
+/// ステンシルの画像: grey:種:W:H、color:種:W:H、varied:W:H、half:W:H。
 fn stencil_pixels(spec: &str) -> (Vec<u8>, usize, usize) {
     let q: Vec<&str> = spec.split(':').collect();
     let seeded = q[0] == "grey" || q[0] == "color";
@@ -783,9 +784,9 @@ fn command_on(c: &mut CaseRun, doc: &mut Document, t: &[&str]) -> Result<(), yol
                     "opacity" => s.opacity = num(c, v),
                     "flow" => s.flow = num(c, v),
                     "color" => s.color = color(v),
-                    "psize" => s.pressure_size = v == "1",
-                    "popacity" => s.pressure_opacity = v == "1",
-                    "pflow" => s.pressure_flow = v == "1",
+                    "psize" => b.brush.influences.size.pressure.on = v == "1",
+                    "popacity" => b.brush.influences.opacity.pressure.on = v == "1",
+                    "pflow" => b.brush.influences.flow.pressure.on = v == "1",
                     "erase" => s.erase = v == "1",
                     "channel" => ch = channel(v),
                     _ => {
@@ -1021,8 +1022,10 @@ fn command_on(c: &mut CaseRun, doc: &mut Document, t: &[&str]) -> Result<(), yol
                 "layer" => {
                     let ch = t.get(3).map_or(Channel::Color, |s| channel(s));
                     let layer = &doc.layers()[layer_index(doc, t[2])];
+                    // 面の無いチャンネル（ストロークで作った面を Undo で外した後など）は、全部透明の画素として書き出す
+                    let empty = || vec![0; doc.width() as usize * doc.height() as usize * 4];
                     (
-                        surface_bytes(layer.surface(ch).expect("面")),
+                        layer.surface(ch).map_or_else(empty, surface_bytes),
                         format!("layer {} {}{size}", t[2], channel_word(ch)),
                     )
                 }
@@ -1095,7 +1098,7 @@ fn command_on(c: &mut CaseRun, doc: &mut Document, t: &[&str]) -> Result<(), yol
             let sel = doc
                 .selection()
                 .cloned()
-                .ok_or(CoreError::Unsupported("選択範囲が無い"))?;
+                .ok_or(CoreError::Unsupported(Reason::NoSelection))?;
             let budget = yolu_core::selection::DEFAULT_WORKING_BUDGET_BYTES;
             let next = match t[1] {
                 "grow" => sel.grow(radius(t[2])?, budget)?,
@@ -1173,10 +1176,10 @@ fn combine_mode(s: &str) -> SelectionCombine {
 
 /// 半径（C# は int を受けて負を断る）。
 fn radius(s: &str) -> Result<u32, CoreError> {
-    u32::try_from(int(s)).map_err(|_| CoreError::InvalidArgument("radius"))
+    u32::try_from(int(s)).map_err(|_| CoreError::InvalidArgument(Reason::Radius))
 }
 
-/// 選択範囲の形（Golden.cs の Shape と同じ書き方）。
+/// 選択範囲の形。
 fn shape(c: &mut CaseRun, doc: &Document, t: &[&str]) -> Result<SelectionMask, CoreError> {
     Ok(match t[0] {
         "rect" => SelectionMask::rectangle(doc, int(t[1]), int(t[2]), int(t[3]), int(t[4])),
@@ -1199,12 +1202,12 @@ fn shape(c: &mut CaseRun, doc: &Document, t: &[&str]) -> Result<SelectionMask, C
                 Some(layer_at(doc, t[1]))
             };
             // C# は int を受けて範囲の外を断る
-            let seed_x =
-                u32::try_from(int(t[3])).map_err(|_| CoreError::InvalidArgument("seed"))?;
-            let seed_y =
-                u32::try_from(int(t[4])).map_err(|_| CoreError::InvalidArgument("seed"))?;
+            let seed_x = u32::try_from(int(t[3]))
+                .map_err(|_| CoreError::InvalidArgument(Reason::SeedOutsideCanvas))?;
+            let seed_y = u32::try_from(int(t[4]))
+                .map_err(|_| CoreError::InvalidArgument(Reason::SeedOutsideCanvas))?;
             let tolerance =
-                u8::try_from(int(t[5])).map_err(|_| CoreError::InvalidArgument("tolerance"))?;
+                u8::try_from(int(t[5])).map_err(|_| CoreError::InvalidArgument(Reason::Amount))?;
             SelectionMask::magic_wand(
                 doc,
                 layer,
@@ -1319,7 +1322,10 @@ fn cases_match_the_recorded_outputs_byte_for_byte() {
     let mut updated = 0;
     for (name, c) in &cases {
         let Some((params, events)) = index.get(name) else {
-            let _ = writeln!(failures, "{name}: index.txt に無い（run.sh で作り直す）");
+            let _ = writeln!(
+                failures,
+                "{name}: index.txt に無い（Rust の出力から作り直す）"
+            );
             continue;
         };
         if *params != c.params.hex() {
@@ -1500,7 +1506,7 @@ fn region_composite_equals_the_per_pixel_reference() {
     }
 }
 
-/// ブラシの式の掃引（Golden.cs の BrushSweeps と同じ乱数・同じ順）: System.Random の列、組み込みの筆先の画素、筆先の双線形、
+/// ブラシの式の掃引: System.Random の列、組み込みの筆先の画素、筆先の双線形、
 /// 色の変化、デュアルの合わせ方、ペンの傾き、曲線の点、HSV。
 #[test]
 fn brush_formulas_match_the_csharp_core_on_sweeps() {
@@ -1589,6 +1595,7 @@ fn brush_formulas_match_the_csharp_core_on_sweeps() {
                 brightness,
                 purity,
                 per_tip: true,
+                ..ColorDynamics::default()
             };
             let mut r = NetRandom::new((rng.next() & 0x7fffffff) as i32);
             for _ in 0..8 {

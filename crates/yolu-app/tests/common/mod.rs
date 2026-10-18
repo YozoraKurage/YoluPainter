@@ -3,11 +3,13 @@
 
 pub mod canvas_device;
 pub mod core_refused;
+pub mod drive;
 pub mod fbx;
 pub mod gpu_thread;
 pub mod livelink;
 pub mod rulers;
 pub mod shared_gpu;
+pub mod shot;
 pub mod tmp;
 pub mod viewports;
 pub mod wait;
@@ -95,6 +97,20 @@ pub fn render_options() -> eframe::egui_wgpu::RendererOptions {
         predictable_texture_filtering: false,
         ..eframe::egui_wgpu::RendererOptions::PREDICTABLE
     }
+}
+
+/// kittest の既定の装置の設定（`default_wgpu_setup()`）の D3D12 のシェーダーのコンパイラーを、製品と同じ `yolu_gpu::dx12_compiler()` にしたもの。
+/// 組み込みの DXC が作れない Windows の PC でも、製品と同じく FXC に戻って D3D12 を使える。装置の上限・機能とアダプターの選びは kittest のまま。
+pub fn default_wgpu_setup() -> eframe::egui_wgpu::WgpuSetup {
+    let mut setup = egui_kittest::wgpu::default_wgpu_setup();
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut setup {
+        create
+            .instance_descriptor
+            .backend_options
+            .dx12
+            .shader_compiler = yolu_gpu::dx12_compiler();
+    }
+    setup
 }
 
 /// 描画の状態をつなぐ（3D ビューを wgpu で描く）。キャンバスは CPU の表示に固定する（実 GPU の機材でも同じ絵・同じ頁の数に
@@ -207,6 +223,20 @@ pub fn move_to(h: &Harness<'_, YoluApp>, at: Pos2) {
     h.event(Event::PointerMoved(at));
 }
 
+/// 3D ビューで、マウスのボタンを離したのを取りこぼした状態にする（ウィンドウの外で離した）: ツールの押しの控えのボタンを、押していないボタンに替える。
+/// egui の側は押したボタン（左ボタン）を押したまま（`any_down` は true）で、ツールの押しのボタンの確かめ（`tool_down`）だけが偽になる。
+/// 実際にボタンを離した状態ではないので、`input::handle` の終わりの `nav_cancel` と `stencil::settle` の「押していない」側は通らない。
+pub fn lose_the_release_3d(h: &mut Harness<'_, YoluApp>) {
+    use drive::Drive;
+    h.view3d_mut()
+        .view
+        .input
+        .mouse_press
+        .as_mut()
+        .expect("ツールの押しの控え")
+        .button = yolu_app::state::key::PointerButton::Secondary;
+}
+
 /// ポインタを `at` に置いたまま、ツールチップが出る時間（既定 0.5 秒。1 フレーム 1/60 秒）より長く待つ。ツールチップの文字は
 /// アクセシビリティの木に出るので、`query_by_label` で読める。
 pub fn hover_and_wait(h: &mut Harness<'_, YoluApp>, at: Pos2) {
@@ -253,16 +283,10 @@ pub fn offset(p: Pos2, dx: f32, dy: f32) -> Pos2 {
 pub fn canvas_pixel(h: &Harness<'_, YoluApp>, p: Pos2) -> [u8; 4] {
     let app = h.state();
     let r = canvas_rect(h);
-    let v = app
-        .state
-        .view
-        .view(r, app.state.doc.width(), app.state.doc.height());
+    let doc = &app.state.session.doc;
+    let v = app.state.view.view(r, doc.width(), doc.height());
     let (x, y) = v.to_canvas(p);
-    yolu_app::engine::composite_pixel(
-        &app.state.doc,
-        x.floor().max(0.0) as u32,
-        y.floor().max(0.0) as u32,
-    )
+    yolu_app::engine::composite_pixel(doc, x.floor().max(0.0) as u32, y.floor().max(0.0) as u32)
 }
 
 /// 3D ビューの右上の軸の印の矩形（描いていなければ None）。絵の画素を数える試験は、この中を数えない（3D の絵の上に重ねた印）。
@@ -305,6 +329,7 @@ pub fn popup_item(h: &Harness<'_, YoluApp>, label: &str) -> Rect {
     let body = h
         .state()
         .state
+        .ui
         .popup
         .as_ref()
         .expect("popup open")
@@ -453,6 +478,24 @@ pub fn layers_body(h: &Harness<'_, YoluApp>) -> Rect {
         pos2(layers.left() - 2.0, layers.bottom()),
         pos2(h.ctx.content_rect().right(), properties.top()),
     )
+}
+
+/// レイヤーの組の行 `name` を右クリックして、レイヤーのメニューを開く。
+pub fn open_layer_menu(h: &mut Harness<'_, YoluApp>, name: &str) {
+    let body = layers_body(h);
+    // 行の名前（幅のある物。サムネイルなど小さい部品は除く）
+    let row = rect_of(h, name, |r| body.contains_rect(r) && r.width() > 60.0);
+    press(h, row.center(), PointerButton::Secondary);
+    h.step();
+    release(h, row.center(), PointerButton::Secondary);
+    h.run();
+}
+
+/// レイヤーの組の行 `name` を右クリックして、出たメニューの項目 `item` を押す（帯から外した操作は、このメニューにある）。
+pub fn choose_in_layer_menu(h: &mut Harness<'_, YoluApp>, name: &str, item: &str) {
+    open_layer_menu(h, name);
+    let at = popup_item(h, item).center();
+    click(h, at);
 }
 
 /// 右の列（レイヤーの組を含む列）を、中央（キャンバスの組）との分け方の取り分 `fraction`（中央の取り分。大きいほど右の列が狭い）に動かす。既定の右の列はどのウィンドウでも幅が広いので、

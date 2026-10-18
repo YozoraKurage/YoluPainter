@@ -8,9 +8,10 @@
 
 use yolu_core::material::ChannelPaint;
 
+use crate::engine::unit_f32_to_byte;
 use crate::engine::{Channel, Rgba8};
 use crate::notice::Source;
-use crate::state::{to_byte, AppState, Rgba};
+use crate::state::{AppState, Rgba};
 
 /// 組に選べるチャンネル（標準の 6 つ。番号の順）。
 pub const CHANNELS: [Channel; 6] = Channel::ALL;
@@ -119,8 +120,14 @@ impl MaterialPaint {
     /// チャンネルの値（straight RGBA8）。アルファは描画色のアルファ。Color は描画色、Emission は色、データは灰色、Normal は傾きの法線。
     pub fn value(&self, channel: Channel, color: Rgba) -> Rgba8 {
         let a = color[3];
-        let rgba =
-            |r: f32, g: f32, b: f32| Rgba8::new(to_byte(r), to_byte(g), to_byte(b), to_byte(a));
+        let rgba = |r: f32, g: f32, b: f32| {
+            Rgba8::new(
+                unit_f32_to_byte(r),
+                unit_f32_to_byte(g),
+                unit_f32_to_byte(b),
+                unit_f32_to_byte(a),
+            )
+        };
         match channel {
             Channel::Color => rgba(color[0], color[1], color[2]),
             Channel::Emission => rgba(self.emission[0], self.emission[1], self.emission[2]),
@@ -161,7 +168,7 @@ pub enum MatAction {
 /// （core は色の変化を外すだけで、スカラー・Normal のチャンネルでも描画色の RGB のまま描く）と、Unity 版のバケツ・ポリゴン塗りつぶし
 /// （`BrushColor32()`）に合わせる。明るさの灰色にすると、同じ画面の同じ設定でも、ブラシとバケツで値が違ってしまう。
 pub fn single_value(color: Rgba) -> Rgba8 {
-    let b = to_byte;
+    let b = unit_f32_to_byte;
     Rgba8::new(b(color[0]), b(color[1]), b(color[2]), b(color[3]))
 }
 
@@ -202,10 +209,7 @@ impl AppState {
                 if !self.mat.set_channel(channel, on) {
                     self.refuse(
                         Source::Material,
-                        lang.pick(
-                            "マテリアルは 1 つ以上のチャンネルを塗ります",
-                            "A material paints at least one channel",
-                        ),
+                        lang.t("matpaint-a-material-paints-at-least"),
                     );
                 }
             }

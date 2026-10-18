@@ -16,19 +16,23 @@ fn options() -> Options<'static> {
     }
 }
 fn brush(i: usize, surface: bool) -> PathBrush {
-    PathBrush(BrushSettings {
-        radius: if surface { 0.08 } else { 3.25 },
-        hardness: if i.is_multiple_of(3) { 1.0 } else { 0.7 },
-        spacing: 0.17,
-        opacity: 0.83,
-        flow: 0.42,
-        color: Rgba8::new(201, 37, 89, 219),
-        pressure_size: i.is_multiple_of(2),
-        pressure_opacity: i % 3 == 1,
-        pressure_flow: i % 3 == 2,
-        erase: i == 7,
-        anti_alias: yolu_core::AntiAlias::None,
-    })
+    PathBrush(
+        BrushSettings {
+            radius: if surface { 0.08 } else { 3.25 },
+            hardness: if i.is_multiple_of(3) { 1.0 } else { 0.7 },
+            spacing: 0.17,
+            opacity: 0.83,
+            flow: 0.42,
+            color: Rgba8::new(201, 37, 89, 219),
+            erase: i == 7,
+            anti_alias: yolu_core::AntiAlias::None,
+        },
+        yolu_core::PressureSwitches {
+            size: i.is_multiple_of(2),
+            opacity: i % 3 == 1,
+            flow: i % 3 == 2,
+        },
+    )
 }
 fn canvas(i: usize) -> CanvasPath {
     let p = vec![
@@ -344,13 +348,14 @@ fn known_canvas_curve_and_empty() {
     let r = render_canvas(&canvas(0), &o).unwrap();
     assert_eq!(r.channels[0].1.allocated_bytes(), 0);
     let mut p = canvas(3);
-    p.brush = PathBrush(BrushSettings {
-        radius: 3.0,
-        hardness: 1.0,
-        pressure_size: false,
-        pressure_opacity: false,
-        ..Default::default()
-    });
+    p.brush = PathBrush(
+        BrushSettings {
+            radius: 3.0,
+            hardness: 1.0,
+            ..Default::default()
+        },
+        yolu_core::PressureSwitches::NONE,
+    );
     let r = render_canvas(&p, &o).unwrap();
     let s = &r.channels[0].1;
     for q in p.points {
@@ -672,15 +677,16 @@ fn big_surface_path(g: &SurfaceGeometry) -> SurfacePath {
         PathPoint::new(0, 0.5, 0.3, 0.9).unwrap(),
         PathPoint::new(1, 0.5, 0.3, 0.9).unwrap(),
     ];
-    p.brush = PathBrush(BrushSettings {
-        radius: 0.2,
-        hardness: 0.7,
-        spacing: 0.17,
-        color: Rgba8::new(201, 37, 89, 255),
-        pressure_size: false,
-        pressure_opacity: false,
-        ..Default::default()
-    });
+    p.brush = PathBrush(
+        BrushSettings {
+            radius: 0.2,
+            hardness: 0.7,
+            spacing: 0.17,
+            color: Rgba8::new(201, 37, 89, 255),
+            ..Default::default()
+        },
+        yolu_core::PressureSwitches::NONE,
+    );
     p
 }
 fn painted(r: &Rendered) -> usize {

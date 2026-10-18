@@ -9,6 +9,7 @@
 //! ウィンドウは `view3d_fx` の共有の装置（製品と同じ `wgpu_configuration` の装置の設定。2×・8× を調べる形式の機能つき）で作る。ほかの試験の
 //! 共用の接続（`common::shared_gpu`）とは別の装置だが、ウィンドウは `gpu_thread::builder` の貸し出しで 1 つずつ作るので、装置どうしは重ならない。
 use crate::common;
+use crate::common::drive::Drive;
 
 use std::sync::{Arc, OnceLock};
 
@@ -30,11 +31,12 @@ use yolu_core::Channel;
 
 // ───────── ウィンドウと場面 ─────────
 
-/// 製品と同じ装置の設定（`wgpu_configuration`）で作った、試験どうしで共有する描画の接続。アダプターは kittest の選び（ソフトの描画を優先）。
+/// 製品と同じ装置の設定（`wgpu_configuration` の装置の記述と D3D12 のシェーダーのコンパイラー）で作った、試験どうしで共有する描画の接続。
+/// アダプターの選びと、そのほかの instance の設定は kittest のまま（ソフトの描画を優先）。
 fn renderer() -> egui_kittest::wgpu::WgpuTestRenderer {
     static CONNECTION: OnceLock<egui_wgpu::RenderState> = OnceLock::new();
     let connection = CONNECTION.get_or_init(|| {
-        let WgpuSetup::CreateNew(mut setup) = egui_kittest::wgpu::default_wgpu_setup() else {
+        let WgpuSetup::CreateNew(mut setup) = default_wgpu_setup() else {
             unreachable!("kittest の既定は新しく作る形")
         };
         let WgpuSetup::CreateNew(product) =
@@ -71,7 +73,7 @@ fn build(
             app.dock = tabbed_center_dock(width);
             with_render_state_cpu_canvas(app, cc.wgpu_render_state.as_ref())
         });
-    h.state_mut().state.bake.backend = yolu_app::bake::BakeBackend::Cpu;
+    h.bake_mut().backend = yolu_app::bake::BakeBackend::Cpu;
     h.run();
     h
 }
@@ -81,11 +83,7 @@ fn view(width: f32, height: f32, doc: u32) -> Harness<'static, YoluApp> {
     let mut h = build(width, height, move |ctx| {
         YoluApp::for_context(ctx, AppState::new(doc, doc), PenInput::detached())
     });
-    h.state_mut()
-        .state
-        .doc
-        .restore_look(MaterialLook::default())
-        .unwrap();
+    h.doc_mut().restore_look(MaterialLook::default()).unwrap();
     click_tab(&mut h, yolu_app::Tab::View3d);
     move_to(&h, pos2(1.0, 1.0));
     h.run();
@@ -124,17 +122,18 @@ fn quad(size: f32, normal: Vec3) -> ModelMesh {
 }
 
 fn set_model(h: &mut Harness<'_, YoluApp>, meshes: Vec<ModelMesh>) {
-    let state = &mut h.state_mut().state;
-    let revision = state.view3d.next_revision();
-    state.view3d.material = 0;
-    let model = ViewModel::new("試験", meshes, vec![Some("試験".to_string())], revision).unwrap();
+    let state = h.app_mut();
+    let revision = state.view3d_mut().next_revision();
+    state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
+    let model =
+        ViewModel::new("テスト", meshes, vec![Some("テスト".to_string())], revision).unwrap();
     model.tangents();
-    state.view3d.set_model(model);
+    state.view3d_mut().set_model(model);
     h.run();
 }
 
 fn look_at(h: &mut Harness<'_, YoluApp>, distance: f32, yaw: f32, pitch: f32) {
-    h.state_mut().state.view3d.camera = OrbitCamera {
+    h.view3d_mut().view.camera = OrbitCamera {
         target: Vec3::ZERO,
         yaw,
         pitch,
@@ -156,11 +155,7 @@ fn fill(h: &mut Harness<'_, YoluApp>, values: &[(Channel, [u8; 4])]) {
         .iter()
         .map(|(c, v)| (*c, yolu_core::Rgba8::new(v[0], v[1], v[2], v[3])))
         .collect();
-    h.state_mut()
-        .state
-        .doc
-        .add_fill_layer("値", &values, None)
-        .unwrap();
+    h.doc_mut().add_fill_layer("値", &values, None).unwrap();
     h.run();
 }
 
@@ -191,13 +186,14 @@ fn assert_close(a: [u8; 3], b: [u8; 3], tol: u8, what: &str) {
 /// 数える範囲（右上のアイコンの帯の下、表示域の内側）。
 fn region(h: &Harness<'_, YoluApp>) -> Rect {
     let rect = view_rect(h);
-    Rect::from_min_max(rect.min + vec2(20.0, 50.0), rect.max - vec2(20.0, 20.0))
+    // 下は左下の隅のシェルフ（目と ▽）にかからない所まで
+    Rect::from_min_max(rect.min + vec2(20.0, 50.0), rect.max - vec2(20.0, 48.0))
 }
 
-/// 板に覆われない背景の点（表示域の左下の隅の近く）。
+/// 板に覆われない背景の点（表示域の右下の隅の近く。左下の隅にはシェルフがある）。
 fn background_point(h: &Harness<'_, YoluApp>) -> egui::Pos2 {
     let rect = view_rect(h);
-    pos2(rect.left() + 30.0, rect.bottom() - 30.0)
+    pos2(rect.right() - 30.0, rect.bottom() - 30.0)
 }
 
 /// 範囲の中の、どの色にも tol 以内で当たらない画素の数（縁の中間の値）。軸の印 skip の中は数えない。
@@ -253,10 +249,7 @@ fn the_supported_counts_are_listed_ascending_and_always_include_one_and_four() {
         "{supported:?}"
     );
     // 画面の選びは、同じ数だけ押せる
-    assert_eq!(
-        h.state().state.view3d.display.supported_sample_counts(),
-        supported
-    );
+    assert_eq!(h.view3d().view.display.supported_sample_counts(), supported);
 }
 
 /// 場面ごとの設定（面の色は一様になるものだけ。縁の中間の値を数えるため）。
@@ -353,7 +346,7 @@ fn a_lil_toon_transparent_face_blends_edges_at_every_sample_count_too() {
     look.shader = "Hidden/lilToonTransparent".into();
     look.properties
         .insert("_Cutoff".into(), LookValue::Float(0.001));
-    h.state_mut().state.doc.set_look(look, false).unwrap();
+    h.doc_mut().set_look(look, false).unwrap();
     h.run();
     let supported = h.state().view3d_supported_samples().unwrap();
     let area = region(&h);
@@ -393,11 +386,11 @@ fn the_chosen_count_is_kept_but_lowered_for_the_device_and_for_the_memory_ceilin
     let supported = h.state().view3d_supported_samples().unwrap();
     // 選びは保たれ、描く数だけが下がる
     op(&mut h, Op::Antialias(8));
-    assert_eq!(h.state().state.view3d.display.post.antialias, 8);
+    assert_eq!(h.view3d().view.display.post.antialias, 8);
     let want = clamp_samples(8, &supported);
     assert_eq!(h.state().view3d_stats().unwrap().samples, want);
     assert_eq!(
-        h.state().state.view3d.display.shown_samples(),
+        h.view3d().view.display.shown_samples(),
         want,
         "画面に出す選びは、使える最大へ下げたもの"
     );
@@ -456,11 +449,9 @@ fn the_target_ceiling_is_the_size_of_the_picture_share_and_sits_outside_the_sett
         GpuMemory::Mib(2048),
         GpuMemory::Standard,
     ] {
-        h.state_mut()
-            .state
-            .apply(Action::Prefs(PrefsAction::Set(Pref::GpuMemory(choice))));
+        h.act(Action::Prefs(PrefsAction::Set(Pref::GpuMemory(choice))));
         h.run();
-        let adapter = h.state().state.prefs.gpu.clone();
+        let adapter = h.prefs().gpu.clone();
         let budgets = gpu_memory::budgets(choice, &adapter);
         // 描き先の上限は、3D の絵の取り分と同じ量（別の勘定。取り分からは引かない）
         assert_eq!(
@@ -679,12 +670,7 @@ fn bright_scene(h: &mut Harness<'_, YoluApp>, color: [u8; 3]) {
 fn halo_points(h: &Harness<'_, YoluApp>, gap: f32) -> (egui::Pos2, egui::Pos2) {
     // 板の端の画面上の位置
     let rect = view_rect(h);
-    let view = h
-        .state()
-        .state
-        .view3d
-        .camera
-        .view(rect.width(), rect.height());
+    let view = h.view3d().view.camera.view(rect.width(), rect.height());
     let edge = view.to_screen(Vec3::new(-0.35, 0.0, 0.0)).unwrap();
     let side = if edge.x < rect.width() * 0.5 {
         -1.0
@@ -929,7 +915,7 @@ fn the_default_light_lights_the_front_of_a_model_facing_plus_z_and_not_its_back(
     op(&mut h, Op::Env(yolu_app::view3d::display::EnvKind::None));
     op(&mut h, Op::Antialias(1));
     assert_eq!(
-        h.state().state.view3d.display.light_direction(),
+        h.view3d().view.display.light_direction(),
         to_light,
         "新しいウィンドウの光は既定のまま"
     );
@@ -977,7 +963,7 @@ fn the_finish_is_written_to_the_settings_file_and_comes_back_at_the_next_start()
     let path = dir.join("YoluPainter").join("settings.conf");
     let mut h = app_with_settings(&path);
     // 初めは既定（4×・ブルーム切）で、ファイルを作らない
-    assert_eq!(h.state().state.view3d.display.post, Display::default().post);
+    assert_eq!(h.view3d().view.display.post, Display::default().post);
     assert!(!path.exists());
     op(&mut h, Op::Antialias(8));
     op(&mut h, Op::Bloom(true));
@@ -994,7 +980,7 @@ fn the_finish_is_written_to_the_settings_file_and_comes_back_at_the_next_start()
         assert!(written.lines().any(|l| l == line), "{line}\n{written}");
     }
     // スライダーをドラッグしているあいだは書かない。離したときの値を書く
-    h.state_mut().state.view3d.display.post_dragging = true;
+    h.view3d_mut().view.display.post_dragging = true;
     op(&mut h, Op::BloomStrength(0.5));
     op(&mut h, Op::BloomStrength(0.75));
     assert_eq!(
@@ -1002,7 +988,7 @@ fn the_finish_is_written_to_the_settings_file_and_comes_back_at_the_next_start()
         written,
         "ドラッグ中は書かない"
     );
-    h.state_mut().state.view3d.display.post_dragging = false;
+    h.view3d_mut().view.display.post_dragging = false;
     h.run();
     let released = std::fs::read_to_string(&path).unwrap();
     assert!(
@@ -1012,7 +998,7 @@ fn the_finish_is_written_to_the_settings_file_and_comes_back_at_the_next_start()
     drop(h);
     // 次の起動は、書いた値で始まる。既定に戻すと行が消える（既定は書かない）
     let mut h = app_with_settings(&path);
-    let post = h.state().state.view3d.display.post;
+    let post = h.view3d().view.display.post;
     assert_eq!(
         (
             post.antialias,
@@ -1040,17 +1026,17 @@ fn a_settings_file_from_before_the_finish_keeps_every_other_value_and_starts_at_
     let old = "language=en\nexport_padding=8\nview3d_orbit=model\nuv_wireframe=off\n";
     std::fs::write(&path, old).unwrap();
     let h = app_with_settings(&path);
-    let app = &h.state().state;
-    assert_eq!(app.lang, yolu_app::lang::Lang::En);
-    assert_eq!(app.prefs.settings.export_padding, 8);
-    assert!(!app.prefs.settings.uv_wireframe);
+    let app = h.app();
+    assert_eq!(app.lang(), yolu_app::lang::Lang::En);
+    assert_eq!(app.prefs().settings.export_padding, 8);
+    assert!(!app.prefs().settings.uv_wireframe);
     assert_eq!(
-        app.view3d.display.post,
+        app.view3d().view.display.post,
         Display::default().post,
         "仕上げは既定"
     );
-    assert_eq!(app.view3d.display.post.antialias, 4);
-    assert_eq!(app.message, "", "壊れた設定として知らせない");
+    assert_eq!(app.view3d().view.display.post.antialias, 4);
+    assert_eq!(app.message(), "", "壊れた設定として知らせない");
     // 読んだだけではファイルに触らない
     assert_eq!(std::fs::read_to_string(&path).unwrap(), old);
     std::fs::remove_dir_all(dir).unwrap();
@@ -1072,7 +1058,7 @@ fn a_3d_stroke_lands_on_the_same_texels_at_every_sample_count() {
             .map(|i| c + vec2(-90.0 + 22.0 * i as f32, -60.0 + 16.0 * i as f32))
             .collect();
         drag(&mut h, &path);
-        let doc = &h.state().state.doc;
+        let doc = h.doc();
         (
             h.state().view3d_stats().unwrap().samples,
             doc.composite(doc.bounds()).unwrap(),
@@ -1092,7 +1078,7 @@ fn a_3d_stroke_lands_on_the_same_texels_at_every_sample_count() {
 fn the_bloom_values_say_the_bloom_is_off() {
     use egui_kittest::kittest::{NodeT, Queryable};
     let mut h = view(1100.0, 760.0, 32);
-    h.state_mut().state.view3d.load_demo();
+    h.view3d_mut().load_demo();
     h.run();
     h.get_by_label("光・環境・トーンマッピング").click();
     h.run();
@@ -1119,7 +1105,7 @@ fn the_bloom_values_say_the_bloom_is_off() {
         move_to(&h, pos2(1.0, 1.0));
         h.run();
     }
-    h.state_mut().state.lang = yolu_app::lang::Lang::En;
+    h.set_lang(yolu_app::lang::Lang::En);
     h.run();
     let reason = "Bloom is off";
     h.get_by_label("Bloom").click();
@@ -1139,15 +1125,15 @@ fn the_bloom_values_say_the_bloom_is_off() {
 fn the_quality_tab_picks_the_count_and_edits_the_bloom_in_both_languages() {
     use egui_kittest::kittest::Queryable;
     let mut h = view(1100.0, 760.0, 32);
-    h.state_mut().state.view3d.load_demo();
+    h.view3d_mut().load_demo();
     h.run();
     h.get_by_label("光・環境・トーンマッピング").click();
     h.run();
-    assert!(h.state().state.view3d.display.settings_open);
+    assert!(h.view3d().view.display.settings_open);
     h.get_by_label("画質").click();
     h.run();
     assert_eq!(
-        h.state().state.view3d.display.tab,
+        h.view3d().view.display.tab,
         yolu_app::view3d::display::SettingsTab::Quality
     );
     for label in ["切", "4×", "ブルーム", "強さ", "しきい値"] {
@@ -1156,10 +1142,10 @@ fn the_quality_tab_picks_the_count_and_edits_the_bloom_in_both_languages() {
     // 4× を選ぶ・切にする
     h.get_by_label("切").click();
     h.run();
-    assert_eq!(h.state().state.view3d.display.post.antialias, 1);
+    assert_eq!(h.view3d().view.display.post.antialias, 1);
     h.get_by_label("4×").click();
     h.run();
-    assert_eq!(h.state().state.view3d.display.post.antialias, 4);
+    assert_eq!(h.view3d().view.display.post.antialias, 4);
     // 機材が対応しない数は押せない（選びは変わらない）
     let supported = h.state().view3d_supported_samples().unwrap();
     for n in [2u32, 8] {
@@ -1167,45 +1153,45 @@ fn the_quality_tab_picks_the_count_and_edits_the_bloom_in_both_languages() {
             h.get_by_label(&format!("{n}×")).click();
             h.run();
             assert_eq!(
-                h.state().state.view3d.display.post.antialias,
+                h.view3d().view.display.post.antialias,
                 4,
                 "{n}× は対応しない"
             );
         }
     }
     // ブルームの入・切（値の欄は切のあいだ押せない）
-    assert!(!h.state().state.view3d.display.post.bloom);
+    assert!(!h.view3d().view.display.post.bloom);
     h.get_by_label("ブルーム").click();
     h.run();
-    assert!(h.state().state.view3d.display.post.bloom);
+    assert!(h.view3d().view.display.post.bloom);
     h.get_by_label("ブルーム").click();
     h.run();
-    assert!(!h.state().state.view3d.display.post.bloom);
+    assert!(!h.view3d().view.display.post.bloom);
     // 既定に戻すはブルームを戻し、アンチエイリアスは戻さない（画質の選び）
     op(&mut h, Op::Antialias(2));
     op(&mut h, Op::Bloom(true));
     op(&mut h, Op::BloomThreshold(2.0));
     op(&mut h, Op::ResetLighting);
-    let post = h.state().state.view3d.display.post;
+    let post = h.view3d().view.display.post;
     assert!(
         !post.bloom && post.bloom_threshold == yolu_app::view3d::display::DEFAULT_BLOOM_THRESHOLD
     );
     assert_eq!(post.antialias, 2);
     // 画像は機材によらず同じ並びで（全部の数を押せる並び・4× を選んだ状態）
-    h.state_mut()
-        .state
-        .view3d
+    h.view3d_mut()
+        .view
         .display
         .set_supported_samples(&[1, 2, 4, 8]);
     op(&mut h, Op::Antialias(4));
     // 英語
-    h.state_mut().state.lang = yolu_app::lang::Lang::En;
+    h.set_lang(yolu_app::lang::Lang::En);
     h.run();
     for label in ["Quality", "Off", "4×", "Bloom", "Strength", "Threshold"] {
         assert!(h.query_by_label(label).is_some(), "{label}");
     }
-    h.snapshot("view3d_quality_panel_en");
-    h.state_mut().state.lang = yolu_app::lang::Lang::Ja;
+    let rect = crate::settings_corner(&h);
+    crate::common::shot::region(&mut h, "view3d_quality_panel_en", rect);
+    h.set_lang(yolu_app::lang::Lang::Ja);
     h.run();
-    h.snapshot("view3d_quality_panel");
+    crate::common::shot::region(&mut h, "view3d_quality_panel", rect);
 }

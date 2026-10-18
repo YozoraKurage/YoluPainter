@@ -91,41 +91,16 @@ impl StoreError {
     pub fn describe(&self, lang: Lang) -> String {
         match self {
             StoreError::Io(e) => lang.file_error(e),
-            StoreError::TooLarge => lang
-                .pick("ファイルが大きすぎます", "The file is too large")
-                .into(),
-            StoreError::NotAPreset => lang
-                .pick("隠し方のファイルではありません", "Not a hide preset file")
-                .into(),
-            StoreError::NewerVersion(v) => lang.pick(
-                format!("新しい形式です（{v}）"),
-                format!("Newer format ({v})"),
-            ),
-            StoreError::Syntax(line) => lang.pick(
-                format!("{line} 行目が読めません"),
-                format!("Cannot read line {line}"),
-            ),
-            StoreError::UnknownKey(key) => lang.pick(
-                format!("知らない項目です（{key}）"),
-                format!("Unknown item ({key})"),
-            ),
-            StoreError::DuplicateName => lang
-                .pick("名前が重なっています", "The name appears twice")
-                .into(),
-            StoreError::BadValue(key) => lang.pick(
-                format!("値が正しくありません（{key}）"),
-                format!("Invalid value ({key})"),
-            ),
-            StoreError::Empty => lang.pick("項目がありません", "No entries").into(),
-            StoreError::Mismatch => lang
-                .pick(
-                    "書いた中身を読み戻せません",
-                    "Written file does not read back",
-                )
-                .into(),
-            StoreError::TooMany => lang
-                .pick("プリセットが多すぎます", "Too many presets")
-                .into(),
+            StoreError::TooLarge => lang.t("view3d-the-file-is-too-large").into(),
+            StoreError::NotAPreset => lang.t("view3d-not-a-hide-preset-file").into(),
+            StoreError::NewerVersion(v) => lang.f("view3d-newer-format", &[("v", &v)]),
+            StoreError::Syntax(line) => lang.f("view3d-cannot-read-line", &[("line", &line)]),
+            StoreError::UnknownKey(key) => lang.f("view3d-unknown-item", &[("key", &key)]),
+            StoreError::DuplicateName => lang.t("view3d-the-name-appears-twice").into(),
+            StoreError::BadValue(key) => lang.f("view3d-invalid-value", &[("key", &key)]),
+            StoreError::Empty => lang.t("view3d-no-entries").into(),
+            StoreError::Mismatch => lang.t("view3d-written-file-does-not-read").into(),
+            StoreError::TooMany => lang.t("view3d-too-many-presets").into(),
         }
     }
 }

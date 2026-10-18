@@ -3,8 +3,14 @@
 
 use super::saved::SavedOp;
 use super::{ModifyKind, SelAction, SelEdit, SelUiOp};
+use crate::lang::Lang;
 use crate::state::{Action, AppState, Tool};
 use crate::ui::menu::Entry;
+
+/// 操作の名前とキーの文字で作るメニューの項目（名前は `commands` の表のもの）。
+fn command_item(lang: Lang, id: &str, action: Action) -> Entry<Action> {
+    Entry::item(crate::commands::label_of(id, lang), action).command_key(id)
+}
 
 /// 選択のツール（メニューとツールの帯の順）。
 pub const SELECT_TOOLS: [Tool; 6] = [
@@ -20,21 +26,12 @@ pub const SELECT_TOOLS: [Tool; 6] = [
 pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
     let l = app.lang;
     let free = !app.is_stroking() && app.read_only_reason().is_none();
-    let any = app.doc.selection().is_some();
+    let any = app.session.doc.selection().is_some();
     let edit = |e: SelEdit| Action::Sel(SelAction::Edit(e));
     let mut v = vec![
-        Entry::item(l.pick("すべてを選択", "Select All"), edit(SelEdit::All))
-            .command_key("selection.all")
-            .enabled(free),
-        Entry::item(l.pick("選択を解除", "Deselect"), edit(SelEdit::Clear))
-            .command_key("selection.deselect")
-            .enabled(free && any),
-        Entry::item(
-            l.pick("選択範囲を反転", "Invert Selection"),
-            edit(SelEdit::Invert),
-        )
-        .command_key("selection.invert")
-        .enabled(free && any),
+        command_item(l, "selection.all", edit(SelEdit::All)).enabled(free),
+        command_item(l, "selection.deselect", edit(SelEdit::Clear)).enabled(free && any),
+        command_item(l, "selection.invert", edit(SelEdit::Invert)).enabled(free && any),
         Entry::Separator,
     ];
     for kind in ModifyKind::ALL {
@@ -57,12 +54,13 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
     }
     v.push(Entry::Separator);
     // 選択範囲を使う操作（選択範囲の下のボタンの帯と同じ。塗る・コピーできるレイヤーでなければ押せない）
-    let paintable = free && any && app.paint_blocker().is_none();
+    let paintable = free && any && crate::stroke_gate::blocker(app).is_none();
     let copyable = free
         && any
         && app
+            .session
             .selected_layer
-            .and_then(|id| app.doc.layer(id))
+            .and_then(|id| app.session.doc.layer(id))
             .is_some_and(|layer| {
                 (app.m2.edit_mask && layer.mask().is_some())
                     || matches!(
@@ -72,43 +70,26 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
             });
     v.push(
         Entry::item(
-            l.pick("描画色で塗りつぶす", "Fill with the Paint Color"),
+            l.t("selection-fill-with-the-paint-color"),
             edit(SelEdit::Fill),
         )
         .enabled(paintable),
     );
+    v.push(command_item(l, "selection.erase", edit(SelEdit::Erase)).enabled(paintable));
+    v.push(command_item(l, "selection.to_new_layer", edit(SelEdit::ToNewLayer)).enabled(copyable));
     v.push(
         Entry::item(
-            l.pick("選択範囲を消去", "Erase Selection"),
-            edit(SelEdit::Erase),
-        )
-        .command_key("selection.erase")
-        .enabled(paintable),
-    );
-    v.push(
-        Entry::item(
-            l.pick("コピーして新しいレイヤーに", "Copy to a New Layer"),
-            edit(SelEdit::ToNewLayer),
-        )
-        .command_key("selection.to_new_layer")
-        .enabled(copyable),
-    );
-    v.push(
-        Entry::item(
-            l.pick(
-                "選択範囲をレイヤーマスクにする",
-                "Make the Selection a Layer Mask",
-            ),
+            l.t("selection-make-the-selection-a-layer"),
             edit(SelEdit::ToMask),
         )
-        .enabled(free && any && app.selected_layer.is_some()),
+        .enabled(free && any && app.session.selected_layer.is_some()),
     );
     v.push(
-        Entry::item(
-            l.pick("クイックマスク", "Quick Mask"),
+        command_item(
+            l,
+            "selection.quick_mask",
             Action::Sel(SelAction::Ui(SelUiOp::QuickMask(None))),
         )
-        .command_key("selection.quick_mask")
         .checked(app.sel.quick)
         .enabled(app.sel.quick || !app.is_stroking()),
     );
@@ -122,10 +103,7 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
     );
     v.push(
         Entry::item(
-            l.pick(
-                "選択範囲のボタンの帯を表示",
-                "Show the Selection Button Bar",
-            ),
+            l.t("selection-show-the-selection-button-bar"),
             Action::Sel(SelAction::Ui(SelUiOp::Bar(
                 !app.prefs.settings.selection_bar,
             ))),

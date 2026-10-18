@@ -2,6 +2,7 @@
 //! UV のワイヤーフレームの重なりの表示と、塗りの知らせが使う。数えるのは渡した三角形だけで、ベイクの優先・焼かないアイランドは見ない
 //! （塗りでは、どのアイランドも同じテクセルを使う）。座標は左下原点。
 use super::{check, raster::Raster, Result};
+use crate::Reason;
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -73,11 +74,11 @@ pub fn uv_overlap(
 ) -> Result<Option<UvOverlap>> {
     check(
         (1..=8192).contains(&width) && (1..=8192).contains(&height),
-        "UV の重なりの図の大きさが範囲外です",
+        Reason::UvOverlapMapSizeRange,
     )?;
     check(
         uvs.len().is_multiple_of(6) && triangles.iter().all(|t| (t + 1) * 6 <= uvs.len()),
-        "三角形の番号が UV の数を超えています",
+        Reason::UvOverlapTriangleRange,
     )?;
     let receivers: Vec<usize> = triangles
         .iter()

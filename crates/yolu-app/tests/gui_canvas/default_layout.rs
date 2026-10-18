@@ -1,6 +1,7 @@
 //! 既定の並び（3D ビューが左・キャンバスが右）での操作: それぞれの側に描ける、ポインタの下のビューにキー（Space のパン）が届く、スポイトがそれぞれの側で色を取る。
 //! 試験の標準のウィンドウ（`app`）は中央を 1 つの組にしているので、左右に並んだ既定そのものでの入力の道は、ここで見る。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::{Event, Key, Modifiers, Pos2, Rect};
@@ -20,11 +21,11 @@ const B: Vec3 = Vec3::new(0.12, 0.0, -0.5);
 fn default_with_cube() -> (H, Rect) {
     let mut h = app_default(1280.0, 800.0, 256);
     {
-        let s = &mut h.state_mut().state;
-        s.view3d.load_demo();
-        s.view3d.camera.yaw = -40.0;
-        s.view3d.camera.pitch = 15.0;
-        s.brush.radius = 14.0;
+        let s = h.app_mut();
+        s.view3d_mut().load_demo();
+        s.view3d_mut().view.camera.yaw = -40.0;
+        s.view3d_mut().view.camera.pitch = 15.0;
+        s.brush_mut().radius = 14.0;
     }
     h.run();
     let rect = h.state().view3d_rect().expect("3D ビューを描いた");
@@ -37,19 +38,14 @@ fn default_with_cube() -> (H, Rect) {
 }
 
 fn screen_of(h: &H, rect: Rect, p: Vec3) -> Pos2 {
-    let view = h
-        .state()
-        .state
-        .view3d
-        .camera
-        .view(rect.width(), rect.height());
+    let view = h.view3d().view.camera.view(rect.width(), rect.height());
     let s = view.to_screen(p).expect("カメラの前");
     egui::pos2(rect.left() + s.x, rect.top() + s.y)
 }
 
 /// 文書の合成（描いたかどうかの比べ）。
 fn composite(h: &H) -> Vec<u8> {
-    let doc = &h.state().state.doc;
+    let doc = h.doc();
     doc.composite(doc.bounds()).unwrap()
 }
 
@@ -71,7 +67,7 @@ fn key_event(h: &H, key: Key, pressed: bool) {
 }
 
 fn main_rgb(h: &H) -> [u8; 3] {
-    let main = h.state().state.color.main;
+    let main = h.color().main;
     [0, 1, 2].map(|i| (main[i] * 255.0).round() as u8)
 }
 
@@ -84,7 +80,7 @@ fn each_side_of_the_default_arrangement_paints() {
     let c = canvas_rect(&h).center();
     drag(&mut h, &[offset(c, -60.0, 0.0), c, offset(c, 60.0, 10.0)]);
     assert!(composite(&h) != before, "キャンバスに描けた");
-    assert!(h.state().state.doc.can_undo());
+    assert!(h.doc().can_undo());
     // 3D ビュー（左）
     let (mut h, rect) = default_with_cube();
     let before = composite(&h);
@@ -93,9 +89,9 @@ fn each_side_of_the_default_arrangement_paints() {
     assert!(
         composite(&h) != before,
         "3D ビューに描けた: {}",
-        h.state().state.message
+        h.message()
     );
-    assert!(h.state().state.doc.can_undo());
+    assert!(h.doc().can_undo());
 }
 
 /// Space を押しながらのドラッグ（パン）は、ポインタの下のビューだけを動かす。キャンバスの上ではキャンバスの表示、3D ビューの上では視点。
@@ -103,24 +99,24 @@ fn each_side_of_the_default_arrangement_paints() {
 fn the_space_key_reaches_the_view_under_the_pointer_on_each_side() {
     let (mut h, rect) = default_with_cube();
     let canvas = canvas_rect(&h);
-    let (pan0, camera0) = (h.state().state.view.pan, h.state().state.view3d.camera);
+    let (pan0, camera0) = (h.view().pan, h.view3d().view.camera);
     // キャンバスの上
     key_event(&h, Key::Space, true);
     let c = canvas.center();
     drag(&mut h, &[c, offset(c, 30.0, 0.0), offset(c, 60.0, 20.0)]);
     key_event(&h, Key::Space, false);
     h.run();
-    let pan = h.state().state.view.pan;
+    let pan = h.view().pan;
     assert_ne!(pan, pan0, "キャンバスの表示が動いた");
-    assert_eq!(h.state().state.view3d.camera, camera0, "視点は動かない");
+    assert_eq!(h.view3d().view.camera, camera0, "視点は動かない");
     // 3D ビューの上
     key_event(&h, Key::Space, true);
     let v = rect.center();
     drag(&mut h, &[v, offset(v, 30.0, 0.0), offset(v, 60.0, 20.0)]);
     key_event(&h, Key::Space, false);
     h.run();
-    assert_ne!(h.state().state.view3d.camera, camera0, "視点が動いた");
-    assert_eq!(h.state().state.view.pan, pan, "キャンバスの表示は動かない");
+    assert_ne!(h.view3d().view.camera, camera0, "視点が動いた");
+    assert_eq!(h.view().pan, pan, "キャンバスの表示は動かない");
 }
 
 /// スポイトは、キャンバス（右）でも 3D ビュー（左）でも、描いた色を取る。
@@ -128,7 +124,7 @@ fn the_space_key_reaches_the_view_under_the_pointer_on_each_side() {
 fn the_eyedropper_picks_on_each_side_of_the_default_arrangement() {
     for side in ["キャンバス", "3D ビュー"] {
         let (mut h, rect) = default_with_cube();
-        h.state_mut().state.color.set_main([0.0, 0.0, 1.0, 1.0]);
+        h.color_mut().set_main([0.0, 0.0, 1.0, 1.0]);
         let at = if side == "キャンバス" {
             let c = canvas_rect(&h).center();
             drag(&mut h, &[offset(c, -40.0, 0.0), c, offset(c, 40.0, 0.0)]);
@@ -138,17 +134,10 @@ fn the_eyedropper_picks_on_each_side_of_the_default_arrangement() {
             drag(&mut h, &line(a, b, 8));
             screen_of(&h, rect, M)
         };
-        h.state_mut().state.color.set_main([0.0, 0.0, 0.0, 1.0]);
-        h.state_mut()
-            .state
-            .apply(Action::SelectTool(Tool::Eyedropper));
+        h.color_mut().set_main([0.0, 0.0, 0.0, 1.0]);
+        h.act(Action::SelectTool(Tool::Eyedropper));
         h.run();
         click(&mut h, at);
-        assert_eq!(
-            main_rgb(&h),
-            [0, 0, 255],
-            "{side}: {}",
-            h.state().state.message
-        );
+        assert_eq!(main_rgb(&h), [0, 0, 255], "{side}: {}", h.message());
     }
 }

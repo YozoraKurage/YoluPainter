@@ -1,6 +1,7 @@
 //! 知らせの決まり（ソースを読む）: 直前の操作の結果と理由（`AppState::message`）は `notice.rs` の `notify`（`info`・`refuse`・`warn`・`fail`）
 //! だけが書く。種類（済んだ・断り・注意・失敗）と出どころを付けずに `message` を直に書くと、トーストの長さ・ログのウィンドウ・診断の記録から
 //! 外れるので、本番のソースに直の書き込みが無いことを確かめる。断りの文（描いている間・読むだけのセット）は `lang/refusals.rs` だけが持つ。
+//! 文を見る決まりは、ソースの直書きの文と、画面の文の .ftl（`locales/<言語>/*.ftl`）の文の両方を見る。
 use std::collections::BTreeMap;
 
 /// 1 行が `message` を直に書く形か（代入・足し書き・文字列の書き換え・`&mut` で渡す・`mem::take` などで抜く）。
@@ -122,11 +123,53 @@ fn the_shared_refusals_live_in_one_place() {
             }
         }
     }
+    // .ftl の文: 同じ断りの文を持つキーを引くのは `lang/refusals.rs` だけ
+    let shared_keys: Vec<String> = crate::ftl_keys::messages()
+        .into_iter()
+        .filter(|m| m.texts.iter().any(|t| SHARED.iter().any(|r| t.contains(r))))
+        .map(|m| m.key)
+        .collect();
+    assert!(!shared_keys.is_empty(), "断りの文のキーが見つからない");
+    for (file, line, key) in key_uses() {
+        if file != "lang/refusals.rs" && shared_keys.contains(&key) {
+            found.push(format!("{file}:{line}: {key}"));
+        }
+    }
     assert!(
         found.is_empty(),
         "断りの文は lang::refusals の関数で:\n{}",
         found.join("\n")
     );
+}
+
+/// 本番のソースが .ftl のキーで文を引く所（`.t("キー")`・`.f("キー"`）: (ファイル, 行, キー)。
+pub(crate) fn key_uses() -> Vec<(String, usize, String)> {
+    let mut out = Vec::new();
+    for (file, text) in crate::no_instruction_text::production_sources() {
+        for head in [".t(", ".f("] {
+            for (at, _) in text.match_indices(head) {
+                // `x.t(` の形だけ（`.t(` の前が、空白を飛ばして名前か `)`・`]`・`?` の終わり）。コメントの行は見ない
+                let before = text[..at].trim_end().chars().next_back();
+                if !before
+                    .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | ')' | ']' | '?'))
+                {
+                    continue;
+                }
+                let line_head = text[..at].rfind('\n').map_or(0, |i| i + 1);
+                if text[line_head..at].trim_start().starts_with("//") {
+                    continue;
+                }
+                let rest = text[at + head.len()..].trim_start();
+                let Some(body) = rest.strip_prefix('"') else {
+                    continue;
+                };
+                let Some(end) = body.find('"') else { continue };
+                let line = text[..at].matches('\n').count() + 1;
+                out.push((file.clone(), line, body[..end].to_owned()));
+            }
+        }
+    }
+    out
 }
 
 /// 1 つの字句が、文と文をコロンでつないだ断り・失敗の形か（「〜できません: 理由」「Cannot …: reason」）、何がを言わない
@@ -192,6 +235,13 @@ fn refusals_say_what_and_why_in_one_sentence() {
             }
             if literals(line).into_iter().any(stitched) {
                 found.push(format!("{file}:{}: {}", n + 1, line.trim()));
+            }
+        }
+    }
+    for message in crate::ftl_keys::messages() {
+        for text in &message.texts {
+            if stitched(text) {
+                found.push(format!("{}: {}: {text}", message.file, message.key));
             }
         }
     }

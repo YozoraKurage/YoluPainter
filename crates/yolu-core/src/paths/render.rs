@@ -1,5 +1,6 @@
 use super::*;
 use crate::geometry::SurfaceBrushBudget;
+use crate::Reason;
 use crate::{Brush, Document, LayerId, Stroke, Surface};
 use glam::DVec2;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,6 +16,12 @@ pub struct Options<'a> {
     pub cancel: Option<&'a AtomicBool>,
     /// リボンの画像（アセットの画像。画素は共有）。リボンのパスが無ければ空でよい。
     pub images: std::collections::HashMap<crate::ImageId, crate::effects::ImageInput>,
+    /// 3D のパスで描かない面（描く形の三角形の番号ごと。true の面にはレイを当てず、ダブも広げない）。None か true が 1 つも無ければ、
+    /// 全部の面に描く（除く面を持たない描き方と同じバイト）。数が描く形の三角形の数と違えば `Error::ModelMismatch`。
+    pub hidden: Option<&'a [bool]>,
+    /// 3D のパスを描く作業面（テクスチャセット）のマテリアルの組。鏡の対称が、映した点を探す面をこの組の全部のマテリアルにする（左右が
+    /// 別のマテリアルでも映せる）。None なら、元の点と同じマテリアルの面だけ。
+    pub material: Option<&'a crate::geometry::MaterialSet>,
 }
 impl Default for Options<'_> {
     fn default() -> Self {
@@ -27,6 +34,8 @@ impl Default for Options<'_> {
             surface_budget: Default::default(),
             cancel: None,
             images: Default::default(),
+            hidden: None,
+            material: None,
         }
     }
 }
@@ -262,8 +271,12 @@ pub fn render_canvas(path: &CanvasPath, options: &Options<'_>) -> Result<Rendere
     painter.finish(samples, 0, 0)
 }
 /// 種類に合わせたストロークのブラシ（消しゴムは `erase`、指先は指先の効果）と、筆先の画像・角度・向き。
-pub(super) fn kind_brush(base: BrushSettings, style: &PathStyle) -> Brush {
-    let mut brush = Brush::from(base);
+pub(super) fn kind_brush(
+    base: BrushSettings,
+    pressure: PressureSwitches,
+    style: &PathStyle,
+) -> Brush {
+    let mut brush = Brush::simple(base, pressure);
     brush.tip.image = style.tip.clone();
     brush.tip.angle = style.angle;
     brush.tip.follow_direction = style.follow;
@@ -287,7 +300,7 @@ pub(super) fn draw_canvas(
     if let PathSymmetry::Canvas(sym) = path.style.symmetry {
         let transforms = sym
             .transforms()
-            .map_err(|_| Error::Invalid("パスの対称の種類・中心・数が範囲外です"))?;
+            .map_err(|_| Error::Invalid(Reason::PathSymmetryRange))?;
         for t in transforms.iter().skip(1) {
             if let Some(copy) = mirrored_canvas(path, t) {
                 samples += draw_canvas_one(painter, &copy)?;
@@ -337,7 +350,7 @@ fn draw_canvas_one(painter: &mut Painter<'_, '_>, path: &CanvasPath) -> Result<u
     }
     painter.begin(
         paints(path.channel, path.brush, &path.material)?,
-        &kind_brush(path.brush.0, &path.style),
+        &kind_brush(path.brush.0, path.brush.1, &path.style),
     )?;
     let step = (path.brush.0.radius * 2.0 * path.brush.0.spacing).max(0.01) / 4.0;
     let samples = canvas_curve(path, step, &mut |x, y, pressure| {

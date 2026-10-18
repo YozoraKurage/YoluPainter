@@ -1,4 +1,5 @@
 //! 複数チャンネルを一回の Undo で塗るマテリアル。
+use crate::Reason;
 use crate::{Channel, Rgba8};
 /// チャンネルとそこへ描く straight RGBA8 の値。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,7 +45,7 @@ impl GradientSettings {
     pub fn validate(&self) -> Result<(), crate::CoreError> {
         if !self.start.is_finite() || !self.end.is_finite() || !(0.0..=1.0).contains(&self.opacity)
         {
-            return Err(crate::CoreError::InvalidArgument("グラデーション"));
+            return Err(crate::CoreError::InvalidArgument(Reason::Gradient));
         }
         Ok(())
     }

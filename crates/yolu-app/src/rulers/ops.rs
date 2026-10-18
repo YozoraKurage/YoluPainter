@@ -1,6 +1,7 @@
 //! 定規を変える操作。文書を変えるものは 1 つが 1 回の取り消し（`Document::set_rulers`・`move_rulers`・`set_snap_ruler`。新しいレイヤーに作るときは
 //! `batch` でレイヤーと定規を 1 回に）。描いている間と読むだけのセットでは `Action::apply` が先に断る。
 
+use yolu_core::Reason;
 use yolu_core::{CoreError, LayerId, Ruler, RulerId, RulerKind, RulerScope, RulerSpace};
 
 use super::{Place, RulerState};
@@ -70,6 +71,7 @@ impl AppState {
                 // 編集のモードでは、3D の定規を選ぶと編集のモードの選び（印・ギズモ）も同じ定規になる
                 if let Some((layer, id)) = selected {
                     let is_3d = self
+                        .session
                         .doc
                         .layer(layer)
                         .and_then(|l| l.rulers().iter().find(|r| r.id == id))
@@ -93,13 +95,11 @@ impl AppState {
                 }
             }
             edit => {
-                let before = self.doc.revision();
+                let before = self.session.doc.revision();
                 if let Err(e) = self.ruler_edit(edit) {
                     self.notify(Kind::of_core(&e), Source::Ruler, self.lang.core_error(&e));
                 }
-                if self.doc.revision() != before {
-                    self.modified = true;
-                }
+                self.session.mark_modified_if_changed(before);
             }
         }
     }
@@ -115,7 +115,7 @@ impl AppState {
             RulerAction::Delete { owner, ids } => {
                 let mut list = self.ruler_list(owner)?;
                 list.retain(|r| !ids.contains(&r.id));
-                self.doc.set_rulers(owner, list, false)?;
+                self.session.doc.set_rulers(owner, list, false)?;
                 if self
                     .rulers
                     .selected
@@ -130,7 +130,7 @@ impl AppState {
                 for r in &mut list {
                     r.visible = visible;
                 }
-                self.doc.set_rulers(owner, list, false)
+                self.session.doc.set_rulers(owner, list, false)
             }
             RulerAction::SetAllScope { owner, scope } => {
                 let mut list = self.ruler_list(owner)?;
@@ -138,11 +138,11 @@ impl AppState {
                     r.scope = scope;
                     r.visible = true;
                 }
-                self.doc.set_rulers(owner, list, false)
+                self.session.doc.set_rulers(owner, list, false)
             }
             RulerAction::MoveAll { from, to } => {
                 let ids: Vec<RulerId> = self.ruler_list(from)?.iter().map(|r| r.id).collect();
-                self.doc.move_rulers(from, to, &ids)?;
+                self.session.doc.move_rulers(from, to, &ids)?;
                 if let Some((owner, id)) = self.rulers.selected {
                     if owner == from {
                         self.rulers.selected = Some((to, id));
@@ -151,7 +151,9 @@ impl AppState {
                 Ok(())
             }
             RulerAction::MarkSnap { owner, id } => {
-                self.doc.set_snap_ruler(owner, id, self.selected_layer)?;
+                self.session
+                    .doc
+                    .set_snap_ruler(owner, id, self.session.selected_layer)?;
                 self.rulers.snap_special = true;
                 Ok(())
             }
@@ -174,19 +176,18 @@ impl AppState {
         let slot = list
             .iter_mut()
             .find(|r| r.id == ruler.id)
-            .ok_or(CoreError::InvalidArgument("その定規がそのレイヤーに無い"))?;
+            .ok_or(CoreError::InvalidArgument(Reason::RulerNotOnLayer))?;
         *slot = ruler;
-        let before = self.doc.revision();
-        self.doc.set_rulers(owner, list, coalesce)?;
-        if self.doc.revision() != before {
-            self.modified = true;
-        }
+        let before = self.session.doc.revision();
+        self.session.doc.set_rulers(owner, list, coalesce)?;
+        self.session.mark_modified_if_changed(before);
         Ok(())
     }
 
     /// レイヤーの定規の一覧の写し。
     fn ruler_list(&self, owner: LayerId) -> Result<Vec<Ruler>, CoreError> {
         Ok(self
+            .session
             .doc
             .layer(owner)
             .ok_or(CoreError::LayerNotFound)?
@@ -198,18 +199,18 @@ impl AppState {
     /// 新しいレイヤー「定規」（レイヤーと定規で 1 回の取り消し。選んでいるレイヤーはそのまま。範囲は「同じグループの中」）。特殊定規は、描くレイヤーから見えるほかの特殊定規の
     /// 印を外して印を付け、「特殊定規にスナップ」を入れる。選んでいるレイヤーに作ったときだけ、作った定規を選ぶ。
     pub fn ruler_create(&mut self, mut ruler: Ruler) -> Result<RulerId, CoreError> {
-        let Some(drawing) = self.selected_layer else {
+        let Some(drawing) = self.session.selected_layer else {
             return Err(CoreError::LayerNotFound);
         };
         let on_layer = self.rulers.on_layer;
-        let name = self.lang.pick("定規", "Ruler");
+        let name = self.lang.t("rulers-ruler");
         let special = ruler.is_special();
         ruler.snap = false;
         if !on_layer {
             // 「定規」のレイヤーには描かないので、「選んでいるときだけ」では効く時が無い。下のレイヤーに描くときに効く範囲にする
             ruler.scope = RulerScope::Group;
         }
-        let (owner, id) = self.doc.batch(|d| {
+        let (owner, id) = self.session.doc.batch(|d| {
             let owner = if on_layer {
                 drawing
             } else {
@@ -250,9 +251,10 @@ impl AppState {
 
     /// スナップする特殊定規を、見えている特殊定規（`ruler_view_place` のビューの空間）の中で次へ回す。候補が無いときは何もしない。
     fn ruler_switch_special(&mut self) -> Result<(), CoreError> {
-        let drawing = self.selected_layer;
+        let drawing = self.session.selected_layer;
         let space = self.ruler_view_place().space();
         let candidates: Vec<(LayerId, RulerId, bool)> = self
+            .session
             .doc
             .special_ruler_candidates(drawing, space)
             .into_iter()
@@ -268,7 +270,7 @@ impl AppState {
             None => 0,
         };
         let (owner, id, _) = candidates[next];
-        self.doc.set_snap_ruler(owner, id, drawing)?;
+        self.session.doc.set_snap_ruler(owner, id, drawing)?;
         self.rulers.snap_special = true;
         Ok(())
     }
@@ -301,7 +303,7 @@ mod tests {
 
     fn state() -> AppState {
         let mut s = AppState::new(64, 64);
-        s.doc.clear_history().unwrap();
+        s.session.doc.clear_history().unwrap();
         s
     }
 
@@ -324,13 +326,13 @@ mod tests {
     }
 
     fn rulers(s: &AppState, layer: LayerId) -> Vec<Ruler> {
-        s.doc.layer(layer).unwrap().rulers().to_vec()
+        s.session.doc.layer(layer).unwrap().rulers().to_vec()
     }
 
     #[test]
     fn creating_on_the_selected_layer_is_one_step_selects_it_and_marks_a_special_ruler() {
         let mut s = state();
-        let layer = s.selected_layer.unwrap();
+        let layer = s.session.selected_layer.unwrap();
         s.rulers.snap_special = false;
         s.apply(Action::Ruler(RulerAction::Create(symmetry())));
         let list = rulers(&s, layer);
@@ -341,8 +343,8 @@ mod tests {
             "特殊定規を作ると「特殊定規にスナップ」が入る"
         );
         assert_eq!(s.rulers.selected, Some((layer, list[0].id)));
-        assert_eq!(s.doc.undo_count(), 1);
-        assert!(s.modified);
+        assert_eq!(s.session.doc.undo_count(), 1);
+        assert!(s.session.is_modified());
         // 直線定規は印が付かない
         s.apply(Action::Ruler(RulerAction::Create(line(
             (0.0, 5.0),
@@ -350,7 +352,7 @@ mod tests {
         ))));
         let list = rulers(&s, layer);
         assert!(!list[1].snap);
-        assert_eq!(s.doc.undo_count(), 2);
+        assert_eq!(s.session.doc.undo_count(), 2);
         // 取り消しで 1 つずつ
         s.apply(Action::Undo);
         assert_eq!(rulers(&s, layer).len(), 1);
@@ -361,29 +363,29 @@ mod tests {
     #[test]
     fn creating_with_on_layer_off_makes_a_ruler_layer_above_in_one_step_and_keeps_the_selection() {
         let mut s = state();
-        let below = s.selected_layer.unwrap();
-        let top = s.doc.add_layer("Top").unwrap();
-        s.selected_layer = Some(below);
-        s.doc.clear_history().unwrap();
+        let below = s.session.selected_layer.unwrap();
+        let top = s.session.doc.add_layer("Top").unwrap();
+        s.session.selected_layer = Some(below);
+        s.session.doc.clear_history().unwrap();
         s.rulers.on_layer = false;
         s.apply(Action::Ruler(RulerAction::Create(symmetry())));
-        let layers: Vec<LayerId> = s.doc.layers().iter().map(|l| l.id()).collect();
+        let layers: Vec<LayerId> = s.session.doc.layers().iter().map(|l| l.id()).collect();
         assert_eq!(layers.len(), 3, "{}", s.message);
         assert_eq!(layers[0], below);
         assert_eq!(layers[2], top);
         let ruler_layer = layers[1];
         assert_eq!(
-            s.doc.layer(ruler_layer).unwrap().name(),
+            s.session.doc.layer(ruler_layer).unwrap().name(),
             s.lang.pick("定規", "Ruler")
         );
         assert!(rulers(&s, below).is_empty());
         assert_eq!(rulers(&s, ruler_layer).len(), 1);
         assert_eq!(
-            s.selected_layer,
+            s.session.selected_layer,
             Some(below),
             "選んでいるレイヤーはそのまま"
         );
-        assert_eq!(s.doc.undo_count(), 1, "レイヤーと定規で 1 回");
+        assert_eq!(s.session.doc.undo_count(), 1, "レイヤーと定規で 1 回");
         assert_eq!(
             s.rulers.selected, None,
             "別のレイヤーに作った定規は、選んでいるレイヤーのものでないので選ばない"
@@ -391,13 +393,13 @@ mod tests {
         // 下のレイヤーに描くと、上に作ったレイヤーの対称が「同じグループの中」で効く
         assert!(s.canvas_symmetry().enabled());
         s.apply(Action::Undo);
-        assert_eq!(s.doc.layers().len(), 2);
+        assert_eq!(s.session.doc.layers().len(), 2);
     }
 
     #[test]
     fn a_new_special_ruler_takes_the_mark_only_from_special_rulers_of_its_own_space() {
         let mut s = state();
-        let layer = s.selected_layer.unwrap();
+        let layer = s.session.selected_layer.unwrap();
         s.apply(Action::Ruler(RulerAction::Create(symmetry())));
         let model = Ruler::model(
             RulerId(1),
@@ -419,13 +421,13 @@ mod tests {
         let list = rulers(&s, layer);
         assert!(!list.iter().find(|r| r.id == first_2d).unwrap().snap);
         assert!(list.iter().filter(|r| r.snap).count() == 2);
-        assert_eq!(s.doc.undo_count(), 3, "印の付け替えも作る 1 回の中");
+        assert_eq!(s.session.doc.undo_count(), 3, "印の付け替えも作る 1 回の中");
     }
 
     #[test]
     fn switching_the_special_ruler_steps_through_the_visible_candidates_of_the_view_space() {
         let mut s = state();
-        let layer = s.selected_layer.unwrap();
+        let layer = s.session.selected_layer.unwrap();
         for kind in [
             RulerKind::Parallel,
             RulerKind::Concentric,
@@ -442,14 +444,14 @@ mod tests {
             rulers(s, layer).into_iter().find(|r| r.snap).unwrap().kind
         };
         assert_eq!(marked(&s), RulerKind::Symmetry, "最後に作った物");
-        let steps = s.doc.undo_count();
+        let steps = s.session.doc.undo_count();
         s.apply(Action::Ruler(RulerAction::SwitchSpecial));
         assert_eq!(marked(&s), RulerKind::Parallel, "一覧の次（回って先頭）");
         s.apply(Action::Ruler(RulerAction::SwitchSpecial));
         assert_eq!(marked(&s), RulerKind::Concentric);
         s.apply(Action::Ruler(RulerAction::SwitchSpecial));
         assert_eq!(marked(&s), RulerKind::Symmetry);
-        assert_eq!(s.doc.undo_count(), steps + 3, "1 回ずつ取り消せる");
+        assert_eq!(s.session.doc.undo_count(), steps + 3, "1 回ずつ取り消せる");
         // 印が 1 つも無ければ、先頭から
         let list: Vec<Ruler> = rulers(&s, layer)
             .into_iter()
@@ -458,7 +460,7 @@ mod tests {
                 r
             })
             .collect();
-        s.doc.set_rulers(layer, list, false).unwrap();
+        s.session.doc.set_rulers(layer, list, false).unwrap();
         s.apply(Action::Ruler(RulerAction::SwitchSpecial));
         assert_eq!(marked(&s), RulerKind::Parallel);
     }
@@ -466,17 +468,17 @@ mod tests {
     #[test]
     fn edits_move_and_delete_are_each_one_step_and_are_refused_while_stroking_or_read_only() {
         let mut s = state();
-        let a = s.selected_layer.unwrap();
-        let b = s.doc.add_layer("B").unwrap();
-        s.selected_layer = Some(a);
-        s.doc.clear_history().unwrap();
+        let a = s.session.selected_layer.unwrap();
+        let b = s.session.doc.add_layer("B").unwrap();
+        s.session.selected_layer = Some(a);
+        s.session.doc.clear_history().unwrap();
         s.apply(Action::Ruler(RulerAction::Create(line(
             (0.0, 5.0),
             (50.0, 5.0),
         ))));
         s.apply(Action::Ruler(RulerAction::Create(symmetry())));
         let ids: Vec<RulerId> = rulers(&s, a).iter().map(|r| r.id).collect();
-        let steps = s.doc.undo_count();
+        let steps = s.session.doc.undo_count();
         // 値を替える（ドラッグ・スライダーをまとめる）
         let mut moved = rulers(&s, a)[0].clone();
         moved.visible = false;
@@ -487,20 +489,20 @@ mod tests {
                 coalesce: true,
             }));
         }
-        assert_eq!(s.doc.undo_count(), steps + 1, "まとめて 1 回");
-        s.doc.end_coalescing();
+        assert_eq!(s.session.doc.undo_count(), steps + 1, "まとめて 1 回");
+        s.session.doc.end_coalescing();
         // 全部を別のレイヤーへ
         s.apply(Action::Ruler(RulerAction::MoveAll { from: a, to: b }));
         assert!(rulers(&s, a).is_empty());
         assert_eq!(rulers(&s, b).iter().map(|r| r.id).collect::<Vec<_>>(), ids);
-        assert_eq!(s.doc.undo_count(), steps + 2);
+        assert_eq!(s.session.doc.undo_count(), steps + 2);
         // 消す
         s.apply(Action::Ruler(RulerAction::Delete {
             owner: b,
             ids: vec![ids[0]],
         }));
         assert_eq!(rulers(&s, b).len(), 1);
-        assert_eq!(s.doc.undo_count(), steps + 3);
+        assert_eq!(s.session.doc.undo_count(), steps + 3);
         // 描いている間は断る（文書を変えない）
         let stroke = s.begin_canvas_stroke(a, false, None).unwrap();
         s.apply(Action::Ruler(RulerAction::Delete {
@@ -509,9 +511,9 @@ mod tests {
         }));
         assert_eq!(rulers(&s, b).len(), 1);
         assert!(s.message.contains("描いている間"), "{}", s.message);
-        s.doc.cancel_stroke(stroke);
+        s.session.doc.cancel_stroke(stroke);
         // 読むだけのセットでも断る
-        s.sets.get_mut(0).unwrap().read_only = Some("テスト".into());
+        s.session.sets.get_mut(0).unwrap().read_only = Some("テスト".into());
         s.apply(Action::Ruler(RulerAction::Delete {
             owner: b,
             ids: vec![ids[1]],
@@ -522,7 +524,7 @@ mod tests {
         s.apply(Action::Ruler(RulerAction::ToggleSnapRuler));
         assert!(!s.rulers.snap_ruler);
         // 取り消しで 1 つずつ戻る
-        s.sets.get_mut(0).unwrap().read_only = None;
+        s.session.sets.get_mut(0).unwrap().read_only = None;
         for _ in 0..3 {
             s.apply(Action::Undo);
         }
@@ -532,29 +534,29 @@ mod tests {
     #[test]
     fn the_overflow_of_a_move_is_refused_with_the_core_reason_and_changes_nothing() {
         let mut s = state();
-        let a = s.selected_layer.unwrap();
-        let b = s.doc.add_layer("B").unwrap();
+        let a = s.session.selected_layer.unwrap();
+        let b = s.session.doc.add_layer("B").unwrap();
         let many: Vec<Ruler> = (0..62)
             .map(|i| {
                 let mut r = line((0.0, i as f64), (10.0, i as f64));
-                r.id = s.doc.new_ruler_id();
+                r.id = s.session.doc.new_ruler_id();
                 r
             })
             .collect();
-        s.doc.set_rulers(b, many, false).unwrap();
+        s.session.doc.set_rulers(b, many, false).unwrap();
         let few: Vec<Ruler> = (0..3)
             .map(|i| {
                 let mut r = line((0.0, i as f64), (10.0, i as f64));
-                r.id = s.doc.new_ruler_id();
+                r.id = s.session.doc.new_ruler_id();
                 r
             })
             .collect();
-        s.doc.set_rulers(a, few, false).unwrap();
-        let steps = s.doc.undo_count();
+        s.session.doc.set_rulers(a, few, false).unwrap();
+        let steps = s.session.doc.undo_count();
         s.apply(Action::Ruler(RulerAction::MoveAll { from: a, to: b }));
         assert_eq!(rulers(&s, a).len(), 3);
         assert_eq!(rulers(&s, b).len(), 62);
-        assert_eq!(s.doc.undo_count(), steps);
+        assert_eq!(s.session.doc.undo_count(), steps);
         assert!(s.message.contains("64"), "{}", s.message);
     }
 
@@ -563,13 +565,13 @@ mod tests {
         use crate::rulers::{Grab, Handle, RulerDrag};
         use crate::state::StrokeSource;
         let mut s = state();
-        let layer = s.selected_layer.unwrap();
+        let layer = s.session.selected_layer.unwrap();
         s.apply(Action::Ruler(RulerAction::Create(symmetry())));
         let mut parallel = line((0.0, 0.0), (10.0, 0.0));
         parallel.kind = RulerKind::Parallel;
         s.apply(Action::Ruler(RulerAction::Create(parallel)));
         let before = rulers(&s, layer);
-        let (steps, revision) = (s.doc.undo_count(), s.doc.revision());
+        let (steps, revision) = (s.session.doc.undo_count(), s.session.doc.revision());
         s.rulers.drag = Some(RulerDrag {
             source: StrokeSource::Mouse,
             start: DVec2::ZERO,
@@ -598,21 +600,21 @@ mod tests {
             s.apply(Action::Ruler(op.clone()));
             assert!(s.message.contains("描いている間"), "{op:?}: {}", s.message);
             assert_eq!(rulers(&s, layer), before, "{op:?}");
-            assert_eq!(s.doc.revision(), revision, "{op:?}");
-            assert_eq!(s.doc.undo_count(), steps, "{op:?}");
+            assert_eq!(s.session.doc.revision(), revision, "{op:?}");
+            assert_eq!(s.session.doc.undo_count(), steps, "{op:?}");
         }
         // 離したあと（ドラッグが無い）は通る
         s.rulers.drag = None;
         s.apply(Action::Ruler(RulerAction::SwitchSpecial));
-        assert_eq!(s.doc.undo_count(), steps + 1);
+        assert_eq!(s.session.doc.undo_count(), steps + 1);
     }
 
     #[test]
     fn delete_takes_the_selected_ruler_2d_or_3d_and_a_foreign_selection_is_dropped() {
         let mut s = state();
-        let a = s.selected_layer.unwrap();
-        let b = s.doc.add_layer("B").unwrap();
-        s.selected_layer = Some(a);
+        let a = s.session.selected_layer.unwrap();
+        let b = s.session.doc.add_layer("B").unwrap();
+        s.session.selected_layer = Some(a);
         assert!(!s.has_ruler(), "選んだ定規が無ければ消せない");
         s.apply(Action::Ruler(RulerAction::Create(line(
             (0.0, 5.0),
@@ -635,7 +637,7 @@ mod tests {
             (50.0, 6.0),
         ))));
         assert_eq!(s.rulers.selected.map(|(o, _)| o), Some(a));
-        s.selected_layer = Some(b);
+        s.session.selected_layer = Some(b);
         s.apply(Action::Ruler(RulerAction::ToggleSnapRuler));
         assert_eq!(
             s.rulers.selected, None,

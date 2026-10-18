@@ -6,6 +6,7 @@ use attach_support::*;
 use std::sync::atomic::AtomicBool;
 use yolu_core::curve::{Curve, CurvePoint};
 use yolu_core::fill_image::{Projection, ProjectionMode};
+use yolu_core::fill_points::{GradientPoint, PointGradient, PointSpace};
 use yolu_core::generator::{self, anchor::ReadMode, ColorStop, OpacityStop, Ramp, Settings};
 use yolu_core::{
     AdjustmentSettings, AdjustmentType, AnchorId, AnchorPlacement, BalanceRange,
@@ -641,6 +642,68 @@ fn fills_that_read_an_image_a_projection_or_a_gradient_are_baked_per_channel() {
 }
 
 #[test]
+fn a_point_gradient_fill_is_baked_as_pixels_and_told_like_the_other_gradients() {
+    let (mut d, l) = world();
+    let fill = l[3];
+    // UV の空間の点（位置のマップが要らない）。Color は 2 点の間で色も不透明度も変わる
+    let gradient = PointGradient {
+        space: PointSpace::Uv,
+        spread: 0.5,
+        points: vec![
+            GradientPoint {
+                position: [0.0, 0.0, 0.0],
+                color: Rgba8::new(10, 200, 30, 214),
+            },
+            GradientPoint {
+                position: [1.0, 1.0, 0.0],
+                color: Rgba8::new(240, 20, 90, 255),
+            },
+        ],
+    };
+    d.set_fill_points(fill, Channel::Color, Some(gradient), false)
+        .unwrap();
+    let before = state(&d);
+
+    let (color, back) = round_trip(&d, Channel::Color);
+    let note = color.notes.iter().find(|n| n.layer == "塗り").unwrap();
+    match &note.action {
+        NoteAction::BakedFill(s) => assert!(s.gradient && !s.image && !s.decal, "{s:?}"),
+        other => panic!("{other:?}"),
+    }
+    let baked = find(&color.document.layers, "塗り");
+    assert!(matches!(baked.kind, LayerKind::Raster));
+    // 焼いた画素は単色の値でなく、点のグラデーションの評価と全バイト一致する
+    let evaluated = d.layer_output(fill, Channel::Color, d.bounds()).unwrap();
+    assert_eq!(quiet(expand(baked, W, H)), quiet(evaluated.clone()));
+    assert!(
+        evaluated
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|p| p != &evaluated[..4]),
+        "画素が場所で変わる"
+    );
+    assert_eq!(
+        back.layers()
+            .iter()
+            .filter(|l| l.kind() == CoreKind::Fill)
+            .count(),
+        0
+    );
+    // 点のグラデーションを持たないチャンネルは、これまでどおり単色の塗りつぶしのまま（注記なし）
+    let (height, _) = round_trip(&d, Channel::Height);
+    assert!(
+        !height
+            .notes
+            .iter()
+            .any(|n| matches!(n.action, NoteAction::BakedFill(_))),
+        "{:?}",
+        height.notes
+    );
+    assert_eq!(state(&d), before);
+}
+
+#[test]
 fn a_decal_is_baked_as_pixels_in_every_channel_it_has_a_value_for() {
     let (mut d, l) = world();
     let fill = l[3];
@@ -728,12 +791,15 @@ fn a_path_layer_keeps_its_rasterized_pixels_and_says_the_path_is_not_carried() {
             style: Default::default(),
             id: 0x77,
             channel: Channel::Color,
-            brush: PathBrush(yolu_core::BrushSettings {
-                radius: 3.0,
-                spacing: 0.17,
-                color: Rgba8::new(201, 37, 89, 219),
-                ..yolu_core::BrushSettings::default()
-            }),
+            brush: PathBrush(
+                yolu_core::BrushSettings {
+                    radius: 3.0,
+                    spacing: 0.17,
+                    color: Rgba8::new(201, 37, 89, 219),
+                    ..yolu_core::BrushSettings::default()
+                },
+                yolu_core::PressureSwitches::default(),
+            ),
             points: vec![
                 CanvasPoint::new(4.5, 7.25, 0.3).unwrap(),
                 CanvasPoint::new(29.5, 21.5, 0.9).unwrap(),
@@ -931,6 +997,95 @@ fn an_empty_clipped_group_is_written_hidden_so_its_base_group_keeps_passing_thro
         .iter()
         .any(|n| n.action == NoteAction::BakedClippedGroup));
     assert!(!find(&out.document.layers, "空の組").visible);
+}
+
+/// 通過のグループに、見えないレイヤー（非表示・チャンネルを切った・透明）だけがクリッピングされた文書。PSD へ書いて読み直しても、書き出した統合画像と
+/// 読み直した文書の合成の、グループの外側の画素が反転しない（グループは分離する）。クリッピングが無い文書は反転する。
+/// 文書の合成だけでなく、書き出し・読み直しの後の画素を決まった値で確かめる（合成どうしの比べは、決まりが両方とも前の形でも通る）。
+#[test]
+fn a_pass_through_group_clipped_only_by_invisible_layers_stays_isolated_after_export_and_read() {
+    const RED: Rgba8 = Rgba8::new(200, 0, 0, 255);
+    const BLUE: Rgba8 = Rgba8::new(0, 0, 255, 255);
+    const GREEN: Rgba8 = Rgba8::new(0, 255, 0, 255);
+    const CYAN: Rgba8 = Rgba8::new(0, 255, 255, 255);
+    const INVERTED_RED: Rgba8 = Rgba8::new(55, 255, 255, 255);
+    const INVERTED_BLUE: Rgba8 = Rgba8::new(255, 255, 0, 255);
+    // 緑の帯は不透明なので、分離しても反転した緑
+    const INVERTED_GREEN: Rgba8 = Rgba8::new(255, 0, 255, 255);
+    const W: u32 = 8;
+    const H: u32 = 2;
+    fn fill(d: &mut Document, id: LayerId, c: Rgba8, x0: u32, x1: u32) {
+        for y in 0..H {
+            for x in x0..x1 {
+                d.set_pixel(id, x, y, c).unwrap();
+            }
+        }
+    }
+    // 下から: 基（左 赤・右 青）・通過のグループ（緑の帯と反転の調整）・グループへクリッピングしたレイヤー（None なら無い）
+    // 帯は x = 2..6、クリッピングのレイヤーが描かれるなら x = 3..5（帯の中）
+    let build = |kind: Option<&str>| {
+        let mut d = Document::with_tile_size(W, H, 4).unwrap();
+        let base = d.add_layer("基").unwrap();
+        fill(&mut d, base, RED, 0, 4);
+        fill(&mut d, base, BLUE, 4, W);
+        let band = d.add_layer("緑").unwrap();
+        fill(&mut d, band, GREEN, 2, 6);
+        let invert = d
+            .add_adjustment_layer("反転", AdjustmentSettings::invert(), None, None)
+            .unwrap();
+        let g = d.group_layers(&[band, invert], "グループ").unwrap();
+        d.set_layer_blend_mode(g, CoreBlend::PassThrough).unwrap();
+        if let Some(kind) = kind {
+            let c = d.add_layer("クリッピング").unwrap();
+            if kind != "transparent" {
+                fill(&mut d, c, CYAN, 3, 5);
+            }
+            match kind {
+                "hidden" => d.set_layer_visible(c, false).unwrap(),
+                "channel off" => d.set_channel_enabled(c, Channel::Color, false).unwrap(),
+                _ => {}
+            }
+            d.set_layer_clipping(c, true).unwrap();
+        }
+        d.clear_history().unwrap();
+        d
+    };
+    // 外側（x = 0 と 7）と帯の中（x = 2）の画素を、書き出した統合画像・読み直した文書の合成・PSD の参照合成の 3 つで（2 行とも同じ値）
+    let check = |kind: Option<&str>, outside: (Rgba8, Rgba8)| {
+        let d = build(kind);
+        let (out, back) = round_trip(&d, Channel::Color);
+        let merged = out.document.composite_rgba.as_ref().unwrap();
+        let read = look(&back, Channel::Color);
+        // 書いた PSD を読み直す。保存した統合画像と PSD の参照合成（レイヤーを重ねる）が一致する（食い違うと CompositeDiffers の注記が付く）。
+        // 参照合成の結果（読み直して重ねた 1 枚。上の行から）の外側も、同じ値
+        let bytes = psd::write(&out.document, &Limits::default()).unwrap();
+        let reread = psd::read(&bytes, &Limits::default()).unwrap();
+        assert!(
+            reread
+                .diagnostics()
+                .iter()
+                .all(|d| d.code != "CompositeDiffers"),
+            "{kind:?}: {:?}",
+            reread.diagnostics()
+        );
+        let (_, _, flattened) = psd::read_flattened(&bytes, &Limits::default(), None).unwrap();
+        for (name, bytes) in [
+            ("統合画像", merged),
+            ("読み直した合成", &read),
+            ("PSD の参照合成", &flattened),
+        ] {
+            let px = |x: u32, y: u32| Rgba8::from_slice(&bytes[((y * W + x) * 4) as usize..][..4]);
+            for y in 0..H {
+                assert_eq!(px(0, y), outside.0, "{kind:?} {name} 外側（赤）");
+                assert_eq!(px(7, y), outside.1, "{kind:?} {name} 外側（青）");
+                assert_eq!(px(2, y), INVERTED_GREEN, "{kind:?} {name} 帯の中");
+            }
+        }
+    };
+    check(None, (INVERTED_RED, INVERTED_BLUE));
+    for kind in ["hidden", "channel off", "transparent"] {
+        check(Some(kind), (RED, BLUE));
+    }
 }
 
 // ───────── 刻みの間の調整 ─────────
@@ -2380,7 +2535,7 @@ fn a_cancel_during_the_normal_composite_of_a_big_canvas_stops_it_without_a_resul
     assert!(full.is_ok(), "旗が立たなければ書ける");
     assert!(
         whole > Duration::from_millis(40),
-        "重ねに時間がかかるキャンバスでなければ、この試験は意味が無い: {whole:?}"
+        "重ねに時間がかかるキャンバスでなければ、このテストは意味が無い: {whole:?}"
     );
     let (cut, _, since_raised) = run(Some(whole / 5));
     assert!(

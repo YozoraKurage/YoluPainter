@@ -5,9 +5,10 @@ use super::Document;
 use crate::composite::{self, Stack};
 use crate::effects::EffectSettings;
 use crate::surface::{Readers, Tile};
+use crate::Reason;
 use crate::{
-    BlendMode, Channel, ChannelKind, CoreError, Layer, LayerId, LayerKind, LayerLocks, Rgba8,
-    Surface, TileCoord,
+    BlendMode, Channel, ChannelKind, CoreError, Layer, LayerId, LayerKind, LayerLocks, LayerSetId,
+    Rgba8, Surface, TileCoord,
 };
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -158,7 +159,7 @@ impl Document {
         if l.is_group() {
             return Ok(Some(MergeRefusal::IsGroup));
         }
-        let Some(lower) = self.layers[..i].iter().rev().find(|b| b.parent == l.parent) else {
+        let Some(lower) = self.layers[..i].iter().rev().find(|b| b.is_sibling_of(l)) else {
             return Ok(Some(MergeRefusal::NoLayerBelow));
         };
         Ok(if lower.is_group() {
@@ -401,7 +402,7 @@ impl Document {
         }
         !self.layers[..i]
             .iter()
-            .any(|b| b.parent == l.parent && b.visible)
+            .any(|b| b.is_sibling_of(l) && b.visible)
     }
     pub fn merge_down(
         &mut self,
@@ -416,7 +417,7 @@ impl Document {
         let upper = &self.layers[ui];
         let li = (0..ui)
             .rev()
-            .find(|&i| self.layers[i].parent == upper.parent)
+            .find(|&i| self.layers[i].is_sibling_of(upper))
             .expect("下のレイヤー");
         let lower = &self.layers[li];
         self.ensure_pixels_editable(id, false)?;
@@ -448,7 +449,7 @@ impl Document {
             &lower.name,
             LayerKind::Raster,
         );
-        result.parent = lower.parent;
+        result.place_like(lower);
         result.locks = lower.locks;
         if method != MergeMethod::Isolated {
             result.visible = lower.visible;
@@ -627,13 +628,24 @@ impl Document {
         copy.layers[li] = result;
         self.finish_merge(copy, &removed, method, notes, tolerance, &output_tiles)
     }
-    /// 表示に寄与するレイヤーを結合。非表示・不透明度ゼロのレイヤーと、それを持つグループは残す。
+    /// 最初のレイヤーセットの、表示に寄与するレイヤーを結合（`merge_visible_in`）。
     pub fn merge_visible(
         &mut self,
         name: &str,
         tolerance: u8,
     ) -> Result<LayerMergeReport, CoreError> {
+        self.merge_visible_in(self.layer_sets[0].id, name, tolerance)
+    }
+    /// レイヤーセット `set` の、表示に寄与するレイヤーを結合。非表示・不透明度ゼロのレイヤーと、それを持つグループは残す。ほかのレイヤーセットは
+    /// 変えない。
+    pub fn merge_visible_in(
+        &mut self,
+        set: LayerSetId,
+        name: &str,
+        tolerance: u8,
+    ) -> Result<LayerMergeReport, CoreError> {
         self.ensure_no_stroke()?;
+        self.require_layer_set(set)?;
         fn walk(entries: &[composite::Entry], layers: &[Layer], out: &mut HashSet<LayerId>) {
             for e in entries {
                 out.insert(layers[e.layer].id);
@@ -644,7 +656,9 @@ impl Document {
         let mut removed = HashSet::new();
         for c in self.channels() {
             walk(
-                &Stack::new(&self.layers, c, self.channel_kind(c)?, None).plan(),
+                &self
+                    .set_stack(set, None, c, self.channel_kind(c)?, None)
+                    .plan(),
                 &self.layers,
                 &mut removed,
             );
@@ -679,24 +693,30 @@ impl Document {
             name,
             LayerKind::Raster,
         );
+        result.set = set;
         let mut budget = 0;
-        let in_place: Vec<usize> = (0..self.layers.len()).collect();
+        // 読むのはこのレイヤーセットのレイヤーだけ（全部のレイヤーがこのレイヤーセットなら、写さずに文書の並びのまま）
+        let in_place: Vec<usize> = (0..self.layers.len())
+            .filter(|&i| self.layers[i].set == set)
+            .collect();
+        let picked: Option<Vec<Layer>> = (in_place.len() != self.layers.len())
+            .then(|| in_place.iter().map(|&i| self.layers[i].clone()).collect());
+        let members: &[Layer] = picked.as_deref().unwrap_or(&self.layers);
         let mut output_tiles: BTreeMap<Channel, BTreeSet<TileCoord>> = BTreeMap::new();
         for c in self.channels() {
             let kind = self.channel_kind(c)?;
-            if Stack::new(&self.layers, c, kind, None).plan().is_empty() {
+            if Stack::new(members, c, kind, None).plan().is_empty() {
                 continue;
             }
             // 全部のレイヤーの評価した出力（効果を焼く）。評価した面のタイルは、元の画素の無い所へ出した効果の分も読むタイルに足す
-            let (eval, evaluated_tiles) = self.merge_eval(&self.layers, &in_place, c, kind)?;
-            let mut coords: BTreeSet<_> = self
-                .layers
+            let (eval, evaluated_tiles) = self.merge_eval(members, &in_place, c, kind)?;
+            let mut coords: BTreeSet<_> = members
                 .iter()
                 .flat_map(|l| self.content_coords(l, c))
                 .collect();
             coords.extend(evaluated_tiles.iter().copied());
             output_tiles.entry(c).or_default().extend(evaluated_tiles);
-            let stack = Stack::new(&self.layers, c, kind, Some(&eval));
+            let stack = Stack::new(members, c, kind, Some(&eval));
             let surface = self.merge_surface_of_plan(&coords, &mut budget, &stack)?;
             if surface.tile_count() > 0 {
                 result.put_surface(c, Some(surface));
@@ -761,9 +781,18 @@ impl Document {
         self.ensure_no_stroke()?;
         let members = self.topmost_of(ids)?;
         if members.len() < 2 {
-            return Err(CoreError::InvalidArgument("結合は 2 レイヤー以上"));
+            return Err(CoreError::InvalidArgument(
+                Reason::MergingRequiresAtLeastTwoLayers,
+            ));
         }
         let parent = self.layer(members[0]).expect("対象").parent;
+        let set = self.layer(members[0]).expect("対象").set;
+        if members
+            .iter()
+            .any(|&id| self.layer(id).expect("対象").set != set)
+        {
+            return Err(CoreError::InvalidArgument(Reason::MergeAcrossLayerSets));
+        }
         if members
             .iter()
             .any(|&id| self.layer(id).expect("対象").parent != parent)
@@ -784,7 +813,11 @@ impl Document {
                     return None;
                 }
                 let mut base = None;
-                for l in self.layers[..i].iter().rev().filter(|l| l.parent == parent) {
+                for l in self.layers[..i]
+                    .iter()
+                    .rev()
+                    .filter(|l| l.parent == parent && l.set == set)
+                {
                     base = Some(l.id);
                     if !l.clipping {
                         break;
@@ -848,7 +881,7 @@ impl Document {
             &top.name,
             LayerKind::Raster,
         );
-        result.parent = top.parent;
+        result.place_like(top);
         result.clipping = clipped;
         if group.is_some() {
             result.opacity = top.opacity;
@@ -939,6 +972,27 @@ impl Document {
             &output_tiles,
         )
     }
+    /// クリッピングされたレイヤーごとの下地（合成の計画と同じ規則: 同じ親の中で、直前のクリッピングでない兄弟。親の最初の子は下地）。
+    /// 下地が調整レイヤーなら、その組は合成に出ないので印（true）を付ける。`rename` は結合で外すレイヤーの id を結果の id へ読み替える。
+    fn clip_bases(
+        &self,
+        rename: &dyn Fn(LayerId) -> LayerId,
+    ) -> BTreeMap<LayerId, (LayerId, bool)> {
+        let mut current: BTreeMap<(Option<LayerId>, LayerSetId), usize> = BTreeMap::new();
+        let mut out = BTreeMap::new();
+        for (i, l) in self.layers.iter().enumerate() {
+            match current.get(&(l.parent, l.set)) {
+                Some(&b) if l.clipping => {
+                    let base = &self.layers[b];
+                    out.insert(l.id, (rename(base.id), base.kind == LayerKind::Adjustment));
+                }
+                _ => {
+                    current.insert((l.parent, l.set), i);
+                }
+            }
+        }
+        out
+    }
     fn finish_merge(
         &mut self,
         mut copy: Document,
@@ -982,6 +1036,21 @@ impl Document {
             changed_by_channel: BTreeMap::new(),
         };
         let parent = result.parent;
+        // 比べるのは、結合したレイヤーセットの合成（出力の割り当てによらない）
+        let set = result.set;
+        // 結合で、外さないレイヤーのクリッピングの下地が替わることがある（クリッピングされた下のレイヤーへ、クリッピングされていない上の
+        // レイヤーを結合すると、上のレイヤーにクリッピングしていたレイヤーは下のレイヤーの組の下地へ移る）。そのレイヤーの出す所は
+        // 結合したレイヤーの画素の所に限らないので、キャンバス全体を比べる
+        let rebased = !visible && {
+            let result_id = result.id;
+            let rename = |id: LayerId| if removed.contains(&id) { result_id } else { id };
+            let before = self.clip_bases(&rename);
+            let after = copy.clip_bases(&|id| id);
+            copy.layers
+                .iter()
+                .filter(|l| l.id != result_id)
+                .any(|l| before.get(&l.id) != after.get(&l.id))
+        };
         for c in self.channels() {
             let mut coords: BTreeSet<_> = self
                 .layers
@@ -994,8 +1063,14 @@ impl Document {
             if let Some(tiles) = output_tiles.get(&c) {
                 coords.extend(tiles.iter().copied());
             }
+            if rebased {
+                coords.extend(self.canvas_tiles());
+            }
             if visible || method == MergeMethod::Layers {
                 for (i, l) in self.layers.iter().enumerate() {
+                    if l.set != set {
+                        continue;
+                    }
                     if visible
                         || parent.is_none()
                         || l.parent == parent
@@ -1011,12 +1086,12 @@ impl Document {
             let mut changed = 0;
             for chunk in coords.chunks(self.merge_batch_tiles()) {
                 let differences = if visible {
-                    copy.composite_tiles_then(c, chunk, None, |_, _, rect, after| {
+                    copy.composite_set_tiles_then(set, c, chunk, None, |_, _, rect, after| {
                         Ok(Difference::of(&after, &layer_rect(result, c, rect)?))
                     })?
                 } else {
-                    let before = self.composite_tiles(c, chunk)?;
-                    copy.composite_tiles_then(c, chunk, None, |i, coord, _, after| {
+                    let before = self.composite_set_tiles_cancellable(set, c, chunk, None)?;
+                    copy.composite_set_tiles_then(set, c, chunk, None, |i, coord, _, after| {
                         debug_assert_eq!(before[i].coord, coord);
                         Ok(Difference::of(&after, &before[i].pixels))
                     })?

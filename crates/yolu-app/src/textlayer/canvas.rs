@@ -39,7 +39,11 @@ pub fn release(app: &mut AppState, source: StrokeSource) {
     if from != source {
         return;
     }
-    if let Some(id) = app.selected_layer.filter(|id| inside_layer(app, *id, x, y)) {
+    if let Some(id) = app
+        .session
+        .selected_layer
+        .filter(|id| inside_layer(app, *id, x, y))
+    {
         app.apply(Action::Text(TextAction::Edit(id)));
         // 押した所へカーソルを置く
         let index = caret_at(app, x, y);
@@ -72,9 +76,13 @@ pub fn move_press(
         return false;
     }
     let (x, y) = view.to_canvas(at);
-    let selected = app.selected_layer.filter(|id| inside_layer(app, *id, x, y));
+    let selected = app
+        .session
+        .selected_layer
+        .filter(|id| inside_layer(app, *id, x, y));
     let target = selected.or_else(|| {
         let tops: Vec<crate::engine::LayerId> = app
+            .session
             .doc
             .layers()
             .iter()
@@ -197,7 +205,7 @@ fn caret_line(layout: &TextLayout, value: &TextSettings, byte: usize) -> ((f64, 
 pub fn paint_overlay(ui: &mut Ui, painter: &Painter, view: &CanvasView, app: &mut AppState) {
     if app.text.editing.is_none() {
         if app.tool == Tool::Text {
-            if let Some(id) = app.selected_layer {
+            if let Some(id) = app.session.selected_layer {
                 if let Some((value, layout)) = app.text_layer_layout(id) {
                     outline(painter, view, &value, layout_box(&value, &layout), false);
                 }

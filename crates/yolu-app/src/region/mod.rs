@@ -19,6 +19,7 @@ use std::sync::Arc;
 use yolu_core::geometry::SurfaceRegionKind;
 
 use self::index::{RegionIndex, UvGrid};
+use crate::features::Feature;
 use crate::lang::Lang;
 use crate::notice::Source;
 use crate::state::AppState;
@@ -49,7 +50,7 @@ pub struct RegionState {
     /// ID の色で選ぶときの許し幅（8 bit のチャンネルの差の最大）。
     pub id_tolerance: u8,
     /// 入力のフレームごとの修飾キー（ID の色で選択の足す・引く・重ねる）。
-    pub modifiers: egui::Modifiers,
+    pub modifiers: crate::state::key::Modifiers,
     /// ポリゴン塗りつぶしのドラッグ。
     pub drag: Option<PolygonDrag>,
     /// ポインタの下の範囲（強調）。
@@ -77,7 +78,7 @@ impl Default for RegionState {
             job: None,
             erase: false,
             id_tolerance: yolu_core::id_colors::DEFAULT_TOLERANCE,
-            modifiers: egui::Modifiers::NONE,
+            modifiers: crate::state::key::Modifiers::NONE,
             drag: None,
             hover: None,
             cycle: None,
@@ -113,22 +114,35 @@ pub enum RegionAction {
     IdPart(usize),
     /// 手動の ID の色の変更（文書を変える。1 回の Undo）。
     IdColor(IdColorOp),
+    /// ポリゴン塗りつぶしで、2D で重なった UV の同じ所を続けて押した: 前の候補の塗りを取り消す（次の候補を塗り直す前）。
+    UndoCandidate,
+    /// バケツ（近い色）の結果を、始めたときの塗り方で塗る（文書を変える。1 回の Undo）。
+    Bucket(Box<bucket::BucketFill>),
+    /// ポリゴン塗りつぶしを始めて、最初の範囲（三角形 `first` を含む範囲）を塗る（離すまで描いている最中。離して 1 回の Undo）。
+    /// `on_surface` は 3D ビューで始めたか、`at` は押した画面の点（続きの範囲の線の始まり）。
+    Polygon {
+        first: Option<u32>,
+        on_surface: bool,
+        at: egui::Pos2,
+    },
 }
 
 /// 範囲の種類の名前。
 pub fn kind_name(lang: Lang, kind: SurfaceRegionKind) -> &'static str {
     match kind {
-        SurfaceRegionKind::Triangle => lang.pick("三角形", "Triangle"),
-        SurfaceRegionKind::MeshPart => lang.pick("メッシュの塊", "Mesh Part"),
-        SurfaceRegionKind::UvIsland => lang.pick("UV アイランド", "UV Island"),
-        SurfaceRegionKind::Material => lang.pick("マテリアル", "Material"),
+        SurfaceRegionKind::Triangle => lang.t("region-triangle"),
+        SurfaceRegionKind::MeshPart => lang.t("region-mesh-part"),
+        SurfaceRegionKind::UvIsland => lang.t("region-uv-island"),
+        SurfaceRegionKind::Material => lang.t("region-material"),
     }
 }
 
 impl AppState {
     /// 範囲のツールの操作を当てる（描いている間は断る）。
     pub fn region_apply(&mut self, action: RegionAction) {
-        if self.is_stroking() {
+        // バケツの結果は、文書を書かない描いている最中（選択ペンの被覆・図形・定規・パスのドラッグ）にも塗る（core は自分のストロークの
+        // 最中だけを、同じ「描いている間」の文で断る）
+        if self.is_stroking() && !matches!(action, RegionAction::Bucket(_)) {
             self.refuse(
                 Source::Fill,
                 crate::lang::refusals::during_stroke(self.lang),
@@ -166,8 +180,8 @@ impl AppState {
                 r.sample_all = v == color::Reference::Visible;
             }
             RegionAction::ReferenceLayer(id) => {
-                let key = (self.doc.id(), id);
-                if self.doc.layer(id).is_some() && !r.references.remove(&key) {
+                let key = (self.session.doc.id(), id);
+                if self.session.doc.layer(id).is_some() && !r.references.remove(&key) {
                     r.references.insert(key);
                 }
             }
@@ -183,26 +197,35 @@ impl AppState {
             }
             RegionAction::IdPart(i) => r.id.part = i,
             RegionAction::IdColor(op) => self.id_color_edit(op),
+            RegionAction::UndoCandidate => tools::undo_candidate(self),
+            RegionAction::Bucket(fill) => bucket::fill(self, *fill),
+            RegionAction::Polygon {
+                first,
+                on_surface,
+                at,
+            } => tools::start_polygon(self, first, on_surface, at),
         }
     }
 
     /// 今のモデル（見せる形）と、描くテクスチャセットのマテリアルの組。無ければ None（モデルが無い・今のセットがモデルに無い）。
-    pub fn region_model(&self) -> Option<(Arc<crate::view3d::model::ViewModel>, i32)> {
+    pub fn region_model(
+        &self,
+    ) -> Option<(
+        Arc<crate::view3d::model::ViewModel>,
+        yolu_core::geometry::MaterialSet,
+    )> {
         let model = self.view3d.model.clone()?;
-        (self.view3d.material >= 0).then_some((model, self.view3d.material))
+        (!self.view3d.material.is_empty()).then(|| (model, self.view3d.material.clone()))
     }
 
     /// `region_model` が None の理由（モデルが無い、またはモデルはあるが今のテクスチャセットが付いていない）。3D のブラシと同じ文。
     pub fn region_missing_reason(&self) -> String {
         let lang = self.lang;
         if self.view3d.model.is_none() {
-            return lang.pick("モデルがありません", "No model").into();
+            return lang.t("region-no-model").into();
         }
-        let name = &self.sets.current().name;
-        lang.pick(
-            format!("今のテクスチャセット「{name}」はこのモデルにありません。"),
-            format!("Texture set “{name}” is not in this model."),
-        )
+        let name = &self.session.sets.current().name;
+        lang.f("region-texture-set-is-not-in", &[("name", &name)])
     }
 
     /// 今のモデルの範囲の索引（モデルが替わるまで作り直さない）。
@@ -222,7 +245,7 @@ impl AppState {
         self.region
             .grid
             .clone()
-            .filter(|g| g.is_for(&model.geometry, material))
+            .filter(|g| g.is_for(&model.geometry, &material))
     }
 
     /// 今のセットの UV の格子（モデルかセットが替わるまで作り直さない）。
@@ -232,10 +255,16 @@ impl AppState {
         if !r
             .grid
             .as_ref()
-            .is_some_and(|g| g.is_for(&model.geometry, material))
+            .is_some_and(|g| g.is_for(&model.geometry, &material))
         {
-            r.grid = Some(Arc::new(UvGrid::new(&model.geometry, material)));
+            r.grid = Some(Arc::new(UvGrid::new(&model.geometry, &material)));
         }
         r.grid.clone()
     }
 }
+
+/// 機能の表の行（範囲の塗りの仕事・離した後の残りのドラッグの最中か）。
+pub(crate) const FEATURE: Feature = Feature {
+    stroking: Some(|app| app.region.job.is_some() || app.region.leftover_drag.is_some()),
+    ..Feature::new("region")
+};

@@ -41,20 +41,20 @@ pub(super) fn begin(
     let begun = SurfaceCoverStroke::begin(
         model.geometry.clone(),
         camera_view(app, rect),
-        Some(app.view3d.material),
+        Some(&app.view3d.material),
         params,
         app.view3d.projection,
-        app.doc.width(),
-        app.doc.height(),
+        app.session.doc.width(),
+        app.session.doc.height(),
         local(rect, at),
         pressure.clamp(0.0, 1.0),
         room(app),
     );
     match begun {
         Ok((cover, pixels)) => {
-            app.view3d.input.cover = Some(cover);
-            app.view3d.input.stroke = Some(source);
-            app.view3d.input.stroke_points = 1;
+            app.view3d.view.input.cover = Some(cover);
+            app.view3d.view.input.stroke = Some(source);
+            app.view3d.view.input.stroke_points = 1;
             raise(app, &pixels);
         }
         Err(e) => {
@@ -67,12 +67,12 @@ pub(super) fn begin(
 /// 3D のクイックマスクのストロークの点。
 pub(super) fn add(app: &mut AppState, rect: Rect, at: Pos2, pressure: f32) {
     let room = room(app);
-    let Some(cover) = app.view3d.input.cover.as_mut() else {
+    let Some(cover) = app.view3d.view.input.cover.as_mut() else {
         return;
     };
     match cover.add(local(rect, at), pressure.clamp(0.0, 1.0), room) {
         Ok(pixels) => {
-            app.view3d.input.stroke_points += 1;
+            app.view3d.view.input.stroke_points += 1;
             raise(app, &pixels);
         }
         Err(e) => {
@@ -85,7 +85,7 @@ pub(super) fn add(app: &mut AppState, rect: Rect, at: Pos2, pressure: f32) {
 
 /// 3D のクイックマスクのストロークを終える（cancel なら捨てる）。3D のクイックマスクのストロークでなければ false。
 pub(super) fn finish(app: &mut AppState, cancel: bool) -> bool {
-    if app.view3d.input.cover.take().is_none() {
+    if app.view3d.view.input.cover.take().is_none() {
         return false;
     }
     pen::finish(app, cancel);
