@@ -6,8 +6,8 @@
 //!   テクセルの中心を重心座標で展開の点へ写し、その点の中心からのずれ（面に沿った距離）を画面の単位へ戻して、投影の塗りと同じ覆いの式
 //!   （[`ScreenCover`]）で読む。
 //! - 筆先の上の向き: カメラの上（回転の Y）を中心の接平面へ写したもの（接平面とほぼ直交するときはカメラの前の向きを写したもの）。右は、
-//!   上と法線に直交してカメラの右と同じ側の向き。筆先の角度（ストロークの向きに沿わせる角度も）は、この右と上の枠で、画面の上と同じ角度だけ
-//!   回す（面がカメラを向いていれば画面の上の向きと同じ。斜めの面では、画面の向きを接平面へ写した角度とはずれる）。
+//!   上と法線に直交してカメラの右と同じ側の向き。筆先の角度は、この右と上の枠で、画面の上と同じ角度だけ回す。ストロークの向きに沿わせる
+//!   筆先とリボンは、線の向きを接平面へ写した向き（[`surface_heading`]）に沿うように枠を回す（向きが決まらない所は画面の角度のまま）。
 //! - 遮蔽はカメラから見ない（面に沿って届く所は、カメラから見えない側も塗る）。中心の法線との内積が負の面（[`FACING_TOLERANCE`] より小さい）は
 //!   塗らない。直角の面（立方体の隣の面）は塗る。裏の面を塗る切り替えが入っていれば、向きによらず塗る。隠れた所・面の向きの弱めの切り替えは
 //!   使わない。
@@ -16,7 +16,7 @@
 //!   巻くダブは、巻いた先を塗らない）。
 //! - 継ぎ目のにじみは投影の塗りと同じ: 塗る三角形の UV アイランドの縁の辺から外へ N テクセルの、塗るセットのどの三角形の UV にも入らない
 //!   テクセルを、辺の上のいちばん近い点の覆いで塗る。
-//! - 予算: 展開の図（1 三角形 128 バイト）と候補のテクセル（三角形ごとの箱の和）のバイトを、呼び手の残り（1 回の操作のメモリから、ストロークの
+//! - 予算: 展開の図（1 三角形 128 バイト）と候補のテクセル（三角形ごとの箱の和。一時に 2 列並ぶので 2 倍）のバイトを、呼び手の残り（1 回の操作のメモリから、ストロークの
 //!   間の一覧などを引いたもの）に収める。三角形の数・テクセルの数はバイトだけで抑える（3D の指先・クローン・ぼかしの展開の図と同じ。投影の
 //!   塗りも、ダブの大きさはメモリだけで抑える）。超えたら画素を返さずに `MemoryBudget` で断る（呼び手がストロークを取り消す）。
 //! - 決定的: 三角形ごとの候補は三角形と設定だけで決まり、同じテクセルは覆いの大きいほう（同じなら三角形の番号の小さいほう、続けて辺）の 1 つに
@@ -78,6 +78,57 @@ pub(crate) fn foreshortening(geometry: &SurfaceGeometry, view: &CameraView, at: 
     } else {
         1.0
     }
+}
+
+/// 視線と面の法線の cos の絶対値がこれより小さい所（面が画面の上で潰れる所）では、線の向きを面へ写さない（[`surface_heading`]）。
+const GRAZING: f64 = 1e-3;
+
+/// 画面の線の向きを、面の点の接平面へ写したもの（[`surface_heading`]）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SurfaceHeading {
+    /// 画面の上の線の角度から、接平面の枠（[`TangentFrame::of_camera`]）の上の線の角度への回し（cos と sin）。
+    pub turn: DVec2,
+    /// 線の向きの画面の長さ 1 に当たる、面に沿った長さ（画面の大きさ scale を掛けたモデルの単位。面がカメラを向けば 1）。
+    pub stretch: f64,
+    /// 法線と視線の cos の絶対値を [`MIN_FORESHORTENING`] で止めたもの（[`foreshortening`] と同じ値。ダブの間隔の縮め）。
+    pub foreshortening: f64,
+}
+
+/// 面の点 hit で、画面の線の向き heading（y は上向き、長さは問わない）を接平面へ写す。画面の向きの 3D のベクトル s を、その点の視線 r に
+/// 沿って接平面へ移した t = s − r (s·n) / (r·n) は、画面へ写すと s に戻る面の上の向き（透視でも、その点の画面の大きさの単位で）。t を
+/// 枠の右と上で測って正規化したものが面の上の角度の cos・sin、heading を正規化したものが画面の角度の cos・sin なので、回しは前者に後者の
+/// 共役を掛けた形（四則と平方根だけ）。向きが無い・視線が面に沿う（[`GRAZING`]）・枠が決まらない所は None（呼び手は画面の角度のまま）。
+pub(crate) fn surface_heading(
+    view: &CameraView,
+    hit: &SurfaceHit,
+    heading: DVec2,
+) -> Option<SurfaceHeading> {
+    let s = DVec2::new(heading.x, heading.y);
+    let len2 = s.length_squared();
+    if !(len2.is_finite() && len2 > 0.0) {
+        return None;
+    }
+    let s = s / len2.sqrt();
+    let frame = TangentFrame::of_camera(view, hit.normal)?;
+    let s3 =
+        (view.rotation * Vec3::X).as_dvec3() * s.x + (view.rotation * Vec3::Y).as_dvec3() * s.y;
+    let ray = view.to_viewer(hit.position).as_dvec3();
+    let (rn, r2) = (ray.dot(frame.normal), ray.length_squared());
+    if !(r2.is_finite() && r2 > 0.0 && rn * rn > GRAZING * GRAZING * r2) {
+        return None;
+    }
+    let t = s3 - ray * (s3.dot(frame.normal) / rn);
+    let (a, b) = (t.dot(frame.right), t.dot(frame.up));
+    let len = (a * a + b * b).sqrt();
+    if !(len.is_finite() && len > 0.0) {
+        return None;
+    }
+    let (c, d) = (a / len, b / len);
+    Some(SurfaceHeading {
+        turn: DVec2::new(c * s.x + d * s.y, d * s.x - c * s.y),
+        stretch: len,
+        foreshortening: (rn.abs() / r2.sqrt()).clamp(f64::from(MIN_FORESHORTENING), 1.0),
+    })
 }
 
 /// 候補のテクセルを、三角形ごとに並列に集める下限（候補の箱の和）。直列でも結果は同じ。
@@ -147,6 +198,18 @@ impl TangentFrame {
     fn mapped(&self, map: impl Fn(Vec3) -> Vec3, normal: Vec3) -> Option<TangentFrame> {
         let m = |d: DVec3| map(d.as_vec3()).as_dvec3();
         TangentFrame::new(normal.as_dvec3(), m(self.up), m(self.right), m(self.toward))
+    }
+
+    /// 右と上を、接平面の中で回し turn（cos と sin。None は回さない）だけ反時計回りに回した枠（筆先の角度が turn だけ増えて見える）。
+    fn turned(self, turn: Option<DVec2>) -> TangentFrame {
+        let Some(c) = turn else {
+            return self;
+        };
+        TangentFrame {
+            right: self.right * c.x + self.up * c.y,
+            up: self.up * c.x - self.right * c.y,
+            ..self
+        }
     }
 
     /// 展開の座標の y（法線 × 展開の横軸 = 右）を、上の向きに合わせる符号。
@@ -219,16 +282,17 @@ impl TangentPainter {
     }
 
     /// 面の点 hit のテクセル 1 つ分が、覆いの式の画面の単位でどれだけか（y は下向き。UV が潰れていれば None）。scale はモデルの単位 1 の
-    /// 画面の大きさ。
+    /// 画面の大きさ、turn は枠の回し（[`SurfaceHeading::turn`]。ダブと同じ値）。
     pub(crate) fn metric_at(
         &self,
         geometry: &SurfaceGeometry,
         view: &CameraView,
         hit: &SurfaceHit,
         scale: f32,
+        turn: Option<DVec2>,
     ) -> Option<TexelMetric> {
         let t = geometry.triangles().get(hit.triangle as usize)?;
-        let frame = TangentFrame::of_camera(view, hit.normal)?;
+        let frame = TangentFrame::of_camera(view, hit.normal)?.turned(turn);
         let uv = UvFace::new(t, self.width, self.height)?;
         let flat = |p: Vec3| {
             let d = p.as_dvec3() - hit.position.as_dvec3();
@@ -249,7 +313,7 @@ impl TangentPainter {
 
     /// 中心 hit のダブと、対称があればその写し（全部を画素ごとに大きいほうの覆いで 1 つにしたもの）。scale はモデルの単位 1 の画面の大きさ、
     /// cover は画面の単位の覆いの式、radius は写しの点を探す距離（モデルの単位のダブの半径）、room はこのダブに使ってよいバイト。
-    /// 塗った写しの数と、塗られなかった写しの最後の理由も返す。
+    /// turn は枠の回し（[`SurfaceHeading::turn`]。写しは回した枠を写す）。塗った写しの数と、塗られなかった写しの最後の理由も返す。
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn dab_around<C: ScreenCover>(
         &self,
@@ -261,9 +325,10 @@ impl TangentPainter {
         symmetry: Option<&SurfaceSymmetrySetup>,
         radius: f32,
         room: u64,
+        turn: Option<DVec2>,
     ) -> (SurfaceDabResult, usize, Option<MirrorOutcome>) {
         // 法線の潰れた三角形には塗らない（ストロークは続ける）
-        let Some(frame) = TangentFrame::of_camera(view, hit.normal) else {
+        let Some(frame) = TangentFrame::of_camera(view, hit.normal).map(|f| f.turned(turn)) else {
             return (SurfaceDabResult::default(), 0, None);
         };
         let mut result = self.dab(geometry, hit, &frame, scale, cover, room);
@@ -392,7 +457,9 @@ impl TangentPainter {
         let triangles = geometry.triangles();
         let (faces, total) = self.gather_faces(triangles, &chart, frame, radius);
         result.candidate_pixels = total.min(i32::MAX as u64) as i32;
-        let need = (chart.nominal_bytes().max(0) as u64).saturating_add(total * CANDIDATE_BYTES);
+        // 候補は、並列の道では三角形ごとの列と 1 つにつないだ列が一時に 2 つ並ぶ（境目が並列の度合いによらないように、いつも 2 つで数える）
+        let need = (chart.nominal_bytes().max(0) as u64)
+            .saturating_add(total.saturating_mul(CANDIDATE_BYTES).saturating_mul(2));
         if need > room {
             return result.reject(DabRefusal::MemoryBudget);
         }

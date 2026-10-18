@@ -20,6 +20,7 @@ impl SurfaceStroke {
             pressure: pen.pressure,
             arc: self.sampler.length(),
             direction: self.sampler.direction(),
+            heading: self.sampler.heading(),
             tilt: pen.tilt,
             rotation: pen.rotation,
             speed: pen.speed,

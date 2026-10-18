@@ -118,6 +118,8 @@ pub struct ScreenDab {
     pub pressure: f32,
     pub arc: f64,
     pub direction: f64,
+    /// `direction` の元の向きのベクトル（y は上向き、長さは問わない。まだ向きが無ければ 0）。
+    pub heading: DVec2,
     pub tilt: DVec2,
     pub rotation: f64,
     pub speed: f64,
@@ -140,8 +142,9 @@ pub struct ScreenStrokeSampler {
     dual_since: f64,
     /// 次の 2 つ目のダブまでの間隔の係数（最後に置いた 2 つ目のダブの [`DualSink::put`] の値）。
     dual_step: f64,
-    /// 最後に測った線の向き（長さ 0 の区間では変えない）。
+    /// 最後に測った線の向き（長さ 0 の区間では変えない）と、その向きのベクトル。
     direction: f64,
+    heading: DVec2,
 }
 
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
@@ -189,6 +192,7 @@ impl ScreenStrokeSampler {
             dual_since: 0.0,
             dual_step: 1.0,
             direction: 0.0,
+            heading: DVec2::ZERO,
         }
     }
 
@@ -210,6 +214,11 @@ impl ScreenStrokeSampler {
     /// 最後に測った線の向き（ラジアン。連続吹き付けの時刻のダブが使う）。
     pub(crate) fn direction(&self) -> f64 {
         self.direction
+    }
+
+    /// 最後に測った線の向きのベクトル（[`ScreenDab::heading`]）。
+    pub(crate) fn heading(&self) -> DVec2 {
+        self.heading
     }
 
     /// 新しい入力の点（[`ScreenStrokeSampler::add_point`] の、位置と筆圧だけで、ダブの位置と筆圧だけを返す形）。
@@ -440,6 +449,7 @@ impl ScreenStrokeSampler {
             if let Some(g) = dual_gap {
                 let mut j = 1usize;
                 let mut direction = self.direction;
+                let mut heading = self.heading;
                 walk_steps(
                     total,
                     g as f64,
@@ -451,12 +461,14 @@ impl ScreenStrokeSampler {
                         let d = points[j] - points[j - 1];
                         if d.x != 0.0 || d.y != 0.0 {
                             direction = (-(d.y as f64)).atan2(d.x as f64);
+                            heading = DVec2::new(d.x as f64, -(d.y as f64));
                         }
                         dual.put(ScreenDab {
                             at,
                             pressure: lerp(a.pressure, b.pressure, t as f32),
                             arc: base + s,
                             direction,
+                            heading,
                             tilt: a.tilt + (b.tilt - a.tilt) * t,
                             rotation: crate::brush::lerp_angle(a.rotation, b.rotation, t),
                             speed: a.speed + (b.speed - a.speed) * t,
@@ -466,6 +478,7 @@ impl ScreenStrokeSampler {
             }
             let mut j = 1usize;
             let mut direction = self.direction;
+            let mut heading = self.heading;
             walk(total, gap as f64, &mut self.since, |s| {
                 let (at, f) = locate(s, &mut j);
                 let t = ((j - 1) as f64 + f) / pieces as f64;
@@ -473,12 +486,14 @@ impl ScreenStrokeSampler {
                 let d = points[j] - points[j - 1];
                 if d.x != 0.0 || d.y != 0.0 {
                     direction = (-(d.y as f64)).atan2(d.x as f64);
+                    heading = DVec2::new(d.x as f64, -(d.y as f64));
                 }
                 out.push(ScreenDab {
                     at,
                     pressure: lerp(a.pressure, b.pressure, t as f32),
                     arc: base + s,
                     direction,
+                    heading,
                     tilt: a.tilt + (b.tilt - a.tilt) * t,
                     rotation: crate::brush::lerp_angle(a.rotation, b.rotation, t),
                     speed: a.speed + (b.speed - a.speed) * t,
@@ -488,8 +503,10 @@ impl ScreenStrokeSampler {
             let d = points[pieces] - points[pieces - 1];
             if d.x != 0.0 || d.y != 0.0 {
                 direction = (-(d.y as f64)).atan2(d.x as f64);
+                heading = DVec2::new(d.x as f64, -(d.y as f64));
             }
             self.direction = direction;
+            self.heading = heading;
         }
         self.length = base + total;
         Ok(())

@@ -51,6 +51,8 @@
 mod continuous;
 mod ribbon;
 
+use ribbon::RibbonArc;
+
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -72,7 +74,7 @@ use super::stroke::{
     ScreenDab, ScreenPoint, ScreenStrokeSampler, SegmentGaps, TooManyDabs, SURFACE_DABS_PER_SEGMENT,
 };
 use super::symmetry::{find_copy, union_dabs, CopyHit, MirrorOutcome, MirrorPlane, RadialSymmetry};
-use super::tangent_dab::{foreshortening, SurfaceAlignment, TangentPainter};
+use super::tangent_dab::{foreshortening, surface_heading, SurfaceAlignment, TangentPainter};
 use super::unity::{dot, fmax, magnitude, sqr_magnitude, v2_magnitude as magnitude2};
 use super::{SurfaceGeometry, SurfaceHit};
 use crate::brush::profile;
@@ -85,7 +87,7 @@ use crate::brush::{
 use crate::brush::{
     dual_spot, dual_textured_at, lifted_link, DualLook, DualPlace, DualRun, DualTips,
 };
-use crate::brush::{PostPoint, Sweep};
+use crate::brush::{PostPoint, SprayDirection, Sweep};
 use crate::{
     Brush, BrushPixel, BrushSettings, CanvasSymmetry, CoreError, Document, DualBrushMode, MixMode,
     StencilPoint, Stroke, SymmetryTransform,
@@ -252,6 +254,8 @@ struct QueuedDab {
     /// 押した点からの線の長さ（画面の点。入り抜き）と、その所の線の向き・ペンの傾き・回転・速さ。
     arc: f64,
     direction: f64,
+    /// 線の向きのベクトル（[`ScreenDab::heading`]）。
+    heading: DVec2,
     tilt: DVec2,
     rotation: f64,
     speed: f64,
@@ -313,6 +317,8 @@ struct QueuedDual {
     /// その時の画面の大きさ（まだ面に当たっていなければ None）。
     scale: Option<f32>,
     look: DualLook,
+    /// 線の向きのベクトル（[`ScreenDab::heading`]。Tangent | Wrap で線の向きを面へ写す）。
+    heading: DVec2,
 }
 
 /// デュアルブラシ（2D と同じく、同じ道筋に自分の間隔・散布・数で 2 つ目のダブを先に並べ、テクセルごとの最大を溜める）。
@@ -350,6 +356,7 @@ fn dab_at_press(input: &SurfaceInput) -> ScreenDab {
         pressure: input.pressure,
         arc: 0.0,
         direction: 0.0,
+        heading: DVec2::ZERO,
         tilt: input.tilt,
         rotation: input.rotation,
         speed: 0.0,
@@ -389,12 +396,23 @@ impl DualState {
     }
 }
 
-/// 画面の上のダブの形の種類。
+/// 画面の上のダブの形の種類（1 つのダブの間だけスタックに置く値。箱にするとダブごとに割り当てるので、大きさの差は許す）。
+#[allow(clippy::large_enum_variant)]
 enum Form<'a> {
     /// 丸い筆先（画像なし・真円率 1。今までの 3D の式）。
     Round { hardness: f32 },
-    /// 筆先の画像・潰した丸（2D と同じ式。半径は画面の点）。
-    Shaped(DabShape<'a>),
+    /// 筆先の画像・潰した丸（2D と同じ式。半径は画面の点）と、Tangent | Wrap の枠の回し（[`SurfaceStroke::heading_turn`]）。
+    Shaped(DabShape<'a>, Option<DVec2>),
+}
+
+impl Form<'_> {
+    /// Tangent | Wrap の枠の回し（丸は None）。
+    fn turn(&self) -> Option<DVec2> {
+        match self {
+            Form::Shaped(_, turn) => *turn,
+            Form::Round { .. } => None,
+        }
+    }
 }
 
 /// 投影の画素の覆い: 丸か 2D と同じ形の覆いに、デュアルブラシの溜まりを合わせたもの。
@@ -461,6 +479,8 @@ pub struct SurfaceStroke {
     /// 大きさ（中心が面に無いダブの見積もりに使う）。
     anti_alias: AntiAlias,
     last_metric: Option<TexelMetric>,
+    /// Tangent | Wrap のリボンの、直前の描点の面に沿った線の長さ（[`SurfaceStroke::surface_arc`]）。
+    ribbon_arc: Option<RibbonArc>,
     /// 水彩境界のストロークか、その幅の換算の係数を文書のストロークへ渡したか。
     water_edge: WaterEdgeRun,
     spacing: f32,
@@ -718,6 +738,7 @@ impl SurfaceStroke {
             hardness: brush.hardness as f32,
             anti_alias: brush.anti_alias,
             last_metric: None,
+            ribbon_arc: None,
             water_edge: WaterEdgeRun::start(&stroke_brush),
             spacing: brush.spacing as f32,
             pressure_size,
@@ -766,6 +787,7 @@ impl SurfaceStroke {
             pressure: input.pressure,
             arc: 0.0,
             direction: 0.0,
+            heading: DVec2::ZERO,
             tilt: input.tilt,
             rotation: input.rotation,
             speed: 0.0,
@@ -1263,7 +1285,11 @@ impl SurfaceStroke {
         }
         for (
             ScreenDab {
-                at, arc, direction, ..
+                at,
+                arc,
+                direction,
+                heading,
+                ..
             },
             look,
         ) in duals
@@ -1280,6 +1306,7 @@ impl SurfaceStroke {
                     direction,
                     scale,
                     look,
+                    heading,
                 });
             }
         }
@@ -1315,6 +1342,7 @@ impl SurfaceStroke {
             pressure: p.pressure,
             arc: p.arc,
             direction: p.direction,
+            heading: p.heading,
             tilt: p.tilt,
             rotation: p.rotation,
             speed: p.speed,
@@ -1536,7 +1564,7 @@ impl SurfaceStroke {
         } else {
             let mut shape = brush.dab_shape(plan, controls);
             shape.radius = (scale * radius) as f64;
-            Form::Shaped(shape)
+            Form::Shaped(shape, self.heading_turn(dab, plan, hit.as_ref()))
         };
         let dual = self.dual.take();
         let mode = brush.dual.as_ref().map(|d| d.mode);
@@ -1741,11 +1769,12 @@ impl SurfaceStroke {
         } else {
             world
         };
-        self.dual_dab(doc, dual_brush, center, s, radius, &q.look, &place)
+        self.dual_dab(doc, dual_brush, center, s, radius, q, &place)
     }
 
     /// 2 つ目の筆先のダブ 1 つ: 画面の上の形（2D と同じ式、筆圧・ゆらぎなし）で投影の画素の覆いを出し（面の向きでは弱めない）、
-    /// テクセルごとの最大を溜める。対称の写しにも置く。作れなかったら（主のダブと同じく）ストロークを取り消す `Err`。
+    /// テクセルごとの最大を溜める。対称の写しにも置く。作れなかったら（主のダブと同じく）ストロークを取り消す `Err`。q は並べた 2 つ目の
+    /// ダブ（見え方と線の向き）。
     #[allow(clippy::too_many_arguments)]
     fn dual_dab(
         &mut self,
@@ -1754,9 +1783,10 @@ impl SurfaceStroke {
         at: Vec2,
         scale: f32,
         world: f32,
-        look: &DualLook,
+        q: &QueuedDual,
         place: &DualPlace<'_>,
     ) -> Result<(), SurfaceStrokeError> {
+        let look = &q.look;
         if !(at.x >= 0.0 && at.x < self.view.width && at.y >= 0.0 && at.y < self.view.height) {
             return Ok(());
         }
@@ -1771,6 +1801,17 @@ impl SurfaceStroke {
             },
             look,
         );
+        // 2 つ目の筆先は、主の筆先と同じく面の上の線の向きに沿わせる（2 つ目に散布が入っていれば散布の向きが「線の向き」のとき、
+        // 入っていなければ線の向きに沿わせる設定のとき）
+        let follows = match &dual_brush.spray {
+            Some(spray) => spray.direction == SprayDirection::Line,
+            None => dual_brush.angle_line,
+        };
+        let turn = (self.projection.alignment == SurfaceAlignment::TangentWrap && follows)
+            .then_some(hit.as_ref())
+            .flatten()
+            .and_then(|h| surface_heading(&self.view, h, q.heading))
+            .map(|h| h.turn);
         let flow = if look.flow != 1.0 {
             dual_brush.flow * look.flow
         } else {
@@ -1783,7 +1824,7 @@ impl SurfaceStroke {
             at,
             scale,
             world,
-            &Form::Shaped(shape),
+            &Form::Shaped(shape, turn),
             None,
             false,
         );
@@ -1919,12 +1960,17 @@ impl SurfaceStroke {
     /// ダブの画素（元と 3D の対称の写しを 1 つにしたもの）と、ダブの面の点を作る。at・scale は画面の中心と、モデルの単位 1 の画面の大きさ、radius は
     /// アンチエイリアスの帯の見積もりと画像の筆先の小さなダブに使う、ダブの中心のテクセルの画面の大きさ（中心が面に無ければ直前の値）。
     /// 水彩境界の幅の換算も同じ値を覚える（`last_metric`）が、帯の見積もりには水彩境界だけのストロークの値は使わない（None）。
-    fn dab_metric(&mut self, hit: Option<SurfaceHit>, scale: f32) -> Option<TexelMetric> {
+    fn dab_metric(
+        &mut self,
+        hit: Option<SurfaceHit>,
+        scale: f32,
+        turn: Option<DVec2>,
+    ) -> Option<TexelMetric> {
         if self.anti_alias == AntiAlias::None && !self.water_edge.on {
             return None;
         }
         let at_hit = hit.and_then(|h| match &self.tangent {
-            Some(t) => t.metric_at(&self.geometry, &self.view, &h, scale),
+            Some(t) => t.metric_at(&self.geometry, &self.view, &h, scale, turn),
             None => self.projector.as_ref().and_then(|p| p.metric_at(&h)),
         });
         if at_hit.is_some() {
@@ -1982,6 +2028,27 @@ impl SurfaceStroke {
             || self.projection.alignment == SurfaceAlignment::TangentWrap
     }
 
+    /// Tangent | Wrap の、線の向きに沿う形のダブ（ストロークの向きに沿わせる筆先かリボンの帯。形の式で塗るダブだけが使う。丸は向きで
+    /// 形が変わらない）の枠の回し: 中心の面の点で、画面の線の向きを接平面へ写した向きに筆先の向きを合わせる（[`surface_heading`]）。
+    /// それ以外と、向きが決まらない所は None（画面の角度のまま）。
+    fn heading_turn(
+        &self,
+        dab: &QueuedDab,
+        plan: &DabPlan<'_>,
+        hit: Option<&SurfaceHit>,
+    ) -> Option<DVec2> {
+        // 散布が入ったブラシは、粒子の角度を散布の向きで決め直す（線の向きの項は散布の向きが「線の向き」の時だけ）。リボンの帯は線の向き
+        let follows = plan.ribbon.is_some()
+            || match &self.brush.spray {
+                Some(spray) => spray.direction == SprayDirection::Line,
+                None => self.brush.tip.follow_direction,
+            };
+        if self.projection.alignment != SurfaceAlignment::TangentWrap || !follows {
+            return None;
+        }
+        surface_heading(&self.view, hit?, dab.heading).map(|h| h.turn)
+    }
+
     /// Tangent | Wrap の塗りを（まだなければ）作る。
     fn ensure_tangent(&mut self) -> Result<(), DabRefusal> {
         if self.tangent.is_none() {
@@ -2015,7 +2082,8 @@ impl SurfaceStroke {
         Ok(())
     }
 
-    /// Tangent | Wrap（`tangent_dab`）のダブ: 中心の面の点の展開で、写しも含めて塗る。中心が塗るセットの面に無いダブは塗らない。
+    /// Tangent | Wrap（`tangent_dab`）のダブ: 中心の面の点の展開で、写しも含めて塗る。中心が塗るセットの面に無いダブは塗らない。turn は
+    /// 枠の回し（[`SurfaceStroke::heading_turn`]）。
     fn tangent_dab(
         &mut self,
         hit: Option<SurfaceHit>,
@@ -2023,6 +2091,7 @@ impl SurfaceStroke {
         radius: f32,
         cover: &DabCover<'_>,
         total: u64,
+        turn: Option<DVec2>,
     ) -> (SurfaceDabResult, Option<SurfaceHit>) {
         let (Some(painter), Some(hit)) = (&self.tangent, hit) else {
             return (SurfaceDabResult::default(), None);
@@ -2038,6 +2107,7 @@ impl SurfaceStroke {
             self.symmetry.as_ref(),
             radius,
             room,
+            turn,
         );
         self.stats.copies += copies;
         if note.is_some() {
@@ -2070,14 +2140,14 @@ impl SurfaceStroke {
         if let Err(why) = made {
             return (SurfaceDabResult::default().reject(why), hit);
         }
-        let metric = self.dab_metric(hit, scale);
+        let metric = self.dab_metric(hit, scale, form.turn());
         let cover = DabCover {
             form: match form {
                 Form::Round { hardness } => CoverForm::Round(
                     RoundCover::new(screen_radius, *hardness)
                         .with_anti_alias(self.anti_alias, metric),
                 ),
-                Form::Shaped(shape) => {
+                Form::Shaped(shape, _) => {
                     // 形は y を上向きに測るので、画面（y は下向き）の値の xy の符号を反す
                     let shape = match metric {
                         Some(m) => {
@@ -2093,7 +2163,7 @@ impl SurfaceStroke {
         self.clock += 1;
         let total = self.memory_total(doc);
         if self.tangent.is_some() {
-            return self.tangent_dab(hit, scale, radius, &cover, total);
+            return self.tangent_dab(hit, scale, radius, &cover, total, form.turn());
         }
         let room = self.room(total, None);
         let clock = self.clock;
