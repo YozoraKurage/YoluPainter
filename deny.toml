@@ -17,6 +17,9 @@ exclude = ["yolu-mock"]
 yanked = "deny"
 ignore = [
     { id = "RUSTSEC-2024-0436", reason = "paste（保守の終わり）は egui_dock がビルドの時だけ使うマクロ。脆弱性ではなく、上流の更新待ち" },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant（単独のクレートの保守の終わり。zbus 6 の wire に入った）は Linux のアクセシビリティ（accesskit_unix → eframe）が引く。脆弱性ではなく、上流の更新待ち" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names（単独のクレートの保守の終わり。zbus 6 の names に入った）は Linux のアクセシビリティ（accesskit_unix → eframe）が引く。脆弱性ではなく、上流の更新待ち" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive（単独のクレートの保守の終わり。zbus 6 が derive のマクロを持つ）は Linux のアクセシビリティ（accesskit_unix → eframe）が引く。脆弱性ではなく、上流の更新待ち" },
 ]
 
 [licenses]
