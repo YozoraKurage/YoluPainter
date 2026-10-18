@@ -1,0 +1,36 @@
+# 畫面文字（transform）。鍵名為「transform-」加上取自英文的簡短名稱，工具提示的鍵名以 -tip 結尾。
+
+transform-liquify-input-limit-reached = 液化的輸入已達上限
+transform-no-layer-with-pixels-to = 沒有含可移動像素的圖層。
+transform-no-pixels-to-move-inside = 選取範圍內沒有可移動的像素。
+transform-no-pixels-to-move = 沒有可移動的像素。
+transform-that-would-collapse-the-layer = 這會使圖層壓扁，因此不進行變形。
+transform-transform-cancelled = 已取消變形。
+transform-bilinear = 雙線性
+transform-nearest = 最近鄰
+transform-flip-horizontal = 水平翻轉
+transform-flip-vertical = 垂直翻轉
+transform-rotate-90-counter-clockwise = 逆時針旋轉 90°
+transform-rotate-90-clockwise = 順時針旋轉 90°
+transform-resampling = 重新取樣
+transform-bilinear-smooths-nearest-keeps-hard-tip = 雙線性較平滑，最近鄰則保持像素的硬邊。整數像素的移動、90° 旋轉與翻轉，兩者都會原樣複製像素
+transform-mesh = 網格
+transform-columns = 欄
+transform-rows = 列
+transform-numeric = 數值
+transform-horizontal-offset-is-right-tip = 水平位移（+ 為向右）
+transform-vertical-offset-is-up-tip = 垂直位移（+ 為向上）
+transform-width = 寬度
+transform-horizontal-scale-a-negative-value-tip = 水平縮放比例（負值為水平翻轉）
+transform-height = 高度
+transform-vertical-scale-a-negative-value-tip = 垂直縮放比例（負值為垂直翻轉）
+transform-angle = 角度
+transform-counter-clockwise-about-the-centre-tip = 逆時針，以移動內容的中心為軸
+transform-bilinear-smooths-nearest-keeps-hard-2-tip = 雙線性較平滑，最近鄰則保持像素的硬邊
+transform-apply = 套用
+transform-transform-by-these-numbers-one-tip = 依這些數值變形（一個復原步驟）
+transform-reset = 重設
+transform-back-to-no-change-tip = 回到未變更的狀態
+transform-diameter = 直徑
+transform-strength = 強度
+transform-restore-how-strongly-pixels-go-tip = 還原：像素回到本次液化開始時狀態的強度
