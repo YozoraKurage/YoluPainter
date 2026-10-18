@@ -212,7 +212,10 @@ fn every_version_is_in_the_spec() {
     let range = |name: &str| cells(row(summary, name))[3];
     let written = |name: &str| cells(row(summary, name))[4];
     assert_eq!(range("外側のバージョン"), "1〜4", "外側のバージョンの範囲");
-    assert!(written("外側のバージョン").starts_with("3。"), "外側のバージョンの書く値");
+    assert!(
+        written("外側のバージョン").starts_with("3。"),
+        "外側のバージョンの書く値"
+    );
     assert_eq!(
         range("中身の形式"),
         format!("1〜{MAX_FORMAT}"),
@@ -238,7 +241,8 @@ fn every_version_is_in_the_spec() {
         "正本のバージョンの書く値: {native_written}"
     );
     assert!(
-        range("メッシュマップのバージョン").starts_with(&format!("1〜{}。", mesh_map::FORMAT_VERSION)),
+        range("メッシュマップのバージョン")
+            .starts_with(&format!("1〜{}。", mesh_map::FORMAT_VERSION)),
         "メッシュマップのバージョンの範囲"
     );
     assert_eq!(
