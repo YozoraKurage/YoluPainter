@@ -1,0 +1,12 @@
+# ワークフローの Actions はコミットの SHA で固定している。その SHA を新しくする PR を月 1 回、1 つにまとめて出す。
+# Cargo の依存の脆弱性は、リポジトリの設定の Dependabot の通知・直しの PR と、週 1 回の cargo-deny で見る（毎週の更新の PR は出さない）。
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns:
+          - "*"
