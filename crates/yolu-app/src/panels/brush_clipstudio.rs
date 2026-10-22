@@ -317,7 +317,7 @@ fn draw_footer(
     let button = |ui: &mut egui::Ui,
                   x: f32,
                   label: &str,
-                  salt: &str,
+                  id_key: &str,
                   primary: bool,
                   enabled: bool,
                   tip: &str|
@@ -327,7 +327,7 @@ fn draw_footer(
         let clicked = w::button(
             ui,
             r,
-            window_id.with(salt),
+            window_id.with(id_key),
             label,
             primary,
             enabled,

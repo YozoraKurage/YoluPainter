@@ -478,8 +478,8 @@ pub fn dims_tab(tab: crate::Tab) -> bool {
 }
 
 /// 編集・ポーズのモードの間、暗くした欄の上に理由のツールチップを出す（中の部品は押せない）。
-pub fn dimmed_reason(ui: &mut Ui, app: &AppState, rect: Rect, salt: &'static str) {
-    ui.interact(rect, ui.id().with(("mode.dimmed", salt)), Sense::hover())
+pub fn dimmed_reason(ui: &mut Ui, app: &AppState, rect: Rect, id_key: &'static str) {
+    ui.interact(rect, ui.id().with(("mode.dimmed", id_key)), Sense::hover())
         .on_hover_text(paint_only(app.lang));
 }
 

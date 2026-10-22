@@ -779,14 +779,14 @@ fn footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
     w::hline(&p, r.left(), r.right(), r.top(), t::BORDER);
     let mut x = r.left() + 16.0;
     let y = r.top() + 12.0;
-    let mut button = |ui: &mut Ui, label: &str, salt: &str| {
+    let mut button = |ui: &mut Ui, label: &str, id_key: &str| {
         let bw = w::text_width(ui.painter(), label, t::LABEL) + 30.0;
         let b = Rect::from_min_size(pos2(x, y), vec2(bw, 28.0));
         x = b.right() + 10.0;
         w::button(
             ui,
             b,
-            ("yolu.shortcuts", salt),
+            ("yolu.shortcuts", id_key),
             label,
             false,
             true,

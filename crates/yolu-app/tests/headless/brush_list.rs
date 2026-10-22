@@ -63,7 +63,7 @@ fn group_keys(s: &AppState, group: Group) -> Vec<BrushKey> {
     s.brush_entries_in(group).iter().map(|e| e.key).collect()
 }
 
-fn user_id(key: BrushKey) -> u32 {
+fn brush_number(key: BrushKey) -> u32 {
     match key {
         BrushKey::User(id) => id,
         other => panic!("利用者のブラシではない: {other:?}"),
@@ -536,12 +536,12 @@ fn headless_user_brushes_are_saved_and_come_back_with_their_order_and_registered
     select(&mut back, one);
     assert_eq!(back.brush().radius, 31.0);
     back.act(Action::Brush(BrushAction::Add));
-    assert!(user_id(back.brushes().lib.current()) > user_id(two));
+    assert!(brush_number(back.brushes().lib.current()) > brush_number(two));
     // 削除は並びから外すだけ（ファイルは残り、起動し直しても並びには戻らない）。並びのファイルも直る
     let files = store::BrushStore::new(dir.clone());
-    assert!(files.path_of(user_id(one)).exists());
+    assert!(files.path_of(brush_number(one)).exists());
     back.act(Action::Brush(BrushAction::Delete(one)));
-    assert!(files.path_of(user_id(one)).exists());
+    assert!(files.path_of(brush_number(one)).exists());
     let mut again = AppState::new(64, 64);
     again.attach_brush_store(dir.clone());
     assert!(again.brushes().lib.entry(one).is_some());
@@ -549,7 +549,7 @@ fn headless_user_brushes_are_saved_and_come_back_with_their_order_and_registered
     assert_eq!(again.toolset().set.brushes(), back.toolset().set.brushes());
     // ファイルの削除は、ファイルを消す
     again.act(Action::Brush(BrushAction::DeleteFile(one)));
-    assert!(!files.path_of(user_id(one)).exists());
+    assert!(!files.path_of(brush_number(one)).exists());
     assert!(again.brushes().lib.entry(one).is_none());
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -582,12 +582,12 @@ fn headless_a_pressure_response_is_saved_with_the_brush_and_loads_into_the_live_
     let key = s.brushes().lib.current();
     // 書いたファイルは版 2。応えを使わないブラシは版 1 のまま
     let files = store::BrushStore::new(dir.clone());
-    let text = std::fs::read_to_string(files.path_of(user_id(key))).unwrap();
+    let text = std::fs::read_to_string(files.path_of(brush_number(key))).unwrap();
     assert!(text.starts_with("yolupainter-brush 2\n"), "{text}");
     select(&mut s, b("blur"));
     s.act(Action::Brush(BrushAction::Add));
     let plain = s.brushes().lib.current();
-    let text = std::fs::read_to_string(files.path_of(user_id(plain))).unwrap();
+    let text = std::fs::read_to_string(files.path_of(brush_number(plain))).unwrap();
     assert!(text.starts_with("yolupainter-brush 1\n"), "{text}");
     // 起動し直すと、応えが戻り、選べば今の設定に入る。別のブラシへ替えると応えも替わる
     let mut back = AppState::new(64, 64);
@@ -672,13 +672,13 @@ fn headless_the_eyes_the_screen_size_and_the_tilt_maximum_are_saved_with_the_bru
     s.act(Action::Brush(BrushAction::Add));
     let key = s.brushes().lib.current();
     let files = store::BrushStore::new(dir.clone());
-    let text = std::fs::read_to_string(files.path_of(user_id(key))).unwrap();
+    let text = std::fs::read_to_string(files.path_of(brush_number(key))).unwrap();
     assert!(text.starts_with("yolupainter-brush 9\n"), "{text}");
     // 目の印を持たないブラシは、画面上のサイズ・傾きの最大値も使わないので、古いバージョンのまま
     select(&mut s, b("blur"));
     s.act(Action::Brush(BrushAction::Add));
     let plain = s.brushes().lib.current();
-    let text = std::fs::read_to_string(files.path_of(user_id(plain))).unwrap();
+    let text = std::fs::read_to_string(files.path_of(brush_number(plain))).unwrap();
     assert!(!text.starts_with("yolupainter-brush 9\n"), "{text}");
     assert!(!text.contains("rows.shown"), "{text}");
     // 起動し直すと戻る。選べば今の設定に入り、ほかのブラシへ替えると、そのブラシの目になる
@@ -830,9 +830,9 @@ fn headless_broken_brush_files_are_skipped_and_the_reason_is_shown_in_both_langu
     let mut back = AppState::new(64, 64);
     back.attach_brush_store(dir.clone());
     back.act(Action::Brush(BrushAction::Add));
-    let next = user_id(back.brushes().lib.current());
+    let next = brush_number(back.brushes().lib.current());
     assert_eq!(next, 0x66, "読めなかったファイルの番号の続き");
-    assert_ne!(next, user_id(good));
+    assert_ne!(next, brush_number(good));
     for (name, bytes) in &broken {
         assert_eq!(
             &std::fs::read(folder.join(name)).unwrap(),
@@ -877,7 +877,7 @@ fn headless_a_new_brush_never_takes_the_number_of_a_file_that_was_not_read() {
     s.attach_brush_store(dir.clone());
     s.act(Action::Brush(BrushAction::Add));
     let good = s.brushes().lib.current();
-    assert_eq!(user_id(good), 1);
+    assert_eq!(brush_number(good), 1);
     // 読めたブラシの番号のすぐ後ろに、新しい版・壊れた・大きすぎる・フォルダの 3 種類を置く
     let newer = b"yolupainter-brush 10\nname=future\n".to_vec();
     std::fs::write(dir.join("brush-00000002.ylbrush"), &newer).unwrap();
@@ -891,7 +891,7 @@ fn headless_a_new_brush_never_takes_the_number_of_a_file_that_was_not_read() {
     let mut taken = vec![1, 2, 3, 4, 5];
     for _ in 0..3 {
         back.act(Action::Brush(BrushAction::Add));
-        let id = user_id(back.brushes().lib.current());
+        let id = brush_number(back.brushes().lib.current());
         assert!(!taken.contains(&id), "{id} は読めなかったファイルの番号");
         assert!(id > 5, "読めなかったファイルの番号の続き: {id}");
         taken.push(id);
@@ -920,7 +920,7 @@ fn headless_a_new_brush_never_takes_the_number_of_a_file_that_was_not_read() {
     )
     .unwrap();
     back.act(Action::Brush(BrushAction::Add));
-    let id = user_id(back.brushes().lib.current());
+    let id = brush_number(back.brushes().lib.current());
     assert_eq!(id, next + 1, "置かれたファイルを飛ばす");
     assert_eq!(
         std::fs::read(dir.join(format!("brush-{next:08x}.ylbrush"))).unwrap(),

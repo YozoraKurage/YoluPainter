@@ -708,7 +708,7 @@ impl ResidentCompositor {
             .is_some_and(|b| b.revision == doc.revision())
             && !first
         {
-            return Ok(self.account());
+            return Ok(self.tally());
         }
         self.generation += 1;
         // 今の計画が読む面（レイヤー・マスク）だけを常駐に残す。消えたレイヤーに加えて、隠したレイヤー・不透明度 0・チャンネルが無効・外した
@@ -885,7 +885,7 @@ impl ResidentCompositor {
             serial: doc.change_serial(),
             revision: doc.revision(),
         });
-        Ok(self.account())
+        Ok(self.tally())
     }
     /// `add` バイトを足すと、今の上げの上限を超えるか（まだ何も溜めていなければ超えない: 1 つの塊は上限より大きくても流す）。上限は
     /// `ResidentOptions::transfer_limit_bytes`、無ければ予算の空き（固定の量と常駐のタイル。`incoming` はこれから常駐に入るタイルの GPU と
@@ -1010,7 +1010,7 @@ impl ResidentCompositor {
         t.keys.clear();
         Ok(())
     }
-    fn account(&mut self) -> UpdateStats {
+    fn tally(&mut self) -> UpdateStats {
         self.stats.cached_tiles = self.cache.len();
         self.stats.resident_bytes = self.work.as_ref().map_or(0, |w| w.fixed_bytes)
             + self

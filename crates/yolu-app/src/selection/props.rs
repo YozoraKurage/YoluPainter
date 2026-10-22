@@ -234,7 +234,7 @@ fn names_fit(label_widths: &[f32], each: f32) -> bool {
 fn segmented_row(
     ui: &mut Ui,
     rows: &mut Rows,
-    salt: &str,
+    id_key: &str,
     items: &[Segment],
     more: Option<MoreButton>,
 ) -> (Option<usize>, bool) {
@@ -259,7 +259,7 @@ fn segmented_row(
         if w::button_shown(
             ui,
             at,
-            (salt, i),
+            (id_key, i),
             b.label,
             b.lit,
             true,
@@ -286,7 +286,7 @@ fn segmented_row(
         more_clicked = w::button_shown(
             ui,
             at,
-            (salt, "more"),
+            (id_key, "more"),
             m.label,
             m.lit && m.enabled,
             m.enabled,

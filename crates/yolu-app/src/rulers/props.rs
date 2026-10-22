@@ -377,7 +377,7 @@ fn vanishing_ranges(size: (u32, u32)) -> ((f32, f32), (f32, f32)) {
 fn xy_sliders(
     ui: &mut Ui,
     rows: &mut Rows,
-    salt: &str,
+    id_key: &str,
     labels: (&str, &str),
     value: DVec2,
     ranges: ((f32, f32), (f32, f32)),
@@ -386,7 +386,7 @@ fn xy_sliders(
     let x = slider_row(
         ui,
         rows,
-        &format!("{salt}.x"),
+        &format!("{id_key}.x"),
         labels.0,
         value.x as f32,
         ranges.0,
@@ -397,7 +397,7 @@ fn xy_sliders(
     let y = slider_row(
         ui,
         rows,
-        &format!("{salt}.y"),
+        &format!("{id_key}.y"),
         labels.1,
         value.y as f32,
         ranges.1,
