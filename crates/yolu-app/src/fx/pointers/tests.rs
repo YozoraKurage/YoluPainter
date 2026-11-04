@@ -225,6 +225,42 @@ fn a_pointer_reads_the_other_sets_composite_and_follows_it_only_when_it_changes(
     );
 }
 
+#[test]
+fn a_pointer_follows_udim_being_turned_on_or_off_on_either_side() {
+    let (mut s, b, key) = two_sets();
+    let bi = s.session.sets.index_of(b).unwrap();
+    let id = pointer_to(&mut s, PointerTarget::External(key));
+    only_color(&mut s, id);
+    s.sync_effect_inputs();
+    // 向こう（B）を UDIM のシート（1001・1002）にして、1002 のセルに描く。こちら（A）は UDIM でないので、1001 のセルだけを読む
+    s.switch_set(bi).unwrap();
+    s.session.doc.enable_udim(vec![1001, 1002]).unwrap();
+    paint(&mut s, 266, 20, BLUE);
+    s.switch_set(0).unwrap();
+    s.sync_effect_inputs();
+    assert_eq!(output(&s, id, 5, 7), RED, "1001 のセル");
+    assert_ne!(output(&s, id, 10, 20), BLUE, "1002 のセルは読まない");
+    // こちらも UDIM にする（タイルの番号で合う）
+    s.session.doc.enable_udim(vec![1001, 1002]).unwrap();
+    s.sync_effect_inputs();
+    assert_eq!(output(&s, id, 5, 7), RED);
+    assert_eq!(output(&s, id, 266, 20), BLUE, "1002 のセル同士");
+    // 向こうが UDIM をやめると、1002 は向こうに無い（既定値）
+    s.switch_set(bi).unwrap();
+    s.session.doc.disable_udim().unwrap();
+    s.switch_set(0).unwrap();
+    s.sync_effect_inputs();
+    assert_eq!(output(&s, id, 5, 7), RED);
+    assert_ne!(output(&s, id, 266, 20), BLUE);
+    // 向こうがまた UDIM にすると追従する
+    s.switch_set(bi).unwrap();
+    s.session.doc.enable_udim(vec![1001, 1002]).unwrap();
+    paint(&mut s, 266, 20, BLUE);
+    s.switch_set(0).unwrap();
+    s.sync_effect_inputs();
+    assert_eq!(output(&s, id, 266, 20), BLUE);
+}
+
 /// A のポインターレイヤーが B のレイヤーセットを、B のポインターレイヤーが C のレイヤーセットを指す 3 つのセット（C の (5, 7) に赤）。
 /// 返すのは A のポインターレイヤーと、B・C の uid。今のセットは A。
 fn chain() -> (AppState, LayerId, u32, u32) {

@@ -4,7 +4,9 @@
 //! - 指す先は 3 つ: 同じ文書のレイヤー・グループ（その部分木だけを透明から重ねた結果。下のスタックを含めない。指したレイヤー自身のマスク・
 //!   不透明度・合成モードは掛かり、クリッピングは見ない）、同じ文書のレイヤーセット（そのレイヤーセットの合成。組に無いチャンネルは透明）、
 //!   ほかのテクスチャセットのレイヤーセット（[`ExternalSet`]。文書の外の鍵で、合成はアプリが向こうの文書で作って
-//!   [`crate::EffectInputs::with_pointer`] で渡す。UV で読み、大きさが違えば双線形で引き伸ばす）。
+//!   [`crate::EffectInputs::with_pointer`] で渡す。UV で読み、大きさが違えば双線形で引き伸ばす。
+//!   どちらかが UDIM のシートなら、タイルの番号でセルを合わせて読む。UDIM でない文書は「タイル 1001 だけ・シート全体が 1 つのセル」。
+//!   向こうの並びは入力が持ち、こちらの並びは文書が持つ）。
 //! - チャンネルごとに読む元のチャンネルを選べる（既定は自分と同じチャンネル。値は保存したままのバイトで、色空間・種類の変換はしない）。
 //! - 循環（指す先の中に自分か、自分を読むレイヤーがある）は作らない。参照の連なりは [`MAX_POINTER_DEPTH`] 段まで。どちらも、作る・指す先を
 //!   替える・並びを変える・読み込むで断る。ほかのテクスチャセットをまたぐ循環と深さは、core は 1 つの文書しか見ないので、アプリが
@@ -19,7 +21,8 @@ use std::sync::Arc;
 use crate::error::CoreError;
 use crate::layer::{LayerId, LayerSetId};
 use crate::types::{Channel, Rgba8};
-use crate::Reason;
+use crate::udim::{UdimLayout, FIRST_TILE};
+use crate::{Reason, Rect};
 
 /// 参照の連なりの上限（参照レイヤーが指す先の中に、また参照レイヤーがある段の数。参照レイヤー 1 枚で 1 段。ほかのテクスチャセットを
 /// またぐ段も数える）。
@@ -110,15 +113,17 @@ impl PointerSettings {
 }
 
 /// 外から渡す参照の入力 1 枚: ほかのテクスチャセットのレイヤーセットの、1 つのチャンネルの合成（straight RGBA8、左下原点、行優先）。
+/// 向こうが UDIM のシートなら、その並び（[`UdimLayout`]）も持つ（UDIM でなければ None）。
 #[derive(Clone, Debug)]
 pub struct PointerInput {
     pub width: u32,
     pub height: u32,
     pub pixels: Arc<[u8]>,
+    layout: Option<Arc<UdimLayout>>,
 }
 
 impl PointerInput {
-    /// 大きさ（1〜8192）と長さを確かめて作る。
+    /// 大きさ（1〜8192）と長さを確かめて作る（向こうは UDIM でない）。
     pub fn new(width: u32, height: u32, pixels: Arc<[u8]>) -> Result<Self, CoreError> {
         if width == 0
             || height == 0
@@ -134,24 +139,73 @@ impl PointerInput {
             width,
             height,
             pixels,
+            layout: None,
         })
+    }
+    /// 向こうの UDIM のシートの並びを持たせる（None は UDIM でない）。並びのシートが画素の大きさと違えば断る。
+    pub fn with_layout(mut self, layout: Option<Arc<UdimLayout>>) -> Result<Self, CoreError> {
+        if let Some(l) = &layout {
+            if l.sheet_size() != (u64::from(self.width), u64::from(self.height)) {
+                return Err(CoreError::InvalidArgument(Reason::UdimSheetMismatch));
+            }
+        }
+        self.layout = layout;
+        Ok(self)
+    }
+    /// 向こうの UDIM のシートの並び（UDIM でなければ None）。
+    pub fn layout(&self) -> Option<&Arc<UdimLayout>> {
+        self.layout.as_ref()
     }
     /// 画素のバイト数（メモリの予算に数える量）。
     pub fn bytes(&self) -> u64 {
         self.pixels.len() as u64
     }
-    /// 同じ大きさ・画素か（共有していれば中身を見ない）。
-    pub(crate) fn same_pixels(&self, other: &PointerInput) -> bool {
+    /// 同じ大きさ・並び・画素か（共有していれば中身を見ない）。
+    pub(crate) fn same_content(&self, other: &PointerInput) -> bool {
         self.width == other.width
             && self.height == other.height
+            && self.layout == other.layout
             && (Arc::ptr_eq(&self.pixels, &other.pixels) || self.pixels == other.pixels)
     }
-    /// 文書の画素 (x, y)（大きさ `dims`）に当たる値。同じ大きさなら同じ画素、違えば UV（画素の中心）で双線形に引く。混ぜるのは
-    /// アルファを掛けた値で（透明な画素の RGB を周りへにじませない）、最後に straight へ戻して丸める。
-    pub(crate) fn sample(&self, x: u32, y: u32, dims: (u32, u32)) -> Rgba8 {
-        let (w, h) = (self.width, self.height);
+    /// 文書の画素 (x, y) に当たる値。文書（こちら。UDIM なら並び `own`、でなければ大きさ `dims` の 1 つのセル）の画素のタイルの番号と、
+    /// セルの中の位置を求め、向こうの同じ番号のセルの同じ位置を読む（向こうが UDIM でなければ、シート全体がタイル 1001 の 1 つのセル）。
+    /// 向こうにそのタイルが無い・こちらの空のセルは `default`。セルの大きさが同じなら同じ画素、違えば UV（画素の中心）で双線形に引く
+    /// （セルの外の画素は読まない）。混ぜるのはアルファを掛けた値で（透明な画素の RGB を周りへにじませない）、最後に straight へ戻して丸める。
+    pub(crate) fn sample(
+        &self,
+        x: u32,
+        y: u32,
+        own: Option<&UdimLayout>,
+        dims: (u32, u32),
+        default: Rgba8,
+    ) -> Rgba8 {
+        let (tile, lx, ly, cell) = match own {
+            None => (FIRST_TILE, x, y, dims),
+            Some(l) => {
+                let Some(index) = l.cell_at(x, y) else {
+                    return default;
+                };
+                let Some(tile) = l.tile_of_cell(index) else {
+                    return default;
+                };
+                let r = l.cell_rect(index);
+                (tile, x - r.x, y - r.y, (r.width, r.height))
+            }
+        };
+        let rect = match &self.layout {
+            None => (tile == FIRST_TILE).then(|| Rect::new(0, 0, self.width, self.height)),
+            Some(l) => l.cell_of_tile(tile).map(|c| l.cell_rect(c)),
+        };
+        match rect {
+            Some(r) => self.sample_in(r, lx, ly, cell),
+            None => default,
+        }
+    }
+    /// 向こうの矩形 `r` の中を、こちらのセル（大きさ `cell`）の画素 (x, y) の位置で読む。
+    fn sample_in(&self, r: Rect, x: u32, y: u32, cell: (u32, u32)) -> Rgba8 {
+        let w = self.width as usize;
         let at = |px: u32, py: u32| -> [u8; 4] {
-            let i = (py as usize * w as usize + px as usize) * 4;
+            let i = ((r.y + py) as usize * w + (r.x + px) as usize) * 4;
             [
                 self.pixels[i],
                 self.pixels[i + 1],
@@ -159,15 +213,16 @@ impl PointerInput {
                 self.pixels[i + 3],
             ]
         };
-        if (w, h) == dims {
+        let (rw, rh) = (r.width, r.height);
+        if (rw, rh) == cell {
             return Rgba8::from_slice(&at(x, y));
         }
-        let u = (f64::from(x) + 0.5) / f64::from(dims.0) * f64::from(w) - 0.5;
-        let v = (f64::from(y) + 0.5) / f64::from(dims.1) * f64::from(h) - 0.5;
-        let (x0, fx) = split(u, w);
-        let (y0, fy) = split(v, h);
-        let x1 = (x0 + 1).min(w - 1);
-        let y1 = (y0 + 1).min(h - 1);
+        let u = (f64::from(x) + 0.5) / f64::from(cell.0) * f64::from(rw) - 0.5;
+        let v = (f64::from(y) + 0.5) / f64::from(cell.1) * f64::from(rh) - 0.5;
+        let (x0, fx) = split(u, rw);
+        let (y0, fy) = split(v, rh);
+        let x1 = (x0 + 1).min(rw - 1);
+        let y1 = (y0 + 1).min(rh - 1);
         let taps = [
             (at(x0, y0), (1.0 - fx) * (1.0 - fy)),
             (at(x1, y0), fx * (1.0 - fy)),

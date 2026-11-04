@@ -3,6 +3,7 @@
 //! 指した先を消すと既定値と理由（取り消しで戻る）、結合で画素になる、複製は指す先を写す、ほかのテクスチャセットの入力を UV で読む。
 use std::sync::Arc;
 
+use yolu_core::udim::UdimLayout;
 use yolu_core::{
     BlendMode, Channel, CoreError, Document, EffectInputs, EffectSettings, ExternalSet, FilterSpec,
     FilterTarget, InactiveReason, InactiveTarget, LayerId, LayerSetId, PointerInput, PointerIssue,
@@ -834,4 +835,153 @@ fn a_hidden_target_is_still_read_but_hiding_a_child_of_a_pointed_group_changes_t
     d.set_layer_visible(group, true).unwrap();
     d.set_layer_visible(child, false).unwrap();
     assert_ne!(output(&d, q, Channel::Color), group_reading);
+}
+
+// ───────── UDIM: タイルの番号でセルを合わせて読む ─────────
+
+/// タイルごとに違う色（アルファは 255）。
+fn tile_color(tile: u16) -> Rgba8 {
+    Rgba8::new((tile - 1000) as u8 * 10, 50, 200, 255)
+}
+
+/// セルの辺 `cell` のシートの入力（タイルを番号の順に並べ、各セルをタイルの色で塗る）。
+fn sheet(tiles: &[u16], cell: u32) -> PointerInput {
+    let layout = UdimLayout::packed(tiles.to_vec(), cell, cell).unwrap();
+    let (w, h) = layout.sheet_size();
+    let mut px = Vec::new();
+    for y in 0..h as u32 {
+        for x in 0..w as u32 {
+            let tile = layout.tile_of_cell(layout.cell_at(x, y).unwrap());
+            px.extend(tile.map_or([0; 4], |t| tile_color(t).to_array()));
+        }
+    }
+    PointerInput::new(w as u32, h as u32, Arc::from(px))
+        .unwrap()
+        .with_layout(Some(Arc::new(layout)))
+        .unwrap()
+}
+
+/// 1 色で埋めた UDIM でない入力（辺 `edge`）。
+fn plain(edge: u32, color: Rgba8) -> PointerInput {
+    PointerInput::new(
+        edge,
+        edge,
+        Arc::from(color.to_array().repeat((edge * edge) as usize)),
+    )
+    .unwrap()
+}
+
+/// 外を読む参照レイヤー 1 枚の、辺 8 の文書（`tiles` が 2 個以上なら UDIM のシート）。
+fn external_doc(tiles: &[u16]) -> (Document, LayerId) {
+    let mut d = Document::with_tile_size(8, 8, 4).unwrap();
+    let p = d
+        .add_pointer_layer("外", PointerTarget::External(KEY), None)
+        .unwrap();
+    if tiles.len() > 1 {
+        d.enable_udim(tiles.to_vec()).unwrap();
+    }
+    (d, p)
+}
+
+fn feed(d: &mut Document, input: PointerInput) {
+    d.set_effect_inputs(EffectInputs::new().with_pointer(KEY, Channel::Color, input))
+        .unwrap();
+}
+
+/// 画素ごとに、文書の出力が `expect(x, y)`（None の画素は見ない）と一致するか。
+fn assert_cells(d: &Document, p: LayerId, expect: impl Fn(u32, u32) -> Option<Rgba8>) {
+    let out = output(d, p, Channel::Color);
+    for y in 0..d.height() {
+        for x in 0..d.width() {
+            let Some(want) = expect(x, y) else { continue };
+            let at = ((y * d.width() + x) * 4) as usize;
+            assert_eq!(&out[at..at + 4], &want.to_array(), "({x}, {y})");
+        }
+    }
+}
+
+#[test]
+fn a_plain_document_reads_only_the_1001_cell_of_a_udim_sheet() {
+    // セルの大きさが同じ（8）と違う（4。双線形で引き伸ばす）
+    for cell in [8, 4] {
+        let (mut d, p) = external_doc(&[1001]);
+        feed(&mut d, sheet(&[1002, 1001, 1011], cell));
+        assert_cells(&d, p, |_, _| Some(tile_color(1001)));
+    }
+    // 1001 が無いシートには、読むタイルが無いので既定値
+    let (mut d, p) = external_doc(&[1001]);
+    feed(&mut d, sheet(&[1002, 1003], 8));
+    assert_cells(&d, p, |_, _| Some(WHITE));
+}
+
+#[test]
+fn a_udim_document_reads_a_plain_document_into_the_1001_cell_only() {
+    let (mut d, p) = external_doc(&[1001, 1002, 1011]);
+    let layout = d.udim().unwrap().clone();
+    for edge in [8, 4] {
+        feed(&mut d, plain(edge, RED));
+        assert_cells(&d, p, |x, y| {
+            let tile = layout.tile_of_cell(layout.cell_at(x, y)?)?;
+            Some(if tile == 1001 { RED } else { WHITE })
+        });
+    }
+}
+
+#[test]
+fn two_udim_sheets_with_different_layouts_match_by_tile_number() {
+    // こちら 1001・1002・1011（2×2 の格子、右上は空）、向こう 1002・1003（2×1）
+    let (mut d, p) = external_doc(&[1001, 1002, 1011]);
+    let layout = d.udim().unwrap().clone();
+    feed(&mut d, sheet(&[1002, 1003], 8));
+    assert_cells(&d, p, |x, y| {
+        let tile = layout.tile_of_cell(layout.cell_at(x, y)?)?;
+        Some(if tile == 1002 {
+            tile_color(1002)
+        } else {
+            WHITE
+        })
+    });
+    // セルの大きさが違っても同じ（向こうは 4 の辺）
+    feed(&mut d, sheet(&[1011, 1002, 1001], 4));
+    assert_cells(&d, p, |x, y| {
+        let tile = layout.tile_of_cell(layout.cell_at(x, y)?)?;
+        Some(tile_color(tile))
+    });
+}
+
+#[test]
+fn the_read_follows_a_layout_change_on_either_side() {
+    let (mut d, p) = external_doc(&[1001]);
+    feed(&mut d, sheet(&[1001, 1002], 8));
+    assert_cells(&d, p, |_, _| Some(tile_color(1001)));
+    // 向こうの画素は同じバイトのまま、タイルの番号だけ替わる（同じ大きさ・同じ画素の入力と見なさない）
+    let before = sheet(&[1001, 1002], 8);
+    let moved = PointerInput::new(16, 8, before.pixels.clone())
+        .unwrap()
+        .with_layout(Some(Arc::new(
+            UdimLayout::packed(vec![1002, 1011], 8, 8).unwrap(),
+        )))
+        .unwrap();
+    feed(&mut d, moved);
+    assert_cells(&d, p, |_, _| Some(WHITE));
+    // こちらを UDIM（1001・1002）にすると、こちらの各セルが向こうの同じ番号のセルを読む
+    feed(&mut d, sheet(&[1001, 1002], 8));
+    d.enable_udim(vec![1001, 1002]).unwrap();
+    let layout = d.udim().unwrap().clone();
+    feed(&mut d, sheet(&[1001, 1002], 8));
+    assert_cells(&d, p, |x, y| {
+        let tile = layout.tile_of_cell(layout.cell_at(x, y)?)?;
+        Some(tile_color(tile))
+    });
+    // やめると 1001 のセルだけの文書へ戻り、1001 を読む
+    d.disable_udim().unwrap();
+    feed(&mut d, sheet(&[1001, 1002], 8));
+    assert_cells(&d, p, |_, _| Some(tile_color(1001)));
+}
+
+#[test]
+fn a_layout_must_match_the_input_size() {
+    let input = plain(8, RED);
+    let layout = Arc::new(UdimLayout::packed(vec![1001, 1002], 8, 8).unwrap());
+    refused(input.with_layout(Some(layout)), Reason::UdimSheetMismatch);
 }

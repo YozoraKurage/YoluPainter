@@ -1812,7 +1812,7 @@ impl Document {
                 .effects
                 .inputs
                 .pointer(k, c)
-                .filter(|old| old.same_pixels(input))
+                .filter(|old| old.same_content(input))
                 .and_then(|_| self.effects.pointer_serials.get(&(k, c)).copied());
             if kept.is_none() {
                 changed.insert(k);

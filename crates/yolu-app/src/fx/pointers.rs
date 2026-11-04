@@ -832,10 +832,12 @@ fn build_input(
     let (w, h) = (doc.width(), doc.height());
     let tiles = old.and_then(|o| {
         let (id, _, serial) = o.stamp?;
-        (id == doc.id() && (o.input.width, o.input.height) == (w, h))
-            .then(|| doc.changed_tiles(channel, serial))
-            .flatten()
-            .map(|t| (o, t))
+        (id == doc.id()
+            && (o.input.width, o.input.height) == (w, h)
+            && o.input.layout() == doc.udim())
+        .then(|| doc.changed_tiles(channel, serial))
+        .flatten()
+        .map(|t| (o, t))
     });
     // 変わったタイルを囲む矩形を 1 度で合成し直す（タイルごとに呼ぶと、1 回ごとの評価の支度がタイルの数だけ掛かる）
     let whole = u64::from(w) * u64::from(h);
@@ -858,7 +860,10 @@ fn build_input(
             let at = ((rect.y as usize + r) * w as usize + rect.x as usize) * 4;
             buf[at..at + row].copy_from_slice(&part[r * row..(r + 1) * row]);
         }
-        return Ok((PointerInput::new(w, h, pixels)?, Built::Tiles));
+        return Ok((
+            PointerInput::new(w, h, pixels)?.with_layout(doc.udim().cloned())?,
+            Built::Tiles,
+        ));
     }
     // `Arc` の中へ直に合成する（Vec から移すと、もう 1 度写す）
     let mut pixels: Arc<[u8]> = std::iter::repeat_n(0u8, whole as usize * 4).collect();
@@ -871,7 +876,10 @@ fn build_input(
         RowOrder::BottomUp,
         None,
     )?;
-    Ok((PointerInput::new(w, h, pixels)?, Built::Full))
+    Ok((
+        PointerInput::new(w, h, pixels)?.with_layout(doc.udim().cloned())?,
+        Built::Full,
+    ))
 }
 
 // ───────── 指す先の候補 ─────────

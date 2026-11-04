@@ -323,7 +323,7 @@ impl EffectInputs {
             && self
                 .pointers
                 .iter()
-                .all(|(k, i)| other.pointers.get(k).is_some_and(|o| o.same_pixels(i)))
+                .all(|(k, i)| other.pointers.get(k).is_some_and(|o| o.same_content(i)))
     }
     /// モデルの UV の位相（アイランドの図・継ぎ目の対応）。
     pub fn topology(&self) -> Option<&Arc<crate::geometry::UvTopology>> {

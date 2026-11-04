@@ -653,10 +653,13 @@ enum PointerSource<'a> {
     Constant(Rgba8),
     /// 同じ文書の指す先を合成した矩形（キャンバスの中。行は下から上）。矩形の外は透明。
     Region { rect: Rect, pixels: Arc<Vec<u8>> },
-    /// ほかのテクスチャセットの合成（文書の大きさ `dims` へ引き伸ばして読む）。
+    /// ほかのテクスチャセットの合成（タイルの番号でセルを合わせて読む。どちらも UDIM でなければ文書の大きさ `dims` へ引き伸ばす）。
+    /// `own` はこの文書の並び、`default` はそのタイルが向こうに無いときの値。
     External {
         input: &'a crate::pointer::PointerInput,
         dims: (u32, u32),
+        own: Option<&'a crate::udim::UdimLayout>,
+        default: Rgba8,
     },
 }
 
@@ -672,7 +675,12 @@ impl PointerSource<'_> {
                 let at = ((y - rect.y) as usize * rect.width as usize + (x - rect.x) as usize) * 4;
                 [pixels[at], pixels[at + 1], pixels[at + 2], pixels[at + 3]]
             }
-            Self::External { input, dims } => input.sample(x, y, *dims).to_array(),
+            Self::External {
+                input,
+                dims,
+                own,
+                default,
+            } => input.sample(x, y, *own, *dims, *default).to_array(),
         }
     }
 }
@@ -3242,6 +3250,8 @@ impl Document {
                 Some(input) => PointerSource::External {
                     input,
                     dims: (self.width, self.height),
+                    own: self.udim().map(|l| &**l),
+                    default: p.default,
                 },
                 None => PointerSource::Constant(p.default),
             });
