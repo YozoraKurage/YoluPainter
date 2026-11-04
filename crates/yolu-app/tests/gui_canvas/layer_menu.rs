@@ -925,6 +925,9 @@ fn a_chosen_file_goes_to_the_shelf_and_makes_the_layer_and_a_bad_file_makes_noth
         path: ok.clone(),
         mode: ProjectionMode::Uv,
     }));
+    // 読みは別のスレッド（読み終わってから、棚へ足してレイヤーを作る）
+    assert_eq!(layer_count(&s), 1, "読み終わるまでは作らない");
+    s.wait_image_reads();
     let id = s.selected_layer().unwrap();
     let layer = s.doc().layer(id).unwrap();
     assert_eq!(layer.kind(), LayerKind::Fill, "{}", s.message());
@@ -945,6 +948,7 @@ fn a_chosen_file_goes_to_the_shelf_and_makes_the_layer_and_a_bad_file_makes_noth
         path: ok,
         mode: ProjectionMode::Decal,
     }));
+    s.wait_image_reads();
     assert_eq!(s.shelf().resources().len(), before);
     assert_eq!(layer_count(&s), 3);
 
@@ -960,6 +964,7 @@ fn a_chosen_file_goes_to_the_shelf_and_makes_the_layer_and_a_bad_file_makes_noth
             path,
             mode: ProjectionMode::Uv,
         }));
+        s.wait_image_reads();
         assert_eq!(layer_count(&s), layers, "{}", s.message());
         assert_eq!(s.doc().undo_count(), steps);
         assert_eq!(s.shelf().selected, Some(rid.clone()), "選びを元へ戻す");
@@ -1101,6 +1106,7 @@ fn nothing_is_made_inside_a_locked_group_and_the_image_is_let_go() {
         ] {
             s.message_mut().clear();
             s.act(Action::LayerMenu(op.clone()));
+            s.wait_image_reads();
             let what = format!("{lock:?} {op:?}");
             assert!(
                 s.message().contains("ロック"),
@@ -1118,6 +1124,66 @@ fn nothing_is_made_inside_a_locked_group_and_the_image_is_let_go() {
             assert_nothing_made(&mut s, layers, steps, &what);
         }
     }
+}
+
+/// 読んでいる間（別のスレッド）に状態が変わったら、読み終わった時の状態で決める: 描き始めていれば作らず断り（画像は棚に残る）、
+/// 親がロックされたグループになっていれば作らず断り、プロジェクトが替わっていれば何も足さない。
+#[test]
+fn the_layer_is_made_when_the_read_is_done_by_the_state_then_and_not_the_state_when_chosen() {
+    use yolu_core::LayerLocks;
+    let file = quad_png("read-state");
+    // 描き始めた
+    let mut s = AppState::new(64, 64);
+    s.shelf().hold_image_reads(true);
+    s.act(Action::LayerMenu(Op::FillImageFile {
+        path: file.clone(),
+        mode: ProjectionMode::Uv,
+    }));
+    assert_eq!(layer_count(&s), 1);
+    let layer = s.selected_layer().unwrap();
+    let brush = s.stroke_settings(false);
+    let stroke = s.doc_mut().begin_stroke(layer, &brush).unwrap();
+    s.shelf().hold_image_reads(false);
+    s.wait_image_reads();
+    assert_eq!(s.message(), "描いている間はできません。");
+    assert_eq!(layer_count(&s), 1);
+    assert!(
+        s.shelf().resources().iter().any(|r| r.kind == "image"),
+        "画像は棚に残る"
+    );
+    s.doc_mut().cancel_stroke(stroke);
+
+    // 親がロックされた
+    let mut s = AppState::new(64, 64);
+    s.shelf().hold_image_reads(true);
+    s.act(Action::LayerMenu(Op::FillImageFile {
+        path: file.clone(),
+        mode: ProjectionMode::Uv,
+    }));
+    let child = s.selected_layer().unwrap();
+    let group = s.doc_mut().group_layers(&[child], "G").unwrap();
+    s.doc_mut().set_layer_locks(group, LayerLocks::ALL).unwrap();
+    s.set_selected_layer(Some(child));
+    let (layers, steps) = (layer_count(&s), s.doc().undo_count());
+    s.shelf().hold_image_reads(false);
+    s.wait_image_reads();
+    assert!(s.message().contains("ロック"), "{}", s.message());
+    assert_nothing_made(&mut s, layers, steps, "読んでいる間にロック");
+
+    // プロジェクトが替わった: 読み終わった物は足さず、レイヤーも作らない
+    let mut s = AppState::new(64, 64);
+    s.shelf().hold_image_reads(true);
+    s.act(Action::LayerMenu(Op::FillImageFile {
+        path: file,
+        mode: ProjectionMode::Uv,
+    }));
+    s.act(Action::NewProject);
+    let layers = layer_count(&s);
+    s.shelf().hold_image_reads(false);
+    s.poll_image_reads();
+    assert!(!s.shelf().is_reading_images());
+    assert!(s.shelf().resources().is_empty());
+    assert_eq!(layer_count(&s), layers);
 }
 
 #[test]
@@ -1162,6 +1228,7 @@ fn a_file_over_the_image_budget_makes_no_layer_and_the_decal_is_the_same() {
             path: file.clone(),
             mode,
         }));
+        s.wait_image_reads();
         assert!(s.message().contains("予算"), "{mode:?}: {}", s.message());
         assert_nothing_made(&mut s, layers, steps, &format!("{mode:?}"));
         // 取り込んだ画像は棚に残る（消えるのはレイヤーを作らなかったことだけ）。棚の画像から作り直しても、同じ断りで何も作らない

@@ -209,6 +209,7 @@ pub const JOBS: &[JobSpec] = &[
     crate::uv_wireframe::overlap::JOB,
     crate::textlayer::JOB,
     crate::dropin::JOB,
+    crate::shelf::IMAGE_READ_JOB,
 ];
 
 /// 動いている間は描き直し続ける仕事が動いている。
@@ -246,6 +247,8 @@ pub enum CloseJob {
     ShelfSave,
     /// 個人のライブラリのファイルのプロジェクトへの取り込み。
     ShelfImport,
+    /// 落とした画像・メニューから選んだ画像の、アセットへの取り込み（読んでいる・まだ足していない）。
+    ImageRead,
 }
 
 impl CloseJob {
@@ -262,6 +265,7 @@ impl CloseJob {
             CloseJob::LibraryWrite => lang.t("jobs-writing-to-the-library"),
             CloseJob::ShelfSave => lang.t("jobs-saving-a-material"),
             CloseJob::ShelfImport => lang.t("jobs-importing-a-material"),
+            CloseJob::ImageRead => lang.t("jobs-importing-images"),
         }
     }
 }

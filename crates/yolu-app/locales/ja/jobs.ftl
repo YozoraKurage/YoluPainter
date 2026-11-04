@@ -10,3 +10,4 @@ jobs-brush-import = ブラシの取り込み
 jobs-writing-to-the-library = ライブラリへの書き込み
 jobs-saving-a-material = 素材の保存
 jobs-importing-a-material = 素材の取り込み
+jobs-importing-images = 画像の取り込み

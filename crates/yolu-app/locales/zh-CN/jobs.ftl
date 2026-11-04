@@ -10,3 +10,4 @@ jobs-brush-import = 导入画笔
 jobs-writing-to-the-library = 写入资源库
 jobs-saving-a-material = 保存材质
 jobs-importing-a-material = 导入材质
+jobs-importing-images = 导入图片

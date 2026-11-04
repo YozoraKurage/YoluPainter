@@ -31,3 +31,5 @@ fillfx-pbr-materials-added = 머티리얼 { $count }개를 추가했습니다 (�
 fillfx-pbr-images-added = 이미지로 { $n }개 추가
 fillfx-baked-map-set = 베이크한 맵을 지정했습니다
 fillfx-baked-map-removed = 베이크한 맵을 제거했습니다
+fillfx-reading-images = 이미지 읽는 중
+fillfx-cancelled-reading-images = 이미지 읽기를 취소했습니다

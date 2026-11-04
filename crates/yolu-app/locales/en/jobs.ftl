@@ -10,3 +10,4 @@ jobs-brush-import = Brush import
 jobs-writing-to-the-library = Writing to the library
 jobs-saving-a-material = Saving a material
 jobs-importing-a-material = Importing a material
+jobs-importing-images = Importing images

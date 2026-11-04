@@ -168,6 +168,7 @@ fn the_question_names_the_jobs_and_the_unsaved_changes_in_both_languages() {
         CloseJob::LibraryWrite,
         CloseJob::ShelfSave,
         CloseJob::ShelfImport,
+        CloseJob::ImageRead,
     ] {
         let (ja, en) = (job.label(Lang::Ja), job.label(Lang::En));
         assert!(!ja.is_empty() && !en.is_empty() && ja != en);
@@ -376,5 +377,31 @@ fn a_model_load_is_not_asked_about_before_closing() {
     assert!(close_question(Lang::Ja, false, &close_jobs(&s)).is_empty());
     assert!(
         close_question(Lang::En, true, &close_jobs(&s)).starts_with("There are unsaved changes.")
+    );
+}
+
+/// 画像の取り込み（別のスレッドで読んでいる・まだ足していない）は一覧に出て、後始末が取り消して、棚には何も足さない。
+#[test]
+fn an_image_import_is_listed_and_cancelled_when_stopping_jobs() {
+    let dir = TempDir::new("imageread");
+    let path = dir.0.join("tile.png");
+    image::RgbaImage::from_pixel(2, 2, image::Rgba([1, 2, 3, 255]))
+        .save(&path)
+        .unwrap();
+    let mut s = AppState::new(32, 32);
+    assert!(close_jobs(&s).is_empty());
+    s.shelf().hold_image_reads(true);
+    s.act(Action::Fill(yolu_app::fillfx::FillOp::ImportImage(path)));
+    let jobs = close_jobs(&s);
+    assert_eq!(jobs, vec![CloseJob::ImageRead]);
+    assert!(close_question(Lang::En, false, &jobs).contains("Importing images"));
+    assert!(close_question(Lang::Ja, false, &jobs).contains("画像の取り込み"));
+    stop_jobs(&mut s, Duration::from_secs(10));
+    assert!(close_jobs(&s).is_empty(), "取り消した");
+    s.shelf().hold_image_reads(false);
+    s.poll_image_reads();
+    assert!(
+        s.shelf().resources().is_empty(),
+        "取り消した取り込みは棚に入れない"
     );
 }

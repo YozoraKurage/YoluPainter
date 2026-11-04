@@ -53,7 +53,12 @@ fn new_fill(s: &mut AppState) -> LayerId {
 }
 
 fn fill(s: &mut AppState, op: FillOp) {
+    // 画像の取り込みは別のスレッドで読んでから棚へ足す（結果を見る前に待つ）
+    let import = matches!(op, FillOp::ImportImage(_) | FillOp::ImportImageSet(_));
     s.act(Action::Fill(op));
+    if import {
+        s.wait_image_reads();
+    }
 }
 
 fn fill_image(s: &mut AppState, layer: LayerId, channel: Channel, image: ImageId) {
@@ -1942,10 +1947,10 @@ fn headless_importing_or_changing_the_reading_while_a_shelf_save_runs_is_refused
     let resources = s.shelf().resources().len();
     let revision = s.doc().revision();
     s.set_modified(false);
-    // 取り込み・読み方・取り込みのウィンドウは、保存が終わるまで断る（保存の結果は足した後の棚で丸ごと差し替えるので、
-    // その間に変えると変えた分が黙って消える）
-    fill(&mut s, FillOp::ImportImage(path.clone()));
-    assert!(s.message().contains("保存中です"), "{}", s.message());
+    // 読み方・取り込みのウィンドウは、保存が終わるまで断る（保存の結果は足した後の棚で丸ごと差し替えるので、その間に変えると変えた分が
+    // 黙って消える）。画像の取り込みは断らず、読み終わっても保存が終わるまで足さずに待つ
+    s.act(Action::Fill(FillOp::ImportImage(path.clone())));
+    assert!(s.shelf().is_reading_images(), "{}", s.message());
     fill(
         &mut s,
         FillOp::ImageColorSpace {
@@ -1958,23 +1963,31 @@ fn headless_importing_or_changing_the_reading_while_a_shelf_save_runs_is_refused
     fill(&mut s, FillOp::ImportImageDialog);
     assert!(s.message().contains("保存中です"), "{}", s.message());
     assert!(s.dialog_request().is_none(), "ウィンドウも開かない");
+    // 読み終わるだけの時間を待っても、保存が終わるまでは棚に足さない
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    s.poll_image_reads();
+    assert!(s.shelf().is_reading_images(), "読み終わっても足さずに待つ");
     assert_eq!(s.shelf().resources().len(), resources, "棚は変わらない");
     assert_eq!(space(&s), "srgb", "読み方も変わらない");
     assert!(!s.modified(), "文書は変わらない扱いのまま");
     assert_eq!(s.doc().revision(), revision);
-    s.set_lang(Lang::En);
-    fill(&mut s, FillOp::ImportImage(path.clone()));
-    assert!(s.message().contains("Already saving"), "{}", s.message());
-    s.set_lang(Lang::Ja);
-    // 保存が終われば、足した分は残り（取り込みは消えていない）、取り込み・読み方も受けられる
+    // 保存が終われば、保存の結果と取り込みの両方が棚に残る
     s.shelf().hold_saves(false);
     s.shelf_wait();
     assert_eq!(
         s.shelf().resources().len(),
         resources + 1,
-        "{}",
+        "保存の結果が足される: {}",
         s.message()
     );
+    s.wait_image_reads();
+    assert_eq!(
+        s.shelf().resources().len(),
+        resources + 2,
+        "保存の後に取り込みが足される（保存の結果に消されない）: {}",
+        s.message()
+    );
+    // 同じ画像をもう一度取り込んでも足さない・読み方も受けられる
     fill(&mut s, FillOp::ImportImage(path.clone()));
     assert_eq!(
         s.shelf().resources().len(),
@@ -2795,11 +2808,18 @@ fn headless_every_new_name_and_notice_is_short_in_both_languages_with_no_how_to_
         note(&bare, "モデルが無い");
         let (mut painted, id) = painted(16);
         painted.set_lang(lang);
+        let (_, painted_image) = shelf_image(&mut painted, "四色");
         painted.shelf_mut().async_bytes = 0;
         painted.shelf().hold_saves(true);
         painted.act(Action::Shelf(ShelfOp::SaveMaterial(id)));
-        fill(&mut painted, FillOp::ImportImage(png.clone()));
-        note(&painted, "保存中の取り込み");
+        fill(
+            &mut painted,
+            FillOp::ImageColorSpace {
+                image: painted_image,
+                space: yolu_core::ImageColorSpace::Linear,
+            },
+        );
+        note(&painted, "保存中の読み方の変更");
         painted.shelf().hold_saves(false);
         painted.shelf_wait();
         assert!(texts.len() >= 25, "{lang:?}: {}", texts.len());
@@ -3469,4 +3489,177 @@ fn headless_a_point_gradient_survives_saving_and_reopening() {
         .unwrap();
     assert_eq!(reopened.fill_points(Channel::Color), Some(&g));
     assert_eq!(composite(t.doc()), picture);
+}
+
+/// ORM から分けた 3 枚は "linear" で棚に入り、行の向きも合う（上と下で値の違う画像: ファイルの上の行が、棚の PNG の先頭の行）。
+/// 色の画像は "srgb"。
+#[test]
+fn headless_pbr_orm_images_enter_the_shelf_linear_and_the_right_way_up() {
+    let dir = temp_dir("pbr-orm-rows");
+    // 1 × 2: ファイルの上の行は [10, 20, 30]、下の行は [210, 220, 230]
+    let write = |name: &str, top: [u8; 3], bottom: [u8; 3]| {
+        let path = dir.join(name);
+        let mut img = image::RgbImage::new(1, 2);
+        img.put_pixel(0, 0, image::Rgb(top));
+        img.put_pixel(0, 1, image::Rgb(bottom));
+        image::DynamicImage::ImageRgb8(img).save(&path).unwrap();
+        path
+    };
+    let files = vec![
+        write("Brick_ORM.png", [10, 20, 30], [210, 220, 230]),
+        write("Brick_BaseColor.png", [1, 2, 3], [4, 5, 6]),
+    ];
+    let mut s = AppState::new(32, 32);
+    fill(&mut s, FillOp::ImportImageSet(files));
+    // 棚に入る PNG は、ファイルと同じ向き（先頭の行が上の行）。向きが逆になれば、上と下の値が入れ替わる
+    let rows = |s: &AppState, name: &str| {
+        let id = shelf_item(s, "image", name).id;
+        let png = s.shelf().shelf().content_bytes(&id).expect("画像の中身");
+        let img = image::load_from_memory_with_format(png, image::ImageFormat::Png)
+            .unwrap()
+            .to_rgba8();
+        (img.get_pixel(0, 0).0[0], img.get_pixel(0, 1).0[0]) // (上の行, 下の行)
+    };
+    assert_eq!(rows(&s, "Brick_AO"), (10, 210));
+    assert_eq!(rows(&s, "Brick_Roughness"), (20, 220));
+    assert_eq!(rows(&s, "Brick_Metallic"), (30, 230));
+    assert_eq!(rows(&s, "Brick_BaseColor"), (1, 4));
+    for name in ["Brick_AO", "Brick_Roughness", "Brick_Metallic"] {
+        assert_eq!(
+            shelf_item(&s, "image", name).metadata["colorSpace"],
+            "linear",
+            "{name}"
+        );
+    }
+    assert_eq!(
+        shelf_item(&s, "image", "Brick_BaseColor").metadata["colorSpace"],
+        "srgb"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// ───────── 画像の読みは別のスレッド ─────────
+
+/// 落とした画像・メニューの「画像…」は別のスレッドで読み、読み終わってから棚へ足す。読んでいる間は棚が変わらず、取り消せる。
+#[test]
+fn headless_an_imported_image_is_read_on_another_thread_and_added_when_done() {
+    let dir = temp_dir("read-bg");
+    let path = dir.join("tile.png");
+    image::RgbaImage::from_raw(2, 2, quad_image())
+        .unwrap()
+        .save(&path)
+        .unwrap();
+    let mut s = AppState::new(32, 32);
+    let before = s.shelf().resources().len();
+    s.shelf().hold_image_reads(true);
+    s.act(Action::Fill(FillOp::ImportImage(path.clone())));
+    // 頼みは戻ってきたが、読みはまだ始まっていない（画面のスレッドは読まない）
+    assert!(s.shelf().is_reading_images(), "{}", s.message());
+    assert_eq!(s.shelf().resources().len(), before);
+    s.poll_image_reads();
+    assert_eq!(s.shelf().resources().len(), before);
+    assert!(!s.modified());
+    s.shelf().hold_image_reads(false);
+    s.wait_image_reads();
+    assert!(!s.shelf().is_reading_images());
+    assert_eq!(s.shelf().resources().len(), before + 1, "{}", s.message());
+    assert!(
+        s.modified() && s.message().contains("tile"),
+        "{}",
+        s.message()
+    );
+    let rid = s.shelf().selected.clone().expect("足した画像を選ぶ");
+    assert_eq!(shelf_item(&s, "image", "tile").id, rid);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// 読んでいる間に取り消すと、読み終わった物も足さない。
+#[test]
+fn headless_canceling_the_image_read_adds_nothing() {
+    let dir = temp_dir("read-cancel");
+    let path = solid_file(&dir, "a.png", [1, 2, 3]);
+    let mut s = AppState::new(32, 32);
+    let before = s.shelf().resources().len();
+    s.shelf().hold_image_reads(true);
+    s.act(Action::Fill(FillOp::ImportImage(path)));
+    assert!(s.shelf().is_reading_images());
+    s.act(Action::Fill(FillOp::CancelImageRead));
+    assert!(!s.shelf().is_reading_images());
+    assert!(s.message().contains("やめました"), "{}", s.message());
+    s.shelf().hold_image_reads(false);
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    s.poll_image_reads();
+    assert_eq!(s.shelf().resources().len(), before);
+    assert!(!s.modified());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// プロジェクトを替えた後に読み終わった物は、新しいプロジェクトの棚へ足さない（仕事は棚が持ち、棚ごと捨てる）。
+#[test]
+fn headless_an_image_read_that_finishes_after_the_project_changed_is_dropped() {
+    let dir = temp_dir("read-switch");
+    let path = solid_file(&dir, "a.png", [1, 2, 3]);
+    let mut s = AppState::new(32, 32);
+    s.act(Action::Fill(FillOp::ImportImage(path)));
+    // 読み終わるだけの時間を待ってから、受け取る前にプロジェクトを替える
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    s.act(Action::NewProject);
+    s.poll_image_reads();
+    assert!(!s.shelf().is_reading_images());
+    assert!(s.shelf().resources().is_empty(), "{}", s.message());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// 2 枚以上は全部が読み終わってから判別どおりに組み立てる（途中では何も足さない）。読めない物は 1 つずつ理由つきで断る。
+#[test]
+fn headless_a_set_is_added_only_after_every_image_is_read() {
+    let dir = temp_dir("read-set");
+    let junk = dir.join("Wood_Metallic.png");
+    std::fs::write(&junk, b"not an image").unwrap();
+    let files = vec![
+        solid_file(&dir, "Wood_BaseColor.png", [200, 100, 50]),
+        solid_file(&dir, "Wood_Normal.png", [100, 200, 255]),
+        junk,
+        dir.join("Wood_Roughness.dds"),
+    ];
+    let mut s = AppState::new(32, 32);
+    let before = s.shelf().resources().len();
+    s.shelf().hold_image_reads(true);
+    s.act(Action::Fill(FillOp::ImportImageSet(files)));
+    assert!(s.shelf().is_reading_images());
+    s.poll_image_reads();
+    assert_eq!(s.shelf().resources().len(), before, "途中では足さない");
+    s.shelf().hold_image_reads(false);
+    s.wait_image_reads();
+    // 読めた 2 枚でマテリアル 1 つ（と画像 2 枚）。読めない 2 枚は理由つきで断る
+    assert_eq!(s.shelf().resources().len(), before + 3, "{}", s.message());
+    shelf_item(&s, "material", "Wood");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// 読みの仕事は 1 本の列: 前の仕事の読みが終わるまで次のスレッドは始めず、棚へは落とした順に足す。
+#[test]
+fn headless_image_reads_run_one_job_at_a_time_and_are_added_in_the_order_they_were_dropped() {
+    let dir = temp_dir("read-queue");
+    let first = solid_file(&dir, "first.png", [1, 2, 3]);
+    let second = solid_file(&dir, "second.png", [4, 5, 6]);
+    let mut s = AppState::new(32, 32);
+    s.shelf().hold_image_reads(true);
+    s.act(Action::Fill(FillOp::ImportImage(first)));
+    s.act(Action::Fill(FillOp::ImportImage(second)));
+    assert_eq!(s.shelf().image_reads_running(), 1, "読むのは 1 つだけ");
+    s.poll_image_reads();
+    assert_eq!(s.shelf().image_reads_running(), 1);
+    s.shelf().hold_image_reads(false);
+    s.wait_image_reads();
+    assert_eq!(s.shelf().image_reads_running(), 0);
+    let names: Vec<&str> = s
+        .shelf()
+        .resources()
+        .iter()
+        .filter(|r| r.kind == "image")
+        .map(|r| r.name.as_str())
+        .collect();
+    assert_eq!(names, ["first", "second"], "{}", s.message());
+    let _ = std::fs::remove_dir_all(dir);
 }

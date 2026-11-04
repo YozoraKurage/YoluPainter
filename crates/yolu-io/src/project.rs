@@ -1424,41 +1424,12 @@ pub(crate) fn load_resources(
     let mut decoded = HashSet::new();
     let mut result = Vec::new();
     for v in list {
-        let id = id_text(v, "id")?.to_string();
-        check(ids.insert(id.clone()), "リソースのIDが重複しています")?;
-        let name = label(v, "name")?.to_string();
-        let kind = text(v, "kind", 1, 32)?.to_string();
-        check(
-            depth == 0 || kind == "image",
-            "スマートリソースに画像以外のリソースがあります",
-        )?;
-        check(
-            ["image", "smartMaterial", "smartMask", "brush", "material"].contains(&kind.as_str()),
-            format!("未知のリソース種別です: {kind}"),
-        )?;
-        let content = text(v, "content", 64, 64)?.to_string();
-        check(is_hash(&content), "リソースのハッシュが不正です")?;
-        if let Some(origin) = v.get("origin").filter(|v| !v.is_null()) {
-            validate_origin(origin)?;
-        }
-        let ext = match kind.as_str() {
-            "image" => "png",
-            "brush" => "ylbrush",
-            _ => "ylsmart",
-        };
-        let entry = format!("resources/{content}.{ext}");
-        let bytes = required(files, &entry)?;
+        let item = resource_header(v, depth, &mut ids)?;
+        let (kind, content, entry) = (item.kind.as_str(), item.content.as_str(), &item.entry);
+        let bytes = required(files, entry)?;
         if kind == "image" {
-            let w = number(v, "width", 1, 8192)? as u32;
-            let h = number(v, "height", 1, 8192)? as u32;
-            if let Some(c) = v.get("colorSpace").filter(|v| !v.is_null()) {
-                check(
-                    c.as_str()
-                        .is_some_and(|s| ["srgb", "linear", "unspecified"].contains(&s)),
-                    "未知の色空間です",
-                )?;
-            }
-            if decoded.insert((content.clone(), w, h)) {
+            let (w, h) = image_size(v)?;
+            if decoded.insert((content.to_owned(), w, h)) {
                 let rgba = png_pixels(&bytes, w, h, budget)?;
                 use sha2::{Digest, Sha256};
                 let mut sha = Sha256::new();
@@ -1513,20 +1484,64 @@ pub(crate) fn load_resources(
                     )?;
                     validate_smart(&info, &d)?;
                     load_resources(&a.files, budget, depth + 1, notes)?;
-                    notes.push(Note::SmartResourceKept(name.clone()));
+                    notes.push(Note::SmartResourceKept(item.name.clone()));
                 }
             }
         }
-        result.push(Resource {
-            id,
-            kind,
-            name,
-            content,
-            entry,
-            metadata: v.clone(),
-        });
+        result.push(item);
     }
     Ok(result)
+}
+/// 索引の 1 項目の、中身を見ずに決まる検査（ID の重複・名前・種別・ハッシュの形・出どころ）。`ids` は同じ索引で見た ID。
+pub(crate) fn resource_header(
+    v: &Value,
+    depth: usize,
+    ids: &mut HashSet<String>,
+) -> Result<Resource> {
+    let id = id_text(v, "id")?.to_string();
+    check(ids.insert(id.clone()), "リソースのIDが重複しています")?;
+    let name = label(v, "name")?.to_string();
+    let kind = text(v, "kind", 1, 32)?.to_string();
+    check(
+        depth == 0 || kind == "image",
+        "スマートリソースに画像以外のリソースがあります",
+    )?;
+    check(
+        ["image", "smartMaterial", "smartMask", "brush", "material"].contains(&kind.as_str()),
+        format!("未知のリソース種別です: {kind}"),
+    )?;
+    let content = text(v, "content", 64, 64)?.to_string();
+    check(is_hash(&content), "リソースのハッシュが不正です")?;
+    if let Some(origin) = v.get("origin").filter(|v| !v.is_null()) {
+        validate_origin(origin)?;
+    }
+    let ext = match kind.as_str() {
+        "image" => "png",
+        "brush" => "ylbrush",
+        _ => "ylsmart",
+    };
+    let entry = format!("resources/{content}.{ext}");
+    Ok(Resource {
+        id,
+        kind,
+        name,
+        content,
+        entry,
+        metadata: v.clone(),
+    })
+}
+/// 画像の索引の項目の寸法と色空間の検査（寸法を返す）。
+pub(crate) fn image_size(v: &Value) -> Result<(u32, u32)> {
+    let w = number(v, "width", 1, 8192)? as u32;
+    let h = number(v, "height", 1, 8192)? as u32;
+    if let Some(c) = v.get("colorSpace").filter(|v| !v.is_null()) {
+        check(
+            c.as_str()
+                .is_some_and(|s| ["srgb", "linear", "unspecified"].contains(&s)),
+            "未知の色空間です",
+        )?;
+    }
+    Ok((w, h))
 }
 fn origin_text<'a>(v: &'a Value, k: &str, min: usize, max: usize) -> Result<&'a str> {
     let s = text(v, k, min, max)?;
@@ -1585,7 +1600,7 @@ fn validate_origin(v: &Value) -> Result<()> {
     }
     Ok(())
 }
-fn add_budget(b: &mut usize, n: usize) -> Result<()> {
+pub(crate) fn add_budget(b: &mut usize, n: usize) -> Result<()> {
     *b = b
         .checked_add(n)
         .ok_or_else(|| Error::Budget("リソース予算超過です".into()))?;

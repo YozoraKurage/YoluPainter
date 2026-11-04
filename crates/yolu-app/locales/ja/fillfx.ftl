@@ -31,3 +31,5 @@ fillfx-pbr-materials-added = マテリアルを { $count } 個追加しました
 fillfx-pbr-images-added = 画像として { $n } 枚を追加
 fillfx-baked-map-set = 焼いたマップを差しました
 fillfx-baked-map-removed = 焼いたマップを外しました
+fillfx-reading-images = 画像を読み込み中
+fillfx-cancelled-reading-images = 画像の読み込みをやめました

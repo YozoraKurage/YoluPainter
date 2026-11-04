@@ -11,6 +11,7 @@
 //! - 置き場（投影の箱・グラデーションの形）は 3D ビューのギズモ（`gizmo`、`view3d::shape_gizmo`）で動かす。決め方は `placement`。
 
 pub mod gizmo;
+pub(crate) mod image_reads;
 pub mod inputs;
 mod pbrset;
 pub mod placement;
@@ -133,6 +134,8 @@ pub enum FillOp {
     ImportImage(PathBuf),
     /// 一度に落とした画像を取り込む。名前の後ろの印で PBR のチャンネルに当てて、組をマテリアルにする（`pbrset`）。印の無い画像は画像として入る。
     ImportImageSet(Vec<PathBuf>),
+    /// 読んでいる画像の取り込みをやめる（読み終わった物も足さない）。
+    CancelImageRead,
     /// PNG を選ぶウィンドウを開く。
     ImportImageDialog,
     // ── 画面だけ ──
@@ -493,15 +496,11 @@ impl AppState {
                 self.fillfx.drag = Some(*drag);
             }
             FillOp::PlaceDecal { image, at, rect } => self.place_decal(image, at, rect),
-            FillOp::ImportImage(path) => {
-                // 棚を変える操作は、別のスレッドの保存が終わるまで断る（保存の結果は足した後の棚で丸ごと差し替えるので、
-                // その間に取り込むと取り込んだ画像が消え、その画像を差したレイヤーが棚に無い画像を指す）
-                if self.shelf_refuse_while_saving() {
-                    return;
-                }
-                self.import_image_file(&path)
-            }
+            // 読みは別のスレッド、棚へ足すのは読み終わってから（別のスレッドの保存が棚の写しへ足している間は、保存が終わるまで待つ。
+            // 保存の結果は足した後の棚で丸ごと差し替えるので、その間に足すと足した画像が消え、その画像を差したレイヤーが棚に無い画像を指す）
+            FillOp::ImportImage(path) => self.import_image_file(&path, image_reads::Then::Nothing),
             FillOp::ImportImageSet(paths) => self.import_image_set(&paths),
+            FillOp::CancelImageRead => self.cancel_image_reads(),
             FillOp::ImageColorSpace { image, space } => {
                 if self.is_stroking() {
                     self.refuse(
@@ -798,44 +797,51 @@ impl AppState {
         }
     }
 
-    /// 画像のファイル（`imagefile::FORMATS` の形式）を棚の画像として取り込む（文書は変えない）。大きすぎる・読めない・棚がいっぱいのときは理由を出す。棚にもう同じ中身が
-    /// あれば、足さずにその画像を選ぶだけ（棚も文書も「変えた」にしない）。
-    fn import_image_file(&mut self, path: &std::path::Path) {
+    /// 画像のファイル（`imagefile::FORMATS` の形式）を棚の画像として取り込む（文書は変えない）。読みは別のスレッドで始め、棚へ足すのは
+    /// 読み終わってから（`add_read_image`）。
+    pub(crate) fn import_image_file(&mut self, path: &std::path::Path, then: image_reads::Then) {
+        self.start_image_read(
+            image_reads::Request::One {
+                path: path.to_path_buf(),
+                then,
+            },
+            vec![image_reads::Entry {
+                index: 0,
+                path: path.to_path_buf(),
+                transfer: crate::imagefile::Transfer::Srgb,
+                make: image_reads::Make::PLAIN,
+            }],
+        );
+    }
+
+    /// 読んだ画像（文書と同じ向き）を棚の画像として足し、棚の ID を返す。大きすぎる・読めない・棚がいっぱいのときは理由を出して None（棚の選びは
+    /// 変えない）。棚にもう同じ中身があれば、足さずにその画像を選ぶだけ（棚も文書も「変えた」にしない）。
+    fn add_read_image(
+        &mut self,
+        path: &std::path::Path,
+        read: image_reads::Read,
+    ) -> Option<String> {
         let lang = self.lang;
-        let name = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("image")
-            .to_owned();
-        let Some(format) = crate::imagefile::format_of(path) else {
-            self.fail(
-                Source::FillLayer,
-                lang.with_reason(
-                    cannot_add_image(lang, &name),
-                    lang.t("dropin-unsupported-format"),
-                ),
-            );
-            return;
-        };
-        let (mut rgba, w, h) = match crate::imagefile::read_file(path, format)
-            .map_err(|e| lang.image_read_error(format, &e))
-        {
-            Ok(read) => read,
-            Err(why) => {
+        let name = pbrset::stem_of(path);
+        let loaded = match read {
+            Ok(loaded) => loaded,
+            Err(failure) => {
                 self.fail(
                     Source::FillLayer,
-                    lang.with_reason(cannot_add_image(lang, &name), why),
+                    lang.with_reason(cannot_add_image(lang, &name), failure.reason(lang)),
                 );
-                return;
+                return None;
             }
         };
-        // 文書と同じ向き（下の行が先）で渡す（読んだ画素の並びをその場で返す。大きな画像の写しを重ねない）
-        flip_rows(&mut rgba, w as usize * 4);
         let before = self.shelf.resources().len();
-        match self.shelf.add_image(lang, &name, &rgba, w, h) {
+        let piece = &loaded.pieces[0];
+        match self
+            .shelf
+            .add_encoded_image_in(lang, &name, &piece.image, piece.space)
+        {
             Ok(id) => {
                 let added = self.shelf.resources().len() > before;
-                self.shelf.selected = Some(id);
+                self.shelf.selected = Some(id.clone());
                 if added {
                     self.session.mark_modified();
                 }
@@ -850,11 +856,15 @@ impl AppState {
                         }
                     ),
                 );
+                Some(id)
             }
-            Err(why) => self.fail(
-                Source::FillLayer,
-                lang.with_reason(cannot_add_image(lang, &name), why),
-            ),
+            Err(why) => {
+                self.fail(
+                    Source::FillLayer,
+                    lang.with_reason(cannot_add_image(lang, &name), why),
+                );
+                None
+            }
         }
     }
 }

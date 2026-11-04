@@ -1196,6 +1196,7 @@ fn headless_materials_that_point_at_assets_images_are_not_put_into_the_library()
     s.act(Action::Fill(yolu_app::fillfx::FillOp::ImportImageSet(
         files,
     )));
+    s.wait_image_reads();
     let find = |s: &AppState, kind: &str, name: &str| {
         s.shelf()
             .resources()

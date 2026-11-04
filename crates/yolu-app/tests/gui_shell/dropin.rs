@@ -564,11 +564,13 @@ fn images_dropped_on_the_project_shelf_grid_are_added_to_the_shelf_and_unreadabl
     let grid = open_assets(&mut h);
     let assets = h.shelf().resources().len();
     h.drop_files_at(grid.center(), &[&webp, &exr, &png]);
+    h.app_mut().wait_image_reads();
     h.run();
     assert!(!h.dropin().is_open(), "ウィンドウには並べない");
     assert_eq!(h.shelf().resources().len(), assets + 3, "{}", h.message());
     // 読めない形式は断り、棚は変わらない
     h.drop_files_at(grid.center(), &[&dds]);
+    h.app_mut().wait_image_reads();
     h.run();
     assert!(!h.dropin().is_open());
     assert_eq!(h.shelf().resources().len(), assets + 3);
@@ -615,6 +617,7 @@ fn several_images_dropped_on_the_project_shelf_grid_with_pbr_marks_become_a_mate
     let (materials, images) = (count(&h, "material"), count(&h, "image"));
     let paths: Vec<&Path> = files.iter().map(PathBuf::as_path).collect();
     h.drop_files_at(grid.center(), &paths);
+    h.app_mut().wait_image_reads();
     h.run();
     assert!(!h.dropin().is_open(), "ウィンドウには並べない");
     assert_eq!(count(&h, "material"), materials + 1, "{}", h.message());
@@ -652,6 +655,7 @@ fn several_images_dropped_on_the_project_shelf_grid_with_pbr_marks_become_a_mate
     let single = image_file(&dir, "Stone_Normal.png", [120, 130, 250]);
     let (materials, images) = (count(&h, "material"), count(&h, "image"));
     h.drop_files_at(grid.center(), &[&single]);
+    h.app_mut().wait_image_reads();
     h.run();
     assert_eq!(count(&h, "material"), materials);
     assert_eq!(count(&h, "image"), images + 1);
@@ -670,6 +674,7 @@ fn the_assets_grid_after_dropping_pbr_images_shows_the_material_item() {
         let grid = open_assets(&mut h);
         let paths: Vec<&Path> = files.iter().map(PathBuf::as_path).collect();
         h.drop_files_at(grid.center(), &paths);
+        h.app_mut().wait_image_reads();
         for _ in 0..30 {
             h.step();
         }
@@ -926,5 +931,208 @@ fn an_image_into_a_layer_set_uses_a_channel_of_its_set_and_a_set_without_channel
         "{}",
         h.message()
     );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// 測定（普段は回さない）。8192² の EXR を棚の格子へ落としたとき、画面のスレッドの 1 フレームの最大の時間と、棚に入るまでの時間。
+/// 回し方: `cargo test --release -p yolu-app --test gui_shell dropin::measure_ -- --ignored --nocapture --test-threads=1`
+#[test]
+#[ignore = "測定。--ignored --nocapture で回す"]
+fn measure_how_long_dropping_a_huge_exr_stalls_the_screen() {
+    use std::time::Instant;
+    let dir = temp_dir("measure-exr");
+    let path = dir.join("big.exr");
+    {
+        use exr::prelude::*;
+        write_rgba_file(&path, 8192, 8192, |x, y| {
+            (
+                (x % 251) as f32 / 251.0,
+                (y % 241) as f32 / 241.0,
+                ((x + y) % 239) as f32 / 239.0,
+                1.0,
+            )
+        })
+        .unwrap();
+    }
+    let cpu = std::fs::read_to_string("/proc/cpuinfo")
+        .ok()
+        .and_then(|t| {
+            t.lines()
+                .find(|l| l.starts_with("model name"))
+                .map(|l| l.split(':').nth(1).unwrap_or("").trim().to_owned())
+        })
+        .unwrap_or_else(|| "不明".into());
+    println!(
+        "環境: {cpu} / スレッド {}",
+        std::thread::available_parallelism().map_or(0, |n| n.get())
+    );
+    let mut h = app(1280.0, 1400.0, 64);
+    let grid = open_assets(&mut h);
+    let assets = h.shelf().resources().len();
+    h.event(egui::Event::PointerMoved(grid.center()));
+    h.step();
+    h.input_mut()
+        .dropped_files
+        .push(std::sync::Arc::new(DroppedPathForMeasure(path.clone())));
+    let started = Instant::now();
+    let mut frames = Vec::new();
+    while h.shelf().resources().len() == assets && started.elapsed().as_secs() < 120 {
+        let t = Instant::now();
+        h.step();
+        frames.push(t.elapsed().as_secs_f64() * 1000.0);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    let total = started.elapsed().as_secs_f64();
+    let mut sorted = frames.clone();
+    sorted.sort_by(|a, b| a.total_cmp(b));
+    println!(
+        "8192² の EXR を落とす: 棚に入るまで {total:.2} 秒・{} フレーム。1 フレームは中央値 {:.2} ミリ秒・最大 {:.0} ミリ秒",
+        frames.len(),
+        sorted[sorted.len() / 2],
+        sorted[sorted.len() - 1]
+    );
+    println!(
+        "フレームの時間（ミリ秒、時間順の上位 5 つ）: {:?}",
+        {
+            let mut top: Vec<f64> = frames.clone();
+            top.sort_by(|a, b| b.total_cmp(a));
+            top.truncate(5);
+            top.iter().map(|v| v.round() as i64).collect::<Vec<_>>()
+        }
+    );
+    assert_eq!(h.shelf().resources().len(), assets + 1, "{}", h.message());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// 測定（普段は回さない）。4096² の画像 4 枚（BaseColor・Normal・Roughness・Metallic）の組を棚の格子へ落とし、マテリアルまで足すときの、
+/// 画面のスレッドの 1 フレームの最大の時間。
+/// 回し方: `cargo test --release -p yolu-app --test gui_shell dropin::measure_ -- --ignored --nocapture --test-threads=1`
+#[test]
+#[ignore = "測定。--ignored --nocapture で回す"]
+fn measure_how_long_dropping_a_four_image_set_stalls_the_screen() {
+    use std::time::Instant;
+    let dir = temp_dir("measure-set");
+    let side = 4096u32;
+    let mut paths = Vec::new();
+    for (i, name) in [
+        "Wood_BaseColor.png",
+        "Wood_Normal.png",
+        "Wood_Roughness.png",
+        "Wood_Metallic.png",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let path = dir.join(name);
+        let img = image::RgbaImage::from_fn(side, side, |x, y| {
+            image::Rgba([
+                ((x + i as u32 * 17) % 251) as u8,
+                (y % 241) as u8,
+                ((x + y) % 239) as u8,
+                255,
+            ])
+        });
+        img.save(&path).unwrap();
+        paths.push(path);
+    }
+    let mut h = app(1280.0, 1400.0, 64);
+    let grid = open_assets(&mut h);
+    let assets = h.shelf().resources().len();
+    h.event(egui::Event::PointerMoved(grid.center()));
+    h.step();
+    for path in &paths {
+        h.input_mut()
+            .dropped_files
+            .push(std::sync::Arc::new(DroppedPathForMeasure(path.clone())));
+    }
+    let started = Instant::now();
+    let mut frames = Vec::new();
+    // 4 枚の画像とマテリアル 1 つ
+    while h.shelf().resources().len() < assets + 5 && started.elapsed().as_secs() < 120 {
+        let t = Instant::now();
+        h.step();
+        frames.push(t.elapsed().as_secs_f64() * 1000.0);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    let total = started.elapsed().as_secs_f64();
+    let mut top: Vec<f64> = frames.clone();
+    top.sort_by(|a, b| b.total_cmp(a));
+    println!(
+        "4096² の組 4 枚を落とす: 棚に入るまで {total:.2} 秒・{} フレーム。1 フレームの最大 {:.0} ミリ秒（時間順の上位 5 つ {:?}）",
+        frames.len(),
+        top[0],
+        top.iter().take(5).map(|v| v.round() as i64).collect::<Vec<_>>()
+    );
+    assert_eq!(h.shelf().resources().len(), assets + 5, "{}", h.message());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[derive(Debug)]
+struct DroppedPathForMeasure(PathBuf);
+
+impl egui::DroppedFile for DroppedPathForMeasure {
+    fn path(&self) -> &Path {
+        &self.0
+    }
+    fn bytes(&self) -> Result<Vec<u8>, String> {
+        std::fs::read(&self.0).map_err(|e| e.to_string())
+    }
+}
+
+/// 棚の格子へ落とした画像は、読んでいる間も画面が動き（棚は変わらない）、状態の札に「画像を読み込み中」と取消が出る。取り消すと足さない。
+/// 読み終われば足される。
+#[test]
+fn images_dropped_on_the_shelf_grid_show_a_card_while_they_are_read_and_can_be_canceled() {
+    let dir = temp_dir("read-card");
+    let png = image_file(&dir, "tip.png", [50, 60, 70]);
+    let other = image_file(&dir, "wood.png", [10, 20, 30]);
+    for lang in Lang::JA_EN {
+        let mut h = app(1280.0, 1400.0, 64);
+        h.app_mut().set_lang(lang);
+        let grid = open_assets(&mut h);
+        let assets = h.shelf().resources().len();
+        h.shelf().hold_image_reads(true);
+        h.drop_files_at(grid.center(), &[&png]);
+        for _ in 0..5 {
+            h.step();
+        }
+        assert!(h.shelf().is_reading_images());
+        assert_eq!(
+            h.shelf().resources().len(),
+            assets,
+            "読んでいる間は変わらない"
+        );
+        let cards = yolu_app::jobs::cards(h.app(), lang);
+        assert_eq!(cards.len(), 1);
+        assert_eq!(
+            cards[0].1.text,
+            lang.pick("画像を読み込み中", "Reading images")
+        );
+        assert!(matches!(
+            cards[0].1.cancel,
+            Some(Action::Fill(yolu_app::fillfx::FillOp::CancelImageRead))
+        ));
+        let rect = h
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::new("yolu.jobs")))
+            .expect("札を描いている");
+        common::shot::clean_region(
+            &mut h,
+            &format!("image_read_card_{}", lang.pick("ja", "en")),
+            rect,
+        );
+        // 取り消すと足さない
+        h.act(Action::Fill(yolu_app::fillfx::FillOp::CancelImageRead));
+        h.shelf().hold_image_reads(false);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        h.run();
+        assert!(!h.shelf().is_reading_images());
+        assert_eq!(h.shelf().resources().len(), assets);
+        // 読み終われば足される
+        h.drop_files_at(grid.center(), &[&other]);
+        h.app_mut().wait_image_reads();
+        h.run();
+        assert_eq!(h.shelf().resources().len(), assets + 1, "{}", h.message());
+    }
     std::fs::remove_dir_all(dir).unwrap();
 }

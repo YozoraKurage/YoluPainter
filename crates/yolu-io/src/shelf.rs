@@ -49,6 +49,9 @@ pub struct Shelf {
     resources: Vec<Resource>,
     budget: u64,
     used: u64,
+    /// 読み込み（`project::load_resources`）が数える、復号リソースの予算の積み（`MAX_TOTAL_BYTES` 以下）。`used`（メモリの使用量。
+    /// ブラシは 1 画素 1 バイト）とは数え方が違うので、別に持つ。足すたびに足し算し、超えるなら読み直せない棚になる前に断る。
+    decoded: usize,
 }
 impl Shelf {
     pub fn new(budget: u64) -> Self {
@@ -57,10 +60,12 @@ impl Shelf {
             resources: vec![],
             budget,
             used: 0,
+            decoded: 0,
         }
     }
     pub fn read(files: &Files, budget: u64) -> Result<Self> {
-        let resources = project::load_resources(files, &mut 0, 0, &mut vec![])?;
+        let mut decoded = 0;
+        let resources = project::load_resources(files, &mut decoded, 0, &mut vec![])?;
         let mut held = Files::new();
         if let Some(b) = files.get("resources.json") {
             held.insert("resources.json".into(), b.clone());
@@ -75,6 +80,7 @@ impl Shelf {
             resources,
             budget,
             used,
+            decoded,
         })
     }
     pub fn resources(&self) -> &[Resource] {
@@ -82,6 +88,10 @@ impl Shelf {
     }
     pub fn used_bytes(&self) -> u64 {
         self.used
+    }
+    /// 復号リソースの予算の積み（読み直した値と同じ。足すたびに足し算している）。
+    pub fn decoded_bytes(&self) -> usize {
+        self.decoded
     }
     pub fn budget_bytes(&self) -> u64 {
         self.budget
@@ -157,25 +167,49 @@ impl Shelf {
         {
             return Ok(old.id.clone());
         }
-        // 同じ中身が既にあれば上で返したので、ここへ来るのは本当に増えるときだけ。個数の上限は予算と別の断り（棚を変えない）
+        // 新しい 1 件だけを確かめた（棚の今ある素材は読み直さない）。使用量と復号の積みは、その 1 件の分を足す（素材は 1 件ずつの足し上げ。
+        // 画像は同じ画素を 1 回だけ数えるが、同じ中身は上で返した）
+        self.push(
+            item.clone(),
+            Arc::from(bytes),
+            checked.decoded,
+            checked.used,
+        )
+    }
+    /// 確かめ済みの 1 件を棚へ入れる（拒否では何も変えない）。同じ中身の確認は呼び側が済ませている。断りの順: 個数の上限・ID の重複・
+    /// 索引の大きさ・復号の予算・メモリ予算・アーカイブの大きさ。`decoded`・`used` はこの 1 件が増やす分。
+    fn push(
+        &mut self,
+        item: Resource,
+        bytes: Arc<[u8]>,
+        decoded: usize,
+        used: u64,
+    ) -> Result<String> {
+        // 個数の上限は予算と別の断り（棚を変えない）
         check_budget(self.resources.len() < MAX_RESOURCES, REFUSAL_RESOURCE_COUNT)?;
         check(
             !self.resources.iter().any(|r| r.id == item.id),
             "リソースのIDが重複しています",
         )?;
         let mut resources = self.resources.clone();
-        resources.push(item.clone());
+        let (id, entry) = (item.id.clone(), item.entry.clone());
+        resources.push(item);
+        let index = write_index(&resources)?;
+        let mut decoded_total = self.decoded;
+        project::add_budget(&mut decoded_total, decoded)?;
+        let used = self.used + used;
+        check_budget(used <= self.budget, REFUSAL_MEMORY_BUDGET)?;
         let mut files = self.files.clone();
-        files.insert(item.entry.clone(), Arc::from(bytes));
-        files.insert("resources.json".into(), Arc::from(write_index(&resources)?));
-        let next = Self::read(&files, self.budget)?;
-        check_budget(next.used <= self.budget, REFUSAL_MEMORY_BUDGET)?;
+        files.insert(entry, bytes);
+        files.insert("resources.json".into(), Arc::from(index));
         check_budget(
             files.values().map(|b| b.len()).sum::<usize>() <= MAX_TOTAL_BYTES,
             REFUSAL_ARCHIVE_BUDGET,
         )?;
-        let id = item.id.clone();
-        *self = next;
+        self.files = files;
+        self.resources = resources;
+        self.used = used;
+        self.decoded = decoded_total;
         Ok(id)
     }
     pub fn remove(&mut self, id: &str) -> Result<bool> {
@@ -393,6 +427,34 @@ pub fn image_hash(rgba: &[u8], width: u32, height: u32) -> Result<String> {
     sha.update(rgba);
     Ok(format!("{:x}", sha.finalize()))
 }
+/// 圧縮・ハッシュを済ませた画像（`encode_image` で作る。棚へは `Shelf::add_encoded_image` で入れる）。作った所以外で中身を作れないので、
+/// 棚は PNG を開き直さずに信用する。
+#[derive(Clone, Debug)]
+pub struct EncodedImage {
+    png: Arc<[u8]>,
+    content: String,
+    width: u32,
+    height: u32,
+}
+impl EncodedImage {
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+}
+/// 左下原点・straight RGBA8 の画像の、PNG への圧縮と正本ハッシュ（棚の状態を触らない重い所。別のスレッドで呼べる）。
+pub fn encode_image(rgba: &[u8], width: u32, height: u32) -> Result<EncodedImage> {
+    let content = image_hash(rgba, width, height)?;
+    let png = crate::composite_png::encode(rgba, width, height)?;
+    Ok(EncodedImage {
+        png: Arc::from(png),
+        content,
+        width,
+        height,
+    })
+}
 impl Shelf {
     /// 左下原点・straight RGBA8 の画像を追加する。origin は参照の記録だけで、読み込みに使わない。
     #[allow(clippy::too_many_arguments)]
@@ -406,10 +468,33 @@ impl Shelf {
         color_space: &str,
         origin: Value,
     ) -> Result<String> {
-        let content = image_hash(rgba, width, height)?;
-        let metadata = json!({"id":id,"kind":"image","name":name,"content":content,"width":width,"height":height,"colorSpace":color_space,"origin":origin});
-        let png = crate::composite_png::encode(rgba, width, height)?;
-        self.add(metadata, &png)
+        let encoded = encode_image(rgba, width, height)?;
+        self.add_encoded_image(id, name, &encoded, color_space, origin)
+    }
+    /// `encode_image` した画像を追加する（棚の側の軽い所）。同じ画素の画像が既にあれば、その ID（棚は変わらない）。検査と断りと順は
+    /// `add` と同じ（索引の項目・個数・ID の重複・索引の大きさ・復号の予算・メモリ予算・アーカイブの大きさ）。圧縮した画像を開き直さず、棚の
+    /// 今ある画像も復号し直さない（メモリの使用量と復号の積みは、増える 1 枚の分を足す）。
+    pub fn add_encoded_image(
+        &mut self,
+        id: &str,
+        name: &str,
+        image: &EncodedImage,
+        color_space: &str,
+        origin: Value,
+    ) -> Result<String> {
+        let metadata = json!({"id":id,"kind":"image","name":name,"content":image.content,"width":image.width,"height":image.height,"colorSpace":color_space,"origin":origin});
+        let item = project::resource_header(&metadata, 0, &mut HashSet::new())?;
+        project::image_size(&metadata)?;
+        if let Some(old) = self
+            .resources
+            .iter()
+            .find(|r| r.kind == item.kind && r.content == item.content)
+        {
+            return Ok(old.id.clone());
+        }
+        // 同じ画素の画像は上で返したので、ここへ来る画像は増える 1 枚（読み込みも、メモリの使用量も、画像を画素ごとに 1 回だけ数える）
+        let pixels = u64::from(image.width) * u64::from(image.height) * 4;
+        self.push(item, image.png.clone(), pixels as usize, pixels)
     }
     /// 出どころの記録を持たない画像（アプリの中で作った・外のファイルから読んだもの）を追加する。外のパスを .ylp に書き込まない。
     pub fn add_image_without_origin(
@@ -421,15 +506,18 @@ impl Shelf {
         height: u32,
         color_space: &str,
     ) -> Result<String> {
-        self.add_image(
-            id,
-            name,
-            rgba,
-            width,
-            height,
-            color_space,
-            json!({"type":"none"}),
-        )
+        let encoded = encode_image(rgba, width, height)?;
+        self.add_encoded_image_without_origin(id, name, &encoded, color_space)
+    }
+    /// `add_image_without_origin` の、`encode_image` した画像を足す形。
+    pub fn add_encoded_image_without_origin(
+        &mut self,
+        id: &str,
+        name: &str,
+        image: &EncodedImage,
+        color_space: &str,
+    ) -> Result<String> {
+        self.add_encoded_image(id, name, image, color_space, json!({"type":"none"}))
     }
     pub fn add_file(
         &mut self,
@@ -507,5 +595,178 @@ impl Shelf {
         bytes: &[u8],
     ) -> Result<String> {
         self.add_file(id, name, kind, bytes, json!({"type":"none"}))
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn none() -> Value {
+        json!({"type":"none"})
+    }
+    /// 2048×2048 の透明な画像（復号すると 16 MiB。メモリの使用量は 1 枚 4 MiB と数える）を `tips` 枚持つブラシ。
+    fn brush(tips: usize) -> Vec<u8> {
+        let png: Arc<[u8]> =
+            Arc::from(crate::composite_png::encode(&vec![0; 2048 * 2048 * 4], 2048, 2048).unwrap());
+        let mut files = Files::new();
+        files.insert("state.json".into(), Arc::from(br#"{"schema":1}"#.to_vec()));
+        for i in 0..tips {
+            files.insert(format!("tip-{i}.png"), png.clone());
+        }
+        Archive::build(
+            files,
+            1,
+            "application/x-yolupainter-brush",
+            "YOLUPAINTER-BRUSH-",
+        )
+        .unwrap()
+        .to_bytes()
+        .unwrap()
+    }
+    fn brush_item(bytes: &[u8]) -> Value {
+        json!({"id":"50000000-0000-0000-0000-000000000001","kind":"brush","name":"ブラシ","content":crate::hash(bytes),"length":bytes.len(),"origin":none()})
+    }
+
+    #[test]
+    fn a_brush_can_fill_the_decode_budget_while_the_memory_use_stays_small_and_an_image_over_it_is_refused_like_before(
+    ) {
+        // 16 MiB × 46 = 736 MiB を復号する（メモリの使用量は 4 MiB × 46）。残りは 32 MiB
+        let bytes = brush(46);
+        let mut shelf = Shelf::new(1 << 32);
+        shelf.add(brush_item(&bytes), &bytes).unwrap();
+        assert_eq!(shelf.decoded_bytes(), 46 * 2048 * 2048 * 4 + bytes.len());
+        assert_eq!(shelf.used_bytes(), bytes.len() as u64 + 46 * 2048 * 2048);
+        let reread = Shelf::read(shelf.entries(), 1 << 32).unwrap();
+        assert_eq!(reread.decoded_bytes(), shelf.decoded_bytes());
+        assert_eq!(reread.used_bytes(), shelf.used_bytes());
+        let room = MAX_TOTAL_BYTES - shelf.decoded_bytes();
+        let side = (room / 4 / 2048) as u32; // 残りにちょうど入る 2048 × side の画像
+        let fits = |seed: u8, h: u32| {
+            let rgba: Vec<u8> = (0..2048 * h as usize * 4)
+                .map(|i| (i % 251) as u8 ^ seed)
+                .collect();
+            encode_image(&rgba, 2048, h).unwrap()
+        };
+        let over = fits(1, side + 1);
+        let before = (
+            shelf.entries().clone(),
+            shelf.used_bytes(),
+            shelf.decoded_bytes(),
+        );
+        let why = shelf
+            .add_encoded_image(
+                "50000000-0000-0000-0000-000000000002",
+                "画像",
+                &over,
+                "srgb",
+                none(),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(why.contains("復号リソースの768 MiB予算超過です"), "{why}");
+        assert_eq!(
+            (
+                shelf.entries().clone(),
+                shelf.used_bytes(),
+                shelf.decoded_bytes()
+            ),
+            before,
+            "断ったら棚は変わらない"
+        );
+        // メモリの予算も超えるときは、旧と同じく復号の予算の断りが先（読み直しが先で、使用量はその後）
+        shelf.set_budget_bytes(shelf.used_bytes());
+        let why = shelf
+            .add_encoded_image(
+                "50000000-0000-0000-0000-000000000002",
+                "画像",
+                &over,
+                "srgb",
+                none(),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(why.contains("復号リソースの768 MiB予算超過です"), "{why}");
+        // ちょうど入る画像は入り、復号の積みは上限と同じ。読み直しても同じ値で、もう 1 画素も入らない
+        shelf.set_budget_bytes(1 << 32);
+        let exact = fits(2, side);
+        shelf
+            .add_encoded_image(
+                "50000000-0000-0000-0000-000000000003",
+                "ぴったり",
+                &exact,
+                "srgb",
+                none(),
+            )
+            .unwrap();
+        assert_eq!(
+            shelf.decoded_bytes(),
+            MAX_TOTAL_BYTES - (room - side as usize * 2048 * 4)
+        );
+        let reread = Shelf::read(shelf.entries(), 1 << 32).unwrap();
+        assert_eq!(reread.decoded_bytes(), shelf.decoded_bytes());
+        assert_eq!(reread.used_bytes(), shelf.used_bytes());
+        // 読み込み（.ylp を開く側）も、この積みの棚は断らない。ブラシをもう 1 つ足すと断る
+        let bytes2 = brush(1);
+        let why = shelf
+            .add(
+                json!({"id":"50000000-0000-0000-0000-000000000004","kind":"brush","name":"もう 1 つ","content":crate::hash(&bytes2),"length":bytes2.len(),"origin":none()}),
+                &bytes2,
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(why.contains("復号リソースの768 MiB予算超過です"), "{why}");
+        // 消すと積みも減る（読み直した値）
+        let id = shelf.resources()[0].id.clone();
+        assert!(shelf.remove(&id).unwrap());
+        assert_eq!(shelf.decoded_bytes(), side as usize * 2048 * 4);
+    }
+
+    #[test]
+    fn an_archive_over_the_size_limit_is_refused_and_changes_nothing() {
+        // 中身が PNG かどうかは棚の側では見ない（`EncodedImage` は作った所の物を信用する）ので、大きな偽の PNG（ゼロ詰め、使うまで確保しない）で
+        // 圧縮後の大きさだけを動かす
+        let big: Arc<[u8]> =
+            unsafe { Arc::<[u8]>::new_zeroed_slice(MAX_TOTAL_BYTES / 2 + 1024).assume_init() };
+        let fake = |content: char| EncodedImage {
+            png: big.clone(),
+            content: content.to_string().repeat(64),
+            width: 1,
+            height: 1,
+        };
+        let mut shelf = Shelf::new(1 << 20);
+        shelf
+            .add_encoded_image(
+                "60000000-0000-0000-0000-000000000001",
+                "1",
+                &fake('a'),
+                "srgb",
+                none(),
+            )
+            .unwrap();
+        let before = (
+            shelf.entries().clone(),
+            shelf.used_bytes(),
+            shelf.decoded_bytes(),
+        );
+        let why = shelf
+            .add_encoded_image(
+                "60000000-0000-0000-0000-000000000002",
+                "2",
+                &fake('b'),
+                "srgb",
+                none(),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(why.contains(REFUSAL_ARCHIVE_BUDGET), "{why}");
+        assert_eq!(
+            (
+                shelf.entries().clone(),
+                shelf.used_bytes(),
+                shelf.decoded_bytes()
+            ),
+            before
+        );
+        assert_eq!(shelf.resources().len(), 1);
     }
 }

@@ -37,3 +37,5 @@ fillfx-pbr-images-added = { $n } added as plain { $n ->
     }
 fillfx-baked-map-set = Baked map set
 fillfx-baked-map-removed = Baked map removed
+fillfx-reading-images = Reading images
+fillfx-cancelled-reading-images = Cancelled reading images

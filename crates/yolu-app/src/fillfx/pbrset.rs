@@ -14,11 +14,12 @@ use std::path::{Path, PathBuf};
 use yolu_core::fill_image::Projection;
 use yolu_core::{Channel, Document, ImageId, Rgba8};
 
+use super::image_reads::{Entry, Loaded, Make, Piece, Read, Request};
 use crate::fillfx::inputs::image_id;
-use crate::imagefile::{self, Transfer};
+use crate::imagefile::Transfer;
 use crate::lang::{Count, Lang};
 use crate::notice::Source;
-use crate::pbr::{self, Kind, Member, Role};
+use crate::pbr::{self, Kind, Member, Plan, Role};
 use crate::state::AppState;
 
 /// 組の中で、あるチャンネルに使う画像（同じチャンネルが 2 つあれば大きい方）。
@@ -50,7 +51,7 @@ struct Tally {
     images: usize,
 }
 
-fn stem_of(path: &Path) -> String {
+pub(super) fn stem_of(path: &Path) -> String {
     path.file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("image")
@@ -58,7 +59,7 @@ fn stem_of(path: &Path) -> String {
 }
 
 /// 画素（straight RGBA8）の平均の色（不透明）。
-fn mean_color(rgba: &[u8]) -> Rgba8 {
+pub(super) fn mean_color(rgba: &[u8]) -> Rgba8 {
     let mut sums = [0u64; 3];
     let mut count = 0u64;
     for px in rgba.as_chunks::<4>().0.iter() {
@@ -81,27 +82,68 @@ fn material_name(lang: Lang, base: &str) -> String {
 }
 
 impl AppState {
-    /// 2 枚以上の画像を一度に落とした（か選んだ）ときの取り込み: 名前の印で組にできた物はマテリアル、残りは今までどおり画像としてアセットに足す。
+    /// 2 枚以上の画像を一度に落とした（か選んだ）ときの取り込み。名前の印の判別は読む前に行い（名前だけで決まる）、色の画像は sRGB・
+    /// データの画像は線形で、全部を別のスレッドで読み始める。足すのは全部が読み終わってから（`add_read_image_set`）。
     pub(super) fn import_image_set(&mut self, paths: &[PathBuf]) {
-        if self.shelf_refuse_while_saving() {
-            return;
-        }
         let stems: Vec<String> = paths.iter().map(|p| stem_of(p)).collect();
         let refs: Vec<&str> = stems.iter().map(String::as_str).collect();
         let plan = pbr::plan(&refs);
+        let mut transfers = vec![Transfer::Srgb; paths.len()];
+        let mut makes = vec![Make::PLAIN; paths.len()];
+        for member in plan.groups.iter().flat_map(|g| &g.members) {
+            if !member.kind.is_color() {
+                transfers[member.index] = Transfer::Linear;
+            }
+            makes[member.index] = match member.kind {
+                Kind::Single {
+                    role,
+                    invert,
+                    flip_green,
+                } => Make::One {
+                    invert,
+                    flip_green,
+                    space: if role.is_color() { "srgb" } else { "linear" },
+                },
+                Kind::Packed => Make::Packed,
+            };
+        }
+        let entries = paths
+            .iter()
+            .zip(transfers)
+            .zip(makes)
+            .enumerate()
+            .map(|(index, ((path, transfer), make))| Entry {
+                index,
+                path: path.clone(),
+                transfer,
+                make,
+            })
+            .collect();
+        let request = Request::Set {
+            paths: paths.to_vec(),
+            plan,
+        };
+        self.start_image_read(request, entries);
+    }
+
+    /// 読み終わった組の取り込み: 名前の印で組にできた物はマテリアル、残りは今までどおり画像としてアセットに足す。
+    pub(super) fn add_read_image_set(&mut self, paths: &[PathBuf], plan: &Plan, reads: Vec<Read>) {
+        let mut reads: Vec<Option<Read>> = reads.into_iter().map(Some).collect();
         if plan.groups.is_empty() {
-            for path in paths {
-                self.import_image_file(path);
+            for (path, read) in paths.iter().zip(reads) {
+                if let Some(read) = read {
+                    self.add_read_image(path, read);
+                }
             }
             return;
         }
         let mut tally = Tally::default();
         for &i in &plan.plain {
-            tally.images += usize::from(self.import_plain(&paths[i]));
+            tally.images += usize::from(self.import_plain(&paths[i], reads[i].take()));
         }
         for group in &plan.groups {
             let name = material_name(self.lang, &group.name);
-            let outcome = self.import_group(&name, paths, &group.members);
+            let outcome = self.import_group(&name, paths, &mut reads, &group.members);
             tally.images += outcome.unused;
             self.add_group_material(&name, outcome, &mut tally);
         }
@@ -109,55 +151,40 @@ impl AppState {
     }
 
     /// 印の無い画像を、今までどおり色の画像として足す（知らせは出さず、足せたかを返す。足せなければ理由を出す）。
-    fn import_plain(&mut self, path: &Path) -> bool {
-        let Some((rgba, w, h)) = self.read_set_image(path, Transfer::Srgb) else {
+    fn import_plain(&mut self, path: &Path, read: Option<Read>) -> bool {
+        let Some(loaded) = self.loaded_or_refuse(path, read) else {
             return false;
         };
-        self.add_set_image(&stem_of(path), rgba, w, h, "srgb")
+        self.add_set_image(&stem_of(path), &loaded.pieces[0])
             .is_some()
     }
 
-    /// 画像を読む（拡張子が読めない形式・読めないファイルは理由を出して None）。
-    fn read_set_image(&mut self, path: &Path, transfer: Transfer) -> Option<(Vec<u8>, u32, u32)> {
+    /// 読んだ画像を取り出す（読めなかった画像は理由を出して None）。
+    fn loaded_or_refuse(&mut self, path: &Path, read: Option<Read>) -> Option<Loaded> {
         let lang = self.lang;
-        let name = stem_of(path);
-        let Some(format) = imagefile::format_of(path) else {
-            self.fail(
-                Source::Assets,
-                lang.with_reason(
-                    super::cannot_add_image(lang, &name),
-                    lang.t("dropin-unsupported-format"),
-                ),
-            );
-            return None;
-        };
-        match imagefile::read_file_as(path, format, transfer)
-            .map_err(|e| lang.image_read_error(format, &e))
-        {
-            Ok(read) => Some(read),
-            Err(why) => {
+        match read? {
+            Ok(loaded) => Some(loaded),
+            Err(failure) => {
                 self.fail(
                     Source::Assets,
-                    lang.with_reason(super::cannot_add_image(lang, &name), why),
+                    lang.with_reason(
+                        super::cannot_add_image(lang, &stem_of(path)),
+                        failure.reason(lang),
+                    ),
                 );
                 None
             }
         }
     }
 
-    /// 読んだ画素（上の行が先）を、文書と同じ向き（下の行が先）にしてアセットへ足す。足せなければ理由を出して None（棚の ID を返す）。
-    fn add_set_image(
-        &mut self,
-        name: &str,
-        mut rgba: Vec<u8>,
-        w: u32,
-        h: u32,
-        space: &str,
-    ) -> Option<String> {
+    /// 読んで圧縮した画像（文書と同じ向き＝下の行が先）をアセットへ足す。足せなければ理由を出して None（棚の ID を返す）。
+    fn add_set_image(&mut self, name: &str, piece: &Piece) -> Option<String> {
         let lang = self.lang;
-        super::flip_rows(&mut rgba, w as usize * 4);
         let before = self.shelf.resources().len();
-        match self.shelf.add_image_in(lang, name, &rgba, w, h, space) {
+        match self
+            .shelf
+            .add_encoded_image_in(lang, name, &piece.image, piece.space)
+        {
             Ok(id) => {
                 if self.shelf.resources().len() > before {
                     self.session.mark_modified();
@@ -174,44 +201,33 @@ impl AppState {
         }
     }
 
-    /// 組の画像を 1 枚ずつ読み、アセットへ足して、チャンネルごとに使う画像を決める。
-    fn import_group(&mut self, base: &str, paths: &[PathBuf], members: &[Member]) -> Outcome {
+    /// 組の画像を 1 枚ずつアセットへ足して、チャンネルごとに使う画像を決める。
+    fn import_group(
+        &mut self,
+        base: &str,
+        paths: &[PathBuf],
+        reads: &mut [Option<Read>],
+        members: &[Member],
+    ) -> Outcome {
         let mut outcome = Outcome::default();
         for member in members {
             let path = &paths[member.index];
-            let transfer = if member.kind.is_color() {
-                Transfer::Srgb
-            } else {
-                Transfer::Linear
-            };
-            let Some((mut rgba, w, h)) = self.read_set_image(path, transfer) else {
+            let Some(loaded) = self.loaded_or_refuse(path, reads[member.index].take()) else {
                 continue;
             };
             let name = stem_of(path);
             match member.kind {
-                Kind::Single {
-                    role,
-                    invert,
-                    flip_green,
-                } => {
-                    if invert {
-                        pbr::invert(&mut rgba);
-                    }
-                    if flip_green {
-                        pbr::flip_green(&mut rgba);
-                    }
-                    self.add_piece(&mut outcome, member.index, role, &name, rgba, (w, h));
+                Kind::Single { role, .. } => {
+                    self.add_piece(&mut outcome, member.index, role, &name, &loaded.pieces[0]);
                 }
-                // 成分を 1 つずつ作り、足してから次を作る（元の画像と 3 枚を同時に持たない）
                 Kind::Packed => {
-                    for (part, role) in pbr::PACKED.into_iter().enumerate() {
+                    for (piece, role) in loaded.pieces.iter().zip(pbr::PACKED) {
                         let name = if base.is_empty() {
                             role.label().to_owned()
                         } else {
                             format!("{base}_{}", role.label())
                         };
-                        let px = pbr::packed_part(&rgba, part);
-                        self.add_piece(&mut outcome, member.index, role, &name, px, (w, h));
+                        self.add_piece(&mut outcome, member.index, role, &name, piece);
                     }
                 }
             }
@@ -226,20 +242,17 @@ impl AppState {
         file: usize,
         role: Role,
         name: &str,
-        px: Vec<u8>,
-        (w, h): (u32, u32),
+        piece: &Piece,
     ) {
-        let mean = mean_color(&px);
-        let space = if role.is_color() { "srgb" } else { "linear" };
-        let Some(resource) = self.add_set_image(name, px, w, h, space) else {
+        let Some(resource) = self.add_set_image(name, piece) else {
             return;
         };
         let pick = Pick {
             file,
             resource,
-            width: w,
-            height: h,
-            mean,
+            width: piece.image.width(),
+            height: piece.image.height(),
+            mean: piece.mean,
         };
         if !self.pick_for(outcome, role, pick) {
             outcome.unused += 1;

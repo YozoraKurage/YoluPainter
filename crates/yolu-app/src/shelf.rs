@@ -527,6 +527,8 @@ pub struct ShelfState {
     /// 試験用: true の間、別のスレッドの書き出しは結果を渡さずに待つ。
     hold: Arc<AtomicBool>,
     inspected: HashMap<String, Inspected>,
+    /// 別のスレッドで読んでいる取り込みの画像（落とした画像・メニューの「画像…」。棚を替えると捨てる）。
+    pub(crate) image_reads: crate::fillfx::image_reads::ImageReads,
     /// 同梱の素材の項目（今の言語の名前。`use_language` で作り直す）。
     builtin: Vec<Resource>,
     builtin_lang: Option<Lang>,
@@ -712,6 +714,7 @@ impl ShelfState {
             waker: None,
             hold: Default::default(),
             inspected: HashMap::new(),
+            image_reads: Default::default(),
             builtin: Vec::new(),
             builtin_lang: None,
             show_builtin: true,
@@ -752,6 +755,23 @@ impl ShelfState {
     /// 試験用: true の間、別のスレッドの書き出しは結果を渡さずに待つ（途中の画面・取り消しを確かめるため）。
     pub fn hold_saves(&self, hold: bool) {
         self.hold.store(hold, Ordering::SeqCst);
+    }
+
+    /// 試験用: true の間、別のスレッドの画像の読みは始めずに待つ（読んでいる間の状態を確かめるため）。
+    #[doc(hidden)]
+    pub fn hold_image_reads(&self, hold: bool) {
+        self.image_reads.hold(hold);
+    }
+
+    /// 画像（落とした画像・メニューの「画像…」）を別のスレッドで読んでいる、か、読み終わって棚へ足すのを待っている。
+    pub fn is_reading_images(&self) -> bool {
+        self.image_reads.is_busy()
+    }
+
+    /// 試験用: 画像の読みのスレッドが走っている仕事の数（列は 1 つずつなので 0 か 1）。
+    #[doc(hidden)]
+    pub fn image_reads_running(&self) -> usize {
+        self.image_reads.running()
     }
 
     /// 別のスレッドで素材を書き出している（`Some(true)` は個人のライブラリのファイルの取り込み、`Some(false)` はレイヤーの保存。無ければ None）。
@@ -889,6 +909,7 @@ impl ShelfState {
     }
 
     /// `add_image` の、画像の色空間（"srgb"・"linear"・"unspecified"）を選べる形（ノーマル・ラフネスなどデータの画像は "linear"）。
+    /// 圧縮が重いので、大きな画像を画面のスレッドで足さない（別のスレッドで `encode_image` して `add_encoded_image_in` へ渡す）。
     pub fn add_image_in(
         &mut self,
         lang: Lang,
@@ -898,13 +919,26 @@ impl ShelfState {
         height: u32,
         space: &str,
     ) -> Result<String, String> {
+        let encoded = yolu_io::shelf::encode_image(rgba, width, height)
+            .map_err(|e| crate::lang::shelf_io_error(lang, &e))?;
+        self.add_encoded_image_in(lang, name, &encoded, space)
+    }
+
+    /// 別のスレッドで圧縮した画像（`yolu_io::shelf::encode_image`）を棚へ足す（棚の索引へ入れるだけの軽い所。結果は `add_image_in` と同じ）。
+    pub fn add_encoded_image_in(
+        &mut self,
+        lang: Lang,
+        name: &str,
+        image: &yolu_io::shelf::EncodedImage,
+        space: &str,
+    ) -> Result<String, String> {
         if let Some(reason) = &self.unavailable {
             return Err(reason.reason(lang).to_owned());
         }
         let before = self.shelf.resources().len();
         let id = self
             .shelf
-            .add_image_without_origin(&new_resource_id(), name, rgba, width, height, space)
+            .add_encoded_image_without_origin(&new_resource_id(), name, image, space)
             .map_err(|e| crate::lang::shelf_io_error(lang, &e))?;
         if self.shelf.resources().len() > before {
             self.changed = true;
@@ -1648,6 +1682,30 @@ pub(crate) const JOB: JobSpec = JobSpec {
     ..JobSpec::new("shelf", |app| app.shelf.saves_running() > 0)
 };
 
+/// 画像（落とした画像・メニューの「画像…」）の読み（札・終わる前に止める）。仕事は棚が持つ（`fillfx::image_reads`）。
+pub(crate) const IMAGE_READ_JOB: JobSpec = JobSpec {
+    repaint: true,
+    card: Some(|app, lang| {
+        let (done, total) = app.shelf.image_reads.progress()?;
+        Some(crate::jobs::JobCard {
+            text: lang.t("fillfx-reading-images").to_owned(),
+            fraction: Some(done as f32 / total.max(1) as f32),
+            cancel: Some(crate::state::Action::Fill(
+                crate::fillfx::FillOp::CancelImageRead,
+            )),
+            canceling: false,
+        })
+    }),
+    close: Some(|app| {
+        app.shelf
+            .image_reads
+            .is_busy()
+            .then_some(CloseJob::ImageRead)
+    }),
+    cancel: Some(AppState::cancel_image_reads),
+    ..JobSpec::new("image-read", |app| app.shelf.image_reads.is_busy())
+};
+
 impl AppState {
     /// ライブラリのフォルダへの書き込みをやめる（スレッドは次の区切りまで走る）。
     pub(crate) fn cancel_library_write(&mut self) {
@@ -2023,9 +2081,10 @@ impl AppState {
         }
     }
 
-    /// 別のスレッドの書き出しが終わっていれば棚へ入れる（毎フレーム）。
+    /// 別のスレッドの書き出しが終わっていれば棚へ入れ、読み終わった画像（`poll_image_reads`）を足す（毎フレーム）。
     pub fn shelf_poll(&mut self) {
         let lang = self.lang;
+        self.poll_image_reads();
         let Some(pending) = &self.shelf.saving else {
             return;
         };

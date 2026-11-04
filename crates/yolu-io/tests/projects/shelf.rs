@@ -458,6 +458,8 @@ fn all_file_kinds_roundtrip_and_count_the_embedded_pixels() {
     let restored = Shelf::read(shelf.entries(), 0).unwrap();
     assert_eq!(restored.used_bytes(), shelf.used_bytes());
     assert_eq!(restored.resources().len(), 3);
+    // 1 件ずつ足した使用量と復号の積みは、全体を読み直した値と同じ（足し算で、棚の全部を復号し直さない）
+    assert_eq!(restored.decoded_bytes(), shelf.decoded_bytes());
 }
 #[test]
 fn csharp_all_kinds_index_payloads_and_memory_agree() {
@@ -498,6 +500,9 @@ fn csharp_all_kinds_index_payloads_and_memory_agree() {
         files["resources.json"].as_ref()
     );
     assert_eq!(rebuilt.entries(), &files);
+    // ブラシ・スマート・マテリアル・画像を 1 件ずつ足した積みは、読み直した値と同じ
+    assert_eq!(rebuilt.used_bytes(), shelf.used_bytes());
+    assert_eq!(rebuilt.decoded_bytes(), shelf.decoded_bytes());
 }
 #[test]
 fn csharp_smart_native_roundtrip_is_byte_exact() {
@@ -949,4 +954,126 @@ fn an_images_color_space_changes_only_the_index_and_round_trips() {
         "linear",
         "断ったら変えない"
     );
+}
+#[test]
+fn an_image_encoded_apart_enters_the_shelf_exactly_like_add_image() {
+    use yolu_io::shelf::{encode_image, REFUSAL_MEMORY_BUDGET};
+    let (w, h) = (5u32, 3u32);
+    let rgba: Vec<u8> = (0..w * h * 4).map(|i| (i * 7 % 251) as u8).collect();
+    let other: Vec<u8> = rgba.iter().map(|v| 255 - v).collect();
+    let id = "40000000-0000-0000-0000-000000000001";
+    let id2 = "40000000-0000-0000-0000-000000000002";
+    let none = || json!({"type":"none"});
+    // 途中に別の画像が入っている棚で比べる（使用量は足し算で、読み直した値と同じ）
+    let mut direct = Shelf::new(1 << 20);
+    direct
+        .add_image(id2, "先", &other, w, h, "linear", none())
+        .unwrap();
+    direct
+        .add_image(id, "画像", &rgba, w, h, "srgb", none())
+        .unwrap();
+    let mut apart = Shelf::new(1 << 20);
+    apart
+        .add_image(id2, "先", &other, w, h, "linear", none())
+        .unwrap();
+    let image = encode_image(&rgba, w, h).unwrap();
+    assert_eq!((image.width(), image.height()), (w, h));
+    assert_eq!(
+        apart
+            .add_encoded_image(id, "画像", &image, "srgb", none())
+            .unwrap(),
+        id
+    );
+    assert_eq!(apart.entries(), direct.entries());
+    assert_eq!(apart.used_bytes(), direct.used_bytes());
+    assert_eq!(apart.used_bytes(), w as u64 * h as u64 * 8);
+    let reread = Shelf::read(apart.entries(), 1 << 20).unwrap();
+    assert_eq!(reread.used_bytes(), apart.used_bytes());
+    assert_eq!(reread.resources().len(), 2);
+    // 同じ画素は足さずに既存の ID（棚は変わらない）
+    let before = apart.entries().clone();
+    let again = apart
+        .add_encoded_image(
+            "40000000-0000-0000-0000-000000000003",
+            "別名",
+            &image,
+            "srgb",
+            none(),
+        )
+        .unwrap();
+    assert_eq!(again, id);
+    assert_eq!(apart.entries(), &before);
+    // 予算を超える・名前が長すぎる・色空間が不正・ID が重複なら断り、棚は変わらない（重複していない画素で確かめる）
+    let mut small = Shelf::new(w as u64 * h as u64 * 4 + 3);
+    small
+        .add_encoded_image(id, "画像", &image, "srgb", none())
+        .unwrap();
+    let more = encode_image(&other, w, h).unwrap();
+    let why = small
+        .add_encoded_image(id2, "先", &more, "srgb", none())
+        .unwrap_err()
+        .to_string();
+    assert!(why.contains(REFUSAL_MEMORY_BUDGET), "{why}");
+    let third_pixels: Vec<u8> = rgba.iter().map(|v| v ^ 0x5a).collect();
+    let third = encode_image(&third_pixels, w, h).unwrap();
+    let id3 = "40000000-0000-0000-0000-000000000003";
+    assert!(apart
+        .add_encoded_image(id3, &"長".repeat(5000), &third, "srgb", none())
+        .is_err());
+    assert!(apart
+        .add_encoded_image(id3, "色", &third, "cmyk", none())
+        .is_err());
+    let why = apart
+        .add_encoded_image(id, "同じ ID", &third, "srgb", none())
+        .unwrap_err()
+        .to_string();
+    assert!(why.contains("IDが重複"), "{why}");
+    assert_eq!(apart.entries(), &before);
+    assert_eq!(small.resources().len(), 1);
+    // 個数の上限: 256 個目までは入り、257 個目は個数の断り。同じ画素なら、いっぱいでも既存の ID
+    let mut full = Shelf::new(1 << 30);
+    let px = |i: usize| encode_image(&[(i % 256) as u8, (i / 256) as u8, 9, 255], 1, 1).unwrap();
+    for i in 0..yolu_io::shelf::MAX_RESOURCES {
+        full.add_encoded_image(
+            &format!("41000000-0000-0000-0000-{i:012}"),
+            "画素",
+            &px(i),
+            "srgb",
+            none(),
+        )
+        .unwrap();
+    }
+    let (entries, used) = (full.entries().clone(), full.used_bytes());
+    let why = full
+        .add_encoded_image(
+            "41000000-0000-0000-0000-00000000ffff",
+            "257",
+            &px(256),
+            "srgb",
+            none(),
+        )
+        .unwrap_err()
+        .to_string();
+    assert_eq!(why, yolu_io::shelf::REFUSAL_RESOURCE_COUNT);
+    assert_eq!(
+        full.add_encoded_image(
+            "41000000-0000-0000-0000-00000000fffe",
+            "同じ",
+            &px(0),
+            "srgb",
+            none()
+        )
+        .unwrap(),
+        "41000000-0000-0000-0000-000000000000"
+    );
+    assert_eq!((full.entries().clone(), full.used_bytes()), (entries, used));
+    // 256 個を読み直した値と、使用量・復号の積みが同じ
+    let reread = Shelf::read(full.entries(), 1 << 30).unwrap();
+    assert_eq!(
+        (reread.used_bytes(), reread.decoded_bytes()),
+        (full.used_bytes(), full.decoded_bytes())
+    );
+    // 寸法の上限・長さの不一致は、圧縮の前に断る
+    assert!(encode_image(&rgba, w + 1, h).is_err());
+    assert!(encode_image(&[0; 4], 8193, 1).is_err());
 }

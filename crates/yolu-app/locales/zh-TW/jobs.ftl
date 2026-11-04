@@ -10,3 +10,4 @@ jobs-brush-import = 匯入筆刷
 jobs-writing-to-the-library = 寫入資源庫
 jobs-saving-a-material = 儲存材質
 jobs-importing-a-material = 匯入材質
+jobs-importing-images = 匯入圖片

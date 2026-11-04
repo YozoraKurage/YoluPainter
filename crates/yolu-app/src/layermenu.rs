@@ -16,7 +16,7 @@ use yolu_core::{
     Channel, ChannelKind, CoreError, ImageId, LayerId, LayerKind, Reason, MAX_POINTER_DEPTH,
 };
 
-use crate::fillfx::{default_fallback, inputs, placement, FillOp};
+use crate::fillfx::{default_fallback, inputs, placement};
 use crate::fx::names;
 use crate::fx::pointers::PointerOp;
 use crate::m2::{AdjustmentKind, Edit};
@@ -194,19 +194,10 @@ impl AppState {
                     );
                     return;
                 }
-                // 取り込みは「画像を差す」欄のファイル取り込みと同じ道（棚を変える操作は、保存の最中は断る）。成功すると棚の選択が
-                // 取り込んだ（すでにあれば、その）画像になるので、それを読む。失敗したら、前の選択へ戻す
-                let before = self.shelf.selected.take();
-                self.fill_apply(FillOp::ImportImage(path));
-                match self
-                    .shelf
-                    .selected
-                    .clone()
-                    .and_then(|id| inputs::image_id(&id))
-                {
-                    Some(image) => self.new_image_fill(image, mode),
-                    None => self.shelf.selected = before,
-                }
+                // 取り込みは「画像を差す」欄のファイル取り込みと同じ道。読みは別のスレッドで、足すのは読み終わってから（保存の最中なら、保存が
+                // 終わってから）。足した画像でレイヤーを作るのも読み終わってからで、その時の状態（描いている途中・ロックされたグループ・選んで
+                // いるレイヤー）で決める。読めなかった・足せなかったときは、何も作らず棚の選びも変えない
+                self.import_image_file(&path, crate::fillfx::image_reads::Then::FillLayer(mode));
             }
             Op::FillGradient(shape) => self.new_gradient_fill(shape),
             Op::PathLayer => self.new_path_layer(),
@@ -254,7 +245,7 @@ impl AppState {
     }
 
     /// 棚の画像と投影 `mode` で、新しい塗りつぶしレイヤーを作る。画像を使えない（棚に無い・読めない・予算）ときは何も作らず理由を出す。
-    fn new_image_fill(&mut self, image: ImageId, mode: ProjectionMode) {
+    pub(crate) fn new_image_fill(&mut self, image: ImageId, mode: ProjectionMode) {
         let lang = self.lang;
         if self.is_stroking() {
             self.refuse(

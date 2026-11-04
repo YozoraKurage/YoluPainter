@@ -31,3 +31,5 @@ fillfx-pbr-materials-added = 已加入 { $count } 个材质（{ $n } 张图片�
 fillfx-pbr-images-added = 另有 { $n } 张作为图片加入
 fillfx-baked-map-set = 已设置已烘焙的贴图
 fillfx-baked-map-removed = 已移除已烘焙的贴图
+fillfx-reading-images = 正在读取图片
+fillfx-cancelled-reading-images = 已取消读取图片
