@@ -1,0 +1,33 @@
+# 界面文本（objects）。键名为“objects-”加上取自英文的简短名称，工具提示的键名以 -tip 结尾。
+
+objects-projection-placement = 投影的位置
+objects-gradient-decal = 渐变贴花
+objects-filter-shape = 滤镜形状
+objects-point = 点
+objects-path = 路径
+objects-ruler = 尺子
+objects-nothing-is-selected = 未选择任何项目
+objects-cannot-delete = 无法删除
+objects-it-is-the-fill-layer = 这是填充图层的投影
+objects-move = 移动
+objects-rotate = 旋转
+objects-scale = 缩放
+objects-local = {" "}局部 { $a }
+objects-local-2 = {" "}局部 { $p }
+objects-cannot-move-the-path = 无法移动路径
+objects-no-model = 没有模型
+objects-point-is-not-on-the = 第 { $i } 个点不在表面上
+objects-the-3d-view-is-not = 3D 视图未显示
+objects-used-in-edit-or-pose = 在编辑或姿势模式中使用
+objects-points-can-only-be-moved = 点只能移动
+objects-no-bone-is-selected = 未选择骨骼
+objects-another-operation-is-in-progress = 另一项操作正在进行中
+objects-cannot-scale = 无法缩放
+objects-a-negative-factor-cannot-be = 无法使用负的倍率
+objects-the-3d-view-is-in = 3D 视图在另一个窗口中
+objects-it-has-no-default-placement = 没有默认的位置
+objects-cannot-do = 无法{ $name }
+objects-cannot-delete-the = 无法删除{ $name }
+objects-cannot-reset-the-position = 无法重置位置
+objects-cannot-reset-the-rotation = 无法重置旋转
+objects-cannot-reset-the-scale = 无法重置缩放

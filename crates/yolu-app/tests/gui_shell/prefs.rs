@@ -473,7 +473,7 @@ fn headless_the_choices_mark_the_current_value_and_add_an_odd_one() {
     );
     assert_eq!(
         labels(&entries(&s, PrefChoice::Language)),
-        ["日本語", "English", "繁體中文"]
+        ["日本語", "English", "繁體中文", "简体中文"]
     );
     // ファイルに書いた中途半端な数も、選択肢に出る（選び直せる）
     s.prefs_mut().settings.undo_budget = Budget::Mib(777);

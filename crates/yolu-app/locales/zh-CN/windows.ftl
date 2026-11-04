@@ -1,0 +1,32 @@
+# 界面文本（windows）。键名为“windows-”加上取自英文的简短名称，工具提示的键名以 -tip 结尾。
+
+windows-and-more = 以及其他 { $existing } 项
+windows-files-to-replace = 要替换的文件
+windows-of-images-already-exist = 要写入的 { $total } 张图片中，已有 { $existing } 个文件存在
+windows-cancel = 取消
+windows-replace = 替换
+windows-replaces-the-files-with-the-tip = 以新图片替换同名的文件
+windows-close-window = 关闭窗口
+windows-normal = 法线
+windows-linear = 线性
+windows-replaced = 将替换
+windows-new = 新文件
+windows-exported-images = 导出的图片
+windows-close = 关闭
+windows-files = { $many } 个文件
+windows-replace-the-imported-psd = 替换导入的 PSD
+windows-this-project-was-imported-from-tip = 此项目是从这个 PSD 导入的。将以导出的 PSD 替换它
+windows-replaces-the-files-with-the-2-tip = 以导出的 PSD 替换同名的文件
+windows-px = { $pixels } 像素
+windows-merge-layers = 合并图层
+windows-the-look-changes = 外观会改变
+windows-merge = 合并
+windows-merges-even-though-the-look-tip = 即使外观改变也要合并（撤销可以还原图层）
+windows-psd-import = 导入 PSD
+windows-psd-export = 导出 PSD
+windows-cancel-tip = 取消
+windows-saving = 正在保存
+windows-text = 、
+windows-there-are-unsaved-changes = 有尚未保存的更改。
+windows-running-jobs-will-be-cancelled = 运行中的工作（{ $names }）将被取消。要结束吗？
+windows-there-are-unsaved-changes-and = 有尚未保存的更改，且运行中的工作（{ $names }）将被取消。

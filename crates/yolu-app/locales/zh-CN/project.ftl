@@ -1,0 +1,52 @@
+# 界面文本（project）。键名为“project-”加上取自英文的简短名称，工具提示的键名以 -tip 结尾。
+
+project-reading-the-project-stopped = 项目读取中途停止
+project-saved-composite-read-only = 已保存的合成图像（只读）
+project-no-saved-composite = 没有已保存的合成图像
+project-invalid-saved-composite = 已保存的合成图像无效（{ $e }）
+project-saved-composite-size-differs-from = 已保存的合成图像大小 { $width }×{ $height } 与画布 { $width_2 }×{ $height_2 } 不同
+project-cannot-open = 无法打开{ $file }
+project-cannot-open-the-recovery = 无法打开恢复数据
+project-cannot-read-the-of = 无法读取{ $name }的 { $name_2 }
+project-untitled = 未命名
+project-opened = 已打开：{ $name }。
+project-opened-backup = 已打开：{ $name }（备份）。
+project-recovered-texture-sets = 已恢复（{ $value } 个纹理集）。
+project-some-texture-sets-opened-read = 有些纹理集以只读方式打开
+project-text = 、
+project-mesh-map-s = {" "}{ $map_count } 张网格贴图。
+project-text-2 = {""}
+project-the-mesh-maps-are-kept = 网格贴图仍保留在文件中。
+project-some-texture-sets-are-read = 有些纹理集缺少效果的输入，因此为只读
+project-the-live-link-model-is = Live Link 的模型不会自动重新打开（仍保留在文件中）。
+project-cannot-read-the-model-reference = 无法读取模型参考（{ $e }）。
+project-the-project-s-assets-cannot = {" "}无法读取项目资源（{ $reason }）。
+project-cannot-create-a-new-project = 无法创建新项目
+project-new-project-created = 已创建新项目。
+project-too-large-to-reopen-within = {" "}以当前的“图层内存”上限无法重新打开。
+project-previous-version-backups = {" "}先前的版本已保留于 { $name }-backups~。
+project-cannot-copy-texture-set = 无法复制纹理集“{ $name }”
+project-texture-set-could-not-be = 无法读取纹理集{ $quoted }，因此未包含在保存内容中。
+project-cannot-write-the-mesh-maps = 无法写入纹理集“{ $name }”的网格贴图
+project-cannot-write-the-project-s = 无法写入项目资源
+project-cannot-build-the-contents-of = 无法创建纹理集“{ $name }”的内容
+project-cannot-build-the-composite-png = 无法创建纹理集“{ $name }”的合成 PNG
+project-saving = 正在保存
+project-the-save-stopped = 保存已中止
+project-cannot-save-while-saving-for = 正在另存为发布版本，因此无法保存
+project-canceled = 已取消
+project-invalid-overwrite-target = 要覆盖的目标不是可读取的 .ylp
+project-saved = 已保存：{ $file }。
+project-wrote-mesh-map-s = {" "}已写入 { $map_total } 张网格贴图。
+project-overwrote-unreadable-look-settings = 已覆盖无法读取的外观设置
+project-text-3 = 、
+project-replaced-unreadable-remembered-selections = 已替换无法读取的已存储选区
+project-cannot-save-to = 无法保存至{ $file }
+project-notes-with-a-stop = {" "}{ $notes }。
+project-notes-separator = ；
+project-could-not-delete-old-backups = {" "}无法删除 { $n } 个旧备份（{ $reason }）。
+project-cannot-be-read-and-have = { $count ->
+       *[other] { $quoted }无法读取，且从未保存过
+    }
+project-quoted-names-separator = 、
+project-replaced-the-unreadable-pose-with = {" "}已用当前的姿势替换无法读取的姿势。

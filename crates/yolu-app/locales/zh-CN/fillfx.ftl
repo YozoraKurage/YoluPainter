@@ -1,0 +1,27 @@
+# 界面文本（fillfx）。键名为“fillfx-”加上取自英文的简短名称，工具提示的键名以 -tip 结尾。
+
+fillfx-the-shape-is-out-of = 形状的数值超出范围
+fillfx-the-ruler-is-out-of = 尺子的数值超出范围
+fillfx-ruler-edit-cancelled = 已取消尺子编辑
+fillfx-shape-edit-cancelled = 已取消形状编辑
+fillfx-invalid-projection = 投影的数值无效
+fillfx-not-a-fill-layer = 不是填充图层
+fillfx-image-set = 已设置图片
+fillfx-image-removed = 已移除图片
+fillfx-no-model = 没有模型
+fillfx-no-such-image-in-the = 项目资源中没有此图片
+fillfx-cannot-read-the-image = 无法读取图片
+fillfx-not-on-the-model = 不在模型上
+fillfx-surface-of-another-texture-set = 这是另一个纹理集（{ $name }）的面。
+fillfx-decal-placed = 已放置贴花
+fillfx-decal-placed-is-not-shown = 已放置贴花。{ $name }尚未显示（{ $why }）。
+fillfx-image-added-to-the-project = 已将图片加入项目资源
+fillfx-already-in-the-project-s = 已在项目资源中
+fillfx-cannot-import = 无法将 { $name } 导入资源
+fillfx-not-a-readable-png = 不是可读取的 PNG
+fillfx-image-sides-must-be-1 = 图片边长必须为 1～8192
+fillfx-cannot-add-a-point = 无法添加点
+fillfx-up-to-64-points = 最多 64 个点
+fillfx-cannot-delete-the-point = 无法删除点
+fillfx-it-is-the-last-point = 这是最后一个点
+fillfx-not-a-readable-image = 不是可读取的图片

@@ -387,6 +387,8 @@ mod tests {
         assert_eq!(lang(&[("LANG", "zh_TW.UTF-8")]), Lang::ZhTw);
         assert_eq!(lang(&[("LANG", "zh_HK.UTF-8")]), Lang::ZhTw);
         assert_eq!(lang(&[("YOLUPAINTER_LANG", "zh-TW")]), Lang::ZhTw);
+        assert_eq!(lang(&[("LANG", "zh_CN.UTF-8")]), Lang::ZhCn);
+        assert_eq!(lang(&[("YOLUPAINTER_LANG", "zh-CN")]), Lang::ZhCn);
         assert_eq!(lang(&[("LANG", "ja_JP.UTF-8")]), Lang::Ja);
         assert_eq!(lang(&[("LANG", "ja")]), Lang::Ja);
         assert_eq!(lang(&[("LANG", "en_US.UTF-8")]), Lang::En);
@@ -410,7 +412,7 @@ mod tests {
             lang(&[("YOLUPAINTER_LANG", "ja"), ("LANG", "en_US.UTF-8")]),
             Lang::Ja
         );
-        for unknown in ["C", "C.UTF-8", "POSIX", "", "zh_CN.UTF-8", "fr_FR"] {
+        for unknown in ["C", "C.UTF-8", "POSIX", "", "fr_FR"] {
             let value = unknown.to_owned();
             let get = move |name: &str| (name == "LANG").then(|| value.clone());
             assert_eq!(system_lang_from(get, None), Lang::En, "{unknown:?}");
@@ -522,10 +524,11 @@ mod tests {
         assert_eq!(lang(&[], &["de-DE"]), Lang::En);
         assert_eq!(lang(&[], &["de"]), Lang::En);
         // 一覧の上から、選べる最初の言語（先頭が選べない言語でも、次を見る）
-        assert_eq!(lang(&[], &["zh-Hans-CN", "ja-JP"]), Lang::Ja);
+        assert_eq!(lang(&[], &["zh-Hans-CN", "ja-JP"]), Lang::ZhCn);
         assert_eq!(lang(&[], &["ko-KR", "ja-JP"]), Lang::Ja);
         assert_eq!(lang(&[], &["fr-FR", "ja-JP"]), Lang::Ja);
         assert_eq!(lang(&[], &["zh-Hant-TW", "ja-JP"]), Lang::ZhTw);
+        assert_eq!(lang(&[], &["fr-FR", "zh-Hans-CN"]), Lang::ZhCn);
         assert_eq!(lang(&[("LANG", "ja_JP.UTF-8")], &[]), Lang::En);
         assert_eq!(lang(&[("YOLUPAINTER_LANG", "ja")], &["en-US"]), Lang::Ja);
     }
@@ -555,10 +558,10 @@ mod tests {
         assert_eq!(Lang::Ko.info().font, Some(&font::NOTO_SANS_KR));
     }
 
-    /// 表: 選べる言語は `locales/` のフォルダの言語で、日本語・英語・繁體中文がある。タグで引ける。
+    /// 表: 選べる言語は `locales/` のフォルダの言語で、日本語・英語・繁體中文・简体中文がある。タグで引ける。
     #[test]
     fn the_table_lists_the_languages_with_texts() {
-        for lang in [Lang::Ja, Lang::En, Lang::ZhTw] {
+        for lang in [Lang::Ja, Lang::En, Lang::ZhTw, Lang::ZhCn] {
             assert!(Lang::ALL.contains(&lang), "{lang:?}");
             assert_eq!(Lang::from_tag(lang.tag()), Some(lang));
         }

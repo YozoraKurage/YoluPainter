@@ -1,0 +1,28 @@
+# 界面文本（library）。键名为“library-”加上取自英文的简短名称，工具提示的键名以 -tip 结尾。
+
+library-reduced-from-16-to-8 = 已从 16 位降为 8 位
+library-project = 项目
+library-library = 资源库
+library-this-project-s-assets-saved-tip = 此项目的资源（保存在 .ylp 中）
+library-your-library-a-folder-shared-tip = 你的资源库（一个文件夹，供你的所有项目共用）
+library-already-writing-to-the-library = 已在写入资源库
+library-finishing-the-cancelled-write = 正在结束已取消的写入
+library-added-to-the-library = 已将 { $added } 项加入资源库。
+library-text = {""}
+library-no-library-location = 没有资源库的位置
+library-writing-to-the-library = 正在写入资源库
+library-the-write-stopped-midway = 写入中途停止
+library-built-in-items-cannot-be = 内置项目无法加入资源库。
+library-layer-not-found = 找不到图层
+library-removed-from-the-library = 已从资源库移除
+library-not-a-fill-layer = 不是填充图层
+library-it-uses-images = 使用了图片
+library-cannot-read-the-list = 无法读取列表
+library-not-a-readable-png = 不是可读取的 PNG
+library-image-sides-must-be-1 = 图片边长必须为 1～8192
+library-wrong-format = 格式不符
+library-too-large = 过大
+library-were-already-in-the-library = { $existing } 项已在资源库中。
+library-is-already-in-the-library = { $name }已在资源库中。
+library-files-count = { $count } 个文件
+library-added-file-to-the-library = 已将{ $name }加入资源库。
