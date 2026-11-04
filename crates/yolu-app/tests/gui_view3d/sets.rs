@@ -846,7 +846,7 @@ fn saving_names_the_effects_that_are_not_in_the_composite_png() {
         "{message}"
     );
     assert!(
-        message.contains("Thickness のマップがありません"),
+        message.contains("厚みのマップがありません"),
         "{message}"
     );
     // 設定は正本に残る（開き直すと、効かない効果があるので読むだけで、理由に出る）
