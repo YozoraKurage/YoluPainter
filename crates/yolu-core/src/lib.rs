@@ -58,7 +58,7 @@ mod layer;
 pub mod look;
 pub mod material;
 pub mod material_triangles;
-mod math;
+pub mod math;
 pub mod mesh_maps;
 pub mod near_color;
 pub mod normal;

@@ -585,3 +585,53 @@ fn headless_the_pose_note_names_what_could_not_be_saved() {
         " Some items are not saved in the pose (a, b)."
     );
 }
+
+/// 乱数（xorshift）の回転（x, y, z, w。長さは 1 前後）。
+fn random_rotations(count: usize) -> Vec<[f32; 4]> {
+    let mut x: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut next = move || {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        (x >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0
+    };
+    (0..count)
+        .map(|_| {
+            let v: [f64; 4] = std::array::from_fn(|_| next());
+            let l = v.iter().map(|a| a * a).sum::<f64>().sqrt();
+            std::array::from_fn(|i| (v[i] / l) as f32)
+        })
+        .collect()
+}
+
+#[test]
+fn headless_a_saved_rotation_is_read_as_its_normalize_to_the_bit() {
+    // 前のバージョンが pose.json に残した回転 r を開くと、`r.normalize()` を休みの形に重ねた値と同じビットになる
+    // （焼いたマップの照合のキーに入るモデルの形が変わらない）
+    let dir = TempDir::new("bits");
+    let s = figure(&dir);
+    let session = s.view3d().pose.session.as_ref().unwrap();
+    let rig = &session.rig;
+    let arm = bone(&s, "右上腕");
+    let rest = rig.bones()[arm].rest.rotation;
+    for rotation in random_rotations(2000) {
+        let stored_pose = StoredPose {
+            bones: vec![StoredBone {
+                path: rig.bone_path(arm),
+                translation: [0.0; 3],
+                rotation,
+                scale: [1.0; 3],
+            }],
+            shapes: Vec::new(),
+            take: None,
+        };
+        let built = stored::pose_from_stored(rig, &stored_pose, "x");
+        assert_eq!(built.applied, 1, "{:?}", built.skipped);
+        let want = (rest * Quat::from_array(rotation).normalize()).normalize();
+        assert_eq!(
+            built.pose.locals[arm].rotation.to_array().map(f32::to_bits),
+            want.to_array().map(f32::to_bits),
+            "{rotation:?}"
+        );
+    }
+}

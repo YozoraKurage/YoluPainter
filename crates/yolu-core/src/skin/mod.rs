@@ -23,6 +23,7 @@ pub use merge::{merge, MergePart, Merged, MeshPick, PartRange};
 use glam::{Mat3, Mat4, Quat, Vec3};
 
 use crate::geometry::ModelMesh;
+use crate::math::stable_normalize;
 
 /// 骨のローカルの変換（Unity の localPosition・localRotation・localScale）。
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -509,7 +510,7 @@ impl Rig {
         };
         let q = Quat::from_axis_angle(parent.inverse() * axis, angle);
         let local = &mut pose.locals[bone];
-        local.rotation = (q * local.rotation).normalize();
+        local.rotation = stable_normalize(q * local.rotation);
     }
 }
 

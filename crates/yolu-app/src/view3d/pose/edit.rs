@@ -8,6 +8,7 @@
 //! - 描いている最中は変えない（ポーズの決まり。理由を知らせる）。
 
 use yolu_core::glam::{EulerRot, Quat, Vec3};
+use yolu_core::math::stable_normalize;
 use yolu_core::skin::{BoneTransform, Pose, Rig};
 
 use super::{begin_edit, edit, end_edit, set_pose, PoseSession};
@@ -61,13 +62,13 @@ pub fn rotation_to_degrees(q: Quat) -> [f32; 3] {
 
 /// オイラー角（度）→ 回転（Unity の Quaternion.Euler と同じ順）。
 pub fn rotation_from_degrees(d: [f32; 3]) -> Quat {
-    Quat::from_euler(
+    let q = Quat::from_euler(
         EulerRot::YXZ,
         d[1].to_radians(),
         d[0].to_radians(),
         d[2].to_radians(),
-    )
-    .normalize()
+    );
+    stable_normalize(q)
 }
 
 /// 欄に見せる骨のオイラー角（入れた回転のままなら入れた角、でなければ回転から）。

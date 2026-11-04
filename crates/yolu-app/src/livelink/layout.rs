@@ -524,6 +524,27 @@ mod tests {
     }
 
     #[test]
+    fn a_received_rotation_is_read_as_its_normalize_to_the_bit() {
+        // 前のバージョンが残した受けたままの回転 r を開くと、`r.normalize()` と同じビットになる（焼いたマップの照合のキーが変わらない）
+        let r = rig(false);
+        let layout = hips_layout(&r);
+        for rotation in random_rotations(3000) {
+            let mut v = value("Armature/Hips", [0.5, 1.0, -2.0]);
+            v.local.r = rotation;
+            let (pose, problems) = layout.pose(&r, &request(vec![v]));
+            assert!(problems.is_empty());
+            assert_eq!(
+                pose.locals[2].rotation.to_array().map(f32::to_bits),
+                Quat::from_array(rotation)
+                    .normalize()
+                    .to_array()
+                    .map(f32::to_bits),
+                "{rotation:?}"
+            );
+        }
+    }
+
+    #[test]
     fn an_edited_rotation_reopens_to_the_same_bits() {
         // ポーズを直した回転（受けた値のどれでもない）も、残して開き直すと同じ
         let r = rig(false);
