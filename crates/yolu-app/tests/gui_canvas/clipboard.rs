@@ -1025,14 +1025,15 @@ fn edit_menu_lists_the_clipboard_entries_and_runs_them() {
     for label in ["Cut", "Copy", "Copy Merged", "Paste"] {
         popup_item(&h, label);
     }
-    let title = menu_title(&h, "Edit");
     let popup = st(&h)
         .popup()
         .as_ref()
         .expect("メニューが開いている")
         .state
         .rect;
-    common::shot::region(&mut h, "clipboard_edit_menu", title.union(popup));
+    // 撮るのはメニューの本体（枠の線まで。`popup` は影の余白を除いた本体の四角）だけ。見出しの四角を合わせると、上端が
+    // 後ろのメニューバーの字に掛かる。撮る前にポインタを外す
+    common::shot::clean_region(&mut h, "clipboard_edit_menu", popup);
 }
 
 // ───────── キー ─────────

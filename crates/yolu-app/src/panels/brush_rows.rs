@@ -1760,9 +1760,11 @@ fn dual_rows(
         Row::DualTip => {
             let on = app.m2.brush.dual.is_some();
             let dual = app.m2.brush.dual.as_ref().unwrap_or(&app.m2.dual_stash);
+            // 並び（`tips`）があれば `tip` に代わる。主の筆先の見本（tip_library::current）と同じく 1 枚目の名前を出す
             let name = dual
-                .tip
-                .as_ref()
+                .tips
+                .first()
+                .or(dual.tip.as_ref())
                 .map(|t| tip_display(lang, t))
                 .unwrap_or_else(|| lang.t("panels-round-hardness-tip").to_owned());
             if let Some(anchor) = dropdown(ui, at, row, lang, &name, None, on && live) {

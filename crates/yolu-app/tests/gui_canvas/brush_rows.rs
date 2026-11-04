@@ -536,3 +536,20 @@ fn the_second_paper_page_edits_only_the_dual_texture() {
     // どの設定も Undo の段を作らない
     assert!(!h.doc().can_undo());
 }
+
+/// 2-筆先の行: 2 つ目の筆先が複数の筆先の並び（`tips`）にあるときは、丸と出さず並びの 1 枚目の名前を出す。
+#[test]
+fn the_second_tip_row_names_the_first_image_of_a_tip_list() {
+    use yolu_app::m2::{BrushOp, UiOp};
+    use yolu_core::builtin_tip;
+    let mut h = app(1600.0, 1000.0, 128);
+    open_detail(&mut h, Category::DualTip);
+    h.act(Action::M2Ui(UiOp::Brush(BrushOp::DualEnabled(true))));
+    h.run();
+    let dual = h.m2_mut().brush.dual.as_mut().unwrap();
+    dual.tip = None;
+    dual.tips = vec![builtin_tip("charcoal").unwrap()];
+    h.run();
+    assert_eq!(h.query_all_by_label_contains("2-筆先: 丸").count(), 0);
+    assert_eq!(h.query_all_by_label_contains("2-筆先: 木炭").count(), 1);
+}
