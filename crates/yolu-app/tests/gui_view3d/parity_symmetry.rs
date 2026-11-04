@@ -3,7 +3,7 @@
 //! 実際の入力（3D ビューと 2D のキャンバスのマウスのイベント）を流して確かめる。
 use crate::common;
 use crate::common::drive::Drive;
-use crate::view3d_brush::{cube_view, screen_of};
+use crate::view3d_brush::{canvas_beside_3d, cube_view, screen_of};
 
 use common::*;
 use egui::{Key, Modifiers, Pos2, Rect};
@@ -318,10 +318,11 @@ fn a_3d_quick_mask_stroke_past_the_pen_budget_is_dropped_and_leaves_nothing() {
 }
 
 /// 片方のビューで選択ペン（クイックマスク）のストロークが動いている間、もう片方のビューのクイックマスクのストロークは始めない
-/// （動いているストロークの被覆を上書きしない）。2D のクイックマスクのストロークを始めの口から始めておき、3D ビューを押す。
+/// （動いているストロークの被覆を上書きしない）。キャンバスと 3D ビューを並べ、2D のクイックマスクのストロークを始めの口から始めておき、3D ビューを押す。
 #[test]
 fn a_quick_mask_stroke_on_the_canvas_is_not_overwritten_by_a_press_in_the_3d_view() {
-    let (mut h, rect) = cube_view();
+    let (mut h, _) = cube_view();
+    let rect = canvas_beside_3d(&mut h);
     thin_hard_brush(&mut h);
     quick_on(&mut h);
     let front = Vec3::new(0.25, 0.0, -0.5);

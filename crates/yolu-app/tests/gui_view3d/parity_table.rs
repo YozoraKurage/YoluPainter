@@ -8,7 +8,7 @@
 use crate::common;
 use crate::common::drive::Drive;
 use crate::parity_input::{hold, sample, texel_at, thin_brush, world};
-use crate::view3d_brush::{cube_view, press_with, release_with};
+use crate::view3d_brush::{canvas_beside_3d, cube_view, press_with, release_with};
 
 use common::*;
 use egui::{pos2, Event, Modifiers, PointerButton, Pos2, Rect};
@@ -1229,11 +1229,12 @@ fn d19_a_missed_release_of_a_point_drag() {
 }
 
 /// 2D で掴んでいる点のドラッグ（`in_3d` でない）は、3D ビューが離しのイベントを受けても、離しを取りこぼしても、3D の側は終えない
-/// （2D の側が自分の道で終える）。
+/// （2D の側が自分の道で終える）。キャンバスと 3D ビューを並べて試す。
 #[test]
 fn a_point_drag_started_in_2d_is_not_ended_by_the_3d_view() {
     use yolu_app::fillfx::points::PointDrag;
-    let (mut h, rect) = scene(View::View3d);
+    let (mut h, _) = scene(View::View3d);
+    let rect = canvas_beside_3d(&mut h);
     let layer = points_layer(&mut h);
     let id = h.doc().id();
     h.fillfx_mut().point_drag = Some(PointDrag {

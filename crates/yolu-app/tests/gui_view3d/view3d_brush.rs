@@ -16,6 +16,20 @@ use yolu_core::glam::{DVec3, Vec3};
 
 const SIZE: u32 = 256;
 
+/// キャンバスと 3D ビューを左右に並べ、3D ビューの矩形を返す（キャンバスが隠れると 2D のストローク・点のドラッグはそこで終わるので、
+/// 2D の操作の途中で 3D ビューを押す試しは、両方が見える並びで行う）。
+pub(crate) fn canvas_beside_3d(h: &mut Harness<'static, YoluApp>) -> Rect {
+    let mut dock = egui_dock::DockState::new(vec![yolu_app::Tab::Canvas]);
+    dock.main_surface_mut().split_right(
+        egui_dock::NodeIndex::root(),
+        0.5,
+        vec![yolu_app::Tab::View3d],
+    );
+    h.state_mut().dock = dock;
+    h.run();
+    h.state().view3d_rect().expect("3D も出ている")
+}
+
 /// 3D のタブを出し、試しの立方体を読み、右（+X）と手前（−Z）の面が見えるカメラにする。
 pub(crate) fn cube_view() -> (Harness<'static, YoluApp>, Rect) {
     let mut h = app(1470.0, 760.0, SIZE);
