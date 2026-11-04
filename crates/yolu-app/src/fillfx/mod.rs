@@ -755,7 +755,7 @@ impl AppState {
         }
     }
 
-    /// PNG のファイルを棚の画像として取り込む（文書は変えない）。大きすぎる・読めない・棚がいっぱいのときは理由を出す。棚にもう同じ中身が
+    /// 画像のファイル（`imagefile::FORMATS` の形式）を棚の画像として取り込む（文書は変えない）。大きすぎる・読めない・棚がいっぱいのときは理由を出す。棚にもう同じ中身が
     /// あれば、足さずにその画像を選ぶだけ（棚も文書も「変えた」にしない）。
     fn import_image_file(&mut self, path: &std::path::Path) {
         let lang = self.lang;
@@ -764,7 +764,19 @@ impl AppState {
             .and_then(|s| s.to_str())
             .unwrap_or("image")
             .to_owned();
-        let (mut rgba, w, h) = match read_png(path, lang) {
+        let Some(format) = crate::imagefile::format_of(path) else {
+            self.fail(
+                Source::FillLayer,
+                lang.with_reason(
+                    cannot_add_image(lang, &name),
+                    lang.t("dropin-unsupported-format"),
+                ),
+            );
+            return;
+        };
+        let (mut rgba, w, h) = match crate::imagefile::read_file(path, format)
+            .map_err(|e| lang.image_read_error(format, &e))
+        {
             Ok(read) => read,
             Err(why) => {
                 self.fail(
@@ -808,52 +820,6 @@ impl AppState {
 fn cannot_add_image(lang: Lang, name: &str) -> String {
     let name = lang.quote(name);
     lang.f("fillfx-cannot-import", &[("name", &name)])
-}
-
-/// 取り込める画像の 1 辺の上限（core の画像の入力と同じ）。
-const MAX_IMAGE_SIDE: u32 = 8192;
-
-/// PNG を straight RGBA8（上の行が先）で読む。寸法はヘッダーで先に見て、画素を読む前に断る（大きすぎる画像で全体を展開しない）。
-/// 読める上限（1 辺と確保）は `Limits` でも守る。
-fn read_png(path: &std::path::Path, lang: Lang) -> Result<(Vec<u8>, u32, u32), String> {
-    read_image(path, image::ImageFormat::Png, lang)
-}
-
-/// 画像（PNG・JPEG・TGA。`image` の機能にある形式）を straight RGBA8（上の行が先）で読む。上限は [`read_png`] と同じ（1 辺 1〜8192・確保 1 GiB）。
-/// 寸法はヘッダーで先に見て、画素を読む前に断る。
-pub(crate) fn read_image(
-    path: &std::path::Path,
-    format: image::ImageFormat,
-    lang: Lang,
-) -> Result<(Vec<u8>, u32, u32), String> {
-    use image::ImageDecoder;
-    let unreadable = || {
-        if format == image::ImageFormat::Png {
-            lang.t("fillfx-not-a-readable-png").to_owned()
-        } else {
-            lang.t("fillfx-not-a-readable-image").to_owned()
-        }
-    };
-    let file = std::fs::File::open(path).map_err(|e| lang.file_error(&e))?;
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(MAX_IMAGE_SIDE);
-    limits.max_image_height = Some(MAX_IMAGE_SIDE);
-    limits.max_alloc = Some(1 << 30);
-    let mut reader = image::ImageReader::with_format(std::io::BufReader::new(file), format);
-    reader.limits(limits.clone());
-    let mut decoder = reader.into_decoder().map_err(|e| match e {
-        image::ImageError::Limits(_) => lang.t("fillfx-image-sides-must-be-1").to_owned(),
-        _ => unreadable(),
-    })?;
-    let (w, h) = decoder.dimensions();
-    if !(1..=MAX_IMAGE_SIDE).contains(&w) || !(1..=MAX_IMAGE_SIDE).contains(&h) {
-        return Err(lang.t("fillfx-image-sides-must-be-1").to_owned());
-    }
-    decoder.set_limits(limits).map_err(|_| unreadable())?;
-    let img = image::DynamicImage::from_decoder(decoder)
-        .map_err(|_| unreadable())?
-        .into_rgba8();
-    Ok((img.into_raw(), w, h))
 }
 
 /// 行の並びを上下逆にする（1 行は `stride` バイト）。

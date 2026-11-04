@@ -47,3 +47,5 @@ app-return-to-dock = 도킹으로 되돌리기
 app-3d-view-numbered = 3D 뷰 { $number }
 app-3d-view-titled = { $name } · { $shading }
 app-add-3d-view-tip = 3D 뷰 추가
+app-import-images = 이미지 가져오기
+app-image-files = 이미지

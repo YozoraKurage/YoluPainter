@@ -47,3 +47,5 @@ app-return-to-dock = Return to Dock
 app-3d-view-numbered = 3D View { $number }
 app-3d-view-titled = { $name } · { $shading }
 app-add-3d-view-tip = Add 3D View
+app-import-images = Import Images
+app-image-files = Images

@@ -60,3 +60,4 @@ shell-copy-mask = マスクをコピー
 shell-paste-to-mask = マスクに貼り付け
 shell-ui-hidden = UI を非表示中です、{ $key } キーで復帰できます。
 shell-ui-hidden-no-key = UI を非表示中です。
+shell-import-images = 画像…

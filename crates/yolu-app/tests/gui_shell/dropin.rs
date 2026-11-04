@@ -157,11 +157,27 @@ fn files_that_cannot_be_read_are_listed_with_a_reason_and_take_no_destination() 
     std::fs::write(&broken, b"not even a png").unwrap();
     let text = dir.join("notes.txt");
     std::fs::write(&text, b"hello").unwrap();
+    let dds = dir.join("h.dds");
+    std::fs::write(&dds, b"DDS ....").unwrap();
     let png = image_file(&dir, "g.png", [1, 2, 3]);
     let mut h = app(1280.0, 800.0, 32);
-    drop_and_read(&mut h, &[&webp, &broken, &text, &png]);
-    assert_eq!(h.dropin().rows.len(), 4);
-    for name in ["e.webp", "f.png", "notes.txt"] {
+    drop_and_read(&mut h, &[&webp, &broken, &text, &dds, &png]);
+    assert_eq!(h.dropin().rows.len(), 5);
+    // 読めない形式（DDS）は形式の名前と「未対応の形式」、壊れた WebP・PNG は読もうとして断られた理由
+    let Content::Refused { format, reason } = &h.dropin().row(row_id(&h, "h.dds")).unwrap().content
+    else {
+        panic!("h.dds は読めない行");
+    };
+    assert_eq!(format, "DDS");
+    assert_eq!(reason, "未対応の形式");
+    let Content::Refused { format, reason } =
+        &h.dropin().row(row_id(&h, "e.webp")).unwrap().content
+    else {
+        panic!("壊れた e.webp は読めない行");
+    };
+    assert_eq!(format, "WebP");
+    assert_eq!(reason, "画像として読めません");
+    for name in ["e.webp", "f.png", "notes.txt", "h.dds"] {
         let row = h.dropin().row(row_id(&h, name)).unwrap();
         let Content::Refused { reason, .. } = &row.content else {
             panic!("{name} は読めない行");
@@ -418,13 +434,14 @@ fn the_import_files_window_looks_right() {
         let psd = psd_file(&dir, "body.psd", 32, true);
         let small = psd_file(&dir, "small.psd", 8, false);
         let png = image_file(&dir, "skin_base.png", [200, 150, 120]);
-        let webp = dir.join("cloth.webp");
-        std::fs::write(&webp, b"RIFF....WEBP").unwrap();
+        let webp = image_file(&dir, "cloth.webp", [90, 120, 200]);
+        let dds = dir.join("normal.dds");
+        std::fs::write(&dds, b"DDS ....").unwrap();
         let mut h = app(1280.0, 800.0, 32);
         h.app_mut().set_language(lang);
         h.app_mut().add_texture_set().unwrap();
         h.run();
-        drop_and_read(&mut h, &[&psd, &small, &png, &webp]);
+        drop_and_read(&mut h, &[&psd, &small, &png, &webp, &dds]);
         let suffix = if lang == Lang::Ja { "" } else { "_english" };
         // ポインタは一覧の外（行のホバーをスクリーンショットに残さない）
         move_to(&h, pos2(4.0, 790.0));
@@ -468,6 +485,198 @@ fn shot_with_menu(h: &mut H, name: &str) {
         })
         .unwrap_or(window);
     crate::common::shot::clean_region(h, name, window.union(menu));
+}
+
+/// 色の画像（浮動小数）を書く。形式は拡張子から（EXR・HDR）。
+fn float_file(dir: &Path, name: &str, rgb: [f32; 3]) -> PathBuf {
+    let path = dir.join(name);
+    let img = image::Rgb32FImage::from_pixel(16, 8, image::Rgb(rgb));
+    image::DynamicImage::ImageRgb32F(img).save(&path).unwrap();
+    path
+}
+
+/// WebP・TIFF・BMP・EXR・HDR・GIF も、PNG・JPEG・TGA と同じく行になって読まれ、アセットに入る（EXR・HDR は色として 8 ビットへ）。
+#[test]
+fn webp_tiff_bmp_exr_hdr_and_gif_are_read_as_rows_and_go_to_the_assets() {
+    let dir = temp_dir("new-formats");
+    let files = [
+        (image_file(&dir, "a.webp", [10, 20, 30]), "WebP"),
+        (image_file(&dir, "b.tiff", [40, 50, 60]), "TIFF"),
+        (image_file(&dir, "c.bmp", [70, 80, 90]), "BMP"),
+        (float_file(&dir, "d.exr", [0.5, 0.25, 1.0]), "EXR"),
+        (float_file(&dir, "e.hdr", [0.2, 0.4, 0.8]), "HDR"),
+        (image_file(&dir, "f.gif", [100, 110, 120]), "GIF"),
+        (image_file(&dir, "g.TIF", [130, 140, 150]), "TIFF"),
+    ];
+    let mut h = app(1280.0, 800.0, 32);
+    let assets = h.shelf().resources().len();
+    let paths: Vec<&Path> = files.iter().map(|(p, _)| p.as_path()).collect();
+    drop_and_read(&mut h, &paths);
+    assert_eq!(h.dropin().rows.len(), files.len());
+    for (path, label) in &files {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let row = h.dropin().row(row_id(&h, &name)).unwrap();
+        let Content::Image(img) = &row.content else {
+            panic!("{name} は読める画像の行: {}", h.message());
+        };
+        assert_eq!(
+            (img.format, img.width, img.height),
+            (*label, 16, 8),
+            "{name}"
+        );
+    }
+    h.act(Action::DropIn(DropOp::SetAll(Dest::Asset)));
+    h.run();
+    assert!(!import_disabled(&h));
+    h.get_by_label("取り込む").click();
+    h.run();
+    assert!(!h.dropin().is_open(), "{}", h.message());
+    assert_eq!(
+        h.shelf().resources().len(),
+        assets + files.len(),
+        "{}",
+        h.message()
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// 棚の格子（アセットのタブ）の範囲を出して返す。
+fn open_assets(h: &mut H) -> egui::Rect {
+    click_tab(h, yolu_app::Tab::Assets);
+    for _ in 0..30 {
+        h.step();
+    }
+    h.run();
+    h.ui().library_grid_rect.expect("格子を描いている")
+}
+
+/// プロジェクトの棚の格子の上へ落とした画像は、取り込みのウィンドウに並べず、文書の画像として棚に足す。読めない形式は理由つきで断る。
+#[test]
+fn images_dropped_on_the_project_shelf_grid_are_added_to_the_shelf_and_unreadable_ones_are_refused()
+{
+    let dir = temp_dir("on-project-shelf");
+    let webp = image_file(&dir, "wood.webp", [10, 20, 30]);
+    let exr = float_file(&dir, "sky.exr", [0.5, 0.5, 0.5]);
+    let png = image_file(&dir, "tip.png", [50, 60, 70]);
+    let dds = dir.join("normal.dds");
+    std::fs::write(&dds, b"DDS ....").unwrap();
+    let mut h = app(1280.0, 1400.0, 64);
+    let grid = open_assets(&mut h);
+    let assets = h.shelf().resources().len();
+    h.drop_files_at(grid.center(), &[&webp, &exr, &png]);
+    h.run();
+    assert!(!h.dropin().is_open(), "ウィンドウには並べない");
+    assert_eq!(h.shelf().resources().len(), assets + 3, "{}", h.message());
+    // 読めない形式は断り、棚は変わらない
+    h.drop_files_at(grid.center(), &[&dds]);
+    h.run();
+    assert!(!h.dropin().is_open());
+    assert_eq!(h.shelf().resources().len(), assets + 3);
+    assert!(
+        h.message().contains("normal") && h.message().contains("未対応の形式"),
+        "{}",
+        h.message()
+    );
+    // 格子の外へ落とした同じ画像は、今までどおりウィンドウの行になる
+    let outside = pos2(grid.right() + 40.0, grid.center().y);
+    assert!(!grid.contains(outside));
+    h.drop_files_at(outside, &[&webp]);
+    h.app_mut().wait_dropin();
+    h.run();
+    assert!(h.dropin().is_open());
+    assert_eq!(h.shelf().resources().len(), assets + 3);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// ライブラリの格子の上へ落とした PNG 以外の画像は、PNG に直してライブラリに置く。読めない形式は断る。
+#[test]
+fn images_of_other_formats_dropped_on_the_library_grid_become_pngs_in_the_library() {
+    let dir = temp_dir("on-library-formats");
+    let library = dir.join("lib");
+    std::fs::create_dir_all(&library).unwrap();
+    let webp = image_file(&dir, "wood.webp", [10, 20, 30]);
+    let exr = float_file(&dir, "sky.exr", [0.5, 0.5, 0.5]);
+    let dds = dir.join("normal.dds");
+    std::fs::write(&dds, b"DDS ....").unwrap();
+    let mut h = app(1280.0, 1400.0, 64);
+    click_tab(&mut h, yolu_app::Tab::Assets);
+    for _ in 0..30 {
+        h.step();
+    }
+    h.prefs_mut().settings.library_folder = Some(library.clone());
+    h.shelf_mut().show_builtin = false;
+    h.run();
+    h.get_by_label("ライブラリ").click();
+    h.run();
+    let grid = h.ui().library_grid_rect.expect("格子を描いている");
+    h.drop_files_at(grid.center(), &[&webp, &exr]);
+    h.app_mut().library_wait();
+    h.run();
+    assert!(!h.dropin().is_open());
+    let read = |name: &str| {
+        let bytes = std::fs::read(library.join("Images").join(name))
+            .unwrap_or_else(|e| panic!("{name}: {e} {}", h.message()));
+        image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
+            .unwrap()
+            .to_rgba8()
+    };
+    let wood = read("wood.png");
+    assert_eq!((wood.width(), wood.height()), (16, 8));
+    assert_eq!(wood.get_pixel(0, 0).0, [10, 20, 30, 255]);
+    // EXR は色として 0〜1 で切って sRGB へ（線形の 0.5 は 188）
+    assert_eq!(read("sky.png").get_pixel(3, 3).0, [188, 188, 188, 255]);
+    // 読めない形式は置かず、理由を出す
+    h.drop_files_at(grid.center(), &[&dds]);
+    h.app_mut().library_wait();
+    h.run();
+    assert!(!library.join("Images/normal.dds").exists());
+    assert!(std::fs::read_dir(library.join("Images")).unwrap().all(|e| e
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        != "normal.png"));
+    assert!(h.message().contains("normal"), "{}", h.message());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// メニュー「ファイル → インポート → 画像…」は、画像を選ぶウィンドウを頼む。選んだファイルは落としたときと同じ取り込みのウィンドウの行になる
+/// （描いている最中は頼まない）。
+#[test]
+fn the_import_images_menu_asks_for_files_and_the_chosen_ones_open_the_window_like_a_drop() {
+    use yolu_app::state::DialogRequest;
+    let dir = temp_dir("menu");
+    let webp = image_file(&dir, "wood.webp", [10, 20, 30]);
+    let tga = image_file(&dir, "mask.tga", [1, 2, 3]);
+    let mut h = app(1280.0, 800.0, 32);
+    h.act(Action::DropIn(DropOp::ImportDialog));
+    assert_eq!(*h.dialog_request(), Some(DialogRequest::DropInImages));
+    assert!(!h.dropin().is_open(), "選ぶまでウィンドウは出ない");
+    // ウィンドウ（OS）で選んだあとにアプリが当てる操作と同じ（テストでは OS のウィンドウを開かない）
+    *h.dialog_request_mut() = None;
+    h.act(Action::DropIn(DropOp::Open(vec![webp, tga])));
+    h.app_mut().wait_dropin();
+    h.run();
+    let names: Vec<&str> = h.dropin().rows.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, ["wood.webp", "mask.tga"]);
+    assert!(h.dropin().rows.iter().all(|r| r.is_readable()));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// 描いている最中は、画像を選ぶウィンドウを頼まない。
+#[test]
+fn the_import_images_menu_is_refused_while_stroking() {
+    let mut h = app(1280.0, 800.0, 32);
+    let stroke = {
+        let app = h.app_mut();
+        let layer = app.selected_layer().unwrap();
+        let settings = app.stroke_settings(false);
+        app.doc_mut().begin_stroke(layer, &settings).unwrap()
+    };
+    *h.stroke_mut() = Some(stroke);
+    h.run();
+    h.act(Action::DropIn(DropOp::ImportDialog));
+    assert!(h.dialog_request().is_none());
+    assert!(!h.message().is_empty());
 }
 
 /// ライブラリの格子の上へ落とした PNG はライブラリが受ける（ファイルの取り込みのウィンドウには並べない）。

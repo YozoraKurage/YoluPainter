@@ -1228,6 +1228,7 @@ fn headless_adding_files_checks_each_one_and_tells_the_refused_ones_by_name() {
     let junk = make("junk.ylsmart", b"not a smart file");
     let cut = make("cut.png", &sample_png()[..40]);
     let text = make("notes.txt", b"hello");
+    let avif = make("photo.avif", b"not read");
     let mut s = state(&dir);
     add_files(&mut s, vec![good_smart.clone()]);
     assert!(
@@ -1248,7 +1249,7 @@ fn headless_adding_files_checks_each_one_and_tells_the_refused_ones_by_name() {
         s.message()
     );
     // まとめて: 入れた分・すでにあった分・断った理由が 1 つの知らせに
-    add_files(&mut s, vec![good_png, good_smart, junk, cut, text]);
+    add_files(&mut s, vec![good_png, good_smart, junk, cut, text, avif]);
     let message = s.message().to_string();
     assert!(
         message.starts_with("「junk.ylsmart」をライブラリに入れられません（"),
@@ -1256,7 +1257,9 @@ fn headless_adding_files_checks_each_one_and_tells_the_refused_ones_by_name() {
     );
     for expect in [
         "「cut.png」をライブラリに入れられません（PNG として読めません）。",
-        "「notes.txt」をライブラリに入れられません（PNG と .ylsmart だけです）。",
+        "「notes.txt」をライブラリに入れられません（画像と .ylsmart だけです）。",
+        // 画像だが読めない形式は「画像だけ」とは言わない
+        "「photo.avif」をライブラリに入れられません（未対応の形式）。",
     ] {
         assert!(message.contains(expect), "{expect}: {message}");
     }
@@ -1582,7 +1585,9 @@ fn headless_every_library_refusal_has_a_short_sentence_in_both_languages() {
         files::REFUSAL_EMPTY,
         files::REFUSAL_NO_NAME,
         library::REFUSAL_UNSUPPORTED,
+        library::REFUSAL_UNSUPPORTED_FORMAT,
         library::REFUSAL_PNG,
+        library::REFUSAL_IMAGE,
         library::REFUSAL_PNG_SIZE,
     ];
     for lang in Lang::JA_EN {
@@ -2644,14 +2649,18 @@ mod ui {
             st(&h).shelf().resources().is_empty(),
             "プロジェクトの棚へは入れない"
         );
-        // プロジェクトを見せている間は、PNG は取り込まない
+        // プロジェクトを見せている間は、格子の上の PNG はライブラリへ入れず、プロジェクトの棚に足す
         h.get_by_label("プロジェクト").click();
         h.run();
-        assert!(st(&h).ui().library_grid_rect.is_none());
+        let grid = st(&h)
+            .ui()
+            .library_grid_rect
+            .expect("プロジェクトの格子を描いている");
         let again = dir.0.join("outside/again.png");
         std::fs::write(&again, png(2, 2, |_, _| [1, 2, 3, 255])).unwrap();
-        drop_at(&mut h, pos2(150.0, 400.0), &[&again]);
+        drop_at(&mut h, grid.center(), &[&again]);
         assert!(!dir.exists("Images/again.png"));
+        assert_eq!(st(&h).shelf().resources().len(), 1, "{}", st(&h).message());
     }
 
     #[test]

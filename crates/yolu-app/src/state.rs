@@ -968,6 +968,8 @@ pub enum DialogRequest {
     KeymapExport,
     /// 読み込むキーの設定を選ぶ。
     KeymapImport,
+    /// ファイルの取り込みのウィンドウに入れる画像（複数）を選ぶ。
+    DropInImages,
 }
 
 /// 新しい空の文書（「レイヤー 1」を 1 つ。足したことは取り消せない）。返すのは文書とそのレイヤー。

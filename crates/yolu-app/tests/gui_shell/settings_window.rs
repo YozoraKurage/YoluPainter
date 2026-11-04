@@ -61,7 +61,7 @@ fn headless_the_menus_have_the_items_in_the_new_places_in_both_languages() {
             !file.iter().any(|e| matches!(e, Entry::Heading(_))),
             "{lang:?}: ファイルに見出し {names:?}"
         );
-        // 「読み込み」「書き出し」の見出しは無い。インポートは入れ子のメニューで、中に PSD の 2 つ
+        // 「読み込み」「書き出し」の見出しは無い。インポートは入れ子のメニューで、中に PSD の 2 つと画像
         for gone in [
             lang.pick("読み込み", "Import"),
             lang.pick("書き出し", "Export"),
@@ -85,10 +85,15 @@ fn headless_the_menus_have_the_items_in_the_new_places_in_both_languages() {
                 lang.pick(
                     "PSD を今のテクスチャセットに…",
                     "PSD into the Current Texture Set…"
-                )
+                ),
+                lang.pick("画像…", "Images…")
             ],
             "{lang:?}"
         );
+        assert!(has(
+            entries,
+            &Action::DropIn(yolu_app::dropin::DropOp::ImportDialog)
+        ));
         assert!(has(
             entries,
             &Action::Psd(yolu_app::psd::PsdAction::ImportDialog(
@@ -120,10 +125,10 @@ fn headless_the_menus_have_the_items_in_the_new_places_in_both_languages() {
             export + 2,
             "{lang:?}: {names:?}"
         );
-        // （入れ子の中の PSD の 2 つを挟んで、配布用に保存…の 3 つ先）
+        // （入れ子の中の PSD の 2 つと画像を挟んで、配布用に保存…の 4 つ先）
         assert_eq!(
             export,
-            at(lang.pick("配布用に保存…", "Save for Distribution…")) + 3,
+            at(lang.pick("配布用に保存…", "Save for Distribution…")) + 4,
             "{lang:?}: {names:?}"
         );
         let project = at(lang.pick("プロジェクト設定…", "Project Configuration…"));

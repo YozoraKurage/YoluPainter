@@ -25,3 +25,4 @@ fillfx-up-to-64-points = up to 64 points
 fillfx-cannot-delete-the-point = Cannot delete the point
 fillfx-it-is-the-last-point = it is the last point
 fillfx-not-a-readable-image = Not a readable image
+fillfx-image-too-large-to-read = The image is too large to read

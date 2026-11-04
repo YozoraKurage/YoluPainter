@@ -39,6 +39,7 @@ pub mod gesture;
 pub mod gpu_memory;
 pub mod gpu_watch;
 pub mod gradient;
+pub mod imagefile;
 pub mod input;
 pub mod jobs;
 pub mod keyconfig;

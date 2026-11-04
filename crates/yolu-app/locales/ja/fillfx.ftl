@@ -25,3 +25,4 @@ fillfx-up-to-64-points = 点は 64 まで
 fillfx-cannot-delete-the-point = 点を削除できません
 fillfx-it-is-the-last-point = 最後の点
 fillfx-not-a-readable-image = 画像として読めません
+fillfx-image-too-large-to-read = 画像が大きすぎて読めません

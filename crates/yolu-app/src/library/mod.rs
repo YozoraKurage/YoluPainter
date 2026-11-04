@@ -62,9 +62,13 @@ pub const PROBES_PER_FRAME: usize = 8;
 pub const MAX_KNOWN: usize = 1024;
 
 /// 足せない種類のファイルの断りの文言（`reason` が言語ごとの短い文にする）。
-pub const REFUSAL_UNSUPPORTED: &str = "ライブラリへ追加できるのは PNG と .ylsmart だけです";
+pub const REFUSAL_UNSUPPORTED: &str = "ライブラリへ追加できるのは画像と .ylsmart だけです";
+/// 画像だが読めない形式（AVIF・DDS など）の断りの文言。
+pub const REFUSAL_UNSUPPORTED_FORMAT: &str = "未対応の画像の形式です";
 /// 画像の読めない理由の文言（`reason` が言語ごとの短い文にする）。
 pub const REFUSAL_PNG: &str = "PNG として読めません";
+/// PNG 以外の画像（WebP・TIFF など）の読めない理由の文言。
+pub const REFUSAL_IMAGE: &str = "画像として読めません";
 pub const REFUSAL_PNG_SIZE: &str = "画像の 1 辺は 1〜8192 です";
 
 /// 16 ビットの PNG を 8 ビットへ丸めて使ったときの知らせ（使う・置くの知らせに足す）。

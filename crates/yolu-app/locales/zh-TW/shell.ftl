@@ -60,3 +60,4 @@ shell-copy-mask = 複製遮罩
 shell-paste-to-mask = 貼上至遮罩
 shell-ui-hidden = 介面已隱藏。按 { $key } 即可重新顯示。
 shell-ui-hidden-no-key = 介面已隱藏。
+shell-import-images = 圖片…

@@ -1505,7 +1505,7 @@ impl YoluApp {
                 let lang = self.state.lang;
                 if let Some(path) = crate::dialog::file(&self.state, Place::ImageImport)
                     .set_title(lang.t("app-add-an-image-to-the"))
-                    .add_filter("PNG", &["png", "PNG"])
+                    .add_filter(lang.t("app-image-files"), &crate::imagefile::extensions())
                     .pick_file()
                 {
                     self.state.note_file_chosen(Place::ImageImport, &path);
@@ -1518,7 +1518,7 @@ impl YoluApp {
                 // 選ばずに閉じたら何も作らない（Undo の段も増やさない）
                 if let Some(path) = crate::dialog::file(&self.state, Place::ImageImport)
                     .set_title(lang.t("app-create-a-fill-from-an"))
-                    .add_filter("PNG", &["png", "PNG"])
+                    .add_filter(lang.t("app-image-files"), &crate::imagefile::extensions())
                     .pick_file()
                 {
                     self.state.note_file_chosen(Place::ImageImport, &path);
@@ -1529,6 +1529,7 @@ impl YoluApp {
                         }));
                 }
             }
+            Some(DialogRequest::DropInImages) => self.pick_dropin_images(),
             Some(DialogRequest::ImportBrushes) => {
                 let lang = self.state.lang;
                 if let Some(paths) = crate::dialog::file(&self.state, Place::Brush)
@@ -1715,9 +1716,25 @@ impl YoluApp {
         }
     }
 
-    /// ウィンドウに落としたファイル（.ylp なら開く。PSD と画像（PNG・JPEG・TGA）ならファイルの取り込みのウィンドウに行として並べる。
-    /// ブラシのファイル（ABR・GBR・GIH・VBR・PAT）なら取り込む。PNG はブラシの一覧の上ならブラシの筆先、ライブラリの格子・ステンシルの画像の箱の上なら
-    /// そちらが受け取る（ウィンドウに並べない）。FBX・.ylsmart もそれぞれの受け口が受ける。
+    /// メニュー「インポート → 画像…」: 画像を選ぶウィンドウ（複数可）で選んだファイルを、落としたときと同じ取り込みのウィンドウに入れる。
+    fn pick_dropin_images(&mut self) {
+        let lang = self.state.lang;
+        if let Some(paths) = crate::dialog::file(&self.state, Place::ImageImport)
+            .set_title(lang.t("app-import-images"))
+            .add_filter(lang.t("app-image-files"), &crate::imagefile::extensions())
+            .pick_files()
+        {
+            if let Some(first) = paths.first() {
+                self.state.note_file_chosen(Place::ImageImport, first);
+            }
+            self.state
+                .apply(Action::DropIn(crate::dropin::DropOp::Open(paths)));
+        }
+    }
+
+    /// ウィンドウに落としたファイル（.ylp なら開く。PSD と画像（PNG・JPEG・TGA・WebP・TIFF・BMP・EXR・HDR・GIF）ならファイルの取り込みのウィンドウに行として並べる。
+    /// ブラシのファイル（ABR・GBR・GIH・VBR・PAT）なら取り込む。PNG はブラシの一覧の上ならブラシの筆先、ステンシルの画像の箱の上ならそちらが、画像はアセットの格子の上なら格子が
+    /// 受け取る（ウィンドウに並べない）。FBX・.ylsmart もそれぞれの受け口が受ける。
     /// `drops` は、落としたウィンドウで前のフレームに描いた行き先の矩形（メインウィンドウは `root_drops`、別ウィンドウは `win.drops`）。
     fn open_dropped(&mut self, ctx: &egui::Context, drops: crate::detach::DropRects) {
         let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
@@ -1747,11 +1764,10 @@ impl YoluApp {
         let point = crate::pen::drop_point::drop_point(ctx);
         let over = |r: Option<egui::Rect>| point.zip(r).is_some_and(|(p, r)| r.contains(p));
         let over_list = over(drops.brush_list);
-        // PNG を受けるほかの所（ライブラリの格子・ステンシルの画像の箱）の上なら、ウィンドウへ回さない
-        let png_taken = over_list
-            || (self.state.library.source == crate::library::Source::Library
-                && over(drops.library_grid))
-            || over(drops.stencil_image);
+        // PNG を受けるほかの所（ステンシルの画像の箱）の上なら、ウィンドウへ回さない。アセットの格子（プロジェクトの棚・ライブラリ）の上の
+        // 画像は、どの形式でも格子が受ける（`panels::assets::import_dropped`）
+        let png_taken = over_list || over(drops.stencil_image);
+        let over_grid = over(drops.library_grid);
         let is_png = crate::brushes::import::is_png;
         let has_ext = |p: &std::path::Path, exts: &[&str]| {
             p.extension()
@@ -1763,6 +1779,7 @@ impl YoluApp {
             has_ext(p, &["fbx", "ylsmart"])
                 || (crate::brushes::import::is_brush_file(p) && !is_png(p))
                 || (is_png(p) && png_taken)
+                || (over_grid && crate::dropin::is_image(p))
         };
         let files: Vec<std::path::PathBuf> =
             dropped.iter().filter(|p| !elsewhere(p)).cloned().collect();

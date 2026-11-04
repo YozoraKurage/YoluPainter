@@ -1,4 +1,4 @@
-//! ファイルの取り込みのウィンドウ: ウィンドウに落とした PSD と画像（PNG・JPEG・TGA）を 1 つのウィンドウの行にし、行ごとに入れ先を選んで取り込む。
+//! ファイルの取り込みのウィンドウ: ウィンドウに落とした（またはメニューの「画像…」で選んだ）PSD と画像（PNG・JPEG・TGA・WebP・TIFF・BMP・EXR・HDR・GIF）を 1 つのウィンドウの行にし、行ごとに入れ先を選んで取り込む。
 //!
 //! - 入れ先は「アセットに入れるだけ」（画像だけ）・テクスチャセット（ファイルの名前の新しいレイヤーセット）・レイヤーセット（その一番上）。
 //!   既定は何も選んでいない形で、読めるファイルの入れ先が全部決まるまで取り込めない。「すべて」は、その入れ先に入れられる行にだけ当てる
@@ -8,7 +8,7 @@
 //!   core の `Document::insert_layers_from`・`insert_layers_as_layer_set` で入れる。大きさがテクスチャセットと違う PSD は、そのテクスチャセットへ
 //!   入れない（大きさを変えない）。
 //! - 取り消しは入れ先の文書ごとに 1 回（同じテクスチャセットへの複数のファイルは 1 回にまとめる）。描いている最中・読むだけのセット・アセットの保存の
-//!   最中は断る。読むのは別のスレッド（PSD は取り込みと同じ `psd::read_copy`、画像は `fillfx::read_image`）。
+//!   最中は断る。読むのは別のスレッド（PSD は取り込みと同じ `psd::read_copy`、画像は `imagefile::read_file`）。
 
 pub mod window;
 
@@ -65,6 +65,8 @@ pub enum MenuFor {
 pub enum DropOp {
     /// 落としたファイルを行にしてウィンドウを開く（開いていれば行を足す）。
     Open(Vec<PathBuf>),
+    /// メニューの「ファイル → インポート → 画像…」: 読む画像を選ぶウィンドウを頼む（選んだファイルは `Open` と同じ道で行になる）。
+    ImportDialog,
     /// 行の入れ先を選ぶ。
     SetDest(u64, Dest),
     /// 「すべて」の入れ先を選ぶ（入れられる行にだけ当てる）。
@@ -101,7 +103,7 @@ pub struct ImageRead {
     pub(crate) rgba: Vec<u8>,
     pub width: u32,
     pub height: u32,
-    /// 形式の名前（PNG・JPEG・TGA）。
+    /// 形式の名前（PNG・JPEG・TGA・WebP・TIFF・BMP・EXR・HDR・GIF）。
     pub format: &'static str,
     /// GPU へまだ上げていないサムネイル（上の行から）。
     pub(crate) thumb: Option<Picture>,
@@ -205,7 +207,7 @@ impl DropInState {
 enum Kind {
     Psd,
     Image(image::ImageFormat),
-    /// 画像だが読めない形式（新しい依存が要る物）。
+    /// 画像だが読めない形式（AVIF など。名前だけ出して断る）。
     OtherImage,
     Other,
 }
@@ -218,14 +220,14 @@ fn extension(path: &Path) -> String {
 }
 
 fn kind_of(path: &Path) -> Kind {
-    match extension(path).as_str() {
-        "psd" => Kind::Psd,
-        "png" => Kind::Image(image::ImageFormat::Png),
-        "jpg" | "jpeg" => Kind::Image(image::ImageFormat::Jpeg),
-        "tga" => Kind::Image(image::ImageFormat::Tga),
-        "webp" | "tif" | "tiff" | "exr" | "bmp" | "gif" | "hdr" | "psb" | "dds" | "avif"
-        | "heic" | "jxl" | "qoi" => Kind::OtherImage,
-        _ => Kind::Other,
+    if extension(path) == "psd" {
+        Kind::Psd
+    } else if let Some(format) = crate::imagefile::format_of(path) {
+        Kind::Image(format)
+    } else if crate::imagefile::is_image_extension(path) {
+        Kind::OtherImage
+    } else {
+        Kind::Other
     }
 }
 
@@ -234,21 +236,17 @@ pub fn opens_window(path: &Path) -> bool {
     matches!(kind_of(path), Kind::Psd | Kind::Image(_) | Kind::OtherImage)
 }
 
+/// 画像のファイルか（読める形式も、AVIF などの読めない形式も。PSD は含まない）。棚の格子の上に落とした画像は、ウィンドウに並べず棚が受ける。
+pub fn is_image(path: &Path) -> bool {
+    matches!(kind_of(path), Kind::Image(_) | Kind::OtherImage)
+}
+
 /// 形式の名前（行の 2 行目）。
 fn format_name(path: &Path) -> String {
     match kind_of(path) {
         Kind::Psd => "PSD".into(),
-        Kind::Image(image::ImageFormat::Png) => "PNG".into(),
-        Kind::Image(image::ImageFormat::Jpeg) => "JPEG".into(),
-        Kind::Image(_) => "TGA".into(),
-        Kind::OtherImage | Kind::Other => {
-            let e = extension(path);
-            match e.as_str() {
-                "tif" | "tiff" => "TIFF".into(),
-                "webp" => "WebP".into(),
-                _ => e.to_ascii_uppercase(),
-            }
-        }
+        Kind::Image(format) => crate::imagefile::format_label(format).into(),
+        Kind::OtherImage | Kind::Other => extension(path).to_ascii_uppercase(),
     }
 }
 
@@ -322,7 +320,9 @@ fn read_file(
             Err(crate::psd::ReadCopyError::Canceled) => refused(String::new()),
             Err(crate::psd::ReadCopyError::Other(e)) => refused(lang.io_error(&e)),
         },
-        Kind::Image(format) => match crate::fillfx::read_image(path, format, lang) {
+        Kind::Image(format) => match crate::imagefile::read_file(path, format)
+            .map_err(|e| lang.image_read_error(format, &e))
+        {
             Ok((mut rgba, w, h)) => {
                 let thumb = thumbnail(&rgba, w, h);
                 crate::fillfx::flip_rows(&mut rgba, w as usize * 4);
@@ -330,11 +330,7 @@ fn read_file(
                     rgba,
                     width: w,
                     height: h,
-                    format: match format {
-                        image::ImageFormat::Png => "PNG",
-                        image::ImageFormat::Jpeg => "JPEG",
-                        _ => "TGA",
-                    },
+                    format: crate::imagefile::format_label(format),
                     thumb: Some(thumb),
                     slot: UiSlot::new(),
                 }))
@@ -377,6 +373,14 @@ impl AppState {
     pub fn dropin_apply(&mut self, op: DropOp) {
         match op {
             DropOp::Open(paths) => self.dropin_open(paths),
+            DropOp::ImportDialog => {
+                if self.is_stroking() {
+                    let lang = self.lang;
+                    self.refuse(Source::Layer, crate::lang::refusals::during_stroke(lang));
+                    return;
+                }
+                self.outbox.dialog_request = Some(crate::state::DialogRequest::DropInImages);
+            }
             DropOp::SetDest(id, dest) => {
                 if self.dropin_problem(id, dest).is_none() {
                     if let Some(row) = self.dropin.row_mut(id) {

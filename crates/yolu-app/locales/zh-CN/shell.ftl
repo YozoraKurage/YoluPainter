@@ -60,3 +60,4 @@ shell-copy-mask = 复制蒙版
 shell-paste-to-mask = 粘贴至蒙版
 shell-ui-hidden = 界面已隐藏。按 { $key } 即可重新显示。
 shell-ui-hidden-no-key = 界面已隐藏。
+shell-import-images = 图像…

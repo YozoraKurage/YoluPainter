@@ -47,3 +47,5 @@ app-return-to-dock = 放回停駐區
 app-3d-view-numbered = 3D 檢視 { $number }
 app-3d-view-titled = { $name }・{ $shading }
 app-add-3d-view-tip = 新增 3D 檢視
+app-import-images = 匯入圖片
+app-image-files = 圖片

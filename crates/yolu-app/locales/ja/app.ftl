@@ -47,3 +47,5 @@ app-return-to-dock = ドックに戻す
 app-3d-view-numbered = 3D ビュー { $number }
 app-3d-view-titled = { $name }・{ $shading }
 app-add-3d-view-tip = 3D ビューを追加
+app-import-images = 画像を取り込む
+app-image-files = 画像

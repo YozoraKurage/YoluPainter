@@ -60,3 +60,4 @@ shell-copy-mask = Copy Mask
 shell-paste-to-mask = Paste to Mask
 shell-ui-hidden = The UI is hidden. { $key } brings it back.
 shell-ui-hidden-no-key = The UI is hidden.
+shell-import-images = Images…

@@ -46,6 +46,15 @@ Windows MSVC・Windows GNU・Linux GNU・Linux ARM（aarch64）・macOS（univer
 - `yolu-app` は Live Link の元の絵（JPG）を読むために `image` の `jpeg` 機能を有効にしている。増えるのは `zune-jpeg 0.5.15` と `zune-core 0.5.3`
   （どちらも MIT OR Apache-2.0 OR Zlib から MIT。原文はクレートの `LICENSE-MIT`）の 2 件で、どちらも Cargo.lock には前から（テストの依存の `tiff` 経由で）あった。
   2 件の全ソースから GPL・LGPL・AGPL の表記を検索して、該当は無かった。TGA の読み（`tga` 機能）は `image` の中だけで、クレートは増えない。
+- `yolu-app` は画像の取り込み（WebP・TIFF・BMP・EXR・HDR・GIF）のために、`image` の `webp`・`tiff`・`bmp`・`exr`・`hdr`・`gif` の機能を有効にしている
+  （BMP は `image` の中だけで、クレートは増えない）。増えるクレートは次の 12 件で、すべて Rust だけで書かれ（C の依存・`-sys` のクレートは無い）、各クレートの全ソースから
+  GPL・LGPL・AGPL の表記を検索して、該当は無かった。このほか `tiff 0.11.3`・`weezl 0.1.12`・`fax 0.2.7`・`quick-error 2.0.1` が、前から macOS の一覧にあり登録済みで、Windows・Linux の一覧にも新しく入る。
+  `image-webp 0.2.4`（MIT OR Apache-2.0 から MIT。`LICENSE-MIT`）、`gif 0.14.2`（同。`LICENSE-MIT`）、`color_quant 1.1.0`（MIT。`LICENSE`）、
+  `exr 1.74.2`（BSD-3-Clause。`LICENSE.md`）、`lebe 0.5.3`（BSD-3-Clause。`LICENSE-BSD-3-Clause`）、`bit_field 0.10.3`（Apache-2.0/MIT から MIT。`LICENSE-MIT`）、
+  `num-complex 0.4.6`（MIT OR Apache-2.0 から MIT。`LICENSE-MIT`）、`raw-cpuid 11.6.0`（MIT。`LICENSE.md`）、`reborrow 0.5.5`（MIT。`LICENSE`）、
+  `pulp 0.22.3`（MIT。`LICENSE`。SIMD の `unsafe` が多い）、`pulp-wasm-simd-flag 0.1.1`（MIT。クレートに本文が無いので、`pulp` と同じリポジトリの発行時コミットの `LICENSE` を SHA-256 で照合する）、
+  `zune-inflate 0.2.54`（MIT OR Apache-2.0 OR Zlib から Zlib。クレートに本文が無いので、発行時コミットの上流の `LICENSE-ZLIB` を SHA-256 で照合する）。
+  Cargo.lock の SHA-256 と件数の表は、リリースのときに合わせる。
 - 上記の発行時コミットの原文と SHA-256 を照合し、**Windows MSVC・Windows GNU・macOS（universal）は app のクレート分の配布用全文束を生成できる**。
   未確認のバージョンや原文の変更を自動承認せず、依存を更新したら再確認する。
 - macOS（universal）の配布物にだけ入る依存 32 件（`objc2` 系・`block2`・`dispatch2`・`dispatch`・`core-foundation` 系・`core-graphics` 系・`foreign-types` 系・`accesskit_macos`・

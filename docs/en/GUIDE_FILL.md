@@ -12,7 +12,7 @@ Choose a type from "New Fill Layer" in the Layers panel (the same item is in the
 |---|---|
 | Solid Color | A layer painted with a value per channel |
 | Gradient Decal | A layer that paints values over a range in the 3D view (Box, Sphere, Plane (Linear)) |
-| Image | A layer painted with an asset image. "Import from File…" in the list can bring in a PNG |
+| Image | A layer painted with an asset image. "Import from File…" in the list can bring in an image (PNG, JPEG, TGA, WebP, TIFF, BMP, EXR, HDR, GIF) |
 | Decal | A layer that places an asset image on the model like a sticker |
 
 The "Fill" section in Properties holds the value for each channel. The button next to a channel adds its value from the paint color, and the delete button removes it. Color channels (Color, Emission) are set by clicking the swatch to open the color window; scalar channels (Roughness, Metallic, Height) use a 0–1 slider.

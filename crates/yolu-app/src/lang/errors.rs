@@ -10,7 +10,9 @@ use yolu_core::{
 };
 use yolu_model::ModelError;
 
-use crate::library::{REFUSAL_PNG, REFUSAL_PNG_SIZE, REFUSAL_UNSUPPORTED};
+use crate::library::{
+    REFUSAL_IMAGE, REFUSAL_PNG, REFUSAL_PNG_SIZE, REFUSAL_UNSUPPORTED, REFUSAL_UNSUPPORTED_FORMAT,
+};
 use crate::shelf::Block;
 use crate::update::Failure as UpdateFailure;
 use crate::view3d::pose::hide::store::StoreError as HideStoreError;
@@ -209,6 +211,28 @@ impl Lang {
     }
 
     /// 読み書きの失敗の文。種類で言い分け、OS のエラー番号（共有違反・空き不足などの手掛かり）を添える。
+    /// 画像のファイルを読めなかった理由の短い文（PNG のときは「PNG として」）。
+    pub fn image_read_error(
+        self,
+        format: image::ImageFormat,
+        error: &crate::imagefile::ReadError,
+    ) -> String {
+        use crate::imagefile::{Problem, ReadError};
+        match error {
+            ReadError::Io(e) => self.file_error(e),
+            ReadError::Image(Problem::Sides) => self.t("fillfx-image-sides-must-be-1").to_owned(),
+            ReadError::Image(Problem::TooLarge) => {
+                self.t("fillfx-image-too-large-to-read").to_owned()
+            }
+            ReadError::Image(Problem::Unreadable) if format == image::ImageFormat::Png => {
+                self.t("fillfx-not-a-readable-png").to_owned()
+            }
+            ReadError::Image(Problem::Unreadable) => {
+                self.t("fillfx-not-a-readable-image").to_owned()
+            }
+        }
+    }
+
     pub fn file_error(self, error: &std::io::Error) -> String {
         crate::crash::problem(self.file_error_text(error))
     }
@@ -772,12 +796,16 @@ pub fn library_known_error(lang: Lang, e: &yolu_io::Error) -> Option<String> {
         lang.t("lang-empty-file")
     } else if has(files::REFUSAL_NO_NAME) {
         lang.t("lang-cannot-choose-a-name")
+    } else if has(REFUSAL_UNSUPPORTED_FORMAT) {
+        lang.t("dropin-unsupported-format")
     } else if has(REFUSAL_UNSUPPORTED) {
-        lang.t("lang-png-and-ylsmart-only")
+        lang.t("lang-image-and-ylsmart-only")
     } else if has(REFUSAL_PNG_SIZE) {
         lang.t("lang-image-sides-must-be-1")
     } else if has(REFUSAL_PNG) {
         lang.t("lang-not-a-readable-png")
+    } else if has(REFUSAL_IMAGE) {
+        lang.t("lang-not-a-readable-image")
     } else {
         return None;
     };

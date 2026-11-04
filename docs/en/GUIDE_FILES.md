@@ -74,7 +74,7 @@ How things are sorted, and the limits, are in [PSD.md](../PSD.md) (in Japanese).
 
 ## Import PSDs and images dropped onto the window
 
-When you drop PSDs and images (PNG, JPEG, TGA) onto the window, the "Import Files" window lists each dropped file as a row. Choose a "Destination" for each row and press "Import". "Import" stays unavailable until every readable file has a destination. A destination chosen under "All" is applied only to the rows that can go there.
+When you drop PSDs and images (PNG, JPEG, TGA, WebP, TIFF, BMP, EXR, HDR, GIF) onto the window, or choose images with File → Import → Images…, the "Import Files" window lists each dropped file as a row. Choose a "Destination" for each row and press "Import". "Import" stays unavailable until every readable file has a destination. A destination chosen under "All" is applied only to the rows that can go there.
 
 - "Assets Only" (images only): adds the image to the assets (formats other than PNG become the same kind of image).
 - A texture set row: makes a new layer set named after the file in that texture set and puts the file there.
@@ -83,7 +83,9 @@ When you drop PSDs and images (PNG, JPEG, TGA) onto the window, the "Import File
 - Opening a PSD row shows the same list as the "Import PSD Check" window. The layers go in with their groups, masks and blend modes. A PSD whose size differs from a texture set cannot go into that texture set (it is not resized), and cannot go into the assets.
 - Undo works once per destination texture set (several files into the same texture set are undone together).
 - After importing, the last destination texture set and layer set become current.
-- WebP, TIFF, EXR and other formats are listed with the reason and cannot be imported. A PNG dropped onto the brush list, the library or the stencil image is read there as before.
+- EXR and HDR are read as color: values are clipped to 0–1 (anything above 1 becomes 1), the linear values are converted to sRGB, and the result is 8 bits. Alpha is clipped to 0–1 as it is. There is no way to import them as linear data channels such as Normal or Roughness. 16-bit PNG and TIFF are rounded to 8 bits. A GIF is read from its first frame only.
+- Each side must be 1 to 8192, and reading uses at most 1 GiB of memory (the pixels as read plus the imported image). A floating-point TIFF holds its pixels twice while it is read, so one more than about 5700 pixels on a side (with alpha) or 6600 (without alpha) is refused as too large. DDS, AVIF, HEIC, JPEG XL, QOI and PSB cannot be read; they are listed with the reason and cannot be imported. A PNG dropped onto the brush list or the stencil image is read there as before.
+- An image dropped onto the assets grid is not listed in this window; it goes straight in. Onto the project's grid it is added to the project's assets, and onto the library's grid it is added to the library (converted to PNG unless it already is one). A format that cannot be read is refused with the reason. Dropping onto the grid does not make an undo step (the same as "Import from File…").
 
 ## Export a PSD
 
@@ -98,13 +100,14 @@ When you drop PSDs and images (PNG, JPEG, TGA) onto the window, the "Import File
 
 Opening the file in Photoshop or CLIP STUDIO PAINT can re-evaluate the adjustment layers and change how it looks. How it is written, and the limits, are in [PSD.md](../PSD.md) (in Japanese).
 
-## Import PNG files
+## Import images
 
-PNG files can be imported in these places:
+Image files can be imported in these places:
 
-- Stencils (the Stencil tab in Properties)
+- Stencils (the Stencil tab in Properties): PNG only
 - Asset images: through "Import from File…" in the image list of a fill layer, or "Use in this project" in the library. Fill layers, Image generators and path ribbons use them ([GUIDE_FILL.md](GUIDE_FILL.md))
-- The library: "Add files to the library…" or dropping onto the grid
+- The library: "Add files to the library…" or dropping onto the grid (images other than PNG are converted to PNG)
+- The project's assets: dropping onto the grid
 - Dropping onto the window: into the assets or an image fill layer through the "Import Files" window ("Import PSDs and images dropped onto the window" above)
 
 A smart material's `.ylsmart` can be imported into the assets and the library.

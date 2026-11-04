@@ -16,7 +16,10 @@ use yolu_io::shelf::ResourceKind;
 use yolu_io::smart::SmartFile;
 
 use super::image as png;
-use super::{PendingWrite, REFUSAL_PNG, REFUSAL_PNG_SIZE, REFUSAL_UNSUPPORTED};
+use super::{
+    PendingWrite, REFUSAL_IMAGE, REFUSAL_PNG, REFUSAL_PNG_SIZE, REFUSAL_UNSUPPORTED,
+    REFUSAL_UNSUPPORTED_FORMAT,
+};
 use crate::engine::{LayerId, LayerKind};
 use crate::lang::{Count, Lang};
 use crate::notice::{Kind as NoticeKind, Source};
@@ -691,25 +694,39 @@ fn material_from(lang: Lang, bytes: &[u8]) -> Result<yolu_core::smart::SmartMate
     Ok(material)
 }
 
-/// 外のファイル 1 つを検証して、ライブラリへ足す（PNG は寸法、.ylsmart は読めるかを確かめる）。
+/// 外のファイル 1 つを検証して、ライブラリへ足す（PNG は寸法、.ylsmart は読めるかを確かめる。PNG 以外の画像（WebP・TIFF・BMP・EXR・HDR・
+/// JPEG・TGA・GIF）は読んで PNG に直して置く＝ライブラリの画像は PNG だけ）。
 fn add_outside(
     root: &Path,
     path: &Path,
     limit: u64,
     cancel: &AtomicBool,
 ) -> Result<files::Added, yolu_io::Error> {
-    let kind = kind_of_extension(path)
-        .filter(|k| matches!(k, files::Kind::Image | files::Kind::Smart))
-        .ok_or_else(|| yolu_io::Error::InvalidData(REFUSAL_UNSUPPORTED.into()))?;
-    let bytes = read_outside(path, limit, cancel)?;
+    if crate::imagefile::is_unsupported_image(path) {
+        return Err(yolu_io::Error::InvalidData(
+            REFUSAL_UNSUPPORTED_FORMAT.into(),
+        ));
+    }
+    let other_image = crate::imagefile::format_of(path).filter(|f| *f != image::ImageFormat::Png);
+    let kind = if other_image.is_some() {
+        Some(files::Kind::Image)
+    } else {
+        kind_of_extension(path).filter(|k| matches!(k, files::Kind::Image | files::Kind::Smart))
+    }
+    .ok_or_else(|| yolu_io::Error::InvalidData(REFUSAL_UNSUPPORTED.into()))?;
+    let mut bytes = read_outside(path, limit, cancel)?;
     let stem = path
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
     let name = match kind {
         files::Kind::Image => {
-            // 全部を展開して確かめる（ヘッダーだけ読める壊れた PNG をライブラリへ入れない）
-            png::decode(&bytes).map_err(png_error)?;
+            if let Some(format) = other_image {
+                bytes = to_png(&bytes, format)?;
+            } else {
+                // 全部を展開して確かめる（ヘッダーだけ読める壊れた PNG をライブラリへ入れない）
+                png::decode(&bytes).map_err(png_error)?;
+            }
             stem
         }
         _ => {
@@ -718,6 +735,19 @@ fn add_outside(
         }
     };
     files::add(root, kind.folder(), &name, kind, &bytes, Some(cancel))
+}
+
+/// PNG 以外の画像のバイト列を読んで、PNG のバイト列にする（straight RGBA8。EXR・HDR は色として 0〜1 で切って sRGB の 8 ビットへ）。
+fn to_png(bytes: &[u8], format: image::ImageFormat) -> Result<Vec<u8>, yolu_io::Error> {
+    use crate::imagefile::Problem;
+    let (rgba, w, h) =
+        crate::imagefile::decode(std::io::Cursor::new(bytes), format).map_err(|p| match p {
+            Problem::Unreadable => yolu_io::Error::InvalidData(REFUSAL_IMAGE.into()),
+            Problem::Sides => yolu_io::Error::Budget(REFUSAL_PNG_SIZE.into()),
+            Problem::TooLarge => yolu_io::Error::Budget(files::REFUSAL_TOO_LARGE.into()),
+        })?;
+    crate::imagefile::encode_png(&rgba, w, h)
+        .map_err(|_| yolu_io::Error::InvalidData(REFUSAL_IMAGE.into()))
 }
 
 /// ライブラリのフォルダを OS のファイルのウィンドウで開く（無ければ作る）。フォルダでないものは開かない。

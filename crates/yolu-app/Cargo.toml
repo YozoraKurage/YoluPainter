@@ -31,7 +31,8 @@ serde_json = "1"   # MIT OR Apache-2.0（ドックの並びとウィンドウの
 half = "2.7"   # MIT OR Apache-2.0（環境のキューブを half float で上げる。wgpu の naga が既に使っている版）
 rayon = "1.12"   # MIT OR Apache-2.0（環境の畳み込みを並べる。yolu-core が既に使っている）
 bevy_mikktspace = "1.0"   # Zlib AND (MIT OR Apache-2.0)（接線。Unity の RecalculateTangents と同じ MikkTSpace。依存なし・unsafe なし）
-image = { version = "0.25", default-features = false, features = ["png", "tga", "jpeg"] }   # Live Link の元の絵（PNG・TGA・JPG）を読む。jpeg は zune-jpeg（MIT OR Apache-2.0 OR Zlib）
+image = { version = "0.25", default-features = false, features = ["png", "tga", "jpeg", "webp", "tiff", "bmp", "exr", "hdr", "gif"] }   # Live Link の元の絵（PNG・TGA・JPG）を読む。jpeg は zune-jpeg（MIT OR Apache-2.0 OR Zlib）
+exr = { version = "1.74", default-features = false }   # BSD-3-Clause（EXR を f32 の全画面のバッファを作らずに RGBA8 へ読む。image の exr が既に使っているバージョン・機能で、新しい crate は増えない）
 png = "0.18"   # MIT OR Apache-2.0（取り込んだ筆先の画像を、名前つきの灰色の PNG で置く。yolu-io が既に使っている版）
 sha2 = "0.10"   # MIT OR Apache-2.0（筆先の画像を内容の SHA-256 で名づける。yolu-io が既に使っている版）
 arboard = { version = "3.6", default-features = false, features = ["image-data", "wayland-data-control"] }

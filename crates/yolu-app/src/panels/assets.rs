@@ -6,7 +6,7 @@
 //! サムネイルと項目の情報は別のスレッドで作り（見えている項目だけ頼み、できた分から出す）、描いている間も画面を止めない。
 //! 画面には名前と状態と短い理由だけを出し、説明はツールチップに置く。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use egui::{
     pos2, vec2, Color32, DragAndDrop, Id, Rect, Sense, TextureHandle, Ui, WidgetInfo, WidgetType,
@@ -268,7 +268,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         pos2(r.left() + t::PADDING, top),
         pos2(r.right() - t::PADDING, (r.bottom() - FOOTER_H).max(top)),
     );
-    app.ui.library_grid_rect = (source == Source::Library).then_some(grid);
+    app.ui.library_grid_rect = Some(grid);
     cards(ui, app, &ctx, grid);
     footer(
         ui,
@@ -1449,8 +1449,8 @@ fn library_menu_entries(app: &AppState) -> Vec<Entry<Action>> {
 }
 
 /// 毎フレーム: 別のスレッドの書き出し・取り込み・ライブラリへの書き込みが終わっていれば結果を入れ、ウィンドウに落としたファイルを入れる
-/// （ライブラリの格子の上に落とした PNG と .ylsmart はライブラリへ、そうでない .ylsmart は棚へ。PNG は格子の上だけ
-/// （筆先・ステンシルの画像の箱へ落とした PNG は、そちらが取る）。.ylp は `YoluApp` が開く）。
+/// （ライブラリの格子の上に落とした画像と .ylsmart はライブラリへ、プロジェクトの棚の格子の上に落とした画像は文書の画像として棚へ、
+/// そうでない .ylsmart は棚へ。画像は格子の上だけ（筆先・ステンシルの画像の箱へ落とした PNG は、そちらが取る）。.ylp は `YoluApp` が開く）。
 pub fn frame(ctx: &egui::Context, state: &mut AppState) {
     let waker = repaint_waker(ctx);
     state.shelf.waker = Some(waker.clone());
@@ -1475,30 +1475,36 @@ pub(crate) fn import_dropped(ctx: &egui::Context, state: &mut AppState, grid: Op
     if ctx.input(|i| i.raw.dropped_files.is_empty()) {
         return;
     }
-    let over_grid = state.library.source == Source::Library
-        && grid
-            .zip(crate::pen::drop_point::drop_point(ctx))
-            .is_some_and(|(r, p)| r.contains(p));
+    let over_grid = grid
+        .zip(crate::pen::drop_point::drop_point(ctx))
+        .is_some_and(|(r, p)| r.contains(p));
+    let is_ylsmart = |p: &Path| {
+        p.extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("ylsmart"))
+    };
     let dropped: Vec<PathBuf> = ctx.input(|i| {
         i.raw
             .dropped_files
             .iter()
             .map(|f| f.path().to_path_buf())
-            .filter(|p| {
-                p.extension().is_some_and(|e| {
-                    e.eq_ignore_ascii_case("ylsmart")
-                        || (over_grid && e.eq_ignore_ascii_case("png"))
-                })
-            })
+            .filter(|p| is_ylsmart(p) || (over_grid && crate::dropin::is_image(p)))
             .collect()
     });
     if dropped.is_empty() {
         return;
     }
-    if over_grid {
+    if over_grid && state.library.source == Source::Library {
         state.apply(Action::Shelf(ShelfOp::LibraryAddFiles(dropped)));
-    } else {
-        state.apply(Action::Shelf(ShelfOp::ImportFiles(dropped)));
+        return;
+    }
+    // プロジェクトの棚の格子の上: 画像は文書の画像として棚に足す（読めない形式は 1 つずつ理由つきで断る）。.ylsmart は棚へ読む
+    let (smarts, images): (Vec<PathBuf>, Vec<PathBuf>) =
+        dropped.into_iter().partition(|p| is_ylsmart(p));
+    for image in images {
+        state.apply(Action::Fill(crate::fillfx::FillOp::ImportImage(image)));
+    }
+    if !smarts.is_empty() {
+        state.apply(Action::Shelf(ShelfOp::ImportFiles(smarts)));
     }
 }
 
@@ -1520,6 +1526,13 @@ fn file_stem(name: &str) -> String {
     } else {
         s
     }
+}
+
+/// 「ライブラリへファイルを追加…」で選べる拡張子（読める画像と .ylsmart）。
+fn library_add_extensions() -> Vec<String> {
+    let mut all = crate::imagefile::extensions();
+    all.extend(["ylsmart".to_owned(), "YLSMART".to_owned()]);
+    all
 }
 
 /// 棚のファイルのウィンドウ・確認のウィンドウ（ウィンドウを開かない試験では呼ばれない。頼みは `state.outbox.dialog_request` に残る）。
@@ -1558,7 +1571,10 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
         DialogRequest::LibraryAdd => {
             if let Some(paths) = crate::dialog::file(state, Place::Assets)
                 .set_title(lang.t("panels-files-to-add-to-the"))
-                .add_filter("PNG / YoluPainter Smart", &["png", "ylsmart"])
+                .add_filter(
+                    format!("{} / YoluPainter Smart", lang.t("app-image-files")),
+                    &library_add_extensions(),
+                )
                 .pick_files()
             {
                 if let Some(first) = paths.first() {
@@ -1654,5 +1670,13 @@ mod tests {
         assert_eq!(file_stem("  "), "smart");
         assert_eq!(file_stem("..."), "smart");
         assert_eq!(file_stem("木目"), "木目");
+    }
+
+    #[test]
+    fn library_add_dialog_offers_every_readable_image_and_ylsmart() {
+        let all = library_add_extensions();
+        for ext in ["png", "WEBP", "exr", "HDR", "gif", "ylsmart", "YLSMART"] {
+            assert!(all.iter().any(|e| e == ext), "{ext}");
+        }
     }
 }

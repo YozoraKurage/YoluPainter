@@ -60,3 +60,4 @@ shell-copy-mask = 마스크 복사
 shell-paste-to-mask = 마스크에 붙여넣기
 shell-ui-hidden = UI가 숨겨져 있습니다. { $key }을(를) 누르면 다시 표시됩니다.
 shell-ui-hidden-no-key = UI가 숨겨져 있습니다.
+shell-import-images = 이미지…

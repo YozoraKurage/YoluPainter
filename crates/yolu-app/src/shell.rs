@@ -54,7 +54,7 @@ fn command_item(lang: Lang, id: &str, action: Action) -> Entry<Action> {
     Entry::item(crate::commands::label_of(id, lang), action).command_key(id)
 }
 
-/// ファイルメニューのインポート（入れ子のメニュー。PSD を新しいテクスチャセットに・今のテクスチャセットに）と書き出し（テクスチャを書き出す・PSD）。
+/// ファイルメニューのインポート（入れ子のメニュー。PSD を新しいテクスチャセットに・今のテクスチャセットに・画像）と書き出し（テクスチャを書き出す・PSD）。
 /// 見出しは置かず、インポートと書き出しは同じ組に並べる。
 fn import_export_entries(app: &AppState) -> Vec<Entry<Action>> {
     let free = !app.is_stroking();
@@ -73,6 +73,11 @@ fn import_export_entries(app: &AppState) -> Vec<Entry<Action>> {
                     Action::Psd(PsdAction::ImportDialog(PsdTarget::CurrentSet)),
                 )
                 .enabled(free && app.read_only_reason().is_none()),
+                Entry::item(
+                    l.t("shell-import-images"),
+                    Action::DropIn(crate::dropin::DropOp::ImportDialog),
+                )
+                .enabled(free),
             ],
         )
         .enabled(free),
