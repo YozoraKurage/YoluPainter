@@ -428,7 +428,8 @@ fn layer_rename_by_double_click() {
 
 #[test]
 fn layer_drag_reorders() {
-    let mut h = app(1280.0, 800.0, 256);
+    // レイヤーのパネルの頭（レイヤーセットのドロップダウン）の下に 3 行が入る高さ
+    let mut h = app(1280.0, 900.0, 256);
     for _ in 0..2 {
         h.act(yolu_app::state::Action::NewLayer);
     }
@@ -536,8 +537,11 @@ fn properties_tabs_and_pen_toggles() {
     // タブも無い。マテリアルは別のパネル、筆先の形は詳細のウィンドウの「形状」）
     assert_eq!(h.ui().property_tab, 1);
     assert!(h.query_all_by_label("アルファ").next().is_none());
+    // （「マテリアル」の名前は、レイヤーセットの名前としてほかのパネルにも出る。プロパティの組の中には無い）
+    let group = common::shot::group(&h, yolu_app::Tab::Properties);
     assert!(
-        h.query_all_by_label("マテリアル").next().is_none(),
+        h.query_all_by_label("マテリアル")
+            .all(|n| !group.contains_rect(n.rect())),
         "マテリアルはプロパティのタブではない"
     );
     // （「レイヤー」の名前は、右のプロパティのタブのほかにも出る。プロパティの組の中のもの）

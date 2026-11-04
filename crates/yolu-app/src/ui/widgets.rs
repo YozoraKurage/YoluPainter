@@ -1749,6 +1749,60 @@ pub fn dropdown(
     (with_tooltip(response, tooltip), b)
 }
 
+/// 値の名前の代わりにアイコンだけを出す選ぶ箱（[`dropdown`] の狭い形。アイコンと ▾。押すと呼ぶ側が自前のメニューを箱の下に開く）。
+/// `value` は選んでいる値（読み上げの名前）、`tooltip` はツールチップ。返すのは箱の応答と箱の矩形。
+#[allow(clippy::too_many_arguments)]
+pub fn icon_dropdown(
+    ui: &mut Ui,
+    r: Rect,
+    id_salt: impl egui::AsIdSalt,
+    icon_name: &str,
+    icon_color: Color32,
+    value: &str,
+    tooltip: &str,
+    enabled: bool,
+) -> (Response, Rect) {
+    let id = ui.make_persistent_id(id_salt);
+    let shown = look(ui.ctx(), id, enabled);
+    let response = interact(ui, r, id, enabled, Sense::click());
+    let hover = shown.live && response.hovered();
+    let p = ui.painter();
+    rounded(
+        p,
+        r,
+        if shown.live && response.is_pointer_button_down_on() {
+            t::CONTROL_ACTIVE
+        } else if hover {
+            t::CONTROL_HOVER
+        } else {
+            t::CONTROL_BG
+        },
+        3.0,
+    );
+    outline(p, r, t::BORDER, 1.0, 3.0);
+    let color = if shown.enabled {
+        icon_color
+    } else {
+        t::TEXT_DISABLED
+    };
+    icon(
+        p,
+        Rect::from_min_size(pos2(r.left() + 2.0, r.top()), vec2(16.0, r.height())),
+        icon_name,
+        color,
+        15.0,
+    );
+    icon(
+        p,
+        Rect::from_min_size(pos2(r.right() - 16.0, r.top()), vec2(15.0, r.height())),
+        "arrow_drop_down",
+        t::TEXT_DIM,
+        15.0,
+    );
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::ComboBox, enabled, value));
+    (with_tooltip(response, Some(tooltip)), r)
+}
+
 /// 文字の入力欄の結果。
 pub struct TextFieldOutcome {
     /// 決めた文字（Enter か、ほかを押してフォーカスが外れたとき。Esc はやめる）。

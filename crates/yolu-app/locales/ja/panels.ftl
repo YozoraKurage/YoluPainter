@@ -798,7 +798,6 @@ panels-hidden-in-the-3d-view-tip = 3D ビューに見せていない
 panels-not-shown-in-the-3d-tip = 3D ビューに絵を見せていない: GPU のメモリの予算が足りない（今のセットから遠いセットから見せない。絵と書き出しはそのまま）
 panels-baking = ベイク中
 panels-this-texture-set-has-not = このテクスチャセットはまだベイクしていません
-panels-add-an-empty-texture-set-tip = 空のテクスチャセットを追加（今のセットと同じ大きさ・チャンネル）
 panels-a-project-keeps-at-least-tip = プロジェクトには少なくとも 1 つのテクスチャセットが要ります
 panels-remove-this-texture-set-asked-tip = 今のテクスチャセットを消す（確かめます。その作業は消えます）
 panels-project-configuration-tip = プロジェクト設定…

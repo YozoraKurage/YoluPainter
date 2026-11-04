@@ -1363,7 +1363,8 @@ fn the_menu_bar_opens_the_fill_submenu_on_hover_and_a_click_in_it_makes_the_laye
 
 /// 下から a・b・c の 3 つのレイヤーがある画面（選んでいるのは一番上の c）。
 fn three_layers() -> (Harness<'static, YoluApp>, [yolu_app::engine::LayerId; 3]) {
-    let mut h = app(1280.0, 800.0, 64);
+    // レイヤーのパネルの頭（レイヤーセットのドロップダウン）の下に 3 行が入る高さ
+    let mut h = app(1280.0, 900.0, 64);
     let a = h.selected_layer().unwrap();
     h.act(Action::NewLayer);
     let b = h.selected_layer().unwrap();

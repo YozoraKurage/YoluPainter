@@ -798,7 +798,6 @@ panels-hidden-in-the-3d-view-tip = 3D 뷰에서 숨김
 panels-not-shown-in-the-3d-tip = 3D 뷰에 표시하지 않음: GPU 메모리 예산을 초과했습니다(현재 세트에서 먼 세트부터 제외됨. 텍스처와 내보내기는 그대로)
 panels-baking = 베이크 중
 panels-this-texture-set-has-not = 이 텍스처 세트는 아직 베이크하지 않았습니다
-panels-add-an-empty-texture-set-tip = 빈 텍스처 세트를 추가합니다(이 세트와 같은 크기와 채널)
 panels-a-project-keeps-at-least-tip = 프로젝트에는 텍스처 세트가 하나 이상 있어야 합니다
 panels-remove-this-texture-set-asked-tip = 이 텍스처 세트를 제거합니다(먼저 확인하며, 작업 내용이 사라집니다)
 panels-project-configuration-tip = 프로젝트 설정…

@@ -16,8 +16,8 @@ use std::sync::atomic::Ordering;
 use yolu_protocol::{channel, MaterialInfo, MaterialKey as LinkKey};
 
 use crate::canvas::view::ViewState;
-use crate::engine::{CoreError, Document, HistoryKind, LayerId, LayerSetId};
-use crate::m2::layersets::{display_name, outputs, top_layer_of, LayerSetEdit};
+use crate::engine::{Channel, CoreError, Document, HistoryKind, LayerId, LayerSetId};
+use crate::m2::layersets::{display_name, outputs, set_label, top_layer_of, LayerSetEdit};
 use crate::m2::{self, Edit, UiOp};
 use crate::notice::Source;
 use crate::state::canvas_bar::{Add, Chip, Column, Eye, Row};
@@ -79,18 +79,8 @@ pub fn guid_string(id: u128) -> String {
     )
 }
 
-/// 名前が大文字小文字を区別せずにほかと重ならないように、要れば「 2」「 3」… を付ける（.ylp の決まり。書き出すファイルの名前に使う）。
-pub fn unique_name<'a>(base: &str, taken: impl Iterator<Item = &'a str> + Clone) -> String {
-    // yolu-io の検証と同じく大文字にそろえて比べる
-    let free = |n: &str| !taken.clone().any(|t| t.to_uppercase() == n.to_uppercase());
-    if free(base) {
-        return base.to_owned();
-    }
-    (2..)
-        .map(|i| format!("{base} {i}"))
-        .find(|n| free(n))
-        .expect("どこかで空く")
-}
+/// 名前の重なりを避ける（置き場は `m2::layersets`。レイヤーセットの名前を `AppState` の外で決める所と同じ物を使う）。
+pub use crate::m2::layersets::unique_name;
 
 /// マテリアルから作るセットの名前（Unity 版と同じく、マテリアルの名前。マテリアルの無いスロットは Unassigned）。
 pub fn name_for(key: &LinkKey) -> String {
@@ -1399,6 +1389,52 @@ impl AppState {
                     self.set_edit_mask(false);
                 }
             }
+            LayerSetEdit::ToggleChannel { set, channel } => {
+                self.toggle_set_channel(set, channel)?
+            }
+        }
+        Ok(())
+    }
+
+    /// レイヤーセットの組のチャンネルを 1 つ入切する（1 回の取り消し）。外したチャンネルの出力の割り当てがこのレイヤーセットだったなら、core が
+    /// 割り当てを外すので知らせる。今のレイヤーセットの描く・見せるチャンネルを外したときは、組に残ったチャンネルへ替える（`select_layer_set`）。
+    fn toggle_set_channel(&mut self, set: LayerSetId, channel: Channel) -> Result<(), CoreError> {
+        let doc = &self.session.doc;
+        let bits = doc.layer_set_channels(set)?;
+        let routed = doc.channel_output(channel)? == Some(set);
+        self.session
+            .doc
+            .set_layer_set_channels(set, bits ^ channel.bit())?;
+        let lang = self.lang;
+        if bits & channel.bit() != 0 && routed {
+            let doc = &self.session.doc;
+            let text = lang.f(
+                "layersets-the-output-of-was-removed",
+                &[
+                    ("set", &lang.quote(&set_label(lang, doc, set))),
+                    (
+                        "channel",
+                        &lang.quote(&m2::channel_name(lang, doc, channel)),
+                    ),
+                ],
+            );
+            self.warn(Source::Layer, text);
+        }
+        // 組を空にするのは断らない（下書きのレイヤーセットのため）。そのレイヤーセットでは何も描けない・見えないので知らせる
+        if self.session.doc.layer_set_channels(set)? == 0 {
+            let doc = &self.session.doc;
+            let text = lang.f(
+                "layersets-the-set-has-no-channels",
+                &[("set", &lang.quote(&set_label(lang, doc, set)))],
+            );
+            self.warn(Source::Layer, text);
+        }
+        if self.layer_set() == set {
+            let left = self.session.doc.layer_set_channels(set)?;
+            if left & self.m2.paint_channel.bit() == 0 || left & self.m2.display_channel.bit() == 0
+            {
+                self.select_layer_set(set);
+            }
         }
         Ok(())
     }
@@ -1415,13 +1451,9 @@ impl AppState {
             ))
     }
 
-    /// 文書の中のほかのレイヤーセットと名前が重ならない（大文字小文字を区別しない）ように、要れば「 2」「 3」… を付けた名前。
+    /// 今の文書の中で重ならないレイヤーセットの名前（[`crate::m2::layersets::unique_layer_set_name_in`]）。
     pub(crate) fn unique_layer_set_name(&self, base: &str) -> String {
-        let doc = &self.session.doc;
-        let names: Vec<String> = (0..doc.layer_sets().len())
-            .map(|i| display_name(self.lang, doc, i))
-            .collect();
-        unique_name(base, names.iter().map(String::as_str))
+        crate::m2::layersets::unique_layer_set_name_in(self.lang, &self.session.doc, base)
     }
 }
 

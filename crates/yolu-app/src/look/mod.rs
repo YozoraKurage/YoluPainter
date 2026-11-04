@@ -16,6 +16,7 @@ use yolu_core::{
 };
 
 use crate::lang::Lang;
+use crate::m2::layersets::add_channel_in_own_set;
 use crate::notice::Source;
 use crate::state::AppState;
 use liltoon::RenderMode;
@@ -352,6 +353,8 @@ pub fn slot_channel(doc: &Document, slot: &str) -> Option<Channel> {
 
 /// スロットを描く口: 割り当てがあればそのチャンネルを返す（文書を変えない）。無ければ、そのスロットを描くチャンネルを作って
 /// 割り当て（ひな形と同じ作り方。1 回の Undo）、そのチャンネルを返す。見た目が lilToon でなければ lilToon にもする（同じ 1 回）。
+/// 作るチャンネルは、そのチャンネルだけを扱う同じ名前のレイヤーセットから出力する（[`add_channel_in_own_set`]。ほかのレイヤーセットの
+/// レイヤーがマスクに効かない）。
 pub fn paint_slot(doc: &mut Document, slot: &str, lang: Lang) -> Result<Channel, CoreError> {
     if let Some(c) = slot_channel(doc, slot) {
         if doc.drawn_look().kind == LookKind::LilToon {
@@ -368,10 +371,14 @@ pub fn paint_slot(doc: &mut Document, slot: &str, lang: Lang) -> Result<Channel,
             Some(c) => c,
             None => {
                 let name = free_name(d, &spec.name);
-                let c = d.add_channel(ChannelInfo {
-                    name,
-                    ..spec.clone()
-                })?;
+                let (c, _) = add_channel_in_own_set(
+                    d,
+                    ChannelInfo {
+                        name,
+                        ..spec.clone()
+                    },
+                    lang,
+                )?;
                 look.textures.insert(slot.into(), TextureSource::Channel(c));
                 c
             }
@@ -400,6 +407,7 @@ fn ensure_liltoon(d: &Document, look: &mut MaterialLook) {
 /// - `plane` が Some(k): 成分ごとの詰め合わせの k 番目の成分だけを、新しいスカラーのチャンネルにする（名前は「描く口と同じ名前 R/G/B/A」。
 ///   何も描いていない所は、置き換える成分が 0・1 ならその値、チャンネルならスロットの既定のその成分）。詰め合わせでないスロットは断る。
 ///
+/// 作るチャンネルは、どれもそのチャンネルだけを扱う同じ名前のレイヤーセットから出力する（[`add_channel_in_own_set`]）。
 /// 3D ビューが持つユーザーチャンネルの上限（16）は作る側では見ない（超えた分は、欄が「描かない」の印を出す）。作ったチャンネルを返す。
 pub fn new_slot_channel(
     doc: &mut Document,
@@ -446,10 +454,14 @@ pub fn new_slot_channel(
         let mut look = d.look().clone();
         ensure_liltoon(d, &mut look);
         let name = free_name(d, &spec.name);
-        let channel = d.add_channel(ChannelInfo {
-            name,
-            ..spec.clone()
-        })?;
+        let (channel, _) = add_channel_in_own_set(
+            d,
+            ChannelInfo {
+                name,
+                ..spec.clone()
+            },
+            lang,
+        )?;
         let source = match (plane, planes) {
             (Some(k), Some(mut p)) => {
                 p[k as usize] = PlaneSource::Channel {
@@ -510,7 +522,8 @@ fn free_name(doc: &Document, base: &str) -> String {
 
 /// lilToon のひな形を当てる（1 回の Undo）。lilToon にして既定の割り当てを足し、入にしている機能（影・リム・マットキャップ・発光・
 /// 輪郭線）のマスクのスロットが空なら、ユーザーチャンネルを作って割り当てる。影の SDF のときは、影の強度マスクを左右の 2 つの
-/// チャンネル（R・G）の詰め合わせにする。機能が 1 つも入でなければ影を入にする。作ったチャンネルの数を返す。
+/// チャンネル（R・G）の詰め合わせにする。機能が 1 つも入でなければ影を入にする。作ったチャンネルは 1 つずつ、そのチャンネルだけを扱う
+/// 同じ名前のレイヤーセットから出力する（[`add_channel_in_own_set`]）。作ったチャンネルの数を返す。
 pub fn apply_template(doc: &mut Document, lang: Lang) -> Result<usize, CoreError> {
     doc.batch(|d| {
         // 入にしている機能は描く見た目（Unity から受けた値を含む）で見て、割り当ては利用者の設定に書く
@@ -538,12 +551,13 @@ pub fn apply_template(doc: &mut Document, lang: Lang) -> Result<usize, CoreError
             |d: &mut Document, name: &str, kind: ChannelKind, space: ColorSpace, default: Rgba8| {
                 let name = free_name(d, name);
                 made += 1;
-                d.add_channel(ChannelInfo {
+                let info = ChannelInfo {
                     name,
                     kind,
                     color_space: space,
                     default,
-                })
+                };
+                add_channel_in_own_set(d, info, lang).map(|(c, _)| c)
             };
         for mask in TEMPLATE {
             let on = if mask.toggle == "outline" {
@@ -551,9 +565,10 @@ pub fn apply_template(doc: &mut Document, lang: Lang) -> Result<usize, CoreError
             } else {
                 liltoon::on(&on_now, mask.toggle)
             };
-            let has_image = d
-                .received_look()
-                .is_some_and(|r| r.images.contains_key(mask.slot));
+            // Unity にテクスチャがあるスロット（絵を受けた・読めなくて受けられなかった）には、空のチャンネルを割り当てない
+            let has_image = d.received_look().is_some_and(|r| {
+                r.images.contains_key(mask.slot) || r.missing.contains_key(mask.slot)
+            });
             if !on
                 || look.textures.contains_key(mask.slot)
                 || drawn.textures.contains_key(mask.slot)
@@ -630,6 +645,65 @@ fn set_render_mode(look: &mut MaterialLook, drawn: &MaterialLook, mode: RenderMo
 }
 
 impl AppState {
+    /// 文書のチャンネルとレイヤーセットの数（lilToon からチャンネルを足す前に控え、[`warn_channels_without_set`](Self::warn_channels_without_set) に渡す）。
+    fn channel_and_set_counts(&self) -> (usize, usize) {
+        let doc = &self.session.doc;
+        (doc.channels().len(), doc.layer_sets().len())
+    }
+
+    /// 足したチャンネルより足したレイヤーセットが少なければ（レイヤーセットの上限で、自分のレイヤーセットを作れずに足したチャンネルがある）知らせる。
+    fn warn_channels_without_set(&mut self, (channels, sets): (usize, usize)) {
+        let doc = &self.session.doc;
+        let made_channels = doc.channels().len().saturating_sub(channels);
+        let made_sets = doc.layer_sets().len().saturating_sub(sets);
+        if made_sets < made_channels {
+            self.warn_no_room_for_channel_set(Source::Material);
+        }
+    }
+
+    /// lilToon のスロットからチャンネルを足す操作（描く口・新しいチャンネル・ひな形）を当てる。ほかの操作なら何もせず false。
+    fn look_channel_op(&mut self, op: &LookOp) -> bool {
+        let lang = self.lang;
+        let counts = self.channel_and_set_counts();
+        let before = self.session.doc.revision();
+        let doc = &mut self.session.doc;
+        let result = match op {
+            LookOp::PaintSlot(slot) => paint_slot(doc, slot, lang).map(|c| (Some(c), None)),
+            LookOp::NewChannel { slot, plane } => {
+                new_slot_channel(doc, slot, *plane, lang).map(|c| (Some(c), None))
+            }
+            LookOp::Template => apply_template(doc, lang).map(|made| (None, Some(made))),
+            _ => return false,
+        };
+        match result {
+            Ok((channel, made)) => {
+                if matches!(op, LookOp::PaintSlot(_)) {
+                    self.session.mark_modified_if_changed(before);
+                } else {
+                    self.session.mark_modified();
+                }
+                self.warn_channels_without_set(counts);
+                if let Some(channel) = channel {
+                    // 足したチャンネルのレイヤーセットへ移る（`UiOp::PaintChannel`）
+                    self.m2_ui(crate::m2::UiOp::PaintChannel(channel));
+                }
+                if let Some(made) = made {
+                    let text = lang.f(
+                        "look-applied-the-liltoon-template-channels",
+                        &[("made", &made)],
+                    );
+                    self.info(Source::Material, text);
+                }
+            }
+            Err(e) => self.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::Material,
+                lang.core_error(&e),
+            ),
+        }
+        true
+    }
+
     /// 見た目の設定の操作を当てる（`Action::Look`）。
     pub fn look_apply(&mut self, op: LookOp) {
         if self.is_stroking() {
@@ -639,56 +713,7 @@ impl AppState {
             );
             return;
         }
-        if let LookOp::PaintSlot(slot) = op {
-            let lang = self.lang;
-            let before = self.session.doc.revision();
-            match paint_slot(&mut self.session.doc, slot, lang) {
-                Ok(channel) => {
-                    self.session.mark_modified_if_changed(before);
-                    self.m2_ui(crate::m2::UiOp::PaintChannel(channel));
-                }
-                Err(e) => self.notify(
-                    crate::notice::Kind::of_core(&e),
-                    Source::Material,
-                    self.lang.core_error(&e),
-                ),
-            }
-            return;
-        }
-        if let LookOp::NewChannel { slot, plane } = op {
-            let lang = self.lang;
-            match new_slot_channel(&mut self.session.doc, slot, plane, lang) {
-                Ok(channel) => {
-                    self.session.mark_modified();
-                    self.m2_ui(crate::m2::UiOp::PaintChannel(channel));
-                }
-                Err(e) => self.notify(
-                    crate::notice::Kind::of_core(&e),
-                    Source::Material,
-                    self.lang.core_error(&e),
-                ),
-            }
-            return;
-        }
-        if op == LookOp::Template {
-            let lang = self.lang;
-            match apply_template(&mut self.session.doc, lang) {
-                Ok(made) => {
-                    self.session.mark_modified();
-                    self.info(
-                        Source::Material,
-                        lang.f(
-                            "look-applied-the-liltoon-template-channels",
-                            &[("made", &made)],
-                        ),
-                    );
-                }
-                Err(e) => self.notify(
-                    crate::notice::Kind::of_core(&e),
-                    Source::Material,
-                    self.lang.core_error(&e),
-                ),
-            }
+        if self.look_channel_op(&op) {
             return;
         }
         let mut look = self.session.doc.look().clone();

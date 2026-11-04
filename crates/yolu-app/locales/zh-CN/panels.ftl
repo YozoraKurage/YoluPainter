@@ -798,7 +798,6 @@ panels-hidden-in-the-3d-view-tip = 在 3D 视图中隐藏
 panels-not-shown-in-the-3d-tip = 未在 3D 视图中显示：超过 GPU 内存上限（距离当前纹理集最远的纹理集会先被省略；纹理与导出结果不受影响）
 panels-baking = 正在烘焙
 panels-this-texture-set-has-not = 此纹理集尚未烘焙
-panels-add-an-empty-texture-set-tip = 添加空的纹理集（大小与通道与此纹理集相同）
 panels-a-project-keeps-at-least-tip = 项目至少需要保留一个纹理集
 panels-remove-this-texture-set-asked-tip = 移除此纹理集（会先确认；其中的工作内容会丢失）
 panels-project-configuration-tip = 项目设置…

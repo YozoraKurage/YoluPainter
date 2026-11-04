@@ -8,8 +8,8 @@
 //! - 成分ごとの詰め合わせ: R・G・B・A をそれぞれの元から（0・1・チャンネルの成分）。リニアの画像。
 //!
 //! テンプレートの画像と同じものになるスロット（メインカラー = Color、ノーマルマップ = Normal、発光 = Emission）と、プロジェクトの画像を
-//! 割り当てたスロット（マットキャップの絵）は書かない。どのレイヤーも使っていないチャンネルだけを読むスロットも書かない（テンプレートの
-//! 画像と同じ決まり）。
+//! 割り当てたスロット（マットキャップの絵）は書かない。どのレイヤーも使っていないチャンネルだけを読むスロットも、チャンネルを有効にした
+//! だけで何も描いていない（空のレイヤーだけの）スロットも書かない（Unity にある画像を既定値で置き換える候補を作らない）。
 
 use yolu_core::export::{uses, ExportError, ExportImage, ExportImageKind, ExportScalar};
 use yolu_core::look::{LookKind, PlaneSource, TextureSource};
@@ -47,7 +47,12 @@ pub fn extra_images(doc: &Document) -> Vec<(&'static str, ExportImage)> {
             .into_iter()
             .filter(|c| doc.channel_info(*c).is_some())
             .collect();
-        if !channels.iter().any(|c| uses(doc, *c)) {
+        // 描いたスロットだけ書く: チャンネルを有効にしただけの空のレイヤー（ひな形が作る）の画像は、Unity にある本物の画像を既定値で
+        // 置き換える候補になるので書かない
+        if !channels
+            .iter()
+            .any(|c| uses(doc, *c) && has_drawn_content(doc, *c))
+        {
             continue;
         }
         let image = match source {
@@ -67,6 +72,14 @@ pub fn extra_images(doc: &Document) -> Vec<(&'static str, ExportImage)> {
         out.push((slot.name, image));
     }
     out
+}
+
+/// そのチャンネルに描いた中身があるか（Normal は、Height から作る設定なら Height の中身も）。
+fn has_drawn_content(doc: &Document, channel: Channel) -> bool {
+    doc.channel_output_has_content(channel)
+        || (channel == Channel::Normal
+            && doc.derives_normal()
+            && doc.channel_output_has_content(Channel::Height))
 }
 
 fn linear(suffix: &str) -> ExportImage {
@@ -383,14 +396,12 @@ mod tests {
         // 描く口が作るチャンネル（リムシェードのマスク・メインカラー 2nd の色のレイヤー）も、書き出しの lilToon の詰め方に入る
         let mut doc = Document::new(4, 2).unwrap();
         crate::look::apply_new_set_look(&mut doc);
-        let layer = doc.add_layer("a").unwrap();
-        let rim =
-            crate::look::paint_slot(&mut doc, "_RimShadeMask", crate::lang::Lang::Ja).unwrap();
+        crate::look::paint_slot(&mut doc, "_RimShadeMask", crate::lang::Lang::Ja).unwrap();
         let decal =
             crate::look::paint_slot(&mut doc, "_Main2ndTex", crate::lang::Lang::Ja).unwrap();
-        for c in [rim, decal] {
-            doc.set_channel_enabled(layer, c, true).unwrap();
-        }
+        // 描く口が作るチャンネルは、そのチャンネルだけを扱う同じ名前のレイヤーセット（チャンネルを有効にした空のレイヤーつき）から出す
+        let set = doc.channel_output(decal).unwrap().unwrap();
+        let layer = crate::m2::layersets::top_layer_of(&doc, set).unwrap();
         doc.set_channel_pixel(layer, decal, 0, 0, Rgba8::new(255, 0, 0, 255))
             .unwrap();
         let extra = extra_images(&doc);

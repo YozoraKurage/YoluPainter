@@ -252,6 +252,27 @@ fn an_unreadable_look_opens_standard_says_so_and_stays_in_the_file() {
     assert_eq!(archive.entries()[&name].to_vec(), newer);
 }
 
+fn own_layer(s: &AppState, channel: Channel) -> yolu_core::LayerId {
+    let set = s.doc().channel_output(channel).unwrap().unwrap();
+    yolu_app::m2::layersets::top_layer_of(s.doc(), set).unwrap()
+}
+
+fn export_files(s: &mut AppState, name: &str) -> (Dir, Vec<String>) {
+    let dir = Dir::new(name);
+    s.act(Action::Export(ExportAction::TemplateTo {
+        id: "liltoon".into(),
+        dir: dir.0.clone(),
+        sets: None,
+    }));
+    s.wait_export();
+    let mut files: Vec<String> = std::fs::read_dir(&dir.0)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    files.sort();
+    (dir, files)
+}
+
 #[test]
 fn the_liltoon_template_export_adds_the_slot_images() {
     let dir = Dir::new("export");
@@ -261,8 +282,8 @@ fn the_liltoon_template_export_adds_the_slot_images() {
         TextureSource::Channel(c) => c,
         _ => unreachable!(),
     };
-    let layer = s.doc_mut().add_layer("マスク").unwrap();
-    s.doc_mut().set_channel_enabled(layer, mask, true).unwrap();
+    // ひな形は、足したチャンネルごとに同じ名前のレイヤーセット（そのチャンネルを有効にした空のレイヤー 1 枚つき）を作る。マスクはそのレイヤーに描く
+    let layer = own_layer(&s, mask);
     s.doc_mut()
         .set_channel_pixel(layer, mask, 0, 0, Rgba8::new(0, 0, 0, 255))
         .unwrap();
@@ -289,7 +310,7 @@ fn the_liltoon_template_export_adds_the_slot_images() {
         files.contains(&"Texture_ShadowStrengthMask.png".to_string()),
         "{files:?}"
     );
-    // 使っていないチャンネル（影色・AO）のスロットは書かない
+    // 何も描いていないチャンネル（影色・AO。ひな形が作った空のレイヤーのまま）のスロットは書かない（Unity の画像を既定値で置き換えない）
     assert!(
         !files
             .iter()
@@ -306,6 +327,89 @@ fn the_liltoon_template_export_adds_the_slot_images() {
         image.get_pixel(w - 1, 0).0,
         [255, 255, 255, 255],
         "何も描いていない所は既定（白）"
+    );
+}
+
+#[test]
+fn the_template_alone_writes_no_slot_image_for_channels_nobody_drew() {
+    // ひな形が作る空のレイヤーのチャンネルは、有効の印があるだけ。Unity にある本物のマスクを白で置き換える画像を書かない
+    let mut s = lil_state();
+    s.doc_mut()
+        .add_fill_layer(
+            "色",
+            &[(Channel::Color, Rgba8::new(200, 100, 50, 255))],
+            None,
+        )
+        .unwrap();
+    let (_dir, files) = export_files(&mut s, "nothing-drawn");
+    assert!(files.contains(&"Texture_Main.png".to_string()), "{files:?}");
+    assert!(
+        !files.iter().any(|f| f.contains("Shadow")),
+        "描いていないスロットは書かない: {files:?}"
+    );
+}
+
+#[test]
+fn drawing_a_fill_value_into_a_template_channel_writes_its_slot_image() {
+    let mut s = lil_state();
+    let TextureSource::Channel(c) = s.doc().look().textures["_ShadowBorderMask"] else {
+        unreachable!()
+    };
+    let layer = own_layer(&s, c);
+    s.doc_mut()
+        .set_channel_pixel(layer, c, 1, 1, Rgba8::new(0, 0, 0, 255))
+        .unwrap();
+    let (_dir, files) = export_files(&mut s, "drawn-border");
+    assert!(
+        files.contains(&"Texture_ShadowBorderMask.png".to_string()),
+        "{files:?}"
+    );
+    assert!(
+        !files.iter().any(|f| f.contains("ShadowStrength")),
+        "描いていない影の強度は書かない: {files:?}"
+    );
+}
+
+#[test]
+fn the_template_skips_slots_unity_has_a_texture_for_even_when_it_could_not_be_read() {
+    // Unity に絵がある（受けた）・読めなかった（OverBudget・Unreadable・NotAFile）スロットは、チャンネルも画像も作らない
+    let mut s = AppState::new(32, 32);
+    let mut r = received_from_unity();
+    r.look
+        .properties
+        .insert("_UseRim".into(), LookValue::Float(1.0));
+    r.missing
+        .insert("_ShadowBorderMask".into(), MissingImage::Unreadable);
+    r.missing
+        .insert("_RimColorTex".into(), MissingImage::NotAFile);
+    r.images.insert(
+        "_ShadowStrengthMask".into(),
+        std::sync::Arc::new(ReceivedImage {
+            width: 2,
+            height: 2,
+            srgb: false,
+            pixels: [[255u8, 255, 255, 255]; 4].concat().into(),
+        }),
+    );
+    s.doc_mut().set_received_look(Some(r)).unwrap();
+    s.act(Action::Look(LookOp::Template));
+    for slot in [
+        "_ShadowColorTex",
+        "_ShadowBorderMask",
+        "_RimColorTex",
+        "_ShadowStrengthMask",
+    ] {
+        assert!(
+            !s.doc().look().textures.contains_key(slot),
+            "{slot} にチャンネルを割り当てない"
+        );
+    }
+    let (_dir, files) = export_files(&mut s, "received-slots");
+    assert!(
+        !files
+            .iter()
+            .any(|f| { f.contains("Shadow") || f.contains("Rim") }),
+        "{files:?}"
     );
 }
 

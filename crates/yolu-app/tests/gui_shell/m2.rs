@@ -152,7 +152,8 @@ fn the_layer_menu_moves_a_layer_up_and_down_with_one_undo_each() {
 
 #[test]
 fn layer_tree_collapses_and_drag_moves_a_layer_into_a_group() {
-    let mut h = app(1280.0, 800.0, 128);
+    // レイヤーのパネルの頭（レイヤーセットのドロップダウン）の下に 3 行が入る高さ
+    let mut h = app(1280.0, 900.0, 128);
     apply(&mut h, Action::M2(Edit::GroupSelected)); // グループ 1 の中にレイヤー 1
     apply(&mut h, Action::NewLayer); // グループの上にレイヤー 2
     let group = h.doc().layers().iter().find(|l| l.is_group()).unwrap().id();
@@ -858,6 +859,44 @@ fn snapshot_channels_panel() {
     );
     apply(&mut h, Action::M2Ui(UiOp::PaintChannel(Channel::Roughness)));
     common::shot::window(&mut h, "m2_channels_panel");
+}
+
+/// レイヤーセットが 2 つ以上の文書で、行が狭く出力元の名前が入らなくても、出力の割り当てを替える箱（アイコンだけ）がどの行にも出る。
+/// 押すと名前つきと同じ一覧が開く。出力が外れているチャンネルは、アイコンが外れた印になる。
+#[test]
+fn snapshot_channels_panel_with_two_layer_sets() {
+    for lang in Lang::JA_EN {
+        let mut h = app(1280.0, 800.0, 256);
+        apply(&mut h, Action::M2Ui(UiOp::Language(lang)));
+        click_tab(&mut h, Tab::Channels);
+        apply(
+            &mut h,
+            Action::M2(Edit::AddChannel(yolu_app::m2::new_channel_info(
+                lang.pick("AO（遮蔽）", "Ambient Occlusion").into(),
+                yolu_app::engine::ChannelKind::Scalar,
+            ))),
+        );
+        assert_eq!(h.doc().layer_sets().len(), 2);
+        // 出力を外したチャンネルを 1 つ作る（外れた印）
+        let ao = h.m2().paint_channel;
+        apply(
+            &mut h,
+            Action::M2(Edit::LayerSets(
+                yolu_app::m2::layersets::LayerSetEdit::Output {
+                    channel: ao,
+                    set: None,
+                },
+            )),
+        );
+        apply(&mut h, Action::M2Ui(UiOp::PaintChannel(Channel::Roughness)));
+        h.run();
+        let panel = common::shot::group(&h, Tab::Channels);
+        common::shot::clean_region(
+            &mut h,
+            &format!("m2_channels_panel_two_sets_{}", lang.pick("ja", "en")),
+            panel,
+        );
+    }
 }
 
 /// 見た目を lilToon にして、影・発光・マットキャップ・リムライト・ラメを入にしてひな形のチャンネルを作り、ラメだけを切る。どのスロットも

@@ -798,7 +798,6 @@ panels-hidden-in-the-3d-view-tip = Hidden in the 3D View
 panels-not-shown-in-the-3d-tip = Not shown in the 3D View: over the GPU memory budget (the sets farthest from the current one are left out; the texture and exports are unchanged)
 panels-baking = Baking
 panels-this-texture-set-has-not = This texture set has not been baked yet
-panels-add-an-empty-texture-set-tip = Add an empty texture set (same size and channels as this one)
 panels-a-project-keeps-at-least-tip = A project keeps at least one texture set
 panels-remove-this-texture-set-asked-tip = Remove this texture set (asked first; its work is lost)
 panels-project-configuration-tip = Project Configuration…

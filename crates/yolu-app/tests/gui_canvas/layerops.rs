@@ -1970,7 +1970,8 @@ fn headless_a_project_with_layer_locks_saves_and_opens_with_the_same_locks() {
 
 /// 4 つのレイヤー（下から 1 から 4）。2 と 3 を選び、1 は自分のロック、4 は上のグループのロックが効く。
 fn showcase(lang: Lang) -> Harness<'static, YoluApp> {
-    let mut h = app(1280.0, 800.0, 128);
+    // レイヤーのパネルの頭（レイヤーセットのドロップダウン）の下に 4 行が入る高さ
+    let mut h = app(1280.0, 900.0, 128);
     h.app_mut().set_language(lang);
     let layers = named_layers(&mut h, 4);
     {

@@ -128,6 +128,8 @@ pub enum Popup {
     ReferMode,
     /// 3D の塗りのアライメント（カメラ・Tangent | Wrap）。
     ProjectionAlignment,
+    /// テクスチャセットのパネルの「＋」（テクスチャセットを追加・レイヤーセットを追加）。
+    AddSet,
 }
 
 fn tips(
@@ -511,10 +513,20 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         Popup::PathTip => crate::panels::path_props::tip_entries(app),
         Popup::PathPresets => crate::panels::path_props::preset_entries(app),
         Popup::PathAntiAlias => crate::panels::path_props::anti_alias_entries(app),
+        Popup::LayerSet | Popup::LayerSetOutput(_) | Popup::LayerSetContext(_) | Popup::AddSet => {
+            layer_set_entries(app, popup, free)
+        }
+        Popup::ChannelContext(channel) => channel_context_entries(app, channel, free),
+    }
+}
+
+/// レイヤーセットのポップアップ（`entries` の続き）: 頭のドロップダウン・出力元・行の右クリック・テクスチャセットのパネルの「＋」。
+fn layer_set_entries(app: &AppState, popup: Popup, free: bool) -> Vec<Entry<Action>> {
+    match popup {
         Popup::LayerSet => layer_set_pick_entries(app, free),
         Popup::LayerSetOutput(channel) => layer_set_output_entries(app, channel),
         Popup::LayerSetContext(set) => layer_set_context_entries(app, set),
-        Popup::ChannelContext(channel) => channel_context_entries(app, channel, free),
+        _ => crate::panels::texture_sets::add_entries(app, free),
     }
 }
 
@@ -621,7 +633,7 @@ fn layer_set_output_entries(app: &AppState, channel: Channel) -> Vec<Entry<Actio
     entries
 }
 
-/// テクスチャセットのパネルのレイヤーセットの行の右クリック: 新しいレイヤーセット・複製・名前の変更・削除（最後の 1 つは消せない）。
+/// テクスチャセットのパネルのレイヤーセットの行の右クリック: 新しいレイヤーセット・複製・名前の変更・チャンネル ▸・削除（最後の 1 つは消せない）。
 fn layer_set_context_entries(app: &AppState, set: LayerSetId) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = app.can_edit();
@@ -642,6 +654,7 @@ fn layer_set_context_entries(app: &AppState, set: LayerSetId) -> Vec<Entry<Actio
             Action::M2Ui(UiOp::RenameLayerSet(set)),
         )
         .enabled(free),
+        layer_set_channels_submenu(app, set),
         Entry::Separator,
         Entry::item(
             lang.t("m2_menu-delete"),
@@ -649,6 +662,26 @@ fn layer_set_context_entries(app: &AppState, set: LayerSetId) -> Vec<Entry<Actio
         )
         .enabled(free && several),
     ]
+}
+
+/// レイヤーセットの「チャンネル ▸」: 文書のチャンネルごとに、組に入っているかの印。押すとそのチャンネルを 1 つ入切する（1 回の取り消し）。
+fn layer_set_channels_submenu(app: &AppState, set: LayerSetId) -> Entry<Action> {
+    let doc = &app.session.doc;
+    let free = app.can_edit();
+    let bits = doc.layer_set_channels(set).unwrap_or(0);
+    let entries = doc
+        .channels()
+        .into_iter()
+        .map(|channel| {
+            Entry::item(
+                m2::channel_name(app.lang, doc, channel),
+                layer_set_edit(LayerSetEdit::ToggleChannel { set, channel }),
+            )
+            .checked(bits & channel.bit() != 0)
+            .enabled(free)
+        })
+        .collect();
+    Entry::submenu(app.lang.t("panels-channels"), entries).enabled(free)
 }
 
 /// レイヤーの右クリックの「レイヤーセットへ移す ▸」（レイヤーセットが 2 つ以上あるときだけ。移し先は、今のレイヤーのレイヤーセット以外）。

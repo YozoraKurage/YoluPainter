@@ -12,9 +12,10 @@
 use egui::{pos2, vec2, Color32, Rect, Sense, Ui, WidgetInfo, WidgetType};
 
 use crate::engine::LayerSetId;
-use crate::m2::UiOp;
+use crate::m2::layersets::LayerSetEdit;
+use crate::m2::{Edit, UiOp};
 use crate::state::{Action, AppState, OpenPopup, PopupKind};
-use crate::ui::menu::{context_anchor, PopupState};
+use crate::ui::menu::{context_anchor, Entry, PopupState};
 use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align};
@@ -121,7 +122,7 @@ pub fn bake_entrance(app: &AppState) -> BakeEntrance {
 enum ListRow {
     /// テクスチャセット（並びの番号）。
     Texture(usize),
-    /// テクスチャセット `texture` の、`index` 番目のレイヤーセット（そのテクスチャセットにレイヤーセットが 2 つ以上あるときだけ）。
+    /// テクスチャセット `texture` の、`index` 番目のレイヤーセット（1 つだけでも出す）。
     LayerSet { texture: usize, index: usize },
 }
 
@@ -130,16 +131,9 @@ fn list_rows(app: &AppState) -> Vec<ListRow> {
     for texture in 0..app.session.sets.len() {
         rows.push(ListRow::Texture(texture));
         let n = app.set_doc(texture).layer_sets().len();
-        if n >= 2 {
-            rows.extend((0..n).map(|index| ListRow::LayerSet { texture, index }));
-        }
+        rows.extend((0..n).map(|index| ListRow::LayerSet { texture, index }));
     }
     rows
-}
-
-/// そのテクスチャセットの行が「選んでいる行」か（今のセットで、レイヤーセットの行が無いとき。レイヤーセットの行があるときは、そちらを選ぶ）。
-fn texture_row_selected(app: &AppState, index: usize) -> bool {
-    index == app.session.sets.current_index() && app.set_doc(index).layer_sets().len() < 2
 }
 
 pub fn show(ui: &mut Ui, app: &mut AppState) {
@@ -152,7 +146,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     );
     let list = Rect::from_min_max(r.min, pos2(r.right(), toolbar.top()));
     w::fill(ui.painter(), list, t::CONTROL_BG);
-    // 行: テクスチャセットの行（レイヤーセットが 2 つ以上あるセットは、その下にレイヤーセットの行を字下げで並べる）
+    // 行: テクスチャセットの行（その下に、レイヤーセットの行を字下げで並べる。1 つでも出す）
     let rows = list_rows(app);
     let content = rows.len() as f32 * ROW_HEIGHT;
     let bar = Scroll::begin(ui, list, content, &mut app.ui.set_scroll);
@@ -202,19 +196,24 @@ fn toolbar_buttons(ui: &mut Ui, app: &mut AppState, bar: Rect) {
         |x: f32| Rect::from_min_size(pos2(x, bar.top() + 2.0), vec2(26.0, bar.height() - 4.0));
     let mut action = None;
     let mut action_bake = false;
+    // 追加: メニュー（テクスチャセットを追加・レイヤーセットを追加。上限の項目は押せない）
+    let add = button(bar.left() + 4.0);
     if w::icon_button(
         ui,
-        button(bar.left() + 4.0),
+        add,
         "set.add",
         "add",
-        lang.t("panels-add-an-empty-texture-set-tip"),
+        lang.t("layersets-add-tip"),
         false,
-        free && app.session.sets.len() < crate::newproject::MAX_SETS,
+        free,
         16.0,
     )
     .clicked()
     {
-        action = Some(crate::newproject::NpAction::AddSet);
+        app.ui.popup = Some(OpenPopup {
+            kind: PopupKind::M2(crate::m2_menu::Popup::AddSet),
+            state: PopupState::new(ui.ctx(), add),
+        });
     }
     let only = app.session.sets.len() <= 1;
     if w::icon_button(
@@ -286,13 +285,31 @@ fn toolbar_buttons(ui: &mut Ui, app: &mut AppState, bar: Rect) {
     }
 }
 
+/// テクスチャセットのパネルの「＋」: テクスチャセットを追加・レイヤーセットを追加（今のテクスチャセットに、文書の標準のチャンネルの組で）。
+/// 上限に達した項目は押せない。
+pub fn add_entries(app: &AppState, free: bool) -> Vec<Entry<Action>> {
+    let lang = app.lang;
+    vec![
+        Entry::item(
+            lang.t("layersets-add-texture-set"),
+            Action::Project(crate::newproject::NpAction::AddSet),
+        )
+        .enabled(free && app.session.sets.len() < crate::newproject::MAX_SETS),
+        Entry::item(
+            lang.t("layersets-add-layer-set"),
+            Action::M2(Edit::LayerSets(LayerSetEdit::New)),
+        )
+        .enabled(app.can_edit() && app.session.doc.layer_sets().len() < yolu_core::MAX_LAYER_SETS),
+    ]
+}
+
 /// 行の名前（名前の変更中は入力欄）。複数のマテリアルを持つセットは、名前の右にマテリアルの名前を薄く出す。
 fn set_name(
     ui: &mut Ui,
     app: &mut AppState,
     list: Rect,
     name_rect: Rect,
-    (uid, name, selected, visible): (u32, &str, bool, bool),
+    (uid, name, visible): (u32, &str, bool),
     material_names: &[String],
 ) {
     let painter = ui.painter_at(list);
@@ -307,13 +324,7 @@ fn set_name(
             app.ui.renaming_set = None;
         }
     } else {
-        let color = if selected {
-            Color32::WHITE
-        } else if !visible {
-            t::TEXT_DIM
-        } else {
-            t::TEXT
-        };
+        let color = if !visible { t::TEXT_DIM } else { t::TEXT };
         let shown = w::fit(&painter, name, name_rect.width(), t::LABEL);
         w::text(
             &painter,
@@ -367,7 +378,6 @@ fn set_row(
     let (uid, name, visible) = (set.uid, set.name.clone(), set.visible);
     let material_refs = set.materials.clone();
     let material_names = app.bound_material_names(index);
-    let selected = texture_row_selected(app, index);
     let doc = app.set_doc(index);
     let resolution = if doc.width() == doc.height() {
         doc.width().to_string()
@@ -381,15 +391,9 @@ fn set_row(
         ui.make_persistent_id(("set.row", uid)),
         if free { Sense::click() } else { Sense::hover() },
     );
+    // 選んでいる印は、いつも下のレイヤーセットの行に付く（テクスチャセットの行には付けない）
     let painter = ui.painter_at(list);
-    if selected {
-        w::fill(&painter, row, t::ACCENT_SOFT);
-        w::fill(
-            &painter,
-            Rect::from_min_size(row.min, vec2(3.0, row.height())),
-            t::ACCENT,
-        );
-    } else if response.hovered() {
+    if response.hovered() {
         w::fill(&painter, row, t::CONTROL_HOVER);
     }
     w::hline(
@@ -479,7 +483,7 @@ fn set_row(
         app,
         list,
         name_rect,
-        (uid, &name, selected, visible),
+        (uid, &name, visible),
         &material_names,
     );
     // 行の上のツールチップ: マテリアル（詳しく。状態のアイコンの上ではアイコンの説明が先に出る）
@@ -489,8 +493,7 @@ fn set_row(
         .collect::<Vec<_>>()
         .join("\n");
     let response = response.on_hover_text(detail);
-    response
-        .widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, free, selected, &name));
+    response.widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, free, false, &name));
 }
 
 /// レイヤーセットの行の左の字下げ（└ の線の位置）と、名前の始まり。

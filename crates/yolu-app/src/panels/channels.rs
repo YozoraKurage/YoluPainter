@@ -25,11 +25,16 @@ const KIND_PAD: f32 = 32.0;
 
 /// まとまりの見出しの高さ。
 const GROUP_HEIGHT: f32 = 24.0;
-/// レイヤーセットが 2 つ以上あるとき、チャンネルの名前の欄の幅（名前の右に出力元のレイヤーセットのドロップダウンが入る）と、
+/// チャンネルの名前の欄の幅（名前の右に出力元のレイヤーセットのドロップダウンが入る）と、
 /// そのドロップダウンの最小の幅（これに満たない行では出さない）。
 const ROUTE_NAME_WIDTH: f32 = 76.0;
 const ROUTE_NAME_MIN: f32 = 40.0;
 const ROUTE_MIN_WIDTH: f32 = 40.0;
+/// 出力元のレイヤーセットのアイコンだけのドロップダウンの幅（値の名前が入らない行で、いつも出す）。
+const ROUTE_ICON_WIDTH: f32 = 36.0;
+/// ドロップダウンの値の文字の外の幅（`w::dropdown` の左の余白と矢印）と、値を詰めずに出すために求める幅の上限（これより長い名前は詰める）。
+const ROUTE_VALUE_PAD: f32 = 34.0;
+const ROUTE_FIT_CAP: f32 = 110.0;
 /// この幅に満たない行では、標準のチャンネルの形式の名前を出さず、ユーザーチャンネルの形式の欄を詰める。
 const ROUTE_NARROW_ROW: f32 = 340.0;
 /// 詰めた形式の欄の、文字の外の幅（矢印と左右の余白）。
@@ -435,8 +440,9 @@ fn normal_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::
 struct RowBoxes {
     kind_rect: Rect,
     name_rect: Rect,
-    /// 出力元のレイヤーセットのドロップダウン（レイヤーセットが 2 つ以上あって、入る幅があるときだけ）。
-    route_rect: Option<Rect>,
+    /// 出力元のレイヤーセットのドロップダウンの位置と、アイコンだけの形か（いつも出す。レイヤーセットの名前が詰めずに入る幅があれば名前つき、
+    /// なければアイコンだけ）。
+    route: (Rect, bool),
     /// 標準のチャンネルの形式の名前を出さない（行が狭い）。
     hide_format: bool,
 }
@@ -451,10 +457,9 @@ fn row_boxes(
     format: &str,
 ) -> RowBoxes {
     let user = !channel.is_standard();
-    // レイヤーセットが 2 つ以上あって行が狭いとき、標準のチャンネルの形式の名前（情報だけ）は出さず、出力元のレイヤーセットの欄に譲る
+    // 行が狭いとき、標準のチャンネルの形式の名前（情報だけ）は出さず、出力元のレイヤーセットの欄に譲る
     // （ユーザーチャンネルの形式は、押して替える欄なので残す）
-    let many_sets = app.session.doc.layer_sets().len() >= 2;
-    let narrow = many_sets && row.width() < ROUTE_NARROW_ROW;
+    let narrow = row.width() < ROUTE_NARROW_ROW;
     let hide_format = narrow && !user;
     let kind_width = if hide_format {
         0.0
@@ -472,55 +477,84 @@ fn row_boxes(
         pos2(icon_rect.right() + 4.0, row.top() + 3.0),
         pos2(kind_rect.left() - 4.0, row.bottom() - 3.0),
     );
-    // レイヤーセットが 2 つ以上あるとき: 名前の右に、出力元のレイヤーセットのドロップダウン（入る幅があるときだけ）
-    let mut route_rect = None;
-    if many_sets {
-        let name_w = (name_rect.width() * 0.5).clamp(ROUTE_NAME_MIN, ROUTE_NAME_WIDTH);
-        let dropdown = Rect::from_min_max(
-            pos2(name_rect.left() + name_w + 2.0, row.top() + 3.0),
-            pos2(kind_rect.left() - 4.0, row.bottom() - 3.0),
+    // 名前の右に、出力元のレイヤーセットのドロップダウン。値の名前が詰めずに入る幅があるときは名前つき（長い名前は ROUTE_FIT_CAP の幅で足りるとし、
+    // そこから先は「…」で詰める）。入らないときは、名前の欄を譲ってアイコンだけの箱にする（出力の割り当てを替える入口なので、幅によらず出す）
+    let name_w = (name_rect.width() * 0.5).clamp(ROUTE_NAME_MIN, ROUTE_NAME_WIDTH);
+    let dropdown = Rect::from_min_max(
+        pos2(name_rect.left() + name_w + 2.0, row.top() + 3.0),
+        pos2(kind_rect.left() - 4.0, row.bottom() - 3.0),
+    );
+    let label = route_label(app, channel);
+    let need = (w::text_width(ui.painter(), &label, t::LABEL) + ROUTE_VALUE_PAD).min(ROUTE_FIT_CAP);
+    let route_icon_only = dropdown.width() < need.max(ROUTE_MIN_WIDTH);
+    let route_rect = if route_icon_only {
+        let right = kind_rect.left() - 4.0;
+        let at = Rect::from_min_max(
+            pos2(
+                (right - ROUTE_ICON_WIDTH).max(name_rect.left()),
+                row.top() + 3.0,
+            ),
+            pos2(right, row.bottom() - 3.0),
         );
-        if dropdown.width() >= ROUTE_MIN_WIDTH {
-            name_rect.max.x = name_rect.left() + name_w;
-            route_rect = Some(dropdown);
-        }
-    }
+        name_rect.max.x = (at.left() - 2.0).max(name_rect.left());
+        at
+    } else {
+        name_rect.max.x = name_rect.left() + name_w;
+        dropdown
+    };
     RowBoxes {
         kind_rect,
         name_rect,
-        route_rect,
+        route: (route_rect, route_icon_only),
         hide_format,
     }
 }
 
-/// 出力元のレイヤーセット（選ぶとその場で 3D と書き出しの結果が替わる。1 回の取り消し）のドロップダウン。`at` が None（欄が無い行）なら何もしない。
+/// 出力元のレイヤーセットのドロップダウンの値（レイヤーセットの名前か「なし」）。
+fn route_label(app: &AppState, channel: Channel) -> String {
+    let doc = &app.session.doc;
+    match doc.channel_output(channel).ok().flatten() {
+        Some(set) => crate::m2::layersets::set_label(app.lang, doc, set),
+        None => app.lang.t("m2_menu-none").to_owned(),
+    }
+}
+
+/// 出力元のレイヤーセット（選ぶとその場で 3D と書き出しの結果が替わる。1 回の取り消し）のドロップダウン。狭い行ではアイコンだけ
+/// （レイヤーセットの印。出力が外れているときは、レイヤーのパネルと同じ印）。
 fn route_dropdown(
     ui: &mut Ui,
     app: &mut AppState,
     ctx: &egui::Context,
-    at: Option<Rect>,
+    (at, icon_only): (Rect, bool),
     channel: Channel,
     enabled: bool,
 ) {
-    let Some(at) = at else {
-        return;
-    };
     let lang = app.lang;
-    let doc = &app.session.doc;
-    let label = match doc.channel_output(channel).ok().flatten() {
-        Some(set) => crate::m2::layersets::set_label(lang, doc, set),
-        None => lang.t("m2_menu-none").to_owned(),
+    let routed = app.session.doc.channel_output(channel).ok().flatten();
+    let label = route_label(app, channel);
+    let id = ("channel.route", channel.index());
+    let (response, b) = if icon_only {
+        let (icon, color, tip) = match routed {
+            Some(_) => ("layers", t::TEXT, label.clone()),
+            None => (
+                "link_off",
+                t::WARNING,
+                lang.t("layersets-no-output-tip").to_owned(),
+            ),
+        };
+        w::icon_dropdown(ui, at, id, icon, color, &label, &tip, enabled)
+    } else {
+        w::dropdown(
+            ui,
+            at,
+            id,
+            None,
+            &label,
+            Some(lang.t("layersets-output-layer-set-tip")),
+            enabled,
+            0.0,
+        )
     };
-    let (response, b) = w::dropdown(
-        ui,
-        at,
-        ("channel.route", channel.index()),
-        None,
-        &label,
-        Some(lang.t("layersets-output-layer-set-tip")),
-        enabled,
-        0.0,
-    );
     if response.clicked() {
         open_popup(app, ctx, Popup::LayerSetOutput(channel), b, b.width());
     }
@@ -583,7 +617,7 @@ fn channel_row(
     let RowBoxes {
         kind_rect,
         name_rect,
-        route_rect,
+        route,
         hide_format,
     } = row_boxes(ui, app, row, icon_rect, channel, kind, &format);
     // このチャンネルを読む lilToon のスロット（見た目が lilToon のとき）: チャンネルの印の右上に小さな点、スロットの名前はツールチップ
@@ -715,7 +749,7 @@ fn channel_row(
         response.on_hover_text(tip);
     }
 
-    route_dropdown(ui, app, ctx, route_rect, channel, enabled);
+    route_dropdown(ui, app, ctx, route, channel, enabled);
 
     // 種類（形式の名前。ユーザーチャンネルは押すと替えられる）
     if user {

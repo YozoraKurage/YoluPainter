@@ -137,6 +137,19 @@ impl Document {
         })
     }
 
+    /// `channel` の最終の結果を取るレイヤーセットに、そのチャンネルの実際の中身（画素のあるタイル・塗りつぶしの値・効果の出力）が在るか。
+    /// 割り当てが無ければ false（既定値だけ）。空の面だけのレイヤー（チャンネルを有効にしただけ）は数えない。書き出しが「描いていない
+    /// チャンネルの画像を書かない」ための問い（[`crate::export::uses`] は有効の印だけを見る）。
+    pub fn channel_output_has_content(&self, channel: Channel) -> bool {
+        let Ok(Some(set)) = self.output_set(channel) else {
+            return false;
+        };
+        self.channel_kind(channel).is_ok_and(|kind| {
+            let stack = crate::composite::Stack::in_set(&self.layers, set, channel, kind, None);
+            plan_holds_content(&self.layers, &stack.plan(), channel)
+        })
+    }
+
     /// レイヤーが入っているレイヤーセット。
     pub fn layer_set_of(&self, id: LayerId) -> Result<LayerSetId, CoreError> {
         Ok(self.layers[self.index_of(id)?].set)

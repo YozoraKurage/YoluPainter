@@ -883,3 +883,48 @@ fn when_a_later_destination_is_refused_the_finished_ones_stay_and_the_rest_stay_
     assert_eq!(h.doc().layer_sets().len(), first_sets);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn an_image_into_a_layer_set_uses_a_channel_of_its_set_and_a_set_without_channels_is_refused() {
+    let dir = temp_dir("set-channels");
+    let png = image_file(&dir, "mask.png", [10, 20, 30]);
+    let mut h = app(1280.0, 800.0, 32);
+    let uid = current_uid(&h);
+    let set = first_layer_set(&h);
+    assert_eq!(h.m2().paint_channel, yolu_app::engine::Channel::Color);
+    // 描くチャンネル（カラー）を組から外したレイヤーセットへ: 組の最初のチャンネルに置く（組の外に置くと合成に出ない）
+    let bits = h.doc().layer_set_channels(set).unwrap() & !yolu_app::engine::Channel::Color.bit();
+    h.doc_mut().set_layer_set_channels(set, bits).unwrap();
+    drop_and_read(&mut h, &[&png]);
+    set_dest(&mut h, "mask.png", Dest::Set(uid, set));
+    h.act(Action::DropIn(DropOp::Import));
+    h.run();
+    assert!(!h.dropin().is_open(), "{}", h.message());
+    let doc = h.doc();
+    let fill = doc.layers().iter().find(|l| l.name() == "mask").unwrap();
+    let first = doc
+        .channels()
+        .into_iter()
+        .find(|c| bits & c.bit() != 0)
+        .unwrap();
+    assert!(fill.is_channel_enabled(first));
+    assert!(!fill.is_channel_enabled(yolu_app::engine::Channel::Color));
+    // 組が空のレイヤーセット: 置いても合成に出ないので断り、行を残す
+    h.act(Action::Undo);
+    h.run();
+    h.doc_mut().set_layer_set_channels(set, 0).unwrap();
+    let layers = h.doc().layers().len();
+    drop_and_read(&mut h, &[&png]);
+    set_dest(&mut h, "mask.png", Dest::Set(uid, set));
+    h.act(Action::DropIn(DropOp::Import));
+    h.run();
+    assert_eq!(h.doc().layers().len(), layers);
+    assert!(h.dropin().is_open());
+    assert!(
+        h.message()
+            .contains("レイヤーセットがそのチャンネルを扱わない"),
+        "{}",
+        h.message()
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}

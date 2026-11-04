@@ -1262,21 +1262,28 @@ impl AppState {
     /// 空のレイヤー（描くチャンネルを足したときに、すぐ描ける）。
     fn add_channel_with_layer_set(&mut self, info: ChannelInfo) -> Result<(), CoreError> {
         let lang = self.lang;
-        let set_name = self.unique_layer_set_name(&info.name);
-        let layer_name = format!("{} 1", lang.t("state-layer"));
         let (channel, set) = self
             .session
             .doc
             .batch_as(yolu_core::HistoryKind::Channel, |d| {
-                let set = d.add_layer_set_with(&set_name, 0)?;
-                let channel = d.add_channel_in_set(info, set)?;
-                d.add_layer_in_set_on(&layer_name, set, None, channel)?;
-                Ok((channel, set))
+                layersets::add_channel_in_own_set(d, info, lang)
             })?;
         self.m2.paint_channel = channel;
         self.m2.display_channel = channel;
-        self.select_layer_set(set);
+        match set {
+            Some(set) => self.select_layer_set(set),
+            None => self.warn_no_room_for_channel_set(Source::Layer),
+        }
         Ok(())
+    }
+
+    /// レイヤーセットが上限で、足したチャンネルに自分のレイヤーセットを作れなかった知らせ。
+    pub(crate) fn warn_no_room_for_channel_set(&mut self, source: Source) {
+        let text = self.lang.f(
+            "layersets-no-room-for-a-channel-set",
+            &[("max", &yolu_core::MAX_LAYER_SETS)],
+        );
+        self.warn(source, text);
     }
 
     fn m2_apply(&mut self, edit: Edit) -> Result<(), CoreError> {
@@ -1473,12 +1480,28 @@ impl AppState {
                 if stroking {
                     return refuse(self);
                 }
-                if self.session.doc.channel_info(channel).is_some() {
-                    if self.m2.display_channel == self.m2.paint_channel {
-                        self.m2.display_channel = channel;
-                    }
-                    self.m2.paint_channel = channel;
+                if self.session.doc.channel_info(channel).is_none() {
+                    return;
                 }
+                // 今のレイヤーセットの組に無いチャンネルを描くなら、そのチャンネルを持つレイヤーセットへ移る（組の外を描いても合成に出ない）
+                let current = self.layer_set();
+                match layersets::set_for_paint_channel(&self.session.doc, current, channel) {
+                    layersets::PaintSet::Here => {}
+                    layersets::PaintSet::Move(set) => self.select_layer_set(set),
+                    layersets::PaintSet::Nowhere => {
+                        let lang = self.lang;
+                        let name = lang.quote(&channel_name(lang, &self.session.doc, channel));
+                        let text = lang.with_reason(
+                            lang.f("layersets-cannot-paint-channel", &[("name", &name)]),
+                            lang.t("layersets-no-layer-set-uses-the-channel"),
+                        );
+                        return self.refuse(Source::Layer, text);
+                    }
+                }
+                if self.m2.display_channel == self.m2.paint_channel {
+                    self.m2.display_channel = channel;
+                }
+                self.m2.paint_channel = channel;
             }
             UiOp::DisplayChannel(channel) => {
                 if self.session.doc.channel_info(channel).is_some() {

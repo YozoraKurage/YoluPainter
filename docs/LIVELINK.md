@@ -184,7 +184,7 @@ Unity は `updated`（UTC）が 6 秒より新しければ、スタンドアロ�
 - `<n>` は頼みごとの 0 からの通し番号。読めない頼みへの返事は、`inbox/` のファイルの名前（拡張子の前）を `request` にします。
 - `exported`: Live Link の相手の文書を書き出すと、「テクスチャを書き出す」ウィンドウの出力先の既定は `target.export_dir`（利用者が選び直したらそちら）です。書いた PNG のうち、lilToon の
   テンプレートの画像（`Main` → `_MainTex`・`Normal` → `_BumpMap`・`Smoothness` → `_SmoothnessTex`・`Metallic` → `_MetallicGlossMap`・`Emission` → `_EmissionMap`）と
-  lilToon の詰め方のスロットの画像を `files` に入れます。対応の無い画像と、鍵が `none` の組の画像は入れません。複数のマテリアルを持つテクスチャセットの画像は、
+  lilToon の詰め方のスロットの画像を `files` に入れます（詰め方のスロットの画像は、何かを描いたスロットだけです。チャンネルを有効にしただけの空のレイヤーのスロットは書かず、Unity の元の画像を既定の値で置き換える候補を作りません）。対応の無い画像と、鍵が `none` の組の画像は入れません。複数のマテリアルを持つテクスチャセットの画像は、
   マテリアルごとに 1 件ずつ、同じ `path` で入れます。
 
 ## Unity の受け方

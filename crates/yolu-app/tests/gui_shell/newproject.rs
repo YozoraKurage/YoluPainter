@@ -3884,9 +3884,12 @@ fn the_file_menu_opens_the_configuration_and_a_row_edits_removes_and_applies() {
 #[test]
 fn the_texture_set_panel_adds_removes_and_opens_the_configuration() {
     let mut h = gui();
-    h.get_by_label("空のテクスチャセットを追加（今のセットと同じ大きさ・チャンネル）")
-        .click();
-    h.run();
+    // 「＋」のメニューの「テクスチャセットを追加」
+    let panel = common::shot::group(&h, yolu_app::Tab::TextureSets);
+    let plus = rect_of(&h, "追加", |r| panel.contains_rect(r));
+    click(&mut h, plus.center());
+    let item = popup_item(&h, "テクスチャセットを追加");
+    click(&mut h, item.center());
     assert_eq!(st(&h).sets().len(), 2);
     assert_eq!(st(&h).sets().current_index(), 1);
     // 今のセットを消す: 確認のウィンドウが先に出る

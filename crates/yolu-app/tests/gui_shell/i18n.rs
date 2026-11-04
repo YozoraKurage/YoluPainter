@@ -8,7 +8,7 @@ use yolu_app::{
     brushes::{BrushAction, Category, Group},
     engine::BlendMode,
     lang::Lang,
-    m2::{AdjustmentKind, BrushOp, Edit, EffectKind, UiOp},
+    m2::{layersets::LayerSetEdit, AdjustmentKind, BrushOp, Edit, EffectKind, UiOp},
     panels::{assets, color, texture_sets},
     pen::PenInput,
     state::{Action, AppState},
@@ -1637,6 +1637,13 @@ fn walk_states(
     // ツールプロパティの「塗るチャンネル」を開いた画面
     open_paint_channels(&mut h);
     visit(&mut h, "paint channels");
+    // レイヤーセットが 2 つの文書（チャンネルの行の出力元は、狭いとアイコンだけの箱）
+    h.act(Action::M2(Edit::LayerSets(LayerSetEdit::New)));
+    h.run();
+    click_tab(&mut h, Tab::Channels);
+    visit(&mut h, "channels with two layer sets");
+    click_tab(&mut h, Tab::Layers);
+    visit(&mut h, "layers with two layer sets");
     // ブラシの一覧（全グループ）と詳細のウィンドウ（全カテゴリ）
     click_tab(&mut h, Tab::SubTools);
     for group in Group::ALL {

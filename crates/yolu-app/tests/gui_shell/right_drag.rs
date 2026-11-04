@@ -31,9 +31,10 @@ fn near(a: f32, b: f32) -> bool {
     (a - b).abs() < 0.01
 }
 
-/// レイヤーが 30 枚あり、一覧を `scroll` だけ送った 1280×800 のウィンドウ。
+/// レイヤーが 30 枚あり、一覧を `scroll` だけ送った 1280×900 のウィンドウ（レイヤーのパネルの頭のレイヤーセットのドロップダウンの下に、
+/// 一覧の行が何行か入る高さ）。
 fn layers_window(scroll: f32) -> Harness<'static, YoluApp> {
-    let mut h = app(1280.0, 800.0, 128);
+    let mut h = app(1280.0, 900.0, 128);
     for _ in 0..30 {
         h.act(Action::NewLayer);
         h.run();

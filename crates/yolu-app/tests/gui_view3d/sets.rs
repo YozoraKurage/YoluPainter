@@ -364,10 +364,7 @@ fn the_bar_buttons_never_overlap_and_the_bake_button_leaves_when_the_panel_is_to
     const BAKE_MIN_BAR_WIDTH: f32 = 128.0;
     for lang in Lang::JA_EN {
         let configure = lang.pick("プロジェクト設定…", "Project Configuration…");
-        let add = lang.pick(
-            "空のテクスチャセットを追加（今のセットと同じ大きさ・チャンネル）",
-            "Add an empty texture set (same size and channels as this one)",
-        );
+        let add = lang.pick("追加", "Add");
         let remove_label = |h: &egui_kittest::Harness<'_, yolu_app::state::AppState>| {
             h.get_all_by_label_contains(
                 lang.pick("プロジェクトには少なくとも", "A project keeps at least"),
@@ -454,12 +451,7 @@ fn the_bake_mark_follows_the_current_set_and_goes_once_that_set_is_baked() {
 
 /// テクスチャセットの一覧と下の帯（と、その下に出るツールチップ）を切り出して撮る。
 fn snapshot_set_bar(h: &mut egui_kittest::Harness<'_, yolu_app::YoluApp>, lang: Lang, name: &str) {
-    let add = h
-        .get_by_label(lang.pick(
-            "空のテクスチャセットを追加（今のセットと同じ大きさ・チャンネル）",
-            "Add an empty texture set (same size and channels as this one)",
-        ))
-        .rect();
+    let add = h.get_by_label(lang.pick("追加", "Add")).rect();
     let configure = h
         .get_by_label(lang.pick("プロジェクト設定…", "Project Configuration…"))
         .rect();

@@ -210,7 +210,7 @@ const SET_HEAD_HEIGHT: f32 = 22.0;
 /// 出力なしの印の幅（ドロップダウンの右）。
 const SET_MARK_WIDTH: f32 = 22.0;
 
-/// 頭のレイヤーセットのドロップダウン（レイヤーセットが 1 つだけなら出さず、0 を返す）。返すのは、頭が下へ押す高さ（ドロップダウンと次の帯の間を含む）。
+/// 頭のレイヤーセットのドロップダウン（レイヤーセットが 1 つでも出す）。返すのは、頭が下へ押す高さ（ドロップダウンと次の帯の間を含む）。
 fn layer_set_head(
     ui: &mut Ui,
     app: &mut AppState,
@@ -219,9 +219,6 @@ fn layer_set_head(
     enabled: bool,
 ) -> f32 {
     let doc = &app.session.doc;
-    if doc.layer_sets().len() < 2 {
-        return 0.0;
-    }
     let lang = app.lang;
     let set = app.layer_set();
     let missing = crate::m2::layersets::is_off_output(doc, set, app.m2.paint_channel);
@@ -326,7 +323,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
         })
     });
 
-    // 頭: レイヤーセットのドロップダウン（2 つ以上あるときだけ）。今の描くチャンネルが、このレイヤーセットから最終の結果に出ていないときは、
+    // 頭: レイヤーセットのドロップダウン（1 つでも出す）。今の描くチャンネルが、このレイヤーセットから最終の結果に出ていないときは、
     // 右に印だけ（理由はツールチップ）
     let head = layer_set_head(ui, app, &ctx, r, enabled);
 

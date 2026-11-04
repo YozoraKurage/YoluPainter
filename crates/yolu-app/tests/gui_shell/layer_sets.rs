@@ -1,6 +1,7 @@
 //! レイヤーセットの画面（egui_kittest）: テクスチャセットのパネルの行・レイヤーのパネルの頭・チャンネルの行のドロップダウン・キャンバスの右上の部品。
 //! 行を押すと、レイヤーセット・一覧・描くチャンネルが一度に替わる。出力のドロップダウンで最終の結果が替わり、1 回の取り消しで戻る。
-//! 2D の表示は今のレイヤーセットの合成。レイヤーセットが 1 つの文書は、頭もドロップダウンも出さない。
+//! 2D の表示は今のレイヤーセットの合成。レイヤーセットが 1 つの文書でも、頭・行・ドロップダウンは同じ形で出す。
+//! テクスチャセットのパネルの「＋」のメニュー・行の右クリックの「チャンネル ▸」・レイヤーのプロパティのチャンネルの欄は組のチャンネルだけ。
 use crate::common;
 use crate::common::drive::Drive;
 
@@ -117,21 +118,105 @@ fn index_of(h: &Harness<'_, YoluApp>, set: LayerSetId) -> usize {
 }
 
 #[test]
-fn a_document_with_one_layer_set_has_no_layer_set_rows_dropdown_or_channel_dropdowns() {
+fn a_document_with_one_layer_set_shows_the_head_the_row_and_the_channel_dropdowns() {
+    let mut h = app(1600.0, 960.0, 128);
+    h.run();
+    assert_eq!(h.doc().layer_sets().len(), 1);
+    assert!(layers_head(&h).is_some(), "レイヤーのパネルの頭");
+    // テクスチャセットのパネル: テクスチャセットの行の下に、レイヤーセットの行（字下げ）
+    let texture = set_row(&h, "テクスチャセット 1");
+    let row = set_row(&h, "マテリアル");
+    assert!(row.top() > texture.bottom() - 1.0);
+    // チャンネルの行の、出力元のレイヤーセットのドロップダウン
+    click_tab(&mut h, Tab::Channels);
+    h.run();
+    let panel = common::shot::group(&h, Tab::Channels);
+    assert_eq!(
+        combos(&h, panel, "マテリアル").len(),
+        h.doc().channels().len(),
+        "どのチャンネルの行にも"
+    );
+}
+
+/// テクスチャセットのパネルの「＋」（追加）。
+fn add_button(h: &Harness<'_, YoluApp>) -> Rect {
+    let panel = common::shot::group(h, Tab::TextureSets);
+    rect_of(h, h.lang().pick("追加", "Add"), |r| {
+        panel.contains_rect(r)
+    })
+}
+
+#[test]
+fn the_plus_of_the_texture_set_panel_opens_a_menu_that_adds_a_texture_set_or_a_layer_set() {
     let mut h = app(1280.0, 800.0, 128);
     h.run();
-    assert!(
-        h.query_by_label("レイヤーセット").is_none(),
-        "レイヤーのパネルの頭"
+    let at = add_button(&h).center();
+    click(&mut h, at);
+    assert_eq!(
+        h.popup().as_ref().map(|p| p.kind),
+        Some(PopupKind::M2(Popup::AddSet))
     );
-    assert!(
-        h.query_by_label("出力元のレイヤーセット").is_none(),
-        "チャンネルの行"
+    let at = popup_item(&h, "レイヤーセットを追加").center();
+    click(&mut h, at);
+    assert_eq!(h.doc().layer_sets().len(), 2);
+    assert_eq!(h.sets().len(), 1);
+    let added = h.app().layer_set();
+    assert_eq!(
+        h.doc().layer_set_channels(added).unwrap(),
+        h.doc().standard_channel_bits()
     );
-    // テクスチャセットのパネルは今と同じ 1 行（レイヤーセットの名前の行は無い）
-    assert!(h.query_by_label("マテリアル").is_none());
-    let sets_before = h.sets().len();
-    assert_eq!(sets_before, 1);
+    let at = add_button(&h).center();
+    click(&mut h, at);
+    let at = popup_item(&h, "テクスチャセットを追加").center();
+    click(&mut h, at);
+    assert_eq!(h.sets().len(), 2);
+}
+
+#[test]
+fn the_channels_submenu_of_a_layer_set_row_toggles_a_channel_in_one_undo() {
+    let mut h = app(1280.0, 800.0, 128);
+    let s = three_sets(&mut h);
+    let at = set_row(&h, "下書き").center();
+    right_click(&mut h, at);
+    let at = popup_item(&h, "チャンネル").center();
+    click(&mut h, at);
+    // 文書のチャンネルが並ぶ（影の強度は下書きの組に無い）
+    let at = popup_item(&h, "影の強度").center();
+    click(&mut h, at);
+    assert_ne!(
+        h.doc().layer_set_channels(s.draft).unwrap() & s.channel.bit(),
+        0
+    );
+    assert_eq!(
+        h.doc().channel_output(s.channel).unwrap(),
+        Some(s.shadow),
+        "出力の割り当ては変えない"
+    );
+    undo(&mut h);
+    assert_eq!(
+        h.doc().layer_set_channels(s.draft).unwrap() & s.channel.bit(),
+        0
+    );
+}
+
+#[test]
+fn the_layer_properties_list_only_the_channels_of_the_layers_set() {
+    let mut h = app(1280.0, 1400.0, 128);
+    let s = three_sets(&mut h);
+    click_tab(&mut h, Tab::Properties);
+    h.run();
+    let panel = common::shot::group(&h, Tab::Properties);
+    let shown = |h: &Harness<'_, YoluApp>, name: &str| {
+        h.query_all_by_label(name)
+            .any(|n| panel.contains_rect(n.rect()))
+    };
+    // マテリアルのレイヤー: 標準のチャンネル（影の強度は組に無い）
+    assert!(shown(&h, "カラー"));
+    assert!(!shown(&h, "影の強度"));
+    // 影のマスクのレイヤー: 影の強度だけ
+    apply(&mut h, Action::M2Ui(UiOp::SelectLayerSet(s.shadow)));
+    assert!(shown(&h, "影の強度"));
+    assert!(!shown(&h, "カラー"));
 }
 
 #[test]
@@ -170,7 +255,7 @@ fn another_texture_sets_layer_set_row_switches_the_texture_set_too() {
     let first_set_uid = h.sets().current().uid;
     let s = three_sets(&mut h);
     apply(&mut h, Action::M2Ui(UiOp::SelectLayerSet(s.shadow)));
-    // 2 つ目のテクスチャセット（レイヤーセット 1 つ: 1 行のまま）に切り替えてから、最初のテクスチャセットの下書きの行を押す
+    // 2 つ目のテクスチャセット（レイヤーセット 1 つ）に切り替えてから、最初のテクスチャセットの下書きの行を押す
     h.app_mut().add_texture_set().unwrap();
     h.run();
     assert_eq!(h.sets().current_index(), 1);
@@ -263,7 +348,7 @@ fn the_remove_item_is_disabled_for_the_last_layer_set() {
         );
     }
     assert_eq!(h.doc().layer_sets().len(), 1);
-    // 1 つになるとレイヤーセットの行は出ない。メニューは項目の並びを直に確かめる
+    // メニューは項目の並びを直に確かめる
     let entries = yolu_app::m2_menu::entries(h.app(), Popup::LayerSetContext(s.material));
     let delete = entries
         .iter()
@@ -379,7 +464,8 @@ fn the_layer_menu_moves_layers_to_another_set_and_the_view_stays() {
     assert_eq!(h.doc().layer_set_of(layer).unwrap(), s.material);
 }
 
-/// チャンネルの行の、出力元のレイヤーセットのドロップダウン（値はレイヤーセットの名前か「なし」。行の並びの順）。
+/// チャンネルの行の、出力元のレイヤーセットのドロップダウン（値はレイヤーセットの名前か「なし」。行の並びの順）。値の名前が入らない幅の行では
+/// アイコンだけの箱になるが、値（読み上げの名前）は同じ。
 fn channel_dropdown(h: &Harness<'_, YoluApp>, channel: Channel) -> Rect {
     let panel = common::shot::group(h, Tab::Channels);
     let lang = h.lang();
@@ -398,9 +484,51 @@ fn channel_dropdown(h: &Harness<'_, YoluApp>, channel: Channel) -> Rect {
     all[index]
 }
 
+/// ふつうのノート PC の大きさ（1280×800）では出力元の名前が入らず、アイコンだけの箱になる。どのチャンネルの行にも出て、押すと名前つきと同じ一覧が開き、
+/// 選ぶと 1 回の取り消しで替わる。
+#[test]
+fn the_channel_row_dropdown_is_there_at_a_narrow_width_as_an_icon_and_changes_the_output() {
+    let mut h = app(1280.0, 800.0, 128);
+    let s = three_sets(&mut h);
+    click_tab(&mut h, Tab::Channels);
+    h.run();
+    let panel = common::shot::group(&h, Tab::Channels);
+    let channels = h.doc().channels();
+    for channel in &channels {
+        let at = channel_dropdown(&h, *channel);
+        assert!(panel.contains_rect(at), "{channel:?} の箱が欄の中にある");
+        assert!(at.width() < 60.0, "{channel:?}: アイコンだけの箱 {at:?}");
+    }
+    let at = channel_dropdown(&h, Channel::Color).center();
+    click(&mut h, at);
+    assert_eq!(
+        h.popup().as_ref().map(|p| p.kind),
+        Some(PopupKind::M2(Popup::LayerSetOutput(Channel::Color)))
+    );
+    for name in ["マテリアル", "下書き", "なし"] {
+        popup_item(&h, name);
+    }
+    let steps = h.doc().undo_count();
+    let at = popup_item(&h, "下書き").center();
+    click(&mut h, at);
+    assert_eq!(
+        h.doc().channel_output(Channel::Color).unwrap(),
+        Some(s.draft)
+    );
+    assert_eq!(h.doc().undo_count(), steps + 1, "1 回の取り消し");
+    h.run();
+    // 出力が外れた行も箱が出る（「なし」は短いので名前つき）
+    h.doc_mut()
+        .set_channel_output(Channel::Color, None)
+        .unwrap();
+    h.run();
+    let off = channel_dropdown(&h, Channel::Color);
+    assert!(panel.contains_rect(off), "{off:?}");
+}
+
 #[test]
 fn the_channel_row_dropdown_changes_the_final_result_in_one_undo() {
-    let mut h = app(1280.0, 800.0, 128);
+    let mut h = app(1600.0, 960.0, 128);
     let s = three_sets(&mut h);
     click_tab(&mut h, Tab::Channels);
     h.run();
@@ -651,7 +779,7 @@ fn the_canvas_bar_uv_button_toggles_the_wireframe_and_opens_the_color_menu_witho
 
 #[test]
 fn through_check_the_shadow_mask_set_is_drawn_from_the_canvas_bar_and_the_final_result_follows() {
-    let mut h = app(1280.0, 800.0, 128);
+    let mut h = app(1600.0, 960.0, 128);
     let s = three_sets(&mut h);
     // 影の強度の出力を影のマスクへ（チャンネルを足したときに作ったレイヤーセットは、三つのレイヤーセットを作ったとき影のマスクにした）
     assert_eq!(h.doc().channel_output(s.channel).unwrap(), Some(s.shadow));
@@ -737,7 +865,7 @@ fn through_check_the_shadow_mask_set_is_drawn_from_the_canvas_bar_and_the_final_
 // ───────── スクリーンショット ─────────
 
 fn shot_state(lang: Lang) -> (Harness<'static, YoluApp>, Sets) {
-    let mut h = app(1280.0, 800.0, 128);
+    let mut h = app(1600.0, 960.0, 128);
     h.set_lang(lang);
     h.run();
     let s = three_sets(&mut h);
@@ -763,6 +891,29 @@ fn the_layer_set_panels_look_the_same() {
         click(&mut h, at);
         let rect = common::shot::with_popup(&h, channels);
         common::shot::region(&mut h, &format!("layer_sets_channels_pick_{n}"), rect);
+    }
+}
+
+#[test]
+fn the_add_menu_and_the_channels_submenu_look_the_same() {
+    for lang in Lang::JA_EN {
+        let (mut h, _) = shot_state(lang);
+        let n = lang_name(lang);
+        let group = common::shot::group(&h, Tab::TextureSets);
+        // 「＋」のメニュー
+        let at = add_button(&h).center();
+        click(&mut h, at);
+        let rect = common::shot::with_popup(&h, group);
+        common::shot::region(&mut h, &format!("layer_sets_add_menu_{n}"), rect);
+        key(&h, egui::Key::Escape, egui::Modifiers::NONE);
+        h.run();
+        // 行の右クリックの「チャンネル ▸」
+        let at = set_row(&h, lang.pick("下書き", "Draft")).center();
+        right_click(&mut h, at);
+        let at = popup_item(&h, lang.pick("チャンネル", "Channels")).center();
+        click(&mut h, at);
+        let rect = common::shot::with_popup(&h, group);
+        common::shot::region(&mut h, &format!("layer_sets_channels_submenu_{n}"), rect);
     }
 }
 

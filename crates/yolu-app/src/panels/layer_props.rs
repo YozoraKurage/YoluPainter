@@ -612,7 +612,17 @@ fn channels_section(
     if !open {
         return;
     }
+    // そのレイヤーのレイヤーセットの組のチャンネルだけ（組の外のチャンネルは合成に入らないので出さない。有効・無効は変えない）
+    let group = app
+        .session
+        .doc
+        .layer(id)
+        .and_then(|l| app.session.doc.layer_set_channels(l.layer_set()).ok())
+        .unwrap_or(u64::MAX);
     for channel in app.session.doc.channels() {
+        if group & channel.bit() == 0 {
+            continue;
+        }
         let name = m2::channel_name(lang, &app.session.doc, channel);
         let Some(layer) = app.session.doc.layer(id) else {
             return;

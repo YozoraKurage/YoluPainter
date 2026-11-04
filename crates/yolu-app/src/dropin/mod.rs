@@ -852,7 +852,7 @@ fn put_items(
     for (dest, base, item) in items {
         let set = match dest {
             Dest::NewSet(_) => {
-                let name = unique_layer_set_name_in(lang, d, base);
+                let name = crate::m2::layersets::unique_layer_set_name_in(lang, d, base);
                 match item {
                     Item::Psd(source) => d.insert_layers_as_layer_set(source, &name)?.0,
                     // 画像の塗りつぶしは描くチャンネルに置くので、新しいレイヤーセットの組にそのチャンネルも入れる
@@ -882,16 +882,9 @@ fn put_items(
     Ok(last_set)
 }
 
-/// 文書の中のほかのレイヤーセットと名前が重ならない（大文字小文字を区別しない）ように、要れば「 2」「 3」… を付けた名前。
-fn unique_layer_set_name_in(lang: Lang, doc: &Document, base: &str) -> String {
-    let names: Vec<String> = (0..doc.layer_sets().len())
-        .map(|i| crate::m2::layersets::display_name(lang, doc, i))
-        .collect();
-    crate::sets::unique_name(base, names.iter().map(String::as_str))
-}
-
 /// レイヤーセット `set` の一番上に、画像の塗りつぶしレイヤー（メニューの「画像の塗りつぶしレイヤー」と同じ: UV の投影、画像を使えない所は
-/// チャンネルの既定の値）を足す。チャンネルは描くチャンネル（文書に無ければ Color）。
+/// チャンネルの既定の値）を足す。チャンネルは描くチャンネル（文書に無いか、そのレイヤーセットの組に無ければ、組の最初のチャンネル）。組が空なら、
+/// 置いても合成に出ないので断る（そのテクスチャセットへの取り込みを止め、行を残して知らせる）。
 fn add_image_fill(
     d: &mut Document,
     set: LayerSetId,
@@ -899,10 +892,16 @@ fn add_image_fill(
     image: ImageId,
     paint: Channel,
 ) -> Result<LayerId, yolu_core::CoreError> {
-    let channel = if d.channel_info(paint).is_some() {
+    let group = d.layer_set_channels(set)?;
+    let channel = if d.channel_info(paint).is_some() && group & paint.bit() != 0 {
         paint
     } else {
-        Channel::Color
+        d.channels()
+            .into_iter()
+            .find(|c| group & c.bit() != 0)
+            .ok_or(yolu_core::CoreError::InvalidArgument(
+                yolu_core::Reason::ChannelNotInLayerSet,
+            ))?
     };
     let kind = d
         .channel_info(channel)

@@ -676,7 +676,11 @@ fn text_path_and_fill_layers_added_to_an_empty_set_go_into_that_set() {
     s.app_mut().text_typed("Hi".into());
     s.act(Action::Text(TextAction::Commit));
     check(&mut s, "テキストレイヤー");
-    // パスは標準のチャンネルにだけ描ける
+    // パスは標準のチャンネルにだけ描ける（カラーを影のレイヤーセットの組にも入れる。組に無いと、カラーを描くときにカラーを出力しているレイヤーセットへ移る）
+    s.act(Action::M2(Edit::LayerSets(LayerSetEdit::ToggleChannel {
+        set: shadow,
+        channel: Channel::Color,
+    })));
     s.act(Action::M2Ui(UiOp::PaintChannel(Channel::Color)));
     s.act(Action::LayerMenu(Op::PathLayer));
     check(&mut s, "パスのレイヤー");
