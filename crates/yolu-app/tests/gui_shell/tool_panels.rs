@@ -1770,33 +1770,47 @@ fn snapshots_of_the_tool_properties_with_the_paint_channels_open_and_for_the_mas
 
 #[test]
 fn snapshots_of_the_material_panel_with_the_standard_and_liltoon_looks() {
-    let (lang, name) = (Lang::Ja, "ja");
-    let mut h = app(1500.0, 1300.0, 64);
-    language(&mut h, lang);
-    open_material(&mut h);
-    // マテリアルの組の全体（プロパティの組）
-    let rect = common::shot::group(&h, Tab::Properties);
-    // 標準
-    h.act(Action::Look(yolu_app::look::LookOp::Kind(
-        yolu_core::look::LookKind::Standard,
-    )));
-    h.run();
-    shot_rect(
-        &mut h,
-        rect,
-        &format!("tool_panels_material_standard_{name}"),
-    );
-    // lilToon（ひな形つき）
-    h.act(Action::Look(yolu_app::look::LookOp::Kind(
-        yolu_core::look::LookKind::LilToon,
-    )));
-    h.act(Action::Look(yolu_app::look::LookOp::Template));
-    h.run();
-    shot_rect(
-        &mut h,
-        rect,
-        &format!("tool_panels_material_liltoon_{name}"),
-    );
+    for (lang, name) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
+        let mut h = app(1500.0, 1300.0, 64);
+        language(&mut h, lang);
+        open_material(&mut h);
+        // マテリアルの組の全体（プロパティの組）
+        let rect = common::shot::group(&h, Tab::Properties);
+        // 標準（描画モードは不透明）
+        h.act(Action::Look(yolu_app::look::LookOp::Kind(
+            yolu_core::look::LookKind::Standard,
+        )));
+        h.run();
+        shot_rect(
+            &mut h,
+            rect,
+            &format!("tool_panels_material_standard_{name}"),
+        );
+        // 標準・カットアウト（Cutoff の行が出る）
+        h.act(Action::Look(yolu_app::look::LookOp::Mode(
+            yolu_app::look::liltoon::RenderMode::Cutout,
+        )));
+        h.run();
+        shot_rect(
+            &mut h,
+            rect,
+            &format!("tool_panels_material_standard_cutout_{name}"),
+        );
+        if lang != Lang::Ja {
+            continue;
+        }
+        // lilToon（ひな形つき）
+        h.act(Action::Look(yolu_app::look::LookOp::Kind(
+            yolu_core::look::LookKind::LilToon,
+        )));
+        h.act(Action::Look(yolu_app::look::LookOp::Template));
+        h.run();
+        shot_rect(
+            &mut h,
+            rect,
+            &format!("tool_panels_material_liltoon_{name}"),
+        );
+    }
 }
 
 #[test]

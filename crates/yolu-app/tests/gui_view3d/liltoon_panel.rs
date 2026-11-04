@@ -89,6 +89,42 @@ fn switching_a_standard_set_to_liltoon_assigns_the_standard_channels_and_undo_ta
 }
 
 #[test]
+fn a_standard_set_has_a_rendering_mode_and_the_cutoff_shows_only_when_it_is_not_opaque() {
+    use yolu_app::look::liltoon::{self, RenderMode};
+    for (lang, mode, opaque, cutout, cutoff) in [
+        (
+            Lang::Ja,
+            "描画モード",
+            "不透明",
+            "カットアウト",
+            "Cutoff（完全透明にする範囲）",
+        ),
+        (Lang::En, "Rendering Mode", "Opaque", "Cutout", "Cutoff"),
+    ] {
+        let mut h = harness(lang);
+        h.doc_mut().restore_look(MaterialLook::default()).unwrap();
+        h.run();
+        // 標準の見た目: 描画モードの行があり、不透明のときは Cutoff を出さない
+        assert!(h.query_by_label(&format!("{mode}: {opaque}")).is_some());
+        assert!(h.query_by_label_contains(cutoff).is_none());
+        let steps = h.doc().undo_count();
+        click_label(&mut h, &format!("{mode}: {opaque}"));
+        pick(&mut h, cutout);
+        assert_eq!(h.doc().undo_count(), steps + 1, "選ぶのは 1 回の Undo");
+        assert_eq!(
+            liltoon::render_mode(h.doc().drawn_look()),
+            RenderMode::Cutout
+        );
+        assert_eq!(h.doc().look().kind, LookKind::Standard);
+        assert!(h.query_by_label_contains(cutoff).is_some(), "Cutoff を出す");
+        h.state_mut().apply(Action::Undo);
+        h.run();
+        assert!(h.doc().look().is_default(), "取り消し 1 回で不透明に戻る");
+        assert!(h.query_by_label_contains(cutoff).is_none());
+    }
+}
+
+#[test]
 fn the_shadow_section_toggles_and_a_slider_drag_is_one_undo_step() {
     let mut h = harness(Lang::Ja);
     h.state_mut()

@@ -149,6 +149,7 @@ pub fn slot_reads(values: &[f32]) -> (u64, u64) {
 pub struct SetDraw {
     /// lilToon で描くか（false なら標準の PBR）。
     pub lil: bool,
+    /// 描画モード（標準は `_StandardMode`、lilToon はシェーダーの名前。描く順と混ぜ方を決める）。
     pub mode: RenderMode,
     pub outline: bool,
     /// Cull（0 Off・1 Front・2 Back）。
@@ -170,7 +171,10 @@ impl SetDraw {
 
     pub fn of(look: &MaterialLook) -> SetDraw {
         if look.kind != LookKind::LilToon {
-            return SetDraw::STANDARD;
+            return SetDraw {
+                mode: liltoon::standard_mode(look),
+                ..SetDraw::STANDARD
+            };
         }
         let info = liltoon::shader_info(look);
         SetDraw {
@@ -1011,6 +1015,9 @@ pub struct LookGpu {
     pub wants_tangents: bool,
     /// 最後に値を作ったときの鍵（文書・版・見た目の設定の入れ物・レイヤーの並び・画像の色空間）。同じなら値を作り直さない。
     params_key: Option<ParamsKey>,
+    /// 標準の見た目で、一様バッファの先頭へ書いた描画モードと Cutoff（まだ書いていない・lilToon の値で上書きした後は None。最初のバッファは
+    /// 0 で、不透明）。
+    standard_head: Option<[f32; 2]>,
     /// 値（`params`）を作った回数（試験・計測用。同じツールの兄弟の持ち物（ほかのセット）と共有する）。
     builds: Arc<AtomicU64>,
 }
@@ -1058,8 +1065,28 @@ impl LookGpu {
             draw: SetDraw::STANDARD,
             wants_tangents: false,
             params_key: None,
+            standard_head: Some([0.0, 0.0]),
             builds: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    /// 標準の描画モードと Cutoff を一様バッファの先頭へ書く（シェーダーは lilToon の値の `p[0]` と同じ場所を読む: x 描画モード・y Cutoff）。
+    /// 前に書いた値と同じなら書かない。書いたら描き直す。
+    fn write_standard_head(&mut self, look: &MaterialLook, mode: RenderMode, queue: &wgpu::Queue) {
+        let head = [mode.standard_value(), liltoon::number(look, "_Cutoff")];
+        if self.standard_head == Some(head) {
+            return;
+        }
+        let bytes: Vec<u8> = head
+            .iter()
+            .chain(&[0.0, 0.0])
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        queue.write_buffer(&self.buffer, 0, &bytes);
+        self.standard_head = Some(head);
+        // バッファの中身は lilToon の値の写しではなくなった（lilToon に戻したとき、同じ値でも書き直す）
+        self.written.clear();
+        self.version += 1;
     }
 
     /// 同じツールの、まっさらな別の持ち物（ほかのセット用）。
@@ -1126,68 +1153,14 @@ impl LookGpu {
         }
     }
 
-    /// 文書の見た目の設定に合わせる（値・ユーザーチャンネルの配列・画像・受けた絵の配列）。`paint` はそのセットの標準のチャンネルの絵（縮めと
-    /// 画像の作り方）、`budget` は配列の辺の上限とバイトの予算。標準の見た目のセットは、持ち物を手放すだけで値を作らない
-    /// （描き方は PBR で、値を読まない）。lilToon のセットも、文書・版・設定が前と同じなら値を作り直さない（描くたびに回るので）。
-    /// `shown` はビューが「チャンネルだけ」で見ているユーザーチャンネルの名前（標準の見た目のセットでも、そのチャンネルだけを配列に持つ）。
-    #[allow(clippy::too_many_arguments)]
-    pub fn sync(
+    /// マットキャップの絵（プロジェクトの画像。文書の効果の入力にある画像を使う）を持ち替え、2 つの絵の色空間を返す。
+    fn sync_matcaps(
         &mut self,
         doc: &Document,
+        look: &MaterialLook,
         paint: &Paint,
-        budget: LookBudget,
-        shown: &[String],
-        queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
-    ) {
-        let LookBudget {
-            limit,
-            users: budget,
-            received: received_budget,
-        } = budget;
-        // 描く見た目（Unity から受けた値があれば、その上に利用者の設定を重ねたもの）
-        let look = doc.drawn_look();
-        let mut draw = SetDraw::of(look);
-        // スロットの読み方は値を作ったときに決まる（下）。それまでは前の読み方
-        draw.spec.single = self.draw.spec.single;
-        draw.spec.looped = self.draw.spec.looped;
-        if !draw.lil {
-            if self.draw != draw {
-                self.draw = draw;
-                self.version += 1;
-            }
-            self.wants_tangents = false;
-            self.params_key = None;
-            self.sync_users(doc, shown, paint.level(), limit, budget, encoder);
-            if self.images.iter_mut().any(|i| i.take().is_some()) {
-                self.image_version += 1;
-            }
-            if self.received.sync(&[], limit, received_budget) {
-                self.image_version += 1;
-            }
-            return;
-        }
-        if self.draw != draw {
-            // 描き方（パイプライン）が替わった: 値が前と同じでも描き直す
-            self.draw = draw;
-            self.version += 1;
-        }
-        // 接線を使う機能（ノーマルマップ・2nd・異方性反射・マットキャップのカスタムノーマル・左右で分けるデカール（接線の向きで右手か））
-        let decal_sides = |l: &str| {
-            liltoon::on(look, &format!("_Use{l}Tex"))
-                && ["IsLeftOnly", "IsRightOnly", "ShouldFlipMirror"]
-                    .iter()
-                    .any(|t| liltoon::on(look, &format!("_{l}Tex{t}")))
-        };
-        self.wants_tangents = ["_UseBumpMap", "_UseBump2ndMap", "_UseAnisotropy"]
-            .iter()
-            .any(|t| liltoon::on(look, t))
-            || (liltoon::on(look, "_UseMatCap") && liltoon::on(look, "_MatCapCustomNormal"))
-            || (liltoon::on(look, "_UseMatCap2nd") && liltoon::on(look, "_MatCap2ndCustomNormal"))
-            || decal_sides("Main2nd")
-            || decal_sides("Main3rd");
-        self.sync_users(doc, shown, paint.level(), limit, budget, encoder);
-        // マットキャップの絵（プロジェクトの画像。文書の効果の入力にある画像を使う）
+    ) -> [Option<ImageColorSpace>; 2] {
         let mut spaces: [Option<ImageColorSpace>; 2] = [None, None];
         for (which, name) in ["_MatCapTex", "_MatCap2ndTex"].iter().enumerate() {
             let wanted = match look.textures.get(*name) {
@@ -1222,6 +1195,74 @@ impl LookGpu {
             }
             spaces[which] = self.images[which].as_ref().map(|h| h.space);
         }
+        spaces
+    }
+
+    /// 文書の見た目の設定に合わせる（値・ユーザーチャンネルの配列・画像・受けた絵の配列）。`paint` はそのセットの標準のチャンネルの絵（縮めと
+    /// 画像の作り方）、`budget` は配列の辺の上限とバイトの予算。標準の見た目のセットは、持ち物を手放すだけで値を作らない
+    /// （描き方は PBR で、値を読まない）。lilToon のセットも、文書・版・設定が前と同じなら値を作り直さない（描くたびに回るので）。
+    /// `shown` はビューが「チャンネルだけ」で見ているユーザーチャンネルの名前（標準の見た目のセットでも、そのチャンネルだけを配列に持つ）。
+    #[allow(clippy::too_many_arguments)]
+    pub fn sync(
+        &mut self,
+        doc: &Document,
+        paint: &Paint,
+        budget: LookBudget,
+        shown: &[String],
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        let LookBudget {
+            limit,
+            users: budget,
+            received: received_budget,
+        } = budget;
+        // 描く見た目（Unity から受けた値があれば、その上に利用者の設定を重ねたもの）
+        let look = doc.drawn_look();
+        let mut draw = SetDraw::of(look);
+        // スロットの読み方は値を作ったときに決まる（下）。それまでは前の読み方
+        draw.spec.single = self.draw.spec.single;
+        draw.spec.looped = self.draw.spec.looped;
+        if !draw.lil {
+            if self.draw != draw {
+                self.draw = draw;
+                self.version += 1;
+            }
+            self.write_standard_head(look, draw.mode, queue);
+            self.wants_tangents = false;
+            self.params_key = None;
+            self.sync_users(doc, shown, paint.level(), limit, budget, encoder);
+            if self.images.iter_mut().any(|i| i.take().is_some()) {
+                self.image_version += 1;
+            }
+            if self.received.sync(&[], limit, received_budget) {
+                self.image_version += 1;
+            }
+            return;
+        }
+        // lilToon の値が先頭まで書かれる（標準の描画モードの値は上書きされる）
+        self.standard_head = None;
+        if self.draw != draw {
+            // 描き方（パイプライン）が替わった: 値が前と同じでも描き直す
+            self.draw = draw;
+            self.version += 1;
+        }
+        // 接線を使う機能（ノーマルマップ・2nd・異方性反射・マットキャップのカスタムノーマル・左右で分けるデカール（接線の向きで右手か））
+        let decal_sides = |l: &str| {
+            liltoon::on(look, &format!("_Use{l}Tex"))
+                && ["IsLeftOnly", "IsRightOnly", "ShouldFlipMirror"]
+                    .iter()
+                    .any(|t| liltoon::on(look, &format!("_{l}Tex{t}")))
+        };
+        self.wants_tangents = ["_UseBumpMap", "_UseBump2ndMap", "_UseAnisotropy"]
+            .iter()
+            .any(|t| liltoon::on(look, t))
+            || (liltoon::on(look, "_UseMatCap") && liltoon::on(look, "_MatCapCustomNormal"))
+            || (liltoon::on(look, "_UseMatCap2nd") && liltoon::on(look, "_MatCap2ndCustomNormal"))
+            || decal_sides("Main2nd")
+            || decal_sides("Main3rd");
+        self.sync_users(doc, shown, paint.level(), limit, budget, encoder);
+        let spaces = self.sync_matcaps(doc, look, paint, encoder);
         // Unity から受けた絵（割り当てていないスロットのもの。スロットの並びで先から、レイヤーの上限まで）
         let wanted = received_layered(doc, look);
         if self.received.sync(&wanted, limit, received_budget) {

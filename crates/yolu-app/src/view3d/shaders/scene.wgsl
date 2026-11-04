@@ -263,8 +263,31 @@ fn standard_brdf(
         + gi_specular * fresnel_lerp(spec_color, grazing, nv) * surface_reduction;
 }
 
+// 面の色（ガンマ）と不透明度。不透明な描画モード（0）は不透明度 1 で、何も描いていない所に市松を見せる。カットアウト（1）・半透明（2）は
+// 市松を見せず、Color の A がしきい（liltoon の P_MODE の y）に届かない画素を捨てる（カットアウトは出力を不透明にし、半透明は乗算済みで
+// 後ろの面に重ねる。lilToon の `lil_shade` と同じ。描く順は面ごとのパイプラインの選びで、不透明 → カットアウト → 半透明）。
+// 一様バッファの先頭（liltoon の `lil.p[0]`）の x が描画モード、y がしきい。標準の見た目では `look_gpu` が書く。
+fn standard_alpha_mode() -> i32 {
+    if (u.mode.x > 0.5) {
+        return 0;
+    }
+    return i32(lil.p[0].x + 0.5);
+}
+
 @fragment
 fn fs_main(f: VsOut) -> @location(0) vec4<f32> {
+    let c = standard_shade(f);
+    return vec4<f32>(c.rgb * c.a, c.a);
+}
+
+// 半透明を sRGB の描き先へ（ハードウェアがリニアで重ねる）: リニアの乗算済みのまま書く。
+@fragment
+fn fs_main_linear(f: VsOut) -> @location(0) vec4<f32> {
+    let c = standard_shade(f);
+    return vec4<f32>(srgb_to_linear(c.rgb) * c.a, c.a);
+}
+
+fn standard_shade(f: VsOut) -> vec4<f32> {
     // 標本の取り出しは条件の外で（導関数の一様性）。絵は乗算済み（行は文書と同じ下から上: v がそのまま文書の y）。Color・Emission は
     // sRGB の形式で、読んだ値はリニア（リニアで補間した値。Color はリニアの乗算済み）
     let tex_color = textureSample(color_tex, paint_sampler, f.uv);
@@ -278,9 +301,30 @@ fn fs_main(f: VsOut) -> @location(0) vec4<f32> {
     let tex_map = textureSample(map_tex, paint_sampler, f.uv);
     let painted = set_params.flags.x > 0.5;
     let background = checker_gamma(f.uv);
+    // 絵を貼らない面は、描画モードによらず不透明で市松を見せる（切る絵が無い）。勾配は条件の外で（導関数の一様性）
+    let alpha_mode = select(0, standard_alpha_mode(), painted);
+    let paint_alpha = tex_color.a;
+    let fw_alpha = fwidth(paint_alpha);
     var base_gamma = background;
-    if (painted) {
-        base_gamma = background * (1.0 - tex_color.a) + color_gamma;
+    var alpha = 1.0;
+    if (alpha_mode == 0) {
+        if (painted) {
+            base_gamma = background * (1.0 - tex_color.a) + color_gamma;
+        }
+    } else {
+        let cutoff = lil.p[0].y;
+        // 市松ではなく、色そのもの（乗算済みを割り戻したガンマの値）
+        base_gamma = select(vec3<f32>(0.0), color_gamma / max(tex_color.a, 0.0001), tex_color.a > 0.0);
+        if (alpha_mode == 1) {
+            if (saturate((paint_alpha - cutoff) / max(fw_alpha, 0.0001) + 0.5) == 0.0) {
+                discard;
+            }
+        } else {
+            if (paint_alpha - cutoff < 0.0) {
+                discard;
+            }
+            alpha = paint_alpha;
+        }
     }
 
     // チャンネルだけ・メッシュマップだけ（光なし）: 値をそのまま出す
@@ -367,7 +411,7 @@ fn fs_main(f: VsOut) -> @location(0) vec4<f32> {
     // 影は直接光（拡散も鏡面も）だけを消す。環境光・映り込み・発光は残る（Unity 版は掛け算の重ね描きで、拡散だけを近似していた）
     let direct = u.light_color.rgb * (1.0 - shadow);
     let color = standard_brdf(albedo, metallic, smoothness, n, view, to_light, direct, gi_diffuse, gi_specular) + emission;
-    return vec4<f32>(linear_to_srgb(color), 1.0);
+    return vec4<f32>(linear_to_srgb(color), alpha);
 }
 
 // ───────── 背景（環境をぼかして画面いっぱいに） ─────────

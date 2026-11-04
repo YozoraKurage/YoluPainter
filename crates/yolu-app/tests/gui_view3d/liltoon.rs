@@ -6,6 +6,7 @@ use crate::common::drive::Drive;
 use common::*;
 use egui::Pos2;
 use egui_kittest::Harness;
+use yolu_app::look::liltoon::{self, RenderMode};
 use yolu_app::state::Action;
 use yolu_app::view3d::brdf;
 use yolu_app::view3d::display::{Display, EnvKind, Op};
@@ -606,6 +607,120 @@ fn cutout_discards_and_transparent_blends_over_the_background() {
             "半透明（ガンマ）"
         },
     );
+}
+
+/// 標準の見た目の板（Color の A が `alpha`）を、描画モードとしきいを決めて描き、真ん中の画素・背景の画素・リニアで重ねたかを返す。
+fn standard_at(alpha: u8, mode: RenderMode, cutoff: f32) -> ([u8; 3], [u8; 3], bool) {
+    let mut h = view(900.0, 640.0, 64);
+    set_model(&mut h, vec![quad(1.0)]);
+    look_at(&mut h, 2.5);
+    light(&mut h, 180.0, 0.0);
+    fill_color(&mut h, [200, 120, 60, alpha]);
+    let mut look = MaterialLook::default();
+    if mode != RenderMode::Opaque {
+        look.properties.insert(
+            liltoon::STANDARD_MODE.into(),
+            LookValue::Float(mode.standard_value()),
+        );
+    }
+    look.properties
+        .insert("_Cutoff".into(), LookValue::Float(cutoff));
+    set_look(&mut h, look);
+    let image = h.render().expect("描ける");
+    let r = h.state().view3d_rect().unwrap();
+    let background = px(&image, egui::pos2(r.left() + 5.0, r.top() + 5.0));
+    let linear = h.state().view3d_stats().unwrap().linear_transparent;
+    (px(&image, middle(&h)), background, linear)
+}
+
+#[test]
+fn a_standard_set_cuts_at_the_cutoff_and_blends_over_the_background_in_the_same_order_as_liltoon() {
+    // 参照: 同じ色を不透明（A 255）で標準に描いた、光の当たった色
+    let (lit, background, linear) = standard_at(255, RenderMode::Opaque, 0.5);
+    assert_ne!(lit, background);
+    let a = 64.0 / 255.0;
+    // 不透明は今までどおり市松の上に重ねる（背景でも、光の当たった色でもない）
+    let (opaque, _, _) = standard_at(64, RenderMode::Opaque, 0.5);
+    assert_ne!(opaque, background);
+    assert_ne!(opaque, lit);
+    // カットアウト: α 0.25 < Cutoff 0.5 は捨てて背景。Cutoff を下げると残り、不透明の色（市松は見えない）
+    let (cut, _, _) = standard_at(64, RenderMode::Cutout, 0.5);
+    assert_close(cut, background, 1, "カットアウトで捨てる");
+    let (kept, _, _) = standard_at(64, RenderMode::Cutout, 0.1);
+    assert_close(kept, lit, 2, "カットアウトで残る");
+    // 半透明: 色 × α が背景に重なる（リニアの空間で乗算済み。描き先の sRGB の見え方を作れない機材（GL）はガンマの値で重ねる）
+    let (blend, _, _) = standard_at(64, RenderMode::Transparent, 0.001);
+    let expected = [0, 1, 2].map(|k| {
+        let src = lit[k] as f32 / 255.0;
+        let bg = background[k] as f32 / 255.0;
+        let mixed = if linear {
+            brdf::linear_to_srgb(
+                brdf::srgb_to_linear(src) * a + brdf::srgb_to_linear(bg) * (1.0 - a),
+            )
+        } else {
+            src * a + bg * (1.0 - a)
+        };
+        (mixed.clamp(0.0, 1.0) * 255.0).round() as u8
+    });
+    assert_close(blend, expected, 3, "半透明");
+    // 半透明でも、しきいに届かない画素は捨てる（lilToon の半透明と同じ）
+    let (dropped, _, _) = standard_at(64, RenderMode::Transparent, 0.5);
+    assert_close(dropped, background, 1, "半透明のしきい");
+}
+
+#[test]
+fn a_standard_set_stays_opaque_with_the_checker_in_the_neutral_view() {
+    let mut h = view(900.0, 640.0, 64);
+    set_model(&mut h, vec![quad(1.0)]);
+    look_at(&mut h, 2.5);
+    light(&mut h, 180.0, 0.0);
+    fill_color(&mut h, [200, 120, 60, 64]);
+    let mut look = MaterialLook::default();
+    look.properties.insert(
+        liltoon::STANDARD_MODE.into(),
+        LookValue::Float(RenderMode::Cutout.standard_value()),
+    );
+    set_look(&mut h, look);
+    let materials = h.render().expect("描ける");
+    let r = h.state().view3d_rect().unwrap();
+    let background = px(&materials, egui::pos2(r.left() + 5.0, r.top() + 5.0));
+    assert_close(
+        px(&materials, middle(&h)),
+        background,
+        1,
+        "カットアウトで捨てる",
+    );
+    op(
+        &mut h,
+        Op::Shading(yolu_app::view3d::display::Shading::Neutral),
+    );
+    let neutral = h.render().expect("描ける");
+    assert_ne!(
+        px(&neutral, middle(&h)),
+        background,
+        "中立の表示は描画モードによらず市松の上に描く"
+    );
+}
+
+#[test]
+fn snapshot_of_a_standard_sphere_drawn_transparent() {
+    let mut h = view(900.0, 640.0, 64);
+    set_model(&mut h, vec![cube_sphere(24, 0.5)]);
+    look_at(&mut h, 2.5);
+    light(&mut h, 160.0, 30.0);
+    fill_color(&mut h, [200, 120, 60, 128]);
+    let mut look = MaterialLook::default();
+    look.properties.insert(
+        liltoon::STANDARD_MODE.into(),
+        LookValue::Float(RenderMode::Transparent.standard_value()),
+    );
+    look.properties
+        .insert("_Cutoff".into(), LookValue::Float(0.001));
+    set_look(&mut h, look);
+    h.event(egui::Event::PointerGone);
+    h.run();
+    let rect = crate::view3d_area(&h);
+    common::shot::region(&mut h, "view3d_standard_transparent", rect);
 }
 
 #[test]

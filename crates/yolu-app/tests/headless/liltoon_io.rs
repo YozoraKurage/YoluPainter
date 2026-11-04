@@ -100,6 +100,89 @@ fn the_look_survives_save_and_open_and_is_not_an_unknown_entry() {
 }
 
 #[test]
+fn the_standard_render_mode_is_one_undo_survives_save_and_a_file_without_it_is_opaque() {
+    use yolu_app::look::liltoon::{self, RenderMode};
+    let dir = Dir::new("stdmode");
+    let path = dir.0.join("mode.ylp");
+    let mut s = AppState::new(32, 32);
+    s.act(Action::Look(LookOp::Kind(LookKind::Standard)));
+    assert_eq!(
+        liltoon::render_mode(s.doc().drawn_look()),
+        RenderMode::Opaque,
+        "既定は不透明"
+    );
+    let steps = s.doc().undo_count();
+    s.act(Action::Look(LookOp::Mode(RenderMode::Cutout)));
+    assert_eq!(s.doc().undo_count(), steps + 1, "描画モードは 1 回の Undo");
+    assert_eq!(
+        liltoon::render_mode(s.doc().drawn_look()),
+        RenderMode::Cutout
+    );
+    assert_eq!(liltoon::number(s.doc().drawn_look(), "_Cutoff"), 0.5);
+    s.act(Action::Look(LookOp::Value {
+        name: "_Cutoff",
+        value: LookValue::Float(0.3),
+        drag: false,
+    }));
+    s.act(Action::Look(LookOp::Mode(RenderMode::Transparent)));
+    assert_eq!(
+        liltoon::render_mode(s.doc().drawn_look()),
+        RenderMode::Transparent
+    );
+    s.act(Action::Look(LookOp::Mode(RenderMode::Cutout)));
+    let saved = s.doc().look().clone();
+    yolu_app::project::save_from(&mut s, &path);
+    let mut t = AppState::new(8, 8);
+    yolu_app::project::open_into(&mut t, &path);
+    assert_eq!(t.doc().look(), &saved, "{}", t.message());
+    assert_eq!(t.doc().look().kind, LookKind::Standard);
+    assert_eq!(
+        liltoon::render_mode(t.doc().drawn_look()),
+        RenderMode::Cutout
+    );
+    assert!(
+        !t.message().contains("look.json"),
+        "知らないエントリとして知らせない: {}",
+        t.message()
+    );
+    // 取り消し 1 回で、1 つ前の描画モード（半透明）に戻る
+    s.act(Action::Undo);
+    assert_eq!(
+        liltoon::render_mode(s.doc().drawn_look()),
+        RenderMode::Transparent
+    );
+    // 不透明へ戻すと、描画モードの値を持たない（しきいは残す）。描画モードだけの設定は、戻すと既定の設定に戻り look.json を書かない
+    let mut u = AppState::new(32, 32);
+    u.doc_mut().restore_look(Default::default()).unwrap();
+    u.act(Action::Look(LookOp::Mode(RenderMode::Cutout)));
+    u.act(Action::Look(LookOp::Mode(RenderMode::Opaque)));
+    assert!(!u
+        .doc()
+        .look()
+        .properties
+        .contains_key(liltoon::STANDARD_MODE));
+    // 描画モードの欄の無い look.json（今までの標準の設定）は不透明で開く
+    let mut old = AppState::new(32, 32);
+    old.doc_mut().restore_look(Default::default()).unwrap();
+    old.act(Action::Look(LookOp::Value {
+        name: "_Cutoff",
+        value: LookValue::Float(0.2),
+        drag: false,
+    }));
+    let old_path = dir.0.join("old.ylp");
+    yolu_app::project::save_from(&mut old, &old_path);
+    let mut v = AppState::new(8, 8);
+    yolu_app::project::open_into(&mut v, &old_path);
+    assert_eq!(v.doc().look().kind, LookKind::Standard);
+    assert_eq!(
+        liltoon::render_mode(v.doc().drawn_look()),
+        RenderMode::Opaque,
+        "{}",
+        v.message()
+    );
+}
+
+#[test]
 fn a_file_without_a_look_opens_standard_while_new_sets_start_as_liltoon() {
     // 今までの .ylp（look.json が無い）は、開いただけで見た目を変えない（標準）。新しい文書と新しいセットの既定は lilToon
     let dir = Dir::new("old");

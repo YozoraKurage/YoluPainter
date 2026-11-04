@@ -95,6 +95,7 @@ pub fn look_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     }
     received_row(ui, app, rows, free);
     if look.kind != LookKind::LilToon {
+        standard_mode_rows(ui, app, rows, free);
         rows.space(4.0);
         return;
     }
@@ -1243,6 +1244,32 @@ fn rendering_mode(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) 
             r,
             r.width(),
         );
+    }
+}
+
+/// 標準の見た目の描画モードとしきい（lilToon の描画モードの行と、基本設定の Cutoff の行と同じ部品。不透明のときはしきいを出さない）。
+fn standard_mode_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
+    let lang = app.lang;
+    let mode = liltoon::standard_mode(app.session.doc.drawn_look());
+    if let Some(r) = choice(
+        ui,
+        rows,
+        "look.mode",
+        lang.t("look-rendering-mode"),
+        mode.label(lang),
+        lang.t("look-rendering-mode"),
+        free,
+    ) {
+        open_popup(
+            app,
+            &ui.ctx().clone(),
+            Popup::Look(LookChoice::Mode),
+            r,
+            r.width(),
+        );
+    }
+    if mode != RenderMode::Opaque {
+        float_row(ui, app, rows, "_Cutoff", free);
     }
 }
 
@@ -2720,7 +2747,7 @@ pub fn entries(app: &AppState, choice: LookChoice) -> Vec<Entry<Action>> {
             })
             .collect(),
         LookChoice::Mode => {
-            let current = liltoon::shader_info(look).mode;
+            let current = liltoon::render_mode(look);
             RenderMode::ALL
                 .into_iter()
                 .map(|m| {

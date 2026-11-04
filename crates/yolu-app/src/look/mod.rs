@@ -82,7 +82,8 @@ pub enum LookOp {
     /// 標準と lilToon を切り替える（lilToon にしたとき、スロットが 1 つも無ければ、メインカラー・ノーマルマップ・発光を同じ名前の
     /// チャンネルに割り当てる。書き出しの lilToon の画像と同じ）。
     Kind(LookKind),
-    /// 描画モード（シェーダーの名前が変わる。Cutoff は lilToon のインスペクターと同じく、カットアウトで 0.5・半透明で 0.001）。
+    /// 描画モード（lilToon はシェーダーの名前が変わり、標準は `_StandardMode` の値が変わる。Cutoff は lilToon のインスペクターと同じく、
+    /// カットアウトで 0.5・半透明で 0.001）。
     Mode(RenderMode),
     /// 輪郭線の入切（シェーダーの名前が変わる）。
     Outline(bool),
@@ -603,6 +604,31 @@ pub fn apply_template(doc: &mut Document, lang: Lang) -> Result<usize, CoreError
     })
 }
 
+/// 描画モードを設定へ書く。lilToon はシェーダーの名前、標準は `_StandardMode`（不透明は値を持たず、Cutoff は残す）。Cutoff は lilToon の
+/// インスペクターと同じく、カットアウトで 0.5・半透明で 0.001（標準も同じ）。`drawn` は今描いている見た目（描き方と今の名前を読む）。
+fn set_render_mode(look: &mut MaterialLook, drawn: &MaterialLook, mode: RenderMode) {
+    if drawn.kind == LookKind::LilToon {
+        let info = liltoon::shader_info(drawn);
+        look.shader = liltoon::shader_name(mode, info.outline);
+    } else if mode == RenderMode::Opaque {
+        look.properties.remove(liltoon::STANDARD_MODE);
+    } else {
+        look.properties.insert(
+            liltoon::STANDARD_MODE.into(),
+            LookValue::Float(mode.standard_value()),
+        );
+    }
+    let cutoff = match mode {
+        RenderMode::Cutout => Some(0.5),
+        RenderMode::Transparent => Some(0.001),
+        RenderMode::Opaque => None,
+    };
+    if let Some(c) = cutoff {
+        look.properties
+            .insert("_Cutoff".into(), LookValue::Float(c));
+    }
+}
+
 impl AppState {
     /// 見た目の設定の操作を当てる（`Action::Look`）。
     pub fn look_apply(&mut self, op: LookOp) {
@@ -679,19 +705,7 @@ impl AppState {
                     default_textures(&mut look);
                 }
             }
-            LookOp::Mode(mode) => {
-                let info = liltoon::shader_info(&drawn);
-                look.shader = liltoon::shader_name(mode, info.outline);
-                let cutoff = match mode {
-                    RenderMode::Cutout => Some(0.5),
-                    RenderMode::Transparent => Some(0.001),
-                    RenderMode::Opaque => None,
-                };
-                if let Some(c) = cutoff {
-                    look.properties
-                        .insert("_Cutoff".into(), LookValue::Float(c));
-                }
-            }
+            LookOp::Mode(mode) => set_render_mode(&mut look, &drawn, mode),
             LookOp::Outline(on) => {
                 let info = liltoon::shader_info(&drawn);
                 look.shader = liltoon::shader_name(info.mode, on);

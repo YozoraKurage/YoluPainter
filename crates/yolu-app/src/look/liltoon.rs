@@ -5,7 +5,7 @@
 //! 値は [`yolu_core::look::MaterialLook`] にプロパティの名前で持ち、無い名前はここの既定で描く。ここに無い名前（ファー・宝石・
 //! AudioLink など、再現しない機能の値や Live Link で受けた値）も設定には残り、描かないだけ。
 
-use yolu_core::look::{MaterialLook, LILTOON_SHADER};
+use yolu_core::look::{LookKind, MaterialLook, LILTOON_SHADER};
 
 use super::Section;
 use crate::lang::Lang;
@@ -1240,6 +1240,40 @@ impl RenderMode {
             RenderMode::Cutout => lang.t("look-cutout"),
             RenderMode::Transparent => lang.t("look-transparent"),
         }
+    }
+}
+
+/// 標準の見た目の描画モードを持つプロパティの名前（0 不透明・1 カットアウト・2 半透明。lilToon の `_TransparentMode` と同じ数え方）。
+/// lilToon は描画モードをシェーダーの名前で持つが、標準にはシェーダーの名前が無いので、値の 1 つとして持つ。Unity から受ける値には
+/// 無い名前で、値は不透明（無いとき）が既定。知らない読み手は知らないプロパティとして持つだけで、不透明で描く。
+pub const STANDARD_MODE: &str = "_StandardMode";
+
+impl RenderMode {
+    /// 標準の見た目の `STANDARD_MODE` の値。
+    pub fn standard_value(self) -> f32 {
+        match self {
+            RenderMode::Opaque => 0.0,
+            RenderMode::Cutout => 1.0,
+            RenderMode::Transparent => 2.0,
+        }
+    }
+}
+
+/// 標準の見た目の描画モード（値が無い・範囲の外は不透明）。
+pub fn standard_mode(look: &MaterialLook) -> RenderMode {
+    match look.float(STANDARD_MODE, 0.0).round() as i32 {
+        1 => RenderMode::Cutout,
+        2 => RenderMode::Transparent,
+        _ => RenderMode::Opaque,
+    }
+}
+
+/// 描き方（標準・lilToon）に応じた描画モード。標準は `STANDARD_MODE`、lilToon はシェーダーの名前（[`shader_info`]）。
+pub fn render_mode(look: &MaterialLook) -> RenderMode {
+    if look.kind == LookKind::LilToon {
+        shader_info(look).mode
+    } else {
+        standard_mode(look)
     }
 }
 

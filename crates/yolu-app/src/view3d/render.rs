@@ -305,7 +305,7 @@ struct Pipelines {
     background: wgpu::RenderPipeline,
 }
 
-/// lilToon の描き方のパイプラインの選び（描き先の形式・Cull・半透明・輪郭線）。
+/// lilToon の描き方のパイプラインの選び（描き先の形式・Cull・半透明・輪郭線）。標準の見た目の半透明も同じ仕組みで選ぶ（`standard`）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct LilPipe {
     hdr: bool,
@@ -314,10 +314,30 @@ struct LilPipe {
     cull: u8,
     transparent: bool,
     outline: bool,
+    /// 標準の見た目の半透明（`fs_main`。lilToon でなく、Cull は表だけ・輪郭線なし）。
+    standard: bool,
     /// パイプラインの定数（使う機能とスロットの読み方。実機は全部入り）。
     spec: look_gpu::LilSpec,
     /// 描き先のサンプル数。
     samples: u32,
+}
+
+/// 半透明の面のパイプラインの選び（lilToon は輪郭線なしの本体、標準の見た目は `fs_main` の半透明）。
+fn transparent_key(d: &SetDraw, hdr: bool, srgb: bool, samples: u32) -> LilPipe {
+    LilPipe {
+        hdr,
+        srgb,
+        cull: if d.lil { d.cull } else { 2 },
+        transparent: true,
+        outline: false,
+        standard: !d.lil,
+        spec: if d.lil {
+            d.spec
+        } else {
+            look_gpu::LilSpec::ALL
+        },
+        samples,
+    }
 }
 
 /// 影のマップ（光から見た深さ。影を初めて使うときに作る）。
@@ -3178,7 +3198,7 @@ impl View3dRenderer {
 
     /// lilToon のパイプライン（無ければ作る）。輪郭線は前面を捨てる（lilToon の `_OutlineCull` の既定）・深さは Less（`_OutlineZTest` の既定）、
     /// 半透明の面は乗算済みで重ね（`One`・`OneMinusSrcAlpha`）、半透明の輪郭線は `SrcAlpha`・`OneMinusSrcAlpha`（lilToon の設定の既定）。
-    /// どれも深さを書く（lilToon の半透明も `_ZWrite` は 1）。
+    /// どれも深さを書く（lilToon の半透明も `_ZWrite` は 1）。標準の見た目の半透明（`key.standard`）は `fs_main` を乗算済みで重ねる。
     fn ensure_lil_pipeline(&mut self, key: LilPipe) {
         if self.lil_pipelines.contains_key(&key) {
             return;
@@ -3204,15 +3224,19 @@ impl View3dRenderer {
             key.spec.constants().to_vec()
         };
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(if key.outline {
-                "yolu-3d-liltoon-outline"
-            } else {
-                "yolu-3d-liltoon"
+            label: Some(match (key.standard, key.outline) {
+                (true, _) => "yolu-3d-scene-transparent",
+                (false, true) => "yolu-3d-liltoon-outline",
+                (false, false) => "yolu-3d-liltoon",
             }),
             layout: Some(&self.scene_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &self.scene_module,
-                entry_point: Some(if key.outline { "vs_outline" } else { "vs_main" }),
+                entry_point: Some(if key.outline && !key.standard {
+                    "vs_outline"
+                } else {
+                    "vs_main"
+                }),
                 compilation_options: wgpu::PipelineCompilationOptions {
                     constants: &constants,
                     ..Default::default()
@@ -3243,11 +3267,13 @@ impl View3dRenderer {
             multisample: multisample(key.samples),
             fragment: Some(wgpu::FragmentState {
                 module: &self.scene_module,
-                entry_point: Some(match (key.outline, key.srgb) {
-                    (false, false) => "fs_liltoon",
-                    (false, true) => "fs_liltoon_linear",
-                    (true, false) => "fs_outline",
-                    (true, true) => "fs_outline_linear",
+                entry_point: Some(match (key.standard, key.outline, key.srgb) {
+                    (true, _, false) => "fs_main",
+                    (true, _, true) => "fs_main_linear",
+                    (false, false, false) => "fs_liltoon",
+                    (false, false, true) => "fs_liltoon_linear",
+                    (false, true, false) => "fs_outline",
+                    (false, true, true) => "fs_outline_linear",
                 }),
                 compilation_options: wgpu::PipelineCompilationOptions {
                     constants: &constants,
@@ -3289,23 +3315,27 @@ impl View3dRenderer {
         let draws = self.material_draws(display, current_material);
         // 半透明はリニアで重ねる（Unity と同じ）。8 bit の描き先なら、2 つ目のパスで sRGB の見え方へ描く。HDR の描き先（トーンマッピング）と、
         // sRGB の見え方を作れない機材（GL）は、ガンマの値のまま同じパスで重ねる
-        let is_transparent =
-            |d: &SetDraw| d.lil && d.mode == super::look_gpu::RenderModeAlias::Transparent;
+        let is_transparent = |d: &SetDraw| d.mode == super::look_gpu::RenderModeAlias::Transparent;
         let linear_blend = !hdr_path && self.srgb_views;
         // 要る lilToon のパイプラインを先に作る（描きのパスの中では作れない）
         let mut needed: Vec<LilPipe> = Vec::new();
         for (_, _, _, d, _) in &draws {
-            if !d.lil {
-                continue;
-            }
             let transparent = is_transparent(d);
             let srgb = transparent && linear_blend;
+            if !d.lil {
+                // 標準の見た目は、半透明だけ別のパイプライン（不透明・カットアウトは `pipelines.scene`）
+                if transparent {
+                    needed.push(transparent_key(d, hdr_path, srgb, samples));
+                }
+                continue;
+            }
             needed.push(LilPipe {
                 hdr: hdr_path,
                 srgb,
                 cull: d.cull,
                 transparent,
                 outline: false,
+                standard: false,
                 spec: d.spec,
                 samples,
             });
@@ -3316,6 +3346,7 @@ impl View3dRenderer {
                     cull: 1,
                     transparent,
                     outline: true,
+                    standard: false,
                     spec: d.spec,
                     samples,
                 });
@@ -3411,6 +3442,7 @@ impl View3dRenderer {
                             cull: d.cull,
                             transparent: false,
                             outline: false,
+                            standard: false,
                             spec: d.spec,
                             samples,
                         }));
@@ -3422,6 +3454,7 @@ impl View3dRenderer {
                                 cull: 1,
                                 transparent: false,
                                 outline: true,
+                                standard: false,
                                 spec: d.spec,
                                 samples,
                             }));
@@ -3439,15 +3472,7 @@ impl View3dRenderer {
                     {
                         pass.set_bind_group(1, set_bind(*pick), &[]);
                         pass.set_bind_group(2, self.map_bind(*material), &[]);
-                        pass.set_pipeline(lil(LilPipe {
-                            hdr: hdr_path,
-                            srgb: false,
-                            cull: d.cull,
-                            transparent: true,
-                            outline: false,
-                            spec: d.spec,
-                            samples,
-                        }));
+                        pass.set_pipeline(lil(transparent_key(d, hdr_path, false, samples)));
                         pass.draw(*start..*end, 0..1);
                         if d.outline {
                             pass.set_pipeline(lil(LilPipe {
@@ -3456,6 +3481,7 @@ impl View3dRenderer {
                                 cull: 1,
                                 transparent: true,
                                 outline: true,
+                                standard: false,
                                 spec: d.spec,
                                 samples,
                             }));
@@ -3519,15 +3545,7 @@ impl View3dRenderer {
                 {
                     pass.set_bind_group(1, set_bind(*pick), &[]);
                     pass.set_bind_group(2, self.map_bind(*material), &[]);
-                    pass.set_pipeline(lil(LilPipe {
-                        hdr: false,
-                        srgb: true,
-                        cull: d.cull,
-                        transparent: true,
-                        outline: false,
-                        spec: d.spec,
-                        samples,
-                    }));
+                    pass.set_pipeline(lil(transparent_key(d, false, true, samples)));
                     pass.draw(*start..*end, 0..1);
                     if d.outline {
                         pass.set_pipeline(lil(LilPipe {
@@ -3536,6 +3554,7 @@ impl View3dRenderer {
                             cull: 1,
                             transparent: true,
                             outline: true,
+                            standard: false,
                             spec: d.spec,
                             samples,
                         }));
