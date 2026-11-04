@@ -1,4 +1,4 @@
-//! 文書の外から渡す効果の入力: 焼いたメッシュマップ・モデルのルートの位置・プロジェクトの画像。
+//! 文書の外から渡す効果の入力: 焼いたメッシュマップ・モデルのルートの位置・プロジェクトの画像・参照レイヤーが読むほかのテクスチャセットの合成。
 //! 保存も Undo もしない（派生の入力）。渡し直すと、それを読むレイヤーの合成が作り直される。
 //!
 //! 使えないマップ（無い・古い・条件を照合できない・大きさが違う）は、使う段が入力をそのまま通して理由を出す。黒として読まない。
@@ -15,6 +15,8 @@ use crate::error::CoreError;
 use crate::fill_image;
 use crate::generator::{self, MapKind, MapState};
 use crate::mesh_maps::BakedMeshMap;
+use crate::pointer::{ExternalSet, PointerInput};
+use crate::types::Channel;
 
 /// generator の `MapKind` を保存の番号（メッシュマップの種類の並びと同じ）から。
 pub(crate) fn map_kind_from_index(index: i32) -> Option<MapKind> {
@@ -260,6 +262,8 @@ pub struct EffectInputs {
     pub(crate) images: HashMap<ImageId, ImageInput>,
     /// モデルのこのテクスチャセットの UV の位相（アイランド・継ぎ目の対応）。レイヤーのフィルターが UV の継ぎ目をまたぐのに使う（None はモデルが無い）。
     pub(crate) topology: Option<Arc<crate::geometry::UvTopology>>,
+    /// 参照レイヤーが読む、ほかのテクスチャセットのレイヤーセットの合成（鍵と、向こうのチャンネルごと）。
+    pub(crate) pointers: std::collections::BTreeMap<(ExternalSet, Channel), PointerInput>,
 }
 
 impl Default for EffectInputs {
@@ -269,6 +273,7 @@ impl Default for EffectInputs {
             frame: Some(ModelFrame::default()),
             images: HashMap::new(),
             topology: None,
+            pointers: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -298,6 +303,28 @@ impl EffectInputs {
         self.topology = topology;
         self
     }
+    /// 参照レイヤーが読む、ほかのテクスチャセット（`key`）のレイヤーセットの、チャンネル `channel`（向こうの文書のチャンネルの番号）の合成を置く
+    /// （同じ鍵・チャンネルは置き換える）。大きさは文書と違ってよい（UV で引き伸ばして読む）。
+    pub fn with_pointer(mut self, key: ExternalSet, channel: Channel, input: PointerInput) -> Self {
+        self.pointers.insert((key, channel), input);
+        self
+    }
+    /// 参照の入力（無ければ None）。
+    pub fn pointer(&self, key: ExternalSet, channel: Channel) -> Option<&PointerInput> {
+        self.pointers.get(&(key, channel))
+    }
+    /// 参照の入力の全部（鍵・チャンネルの順）。
+    pub fn pointers(&self) -> impl Iterator<Item = (ExternalSet, Channel, &PointerInput)> + '_ {
+        self.pointers.iter().map(|((k, c), i)| (*k, *c, i))
+    }
+    /// 参照の入力が同じか。画素が同じなら同じ `Arc` を渡すと、比べる費用がかからない（違う `Arc` は、大きさが同じなら全部を比べる）。
+    pub(crate) fn same_pointers(&self, other: &EffectInputs) -> bool {
+        self.pointers.len() == other.pointers.len()
+            && self
+                .pointers
+                .iter()
+                .all(|(k, i)| other.pointers.get(k).is_some_and(|o| o.same_pixels(i)))
+    }
     /// モデルの UV の位相（アイランドの図・継ぎ目の対応）。
     pub fn topology(&self) -> Option<&Arc<crate::geometry::UvTopology>> {
         self.topology.as_ref()
@@ -319,7 +346,8 @@ impl EffectInputs {
     pub fn images(&self) -> &HashMap<ImageId, ImageInput> {
         &self.images
     }
-    /// 位相以外の入力（マップ・モデルのルート・画像）が同じか（画素・画像は共有していれば中身を見ずに同じとする）。
+    /// 位相以外の入力（マップ・モデルのルート・画像）が同じか（画素・画像は共有していれば中身を見ずに同じとする）。参照の入力は見ない
+    /// （[`Self::same_pointers`]。参照の入力だけが替わっても、マップ・画像を読むレイヤーは評価し直さない）。
     pub(crate) fn same_data(&self, other: &EffectInputs) -> bool {
         self.frame == other.frame
             && self.maps.len() == other.maps.len()
@@ -342,7 +370,7 @@ impl EffectInputs {
     }
     /// 同じ入力か（渡し直しで合成を作り直すかの判断に使う）。
     pub fn same_as(&self, other: &EffectInputs) -> bool {
-        self.same_topology(other) && self.same_data(other)
+        self.same_topology(other) && self.same_data(other) && self.same_pointers(other)
     }
     pub fn map(&self, kind: MapKind) -> Option<&MapInput> {
         self.maps.iter().find(|m| m.kind == kind)

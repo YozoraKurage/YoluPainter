@@ -69,11 +69,16 @@ pub const LAYER_SET_CHANNELS_VERSION: i32 = 37;
 /// スタンドアロンはバージョンの範囲の外として断る（形式は docs/YLP_FORMAT.md、理由は docs/YLP_DECISIONS.md）。このバージョンの文書はバージョン
 /// 27〜37 の中身も読み書きできる。
 pub const LAYER_FILL_MAPS_VERSION: i32 = 38;
+/// 参照レイヤー（レイヤーの種類 4。画素を持たず、同じ文書のレイヤー・グループ・レイヤーセットか、ほかのテクスチャセットのレイヤーセットを指す）を
+/// 置けるようにしたバージョン（レイヤーの続きの属性の印のビット 4 と、定規の後の `pointer` の欄）。参照レイヤーのある文書だけがこのバージョンになり、
+/// 0.7.x までのスタンドアロンはバージョンの範囲の外として断る（形式は docs/YLP_FORMAT.md、理由は docs/YLP_DECISIONS.md）。このバージョンの文書は
+/// バージョン 27〜38 の中身も読み書きできる。
+pub const POINTER_LAYER_VERSION: i32 = 39;
 /// この読み手が読める一番新しい版。読める版の集合は 1〜`MIXING_VERSION`・`SPLIT_VERSION`（26。分けた正本の識別）・`PATHS_VERSION`（27）・
 /// `EFFECTS_VERSION`（28）・`POINT_GRADIENT_VERSION`（29）・`TEXT_VERSION`（30）・`SEAMS_VERSION`（32）・`BAKE_PRIORITY_VERSION`（33）・
 /// `ANTI_ALIAS_VERSION`（34）・`RULERS_VERSION`（35）・`LAYER_SETS_VERSION`（36）・`LAYER_SET_CHANNELS_VERSION`（37）・
-/// `LAYER_FILL_MAPS_VERSION`（38）で、間の 31 は意味を決めておらず断る（バージョンを割り振ったら `is_known_version` へ足す）。
-pub const MAX_NATIVE_VERSION: i32 = LAYER_FILL_MAPS_VERSION;
+/// `LAYER_FILL_MAPS_VERSION`（38）・`POINTER_LAYER_VERSION`（39）で、間の 31 は意味を決めておらず断る（バージョンを割り振ったら `is_known_version` へ足す）。
+pub const MAX_NATIVE_VERSION: i32 = POINTER_LAYER_VERSION;
 /// レイヤーの後に手動の ID の色の塊（`YLID`）を置ける版。書き手の版（21 以上）はどれもこれ以上なので、色のために版を上げることは無い。
 pub(crate) const MANUAL_ID_COLORS_VERSION: i32 = 19;
 /// 標準のチャンネルの数（番号 0〜5。Unity 版の PaintChannel）。
@@ -449,7 +454,7 @@ impl ByteSource for PartStream {
 pub const SPLIT_VERSION: i32 = 26;
 
 /// 正本の版の数（外の版）が、意味の決まった版か。1〜`MIXING_VERSION`・`SPLIT_VERSION`・`PATHS_VERSION`・`EFFECTS_VERSION`・
-/// `POINT_GRADIENT_VERSION`・`TEXT_VERSION`・`SEAMS_VERSION`・`BAKE_PRIORITY_VERSION`・`ANTI_ALIAS_VERSION`・`RULERS_VERSION`・`LAYER_SETS_VERSION`・`LAYER_SET_CHANNELS_VERSION`・`LAYER_FILL_MAPS_VERSION` だけで、間の 31 は読まない（`MAX_NATIVE_VERSION` までの範囲で通すと、意味の無いバージョンをバージョン 25 の並びとして読んでしまう）。
+/// `POINT_GRADIENT_VERSION`・`TEXT_VERSION`・`SEAMS_VERSION`・`BAKE_PRIORITY_VERSION`・`ANTI_ALIAS_VERSION`・`RULERS_VERSION`・`LAYER_SETS_VERSION`・`LAYER_SET_CHANNELS_VERSION`・`LAYER_FILL_MAPS_VERSION`・`POINTER_LAYER_VERSION` だけで、間の 31 は読まない（`MAX_NATIVE_VERSION` までの範囲で通すと、意味の無いバージョンをバージョン 25 の並びとして読んでしまう）。
 fn is_known_version(version: i32) -> bool {
     (1..=MIXING_VERSION).contains(&version)
         || version == SPLIT_VERSION
@@ -464,6 +469,7 @@ fn is_known_version(version: i32) -> bool {
         || version == LAYER_SETS_VERSION
         || version == LAYER_SET_CHANNELS_VERSION
         || version == LAYER_FILL_MAPS_VERSION
+        || version == POINTER_LAYER_VERSION
 }
 
 /// 正本をレイヤーごとに読む（頭 → レイヤー 0, 1, … → 終わり）。レイヤーごとに項目を取り出せる（流して core へ入れる読みが、レイヤー 1 枚ぶんだけ持つため）。
@@ -527,7 +533,7 @@ impl<'a> Parse<'a> {
             check(
                 is_known_version(stored),
                 format!(
-                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{PATHS_VERSION}・{EFFECTS_VERSION}・{POINT_GRADIENT_VERSION}・{TEXT_VERSION}・{SEAMS_VERSION}・{BAKE_PRIORITY_VERSION}・{ANTI_ALIAS_VERSION}・{RULERS_VERSION}・{LAYER_SETS_VERSION}・{LAYER_SET_CHANNELS_VERSION}・{LAYER_FILL_MAPS_VERSION})"
+                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{PATHS_VERSION}・{EFFECTS_VERSION}・{POINT_GRADIENT_VERSION}・{TEXT_VERSION}・{SEAMS_VERSION}・{BAKE_PRIORITY_VERSION}・{ANTI_ALIAS_VERSION}・{RULERS_VERSION}・{LAYER_SETS_VERSION}・{LAYER_SET_CHANNELS_VERSION}・{LAYER_FILL_MAPS_VERSION}・{POINTER_LAYER_VERSION})"
                 ),
             )?;
             check(parts.is_none(), "分けていない正本に部分があります")?;
@@ -1111,13 +1117,15 @@ fn layer(
             r.int("locks", 1, 15)?;
         }
         // 続きの属性の印（ビット 7 のとき。ロックの直後）: ビット 0 塗りつぶしの点のグラデーション（バージョン 29）、ビット 1 文字の値
-        // （バージョン 30）、ビット 2 定規（バージョン 35）、ビット 3 塗りつぶしのベイクしたマップの源（バージョン 38）
+        // （バージョン 30）、ビット 2 定規（バージョン 35）、ビット 3 塗りつぶしのベイクしたマップの源（バージョン 38）、ビット 4 参照レイヤーの
+        // 指す先（バージョン 39）
         if flags & 128 != 0 {
             ext = r.int("attributes_ext", 1, i32::MAX)?;
             let known_ext = 1
                 | if v >= TEXT_VERSION { 2 } else { 0 }
                 | if v >= RULERS_VERSION { 4 } else { 0 }
-                | if v >= LAYER_FILL_MAPS_VERSION { 8 } else { 0 };
+                | if v >= LAYER_FILL_MAPS_VERSION { 8 } else { 0 }
+                | if v >= POINTER_LAYER_VERSION { 16 } else { 0 };
             check(ext & !known_ext == 0, "未知の続きのレイヤー属性ビットです")?;
         }
         if flags & 4 != 0 {
@@ -1146,17 +1154,7 @@ fn layer(
         r.boolean("clipping")?;
     }
     let kind = if v >= 3 {
-        r.int(
-            "kind",
-            0,
-            if v >= 6 {
-                3
-            } else if v >= 4 {
-                2
-            } else {
-                1
-            },
-        )?
+        r.int("kind", 0, max_layer_kind(v))?
     } else {
         0
     };
@@ -1372,13 +1370,7 @@ fn layer(
         )?;
         r.block("text", text)?;
     }
-    let mut rulers = Vec::new();
-    if ext & 4 != 0 {
-        let n = r.int("ruler_count", 1, yolu_core::MAX_RULERS_PER_LAYER as i32)?;
-        for i in 0..n {
-            rulers.push(r.block(&format!("rulers[{i}]"), ruler)?);
-        }
-    }
+    let rulers = rulers_and_pointer(r, ext, kind, channel_total, user)?;
     Ok(Layer {
         id,
         parent,
@@ -1387,6 +1379,76 @@ fn layer(
         references,
         rulers,
     })
+}
+/// 正本のバージョン `v` で読めるレイヤーの種類の上限（1 塗りつぶし: 3、2 調整: 4、3 グループ: 6、4 参照レイヤー: 39）。
+fn max_layer_kind(v: i32) -> i32 {
+    if v >= POINTER_LAYER_VERSION {
+        4
+    } else if v >= 6 {
+        3
+    } else if v >= 4 {
+        2
+    } else {
+        1
+    }
+}
+/// レイヤーの末尾の定規（続きの属性の印のビット 2。バージョン 35）と、参照レイヤーの指す先（ビット 4。バージョン 39。参照レイヤーは必ず持ち、
+/// ほかの種類は持たない）。定規の ID を返す。
+fn rulers_and_pointer(
+    r: &mut Reader<'_>,
+    ext: i32,
+    kind: i32,
+    channel_total: i32,
+    user: &UserChannels,
+) -> Result<Vec<[u8; 16]>> {
+    let mut rulers = Vec::new();
+    if ext & 4 != 0 {
+        let n = r.int("ruler_count", 1, yolu_core::MAX_RULERS_PER_LAYER as i32)?;
+        for i in 0..n {
+            rulers.push(r.block(&format!("rulers[{i}]"), ruler)?);
+        }
+    }
+    check(
+        (kind == 4) == (ext & 16 != 0),
+        "参照レイヤーの指す先の欄が種類と合いません",
+    )?;
+    if ext & 16 != 0 {
+        r.block("pointer", |r| pointer(r, channel_total, user))?;
+    }
+    Ok(rulers)
+}
+/// 参照レイヤーの指す先と、チャンネルごとの有効と読む元（バージョン 39）。
+fn pointer(r: &mut Reader<'_>, channel_total: i32, user: &UserChannels) -> Result<()> {
+    // 指す先の種類: 0 同じ文書のレイヤー・グループ、1 同じ文書のレイヤーセット、2 ほかのテクスチャセットのレイヤーセット
+    let target = r.int("target", 0, 2)?;
+    match target {
+        0 => {
+            r.id("layer", false)?;
+        }
+        1 => {
+            r.id("layer_set", false)?;
+        }
+        _ => {
+            r.id("texture_set", false)?;
+            r.id("layer_set", false)?;
+        }
+    }
+    let n = r.int("channel_count", 0, channel_total)?;
+    let mut seen = HashSet::new();
+    for i in 0..n {
+        r.block(&format!("channels[{i}]"), |r| {
+            let c = layer_channel(r, &mut seen, user)?;
+            let enabled = r.boolean("enabled")?;
+            // 読む元は向こうの文書のチャンネルの番号（ほかのテクスチャセットはこの文書の一覧に無くてよい。同じ文書なら無いチャンネルは
+            // 開いてから「読む元が無い」になる）
+            let source = r.int("source", 0, 63)?;
+            check(
+                enabled || source != c,
+                "参照レイヤーのチャンネルの欄が空です（無効で、読む元も同じチャンネル）",
+            )
+        })?;
+    }
+    Ok(())
 }
 /// 定規 1 つ（版 35）。値の確かめは core の `Ruler::validate` と同じ（座標の範囲は欄ごとに読み、残りは core の型で確かめる）。
 /// 返すのは ID。

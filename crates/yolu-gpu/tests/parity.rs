@@ -479,6 +479,52 @@ fn composite_tiles_handles_isolated_groups_adjustments_effects_and_normals() {
     let out = fallback.composite_tiles(&d, Channel::Color, &all).unwrap();
     assert_eq!(out.tiles[0].pixels, d.composite(out.tiles[0].rect).unwrap());
 }
+/// 参照レイヤー（指す先を読み、フィルター・合成モード・不透明度が掛かる）を入れた計画の合成が、CPU の合成と同じ（評価した出力を、ふつうのレイヤーと
+/// 同じ道で重ねる）。指す先を描き換えると、GPU の結果も追従する。
+#[test]
+fn a_plan_with_a_pointer_layer_composites_like_cpu() {
+    use yolu_core::effects::{EffectSettings, FilterSpec, FilterTarget};
+    use yolu_core::PointerTarget;
+    let Some(mut g) = gpu() else { return };
+    let mut d = Document::with_tile_size(67, 35, 16).unwrap();
+    let mut seed = 0x1357_9bdfu32;
+    let mut byte = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        seed as u8
+    };
+    let base = d.add_layer("下地").unwrap();
+    let target = d.add_layer("指す先").unwrap();
+    for (l, shift) in [(base, 0u32), (target, 1)] {
+        for y in 0..35 {
+            for x in 0..67 {
+                let alpha = [255, 200, 90, 0][((x + y + shift) % 4) as usize];
+                d.set_pixel(l, x, y, Rgba8::new(byte(), byte(), byte(), alpha))
+                    .unwrap();
+            }
+        }
+    }
+    let p = d
+        .add_pointer_layer("参照", PointerTarget::Layer(target), None)
+        .unwrap();
+    d.set_layer_blend_mode(p, BlendMode::Multiply).unwrap();
+    d.set_layer_opacity(p, 0.6, false).unwrap();
+    d.add_filter(
+        p,
+        FilterTarget::Content,
+        FilterSpec::new(EffectSettings::blur(2)).channels(&[Channel::Color]),
+    )
+    .unwrap();
+    let all = coords(&d);
+    assert!(compare(&mut g, &d, &all, 2) <= 2);
+    // 指す先を描き換えると、参照レイヤーの結果も変わり、GPU も同じに追従する
+    let before = g.composite_tiles(&d, Channel::Color, &all).unwrap();
+    d.set_pixel(target, 30, 20, Rgba8::new(250, 10, 10, 255))
+        .unwrap();
+    assert!(!before.is_current(&d));
+    assert!(compare(&mut g, &d, &all, 2) <= 2);
+}
 #[test]
 fn unassigned_channel_output_composites_to_the_channel_default_like_cpu() {
     let Some(mut g) = gpu() else { return };

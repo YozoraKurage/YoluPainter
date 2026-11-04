@@ -497,6 +497,7 @@ fn layer_add(kind: NewLayerKind, name: String, above: Option<String>) -> LayerAd
         adjustment: None,
         channels: Vec::new(),
         text: None,
+        target: None,
     }
 }
 

@@ -175,3 +175,5 @@ fx-inputs-separator = { "; " }
 fx-inputs-and-more = { " " }외 { $more }개
 fx-inputs-are-missing = 효과의 입력이 없습니다({ $text })
 fx-baked-map = 베이크한 맵({ $c })
+fx-pointer = 포인터({ $c })
+fx-pointer-whole = 포인터

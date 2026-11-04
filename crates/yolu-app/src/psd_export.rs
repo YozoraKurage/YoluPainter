@@ -434,6 +434,28 @@ fn changes_text(lang: Lang, changes: &[RoundedValue]) -> String {
     parts.join(lang.t("psd_export-text-2"))
 }
 
+/// 塗りつぶしの注記の文（焼いた画像・デカール・グラデーションと、投影）。
+fn fill_note(lang: Lang, s: &yolu_io::psd::FillSources) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if s.image {
+        parts.push(lang.t("psd_export-image").into());
+    }
+    if s.decal {
+        parts.push(lang.t("psd_export-decal").into());
+    }
+    if s.gradient {
+        parts.push(lang.t("psd_export-gradient").into());
+    }
+    let mut what = parts.join(lang.t("psd_export-text"));
+    if let Some(mode) = s.projection {
+        what += &format!(
+            "（{}）",
+            crate::panels::fill_props::projection_name(lang, mode)
+        );
+    }
+    format!("{}: {what}", lang.t("psd_export-fill"))
+}
+
 /// 注記の「機能」と「結果」（確認のウィンドウの 2 つの列。文は名詞句）。
 pub fn note_columns(lang: Lang, note: &ExportNote) -> (String, String) {
     let pixels: String = lang.t("psd_export-to-pixels").into();
@@ -444,26 +466,7 @@ pub fn note_columns(lang: Lang, note: &ExportNote) -> (String, String) {
             format!("{}: {}", lang.t("psd_export-filters"), names(lang, v)),
             pixels,
         ),
-        NoteAction::BakedFill(s) => {
-            let mut parts: Vec<String> = Vec::new();
-            if s.image {
-                parts.push(lang.t("psd_export-image").into());
-            }
-            if s.decal {
-                parts.push(lang.t("psd_export-decal").into());
-            }
-            if s.gradient {
-                parts.push(lang.t("psd_export-gradient").into());
-            }
-            let mut what = parts.join(lang.t("psd_export-text"));
-            if let Some(mode) = s.projection {
-                what += &format!(
-                    "（{}）",
-                    crate::panels::fill_props::projection_name(lang, mode)
-                );
-            }
-            (format!("{}: {what}", lang.t("psd_export-fill")), pixels)
-        }
+        NoteAction::BakedFill(s) => (fill_note(lang, s), pixels),
         NoteAction::BakedTranslucentFill => (lang.t("psd_export-translucent-fill").into(), pixels),
         NoteAction::BakedPath => (
             lang.t("psd_export-path").into(),
@@ -553,6 +556,10 @@ pub fn note_columns(lang: Lang, note: &ExportNote) -> (String, String) {
             lang.t("psd_export-text-layer").into(),
             lang.t("psd_export-pixels-only").into(),
         ),
+        NoteAction::BakedPointer => (
+            lang.t("psd_export-pointer-layer").into(),
+            lang.t("psd_export-pixels-only").into(),
+        ),
     }
 }
 
@@ -603,6 +610,7 @@ pub fn blocker_text(lang: Lang, doc: &Document, channel: Option<Channel>, b: &Bl
         Refusal::Anchor => lang.f("psd_export-has-an-anchor", &[("name", &name)]),
         Refusal::Path => lang.f("psd_export-has-a-path", &[("name", &name)]),
         Refusal::Text => lang.f("psd_export-is-a-text-layer", &[("name", &name)]),
+        Refusal::Pointer => lang.f("psd_export-is-a-pointer-layer", &[("name", &name)]),
     };
     match channel {
         Some(c) => format!("{}: {what}", channel_name(lang, doc, c)),

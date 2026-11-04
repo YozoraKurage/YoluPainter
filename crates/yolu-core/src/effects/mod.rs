@@ -507,6 +507,8 @@ pub enum InactiveReason {
     Generator(generator::Inactive),
     /// 設定が評価の入力として組めない（範囲外・有限でない値）。
     Rejected(String),
+    /// 参照レイヤーが指す先を読めない（既定値を出している）。
+    Pointer(crate::pointer::PointerIssue),
 }
 
 impl fmt::Display for InactiveReason {
@@ -549,6 +551,7 @@ impl fmt::Display for InactiveReason {
                 f.write_str("UV アイランドの図が作業メモリの予算に収まりません")
             }
             Self::Rejected(why) => write!(f, "設定が使えません: {why}"),
+            Self::Pointer(issue) => write!(f, "{issue}"),
         }
     }
 }
@@ -568,6 +571,9 @@ pub enum InactiveTarget {
     FillPoints(Channel),
     /// 塗りつぶしのチャンネルのベイクしたマップの源（焼いていない・投影が組めない所は値を見せ、古いマップはその値のまま使う）。
     FillMap(Channel),
+    /// 参照レイヤー（そのチャンネルの既定値を出している）。チャンネルは、読む元のチャンネル・渡された入力のようにチャンネルごとの理由なら
+    /// そのチャンネル、指す先が無い・循環・深さのようにレイヤー全体の理由なら None。
+    Pointer(Option<Channel>),
 }
 
 /// 入力のまま通している効果 1 件（[`crate::Document::inactive_effect_list`]）。
@@ -613,6 +619,15 @@ impl fmt::Display for InactiveEffect {
                     f,
                     "「{name}」（{c:?}）: 焼いたマップが今の物ではありません。{why}"
                 )
+            }
+            InactiveTarget::Pointer(Some(c)) => {
+                write!(
+                    f,
+                    "「{name}」（{c:?}）: 指す先を読まず既定値を出しています。{why}"
+                )
+            }
+            InactiveTarget::Pointer(None) => {
+                write!(f, "「{name}」: 指す先を読まず既定値を出しています。{why}")
             }
         }
     }

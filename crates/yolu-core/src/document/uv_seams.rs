@@ -131,7 +131,12 @@ impl Document {
     /// （またがずに 2D で評価する。どちらも `seam_fallback` で分かる）。
     pub(super) fn seam_table_for(&self, spec: &super::eval::Spec) -> Option<Arc<SeamBand>> {
         let table = self.seam_table(spec.seam.0)?;
-        self.seams_fit(&super::eval::spec_stages(spec), &table)
+        // 参照レイヤーは、継ぎ目の向こうを読むために、指す先の全面の合成も作業メモリに持つ
+        let shared = self.pointer_whole_bytes(spec);
+        (self
+            .seam_block_need(&super::eval::spec_stages(spec), &table)
+            .saturating_add(shared)
+            <= self.effects.working_budget)
             .then_some(table)
     }
 

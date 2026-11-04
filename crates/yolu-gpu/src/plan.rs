@@ -484,6 +484,8 @@ impl Builder<'_> {
             LayerKind::Fill => l.fill_value(self.channel).is_some(),
             LayerKind::Adjustment => l.adjustment().is_some_and(|a| a.applies_to(self.kind)),
             LayerKind::Group => false,
+            // 参照レイヤーは、有効なチャンネルに評価の出力（指す先を読んだ結果）がある
+            LayerKind::Pointer => true,
         };
         l.visible()
             && l.opacity_in(self.channel) > 0.0
@@ -547,7 +549,7 @@ impl Builder<'_> {
                         out.push(self.adjustment(base, op::ADJUST));
                     }
                 }
-                LayerKind::Raster | LayerKind::Fill => {
+                LayerKind::Raster | LayerKind::Fill | LayerKind::Pointer => {
                     if !self.active(l) {
                         continue; // 下地が落ちれば、クリッピングのレイヤーも一緒に落ちる
                     }
@@ -592,7 +594,7 @@ impl Builder<'_> {
                         out.push(self.adjustment(c, op::CLIP_ADJUST));
                     }
                 }
-                LayerKind::Raster | LayerKind::Fill => {
+                LayerKind::Raster | LayerKind::Fill | LayerKind::Pointer => {
                     if self.active(cl) {
                         let data = self.data(c);
                         out.push(instruction(op::CLIP, &data));
@@ -625,7 +627,7 @@ impl Builder<'_> {
                 let c = l.fill_value(self.channel).unwrap_or(Rgba8::TRANSPARENT);
                 data.fill = u32::from_le_bytes(c.to_array());
             }
-            LayerKind::Raster | LayerKind::Fill => {
+            LayerKind::Raster | LayerKind::Fill | LayerKind::Pointer => {
                 data.slot = self.slots.len() as u32;
                 self.slots.push(Slot {
                     layer: index,
@@ -812,7 +814,8 @@ pub(crate) fn evaluated_tile_bound(doc: &Document, channel: Channel, slot: &Slot
             mask.surface().tile_count() as u64,
             preserving.then_some(halo),
         )
-    } else if layer.kind() == LayerKind::Fill {
+    } else if matches!(layer.kind(), LayerKind::Fill | LayerKind::Pointer) {
+        // 塗りつぶし・参照レイヤーは、キャンバスのどこにでも出し得る
         (0, None)
     } else {
         let expansion: u32 = layer

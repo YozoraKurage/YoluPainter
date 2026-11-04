@@ -376,6 +376,7 @@ impl Lang {
             }
             InactiveReason::Rejected(why) if why.is_ascii() => why.clone(),
             InactiveReason::Rejected(_) => "Settings cannot be used".into(),
+            InactiveReason::Pointer(issue) => pointer_issue_en(*issue),
         }
     }
 
@@ -401,6 +402,12 @@ impl Lang {
             (true, InactiveTarget::FillPoints(c)) => {
                 format!("{name}（{c:?}）の点のグラデーションは値を見せています")
             }
+            (true, InactiveTarget::Pointer(Some(c))) => {
+                format!("{name}（{c:?}）は指す先を読まず既定値を出しています")
+            }
+            (true, InactiveTarget::Pointer(None)) => {
+                format!("{name}は指す先を読まず既定値を出しています")
+            }
             // 焼いていない時は値を見せ、古い・照合できない時はそのマップを読んでいる（理由ごとに言い分ける）
             (true, InactiveTarget::FillMap(c)) => match effect.reason {
                 InactiveReason::Generator(generator::Inactive::StaleMap(_)) => {
@@ -423,6 +430,8 @@ impl Lang {
                     InactiveTarget::FillImage(c) => format!("image ({c:?})"),
                     InactiveTarget::FillPoints(c) => format!("point gradient ({c:?})"),
                     InactiveTarget::FillMap(c) => format!("baked map ({c:?})"),
+                    InactiveTarget::Pointer(Some(c)) => format!("pointer ({c:?})"),
+                    InactiveTarget::Pointer(None) => "pointer".into(),
                 };
                 // 焼いたマップの源は、古い・照合できないマップをそのまま読んでいる（効いていないのではない）
                 let verb = match (target, &effect.reason) {
@@ -434,6 +443,8 @@ impl Lang {
                         InactiveTarget::FillMap(_),
                         InactiveReason::Generator(generator::Inactive::UnverifiedMap(_)),
                     ) => "cannot be verified as current",
+                    // 参照レイヤーは入力を通すのでなく、そのチャンネルの既定値を出している
+                    (InactiveTarget::Pointer(_), _) => "shows the channel default",
                     _ => "has no effect",
                 };
                 format!("{name} {what} {verb}")
@@ -501,6 +512,24 @@ fn issue_key(issue: &str) -> &str {
 }
 
 /// Generator の種類の英語の名前（日本語は core の `generator_kind_name`）。
+/// 参照レイヤーが指す先を読めない理由（英語。日本語は core の文）。
+fn pointer_issue_en(issue: yolu_core::PointerIssue) -> String {
+    use yolu_core::PointerIssue as P;
+    match issue {
+        P::MissingTarget => "Its target is gone".into(),
+        P::MissingInput => "The other texture set's result is not available yet".into(),
+        P::InputOverBudget => {
+            "The other texture set's result does not fit in the memory budget".into()
+        }
+        P::MissingChannel(c) => format!("The channel {c:?} to read is gone"),
+        P::Cycle => "Its target loops back to it".into(),
+        P::TooDeep => format!(
+            "Pointers are nested more than {} levels deep",
+            yolu_core::MAX_POINTER_DEPTH
+        ),
+    }
+}
+
 fn generator_kind_name(kind: generator::Kind) -> &'static str {
     match kind {
         generator::Kind::EdgeWear => "Edge wear",

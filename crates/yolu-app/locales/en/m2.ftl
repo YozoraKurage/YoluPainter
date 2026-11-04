@@ -94,3 +94,4 @@ m2-blend-luminosity = Luminosity
 m2-blend-darker-color = Darker Color
 m2-blend-lighter-color = Lighter Color
 m2-blend-pass-through = Pass Through
+m2-pointer = Pointer Layer

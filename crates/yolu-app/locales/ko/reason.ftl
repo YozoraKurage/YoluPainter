@@ -565,3 +565,7 @@ reason-post-correction-range = 후보정 강도(0–100)와 뷰 배율
 reason-layer-set-channels = 레이어 세트의 채널에 프로젝트에 없는 채널이 있습니다
 reason-channel-not-in-layer-set = 레이어 세트가 그 채널을 다루지 않습니다
 reason-fill-map-channel = 채우기 베이크한 맵 채널
+reason-cannot-paint-pointer-layer = 포인터 레이어에는 칠할 수 없습니다(가리키는 대상을 칠하세요)
+reason-not-pointer-layer = 포인터 레이어가 아닙니다
+reason-pointer-cycle = 가리키는 대상이 순환합니다(대상 안에 이 레이어 또는 이 레이어를 읽는 레이어가 있습니다)
+reason-pointer-too-deep = 포인터가 4단계를 넘게 이어집니다

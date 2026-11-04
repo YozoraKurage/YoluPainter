@@ -132,6 +132,8 @@ pub enum LayerKindName {
     Group,
     /// A paint layer whose Color pixels are drawn from editable text.
     Text,
+    /// A layer without pixels that shows the result of another layer, group or layer set.
+    Pointer,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

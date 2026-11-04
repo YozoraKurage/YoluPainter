@@ -89,6 +89,10 @@ impl Document {
         copy.effects.inputs = effects.inputs.clone();
         copy.effects.inputs_revision = effects.inputs_revision;
         copy.effects.map_serials = effects.map_serials.clone();
+        copy.effects.pointer_serials = effects.pointer_serials.clone();
+        copy.effects.pointer_over = effects.pointer_over.clone();
+        copy.effects.pointer_budget = effects.pointer_budget;
+        copy.effects.pointer_inputs_revision = effects.pointer_inputs_revision;
         copy.effects.topology_revision = effects.topology_revision;
         copy.effects.working_budget = effects.working_budget;
         copy.effects.cache_budget = effects.cache_budget;

@@ -108,7 +108,7 @@ impl Document {
         Ok(())
     }
 
-    /// レイヤーの出力（straight RGBA8、行は下から上）。ラスターと塗りつぶしだけ。`layer_output_pixel` を矩形でまとめて読むのと同じ値。
+    /// レイヤーの出力（straight RGBA8、行は下から上）。ラスター・塗りつぶし・参照レイヤー（指す先を読んだ結果にフィルターを通した値）だけ。`layer_output_pixel` を矩形でまとめて読むのと同じ値。
     pub fn layer_output(
         &self,
         id: LayerId,
@@ -134,7 +134,7 @@ impl Document {
         self.require_channel(channel)?;
         self.check_output_rect(rect, out.len(), 4)?;
         let l = &self.layers[index];
-        if !matches!(l.kind, LayerKind::Raster | LayerKind::Fill) {
+        if !l.outputs_pixels() {
             return Err(CoreError::Unsupported(Reason::LayerOutputOnlyRasterOrFill));
         }
         cancelled(cancel)?;

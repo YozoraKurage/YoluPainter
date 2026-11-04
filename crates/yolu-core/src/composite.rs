@@ -199,24 +199,33 @@ impl<'a> Stack<'a> {
     }
 
     /// そのレイヤーがこのチャンネルで何かを出せるか（C# の Active）。
-    fn active(&self, layer: &Layer) -> bool {
+    fn active(&self, layer: &Layer, ignore_visible: bool) -> bool {
         let applies = layer
             .adjustment
             .as_ref()
             .is_some_and(|a| a.applies_to(self.kind));
-        layer.visible
+        (layer.visible || ignore_visible)
             && layer.opacity_in(self.channel) > 0.0
             && layer.is_channel_enabled(self.channel)
             && layer.has_content(self.channel, applies)
     }
 
     pub(crate) fn make_entry(&self, i: usize) -> Option<Entry> {
+        self.entry_of(i, false)
+    }
+
+    /// `make_entry` の、レイヤー（グループ）自身の表示の入り切りを見ない形（参照レイヤーの指す先。グループの中の子の表示は見る）。
+    pub(crate) fn make_entry_ignoring_visibility(&self, i: usize) -> Option<Entry> {
+        self.entry_of(i, true)
+    }
+
+    fn entry_of(&self, i: usize, ignore_visible: bool) -> Option<Entry> {
         if self.empty {
             return None;
         }
         let l = &self.layers[i];
         if l.is_group() {
-            if !l.visible || l.opacity_in(self.channel) <= 0.0 {
+            if !(l.visible || ignore_visible) || l.opacity_in(self.channel) <= 0.0 {
                 return None;
             }
             let children = self.plan_level(Some(l.id));
@@ -232,7 +241,7 @@ impl<'a> Stack<'a> {
                 children,
             });
         }
-        self.active(l).then(|| Entry {
+        self.active(l, ignore_visible).then(|| Entry {
             layer: i,
             opacity: l.opacity_in(self.channel),
             mode: l.blend_mode_in(self.channel),
@@ -568,6 +577,14 @@ impl<'a> Plan<'a> {
                         .fill_value(stack.channel)
                         .filter(|c| *c != Rgba8::TRANSPARENT),
                 ),
+            },
+            // 参照レイヤーの中身はいつも評価の出力（評価の無い計画では透明）
+            LayerKind::Pointer => match stack.evaluated_content(e.layer) {
+                Some(surface) => {
+                    px = geo_of(true, self);
+                    Content::Raster(surface)
+                }
+                None => Content::Fill(None),
             },
             LayerKind::Adjustment => Content::Adjust(
                 layer

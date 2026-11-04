@@ -185,6 +185,8 @@ pub enum NoteAction {
     BakedTranslucentFill,
     /// パスレイヤー。画素はパスから描いた結果のままで、パスの情報は PSD に残らない。
     BakedPath,
+    /// 参照レイヤー。指す先を読んだ結果（フィルターを通した値）を画素のレイヤーとして書き、指す先を読む設定は PSD に残らない。
+    BakedPointer,
     /// マスクのフィルター・Generator の段を、マスクの画素へ焼いた。
     BakedMaskFilters(Vec<EffectSettings>),
     /// 反転したマスクを、反転した値のマスクの画素へ焼いた。
@@ -266,6 +268,9 @@ impl ExportNote {
             NoteAction::BakedPath => {
                 format!("レイヤー「{name}」のパスの情報は PSD に残りません。画素はそのままです")
             }
+            NoteAction::BakedPointer => {
+                format!("参照レイヤー「{name}」は画素のレイヤーとして書きました。指す先を読む設定は PSD に残りません")
+            }
             NoteAction::BakedMaskFilters(v) => format!(
                 "レイヤー「{name}」のマスクのフィルター（{}）をマスクの画素に焼きました",
                 names(v)
@@ -343,6 +348,8 @@ pub(super) enum Need {
     Hard(Refusal),
     /// テキストレイヤー（Color のチャンネルの画素はテキストの値から描いた結果）。
     Text,
+    /// 参照レイヤー（画素は指す先を読んだ評価の結果）。
+    Pointer,
 }
 impl Need {
     /// そのまま書く（焼かない・丸めない・落とさない）ときに断る理由。
@@ -365,6 +372,7 @@ impl Need {
             Need::Hard(Refusal::GradientMapMixingStops) => Refusal::GradientMapMixing,
             Need::Hard(r) => r.clone(),
             Need::Text => Refusal::Text,
+            Need::Pointer => Refusal::Pointer,
         }
     }
     /// 焼き込みの書き出しが断る理由。`Hard` は計画の `blockers` にある理由そのまま（展開できなかった理由を言う）。ほかは `refusal`。
@@ -905,7 +913,7 @@ pub(super) fn needs(d: &CoreDocument, l: &CoreLayer, c: Channel) -> Vec<Need> {
     let mut out = Vec::new();
     // レイヤーの中身のフィルター: 効く段は焼き、効いていない段（無効・強さ 0）は落とす。ほかのチャンネルだけの段は、この PSD に関わらない
     let mut baked_content = false;
-    if matches!(kind, CoreKind::Raster | CoreKind::Fill) {
+    if matches!(kind, CoreKind::Raster | CoreKind::Fill | CoreKind::Pointer) {
         let (active, idle): (Vec<_>, Vec<_>) = l
             .filters()
             .iter()
@@ -936,6 +944,9 @@ pub(super) fn needs(d: &CoreDocument, l: &CoreLayer, c: Channel) -> Vec<Need> {
     }
     if c == Channel::Color && l.text().is_some() {
         out.push(Need::Text)
+    }
+    if kind == CoreKind::Pointer {
+        out.push(Need::Pointer)
     }
     if l.anchor().is_some() {
         out.push(Need::Anchor)
@@ -1100,6 +1111,21 @@ fn composite(d: &CoreDocument, c: Channel, cancel: Option<&AtomicBool>) -> Resul
     Ok(out)
 }
 
+/// Normal のレイヤーが 2 枚以上重なるか（PSD の色の式の重ねは Yolu の法線の重ねと違い得る）。
+fn normal_overlaps(d: &CoreDocument, c: Channel) -> bool {
+    is_normal(d, c)
+        && d.layers()
+            .iter()
+            .filter(|l| {
+                matches!(
+                    l.kind(),
+                    CoreKind::Raster | CoreKind::Fill | CoreKind::Pointer
+                ) && shown_in(d, l, c)
+            })
+            .count()
+            >= 2
+}
+
 /// 書き出しの計画: 何を焼き・丸め・落とすかをレイヤーの名前つきの注記にする（丸める調整は、丸めた文書と今の文書の合成の最大の差も測る）。
 /// 断るものは `blockers` に。文書は変えない。
 pub fn plan_export(
@@ -1161,6 +1187,7 @@ pub fn plan_export(
                     Need::Anchor => NoteAction::DroppedAnchor,
                     Need::MaskAnchor => NoteAction::DroppedMaskAnchor,
                     Need::Text => NoteAction::BakedText,
+                    Need::Pointer => NoteAction::BakedPointer,
                     Need::Round(r) => {
                         rounded.push((plan.notes.len(), l.id(), (*r).clone(), shown_in(d, l, c)));
                         match r.stops {
@@ -1190,14 +1217,7 @@ pub fn plan_export(
         .iter()
         .map(|(_, id, r, _)| (*id, r.settings.clone()))
         .collect();
-    // Normal のレイヤーが 2 枚以上重なると、PSD の色の式の重ねは Yolu の法線の重ねと違い得る
-    if is_normal(d, c)
-        && d.layers()
-            .iter()
-            .filter(|l| matches!(l.kind(), CoreKind::Raster | CoreKind::Fill) && shown_in(d, l, c))
-            .count()
-            >= 2
-    {
+    if normal_overlaps(d, c) {
         plan.notes.push(ExportNote {
             layer: channel_label(d, c),
             action: NoteAction::NormalBlend,
@@ -1229,7 +1249,7 @@ pub fn plan_export(
     Ok(plan)
 }
 
-/// レイヤーが書き出すチャンネルの合成に出るか（調整・塗りつぶし・ラスターは有効の印と中身、表示。グループは表示）。
+/// レイヤーが書き出すチャンネルの合成に出るか（調整・塗りつぶし・ラスターは有効の印と中身、参照レイヤーは有効の印、表示。グループは表示）。
 fn shown_in(d: &CoreDocument, l: &CoreLayer, c: Channel) -> bool {
     if !l.visible() {
         return false;
@@ -1238,6 +1258,8 @@ fn shown_in(d: &CoreDocument, l: &CoreLayer, c: Channel) -> bool {
         CoreKind::Group => true,
         CoreKind::Raster => l.is_channel_enabled(c) && l.surface(c).is_some(),
         CoreKind::Fill => l.is_channel_enabled(c) && l.fill_value(c).is_some(),
+        // 参照レイヤーは、有効なチャンネルに指す先を読んだ結果（読めなければ既定値）を出す
+        CoreKind::Pointer => l.is_channel_enabled(c),
         CoreKind::Adjustment => {
             let kind = d.channel_info(c).map_or(ChannelKind::Color, |i| i.kind);
             l.is_channel_enabled(c) && l.adjustment().is_some_and(|a| a.applies_to(kind))
@@ -1655,6 +1677,10 @@ impl<'a> Builder<'a> {
                 );
             }
             CoreKind::Fill => self.fill(l, &mut layer, bake_content, slots),
+            // 参照レイヤーは PSD に形が無いので、書き出す時に評価した画素（指す先を読んだ結果にフィルターを通した値）で書く
+            CoreKind::Pointer => {
+                slots.content.insert(id, Source::Baked(l));
+            }
             CoreKind::Adjustment => {
                 let settings = l.adjustment().expect("調整レイヤーは設定を持つ");
                 let adjustment = needs

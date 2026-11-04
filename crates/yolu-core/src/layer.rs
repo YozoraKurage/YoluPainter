@@ -1,4 +1,4 @@
-//! レイヤー（C# の PaintLayer・RasterMask・ChannelBlend）。種類はラスター・塗りつぶし・調整・グループ。
+//! レイヤー（C# の PaintLayer・RasterMask・ChannelBlend）。種類はラスター・塗りつぶし・調整・グループと、このアプリだけの参照レイヤー（[`crate::pointer`]）。
 //!
 //! - 文書のレイヤーは下から上の平らな並びで、グループの中身はグループのすぐ下に続けて並ぶ（PSD のフォルダと同じ）。親は `parent`。
 //! - チャンネルごとに: ラスターは面、塗りつぶしは 1 つの値、どの種類も有効の印と、レイヤーの値を置き換える合成モード・不透明度
@@ -144,7 +144,7 @@ impl RasterMask {
     }
 }
 
-/// レイヤー。種類ごとに中身が違う（ラスターは面、塗りつぶしは値、調整は設定、グループは何も持たない）。
+/// レイヤー。種類ごとに中身が違う（ラスターは面、塗りつぶしは値、調整は設定、グループは何も持たない、参照レイヤーは指す先）。
 #[derive(Clone, Debug)]
 pub struct Layer {
     pub(crate) locks: crate::LayerLocks,
@@ -193,6 +193,8 @@ pub struct Layer {
     pub(crate) text: Option<crate::text::TextSettings>,
     /// このレイヤー（グループ）に付く定規（作った順。どの種類のレイヤーにも付く）。
     pub(crate) rulers: Vec<crate::rulers::Ruler>,
+    /// 参照レイヤーの指す先と読む元（参照レイヤーだけ）。
+    pub(crate) pointer: Option<crate::pointer::PointerSettings>,
 }
 
 impl Layer {
@@ -229,6 +231,7 @@ impl Layer {
             paths: Vec::new(),
             text: None,
             rulers: Vec::new(),
+            pointer: None,
         }
     }
 
@@ -403,6 +406,10 @@ impl Layer {
     pub fn rulers(&self) -> &[crate::rulers::Ruler] {
         &self.rulers
     }
+    /// 参照レイヤーの指す先と読む元（参照レイヤーでなければ None）。
+    pub fn pointer(&self) -> Option<&crate::pointer::PointerSettings> {
+        self.pointer.as_ref()
+    }
     /// テキストレイヤーの値（テキストレイヤーでなければ None）。
     pub fn text(&self) -> Option<&crate::text::TextSettings> {
         self.text.as_ref()
@@ -468,6 +475,20 @@ impl Layer {
     ) -> impl Iterator<Item = (Channel, &crate::fill_points::PointGradient)> + '_ {
         self.fill_points.iter().map(|(c, g)| (*c, g))
     }
+    /// 画素の出力（マスク・不透明度・合成の前の値）を持つ種類か: ラスター・塗りつぶし・参照レイヤー。調整・グループは持たない。
+    pub(crate) fn outputs_pixels(&self) -> bool {
+        matches!(
+            self.kind,
+            LayerKind::Raster | LayerKind::Fill | LayerKind::Pointer
+        )
+    }
+    /// そのチャンネルに中身（面・塗りつぶしの値・参照レイヤーの有効なチャンネル）を持つか。有効の印は、参照レイヤー（中身が有効の印で決まる）の
+    /// ほかは見ない（結合が、無効のチャンネルの中身も残すため）。
+    pub(crate) fn holds_channel(&self, channel: Channel) -> bool {
+        self.surface(channel).is_some()
+            || self.fill.contains_key(&channel)
+            || self.kind == LayerKind::Pointer && self.is_channel_enabled(channel)
+    }
     /// 投影がデカールの塗りつぶしか。
     pub fn is_decal(&self) -> bool {
         self.kind == LayerKind::Fill
@@ -481,8 +502,10 @@ impl Layer {
                 || self.is_decal() && self.fill.contains_key(&channel))
     }
     /// レイヤーのそのチャンネルの画素が、保存した値でなく評価で決まるか（有効なフィルター・グラデーション・投影。C# の `HasEvaluatedOutput`）。
+    /// 参照レイヤーは、指す先を読んだ結果がいつも評価の出力。
     pub fn has_evaluated_output(&self, channel: Channel) -> bool {
-        self.has_active_filters(channel)
+        self.kind == LayerKind::Pointer
+            || self.has_active_filters(channel)
             || self.kind == LayerKind::Fill && self.fill_gradients.contains_key(&channel)
             || self.kind == LayerKind::Fill && self.fill_points.contains_key(&channel)
             || self.is_projected_fill(channel)
@@ -516,7 +539,7 @@ impl Layer {
             || self.blends.contains_key(&channel)
     }
 
-    /// そのチャンネルに何かを出せるか: 面・塗りつぶしの値・そのチャンネルに使える有効な調整（C# の HasContent）。
+    /// そのチャンネルに何かを出せるか: 面・塗りつぶしの値・そのチャンネルに使える有効な調整・参照レイヤーの有効なチャンネル（C# の HasContent）。
     /// グループは中身が決める（ここでは false）。
     pub(crate) fn has_content(&self, channel: Channel, applies: bool) -> bool {
         match self.kind {
@@ -526,10 +549,12 @@ impl Layer {
             }
             LayerKind::Group => false,
             LayerKind::Raster => self.surface(channel).is_some(),
+            // 参照レイヤーは、有効なチャンネルなら指す先を読んだ結果（読めなければ既定値）を出す
+            LayerKind::Pointer => self.is_channel_enabled(channel),
         }
     }
 
-    /// レイヤーそのものの画素（マスク・不透明度・合成の前）。中身の無い所・調整・グループは透明。
+    /// レイヤーそのものの画素（マスク・不透明度・合成の前）。中身の無い所・調整・グループ・参照レイヤー（中身は評価の出力）は透明。
     pub fn pixel(&self, channel: Channel, x: u32, y: u32) -> Result<Rgba8, CoreError> {
         match self.kind {
             LayerKind::Raster => match self.surface(channel) {

@@ -565,3 +565,7 @@ reason-post-correction-range = 後修正強度（0～100）與顯示倍率
 reason-layer-set-channels = 圖層集的通道包含專案中不存在的通道
 reason-channel-not-in-layer-set = 圖層集不處理該通道
 reason-fill-map-channel = 填色已烘焙的貼圖通道
+reason-cannot-paint-pointer-layer = 無法在指向圖層上繪製（請繪製其指向的目標）
+reason-not-pointer-layer = 不是指向圖層
+reason-pointer-cycle = 指向的目標形成循環（目標中包含此圖層或讀取此圖層的圖層）
+reason-pointer-too-deep = 指向的層級超過 4 層

@@ -29,6 +29,7 @@ mod path_kinds;
 mod path_lists;
 mod path_tangents;
 mod path_tips;
+mod pointers;
 mod procedural_doc;
 mod seam_locks;
 mod seam_ops;

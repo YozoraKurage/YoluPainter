@@ -3415,3 +3415,77 @@ fn a_gradient_map_without_mixing_is_written_as_before() {
     let (out, _) = round_trip(&d, Channel::Color);
     assert!(out.notes.is_empty(), "{:?}", out.notes);
 }
+
+// ───────── 参照レイヤー ─────────
+
+#[test]
+fn a_pointer_layer_is_written_as_the_pixels_it_reads() {
+    let (mut d, base, _, top) = three();
+    let pointer = d
+        .add_pointer_layer("参照", yolu_core::PointerTarget::Layer(base), Some(top))
+        .unwrap();
+    d.set_layer_blend_mode(pointer, CoreBlend::Multiply)
+        .unwrap();
+    d.set_layer_opacity(pointer, 0.6, false).unwrap();
+    blur(&mut d, pointer, &[Channel::Color]);
+    let before = state(&d);
+    let (out, back) = round_trip(&d, Channel::Color);
+    assert_eq!(state(&d), before, "書き出しは文書を変えない");
+    let layer = find(&out.document.layers, "参照");
+    assert!(matches!(layer.kind, LayerKind::Raster), "{:?}", layer.kind);
+    // 読み戻したレイヤーは画素のラスター（PSD の取り込みは参照レイヤーを作らない）
+    assert!(back.layers().iter().all(|l| l.kind() != CoreKind::Pointer));
+    // 画素にしたこと（と焼いたフィルター）を、レイヤーの名前つきで注記する
+    assert_eq!(
+        notes_of(&out),
+        [
+            (
+                "参照",
+                &NoteAction::BakedFilters(vec![EffectSettings::blur(3)])
+            ),
+            ("参照", &NoteAction::BakedPointer)
+        ]
+    );
+}
+
+#[test]
+fn a_pointer_layer_notes_dropped_filters_and_counts_as_a_normal_overlap() {
+    let (mut d, base, _, top) = three();
+    let pointer = d
+        .add_pointer_layer("参照", yolu_core::PointerTarget::Layer(base), Some(top))
+        .unwrap();
+    // 効いていないフィルターは落とす（画素は変わらない）
+    let off = blur(&mut d, pointer, &[Channel::Color]);
+    d.set_filter_enabled(pointer, off, false).unwrap();
+    let out = exported(&d, Channel::Color);
+    assert_eq!(
+        notes_of(&out),
+        [
+            (
+                "参照",
+                &NoteAction::DroppedFilters(vec![EffectSettings::blur(3)])
+            ),
+            ("参照", &NoteAction::BakedPointer)
+        ]
+    );
+    // 厳密な書き出しは、書けない参照レイヤーとして断る
+    assert!(yolu_io::psd::export_blockers(&d)
+        .iter()
+        .any(|b| b.layer == "参照" && b.refusal == yolu_io::psd::Refusal::Pointer));
+    // Normal で参照レイヤーが別のレイヤーと重なると、法線の重ねの注記も付く
+    let mut n = Document::with_tile_size(W, H, 8).unwrap();
+    let under = n.add_layer("下").unwrap();
+    n.set_channel_pixel(under, Channel::Normal, 3, 3, Rgba8::new(90, 120, 240, 255))
+        .unwrap();
+    n.add_pointer_layer("参照", yolu_core::PointerTarget::Layer(under), None)
+        .unwrap();
+    let out = exported(&n, Channel::Normal);
+    assert!(out
+        .notes
+        .iter()
+        .any(|x| x.action == NoteAction::NormalBlend));
+    assert!(out
+        .notes
+        .iter()
+        .any(|x| x.action == NoteAction::BakedPointer));
+}

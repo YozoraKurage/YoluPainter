@@ -93,3 +93,5 @@ psd_export-curve = 곡선
 psd_export-mixing = 혼합
 psd_export-curve-mixing = 곡선/혼합
 psd_export-stops-color-opacity = { $cause } → 정지점: 색상 { $colors }개, 불투명도 { $opacities }개
+psd_export-pointer-layer = 포인터 레이어
+psd_export-is-a-pointer-layer = ‘{ $name }’은(는) 포인터 레이어입니다

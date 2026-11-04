@@ -199,7 +199,7 @@ fn every_new_kind_round_trips_at_version_28_with_default_and_odd_values() {
 fn documents_without_the_new_kinds_keep_their_version() {
     assert_eq!(EFFECTS_VERSION, 28);
     // 読める一番新しいバージョンは塗りつぶしのベイクしたマップの源のバージョン 38（バージョン 28 の中身も読み書きできる）
-    assert_eq!(MAX_NATIVE_VERSION, yolu_io::LAYER_FILL_MAPS_VERSION);
+    assert_eq!(MAX_NATIVE_VERSION, yolu_io::POINTER_LAYER_VERSION);
     let (mut doc, id) = plain();
     assert_eq!(
         NativeDocument::from_core(&doc).unwrap().version(),

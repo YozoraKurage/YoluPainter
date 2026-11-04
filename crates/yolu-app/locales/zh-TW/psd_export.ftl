@@ -93,3 +93,5 @@ psd_export-curve = 曲線
 psd_export-mixing = 混色
 psd_export-curve-mixing = 曲線／混色
 psd_export-stops-color-opacity = { $cause } → 色標：顏色 { $colors }、不透明度 { $opacities }
+psd_export-pointer-layer = 指向圖層
+psd_export-is-a-pointer-layer = 「{ $name }」是指向圖層

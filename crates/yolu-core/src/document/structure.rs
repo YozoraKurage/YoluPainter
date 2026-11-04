@@ -115,6 +115,8 @@ pub(crate) struct ChannelContents {
     fill: Option<Rgba8>,
     enabled: bool,
     blend: ChannelBlend,
+    /// 参照レイヤーのそのチャンネルの読む元（替えていたときだけ）。
+    pointer_source: Option<Channel>,
 }
 
 impl Document {
@@ -383,6 +385,8 @@ impl Document {
         }
         // 段・Anchor は新しい ID（写しの中の Anchor を読む段は写しの Anchor を読む）
         self.renew_effect_ids(&mut copies);
+        // 写しの中を指す参照レイヤーは写しを指す
+        Self::remap_pointer_targets(&mut copies, &ids);
         let copy_id = ids[&id];
         if let Some(n) = name {
             copies.last_mut().expect("空でない").name = n.to_string();
@@ -901,11 +905,20 @@ impl Document {
                     fill: layer.fill.remove(&channel),
                     enabled: layer.is_channel_enabled(channel),
                     blend: layer.channel_blend(channel),
+                    pointer_source: layer
+                        .pointer
+                        .as_mut()
+                        .and_then(|p| p.sources.remove(&channel)),
                 };
                 layer.put_surface(channel, None);
                 layer.set_enabled(channel, false);
                 layer.blends.remove(&channel);
-                if c.surface.is_some() || c.fill.is_some() || c.enabled || !c.blend.is_empty() {
+                if c.surface.is_some()
+                    || c.fill.is_some()
+                    || c.enabled
+                    || !c.blend.is_empty()
+                    || c.pointer_source.is_some()
+                {
                     contents.push((layer.id, c));
                 }
             }
@@ -931,6 +944,9 @@ impl Document {
                 }
                 layer.set_enabled(channel, c.enabled);
                 layer.set_channel_blend(channel, c.blend);
+                if let (Some(p), Some(source)) = (layer.pointer.as_mut(), c.pointer_source) {
+                    p.sources.insert(channel, source);
+                }
             }
             for l in 0..self.layers.len() {
                 self.mark_layer(l, Some(channel));
@@ -942,6 +958,7 @@ impl Document {
                 self.mark_layer(l, Some(channel));
             }
         }
+        self.mark_pointer_readers_of(channel);
         while matches!(self.channels.last(), Some(None)) {
             self.channels.pop();
         }

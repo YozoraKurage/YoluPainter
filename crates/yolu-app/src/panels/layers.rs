@@ -742,6 +742,10 @@ fn kind_thumb(
                 15.0,
             );
         }
+        LayerKind::Pointer => {
+            w::rounded(&painter, thumb, t::PANEL_HEADER, 3.0);
+            w::icon(&painter, thumb, "target", t::TEXT_DIM, 15.0);
+        }
     }
 }
 

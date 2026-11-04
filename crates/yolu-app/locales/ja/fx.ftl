@@ -175,3 +175,5 @@ fx-inputs-separator = 、
 fx-inputs-and-more = { " " }ほか { $more } 件
 fx-inputs-are-missing = 効果の入力がそろっていない（{ $text }）
 fx-baked-map = 焼いたマップ（{ $c }）
+fx-pointer = 参照（{ $c }）
+fx-pointer-whole = 参照

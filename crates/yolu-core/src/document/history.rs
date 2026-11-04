@@ -59,7 +59,7 @@ impl Command {
             Self::Insert { .. } => HistoryKind::AddLayer,
             Self::Remove { .. } => HistoryKind::RemoveLayer,
             Self::Structure { .. } => HistoryKind::LayerOrder,
-            Self::Property { .. } => HistoryKind::LayerProperties,
+            Self::Property { .. } | Self::Pointer { .. } => HistoryKind::LayerProperties,
             Self::ChannelEnabled { .. } | Self::ChannelInfo { .. } => HistoryKind::Channel,
             Self::FillValue { .. } | Self::FillChannel { .. } | Self::Projection { .. } => {
                 HistoryKind::Fill

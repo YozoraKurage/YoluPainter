@@ -248,6 +248,9 @@ fn note_text(note: &psd::ExportNote) -> Text {
         NoteAction::BakedText => format!(
             "Layer \"{name}\": a text layer was written as pixels; the text itself is not kept"
         ),
+        NoteAction::BakedPointer => format!(
+            "Layer \"{name}\": a pointer layer was written as the pixels it reads; what it points at is not kept"
+        ),
     };
     Text::new(note.message(), en)
 }

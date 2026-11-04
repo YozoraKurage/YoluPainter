@@ -144,6 +144,9 @@ pub fn rewrite_refs(command: &Command, f: &mut RefRewrite<'_>) -> Result<Option<
             if let Some(above) = &mut a.above {
                 fix(RefSlot::Layer, above)?;
             }
+            if let Some(target) = &mut a.target {
+                fix(RefSlot::Layer, target)?;
+            }
         }
         Command::LayerDelete(a) => fix(RefSlot::Layer, &mut a.layer)?,
         Command::LayerMove(a) => {
@@ -333,6 +336,7 @@ pub fn kind_word(kind: LayerKind) -> &'static str {
         LayerKind::Fill => "fill",
         LayerKind::Adjustment => "adjustment",
         LayerKind::Group => "group",
+        LayerKind::Pointer => "pointer",
     }
 }
 

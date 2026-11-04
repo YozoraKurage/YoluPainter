@@ -287,7 +287,11 @@ impl Document {
                     .collect()
             });
         }
-        if matches!(l.kind, LayerKind::Group | LayerKind::Adjustment) {
+        // 参照レイヤーは画素を持たない（指す先を読んだ結果は評価の出力で、コピーするなら合成から）
+        if matches!(
+            l.kind,
+            LayerKind::Group | LayerKind::Adjustment | LayerKind::Pointer
+        ) {
             return Err(CoreError::Clipboard(ClipboardRefusal::NoPixels));
         }
         self.copy_region(ClipboardSource::Layer, channel, max_bytes, |chunk| {

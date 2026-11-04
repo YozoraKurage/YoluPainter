@@ -399,6 +399,7 @@ fn snapshot(d: &Document, diagnostics: &str) -> String {
                 write!(s, " adjustment={:?}/{}", a.kind(), bits.join("/")).unwrap()
             }
             LayerKind::Group => {}
+            LayerKind::Pointer => write!(s, " pointer={:?}", l.pointer()).unwrap(),
         }
         if l.kind() != LayerKind::Group {
             let channels: Vec<String> = Channel::ALL

@@ -423,6 +423,8 @@ pub enum LayerKind {
     Adjustment = 2,
     /// グループ（中身は直下に並ぶレイヤー）。
     Group = 3,
+    /// 参照レイヤー（画素を持たず、指す先の合成を読む。[`crate::pointer`]。このアプリだけ。正本のバージョン 39 から）。
+    Pointer = 4,
 }
 
 #[cfg(test)]

@@ -237,6 +237,8 @@ fn what(
         InactiveTarget::FillImage(c) => lang.f("fx-image", &[("c", &channel_name(c))]),
         InactiveTarget::FillPoints(c) => lang.f("fx-point-gradient", &[("c", &channel_name(c))]),
         InactiveTarget::FillMap(c) => lang.f("fx-baked-map", &[("c", &channel_name(c))]),
+        InactiveTarget::Pointer(Some(c)) => lang.f("fx-pointer", &[("c", &channel_name(c))]),
+        InactiveTarget::Pointer(None) => lang.t("fx-pointer-whole").to_owned(),
     }
 }
 

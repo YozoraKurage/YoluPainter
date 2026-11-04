@@ -75,7 +75,7 @@ pub(crate) fn plan_holds_content(
     plan.iter().any(|e| {
         let l = &layers[e.layer];
         let own = match l.kind() {
-            crate::LayerKind::Fill => true,
+            crate::LayerKind::Fill | crate::LayerKind::Pointer => true,
             crate::LayerKind::Raster => {
                 !l.filters.is_empty() || l.surface(channel).is_some_and(|s| s.tile_count() > 0)
             }
@@ -480,6 +480,8 @@ impl Document {
             l.set = id;
         }
         self.renew_effect_ids(&mut copies);
+        // 写しの中を指す参照レイヤーは写しを指す
+        Self::remap_pointer_targets(&mut copies, &ids);
         let mut table = self.table();
         table
             .sets
@@ -798,6 +800,7 @@ impl Document {
             l.set = set;
         }
         self.renew_effect_ids(&mut copies);
+        Self::remap_pointer_targets(&mut copies, &ids);
         self.check_layer_effects(&copies)?;
         // 元の一番上の段の一番下は、印があっても下地（何にもクリッピングされず、上の印のレイヤーはそれにクリッピングされる）
         if occupied {

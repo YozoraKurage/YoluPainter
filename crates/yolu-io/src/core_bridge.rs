@@ -6,9 +6,9 @@
 use crate::native::{
     ADJUST_VERSION, ANTI_ALIAS_VERSION, BAKE_PRIORITY_VERSION, EFFECTS_VERSION,
     LAYER_FILL_MAPS_VERSION, LAYER_SETS_VERSION, LAYER_SET_CHANNELS_VERSION,
-    MANUAL_ID_COLORS_VERSION, MIXING_VERSION, PATHS_VERSION, POINT_GRADIENT_VERSION,
-    PROCEDURAL_VERSION, RULERS_VERSION, SEAMS_VERSION, TEXT_VERSION, UNITY_NATIVE_VERSION,
-    USER_CHANNELS_VERSION,
+    MANUAL_ID_COLORS_VERSION, MIXING_VERSION, PATHS_VERSION, POINTER_LAYER_VERSION,
+    POINT_GRADIENT_VERSION, PROCEDURAL_VERSION, RULERS_VERSION, SEAMS_VERSION, TEXT_VERSION,
+    UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
 use crate::{
     check, check_budget, Error, NativeDocument, NativeValue as V, Result, Unwritable,
@@ -28,10 +28,11 @@ use yolu_core::text::{TextAlign, TextFont, TextSettings};
 use yolu_core::{
     AdjustmentSettings, AdjustmentType, AnchorId, AnchorPlacement, AntiAlias, BalanceRange,
     BlendMode, BrightnessContrast, BrushSettings, Channel, ChannelBlend, ChannelInfo, ChannelKind,
-    ColorAdjust, ColorBalance, ColorSpace, Document, EffectSettings, FilterEffect, FilterId,
-    FilterSpec, FilterTarget, GradientMap, HeightEdgeMode, ImageId, LayerId, LayerKind, LayerLocks,
-    LayerPath, LayerSetId, LayerSetInfo, NormalSettings, NormalYDirection, Posterize, Rgba8, Ruler,
-    RulerId, RulerKind, RulerPlace, RulerScope, Threshold, TileCoord, ToneChannel, ToneCurves,
+    ColorAdjust, ColorBalance, ColorSpace, Document, EffectSettings, ExternalSet, FilterEffect,
+    FilterId, FilterSpec, FilterTarget, GradientMap, HeightEdgeMode, ImageId, LayerId, LayerKind,
+    LayerLocks, LayerPath, LayerSetId, LayerSetInfo, NormalSettings, NormalYDirection,
+    PointerSettings, PointerTarget, Posterize, Rgba8, Ruler, RulerId, RulerKind, RulerPlace,
+    RulerScope, Threshold, TileCoord, ToneChannel, ToneCurves,
 };
 
 fn core_id(mut guid: [u8; 16]) -> u128 {
@@ -204,6 +205,7 @@ fn unsupported(path: &str, fields: &HashMap<&str, &V>) -> Option<(String, &'stat
         | "text"
         | "ruler_count"
         | "rulers"
+        | "pointer"
         | "set" => None,
         "mask" => match parts.next().unwrap_or_default().split('[').next() {
             Some(
@@ -304,6 +306,8 @@ pub(crate) struct CoreLoad {
     layer_sets: Option<LoadedLayerSets>,
     /// 版 36 のレイヤーの所属（読んだレイヤーの順）。
     members: Vec<LayerSetId>,
+    /// バージョン 39 の参照レイヤーの指す先（読んだレイヤーの番号と設定）。指すレイヤーの ID が保存した物になってから置く。
+    pointers: Vec<(usize, PointerSettings)>,
 }
 impl CoreLoad {
     /// 頭（寸法・Normal の設定・ユーザーチャンネル）から空の文書を作る。`f` は頭の項目を含む。
@@ -375,6 +379,7 @@ impl CoreLoad {
             locks: Vec::new(),
             layer_sets,
             members: Vec::new(),
+            pointers: Vec::new(),
         })
     }
     /// レイヤー `i` を足す（`f` はそのレイヤーの項目を含む）。
@@ -396,6 +401,10 @@ impl CoreLoad {
             self.members
                 .push(LayerSetId(core_id(f.guid(&format!("{p}.set"))?)));
         }
+        if version >= POINTER_LAYER_VERSION && f.int(&format!("{p}.kind"))? == 4 {
+            let (_, settings) = read_pointer(f, &format!("{p}.pointer"))?;
+            self.pointers.push((i, settings));
+        }
         Ok(())
     }
     /// 親・保存した ID・ロックと手動の ID の色を付けて終える（`head` は文書の ID を含む頭の項目、`tail` は読み終えた正本の項目で、
@@ -408,6 +417,7 @@ impl CoreLoad {
             locks,
             layer_sets,
             members,
+            pointers,
             ..
         } = self;
         let mut doc = doc;
@@ -439,6 +449,15 @@ impl CoreLoad {
                 .map_err(|e| Error::from(e).in_context("レイヤーセットをcoreにできません"))?;
         }
         let mut doc = doc.with_persistent_ids(core_id(head.guid("id")?), &ids)?;
+        // 参照レイヤーの指す先は、レイヤーの ID が保存した物になってから置く（指す先が無いのは断らず「指す先が無い」で開く）。循環と、参照の
+        // 連なりの上限を超えるものは断る
+        for (i, settings) in pointers {
+            doc.set_pointer_for_load(ids[i], settings).map_err(|e| {
+                Error::from(e).in_context(format!("layers[{i}].pointerをcoreにできません"))
+            })?;
+        }
+        doc.check_pointers_for_load()
+            .map_err(|e| Error::from(e).in_context("参照レイヤーの指す先をcoreにできません"))?;
         // ロックは読み終えてから付ける（読み手自身の画素・属性の設定をロックが断らないように。C# の `SetLocksForLoad` と同じ）。
         // 付けるのは履歴を持たない読み込みの経路で、ロックは合成を変えない
         for (id, locks) in ids.iter().zip(locks) {
@@ -584,7 +603,9 @@ fn path_brush(path: &LayerPath) -> BrushSettings {
 pub(crate) fn version_of(doc: &Document) -> i32 {
     let user = doc.channels().into_iter().any(|c| !c.is_standard());
     let all = doc.channel_bits();
-    if doc.layers().iter().any(|l| l.fill_maps().next().is_some()) {
+    if doc.layers().iter().any(|l| l.kind() == LayerKind::Pointer) {
+        POINTER_LAYER_VERSION
+    } else if doc.layers().iter().any(|l| l.fill_maps().next().is_some()) {
         LAYER_FILL_MAPS_VERSION
     } else if doc.layer_sets().iter().any(|s| s.channels != all) {
         LAYER_SET_CHANNELS_VERSION
@@ -875,14 +896,15 @@ pub(crate) fn uses_rust_only_adjustments(doc: &Document) -> bool {
 }
 /// 1 つのレイヤーを core に足す（C# の読み手と同じ順: 種類で作り、属性、チャンネルごとの合成、画素、マスク）。返すのは、読み終えてから
 /// 付けるロック（属性の印のビット 1 が立っていれば、直後の int）。
-fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Result<LayerLocks> {
-    let name = f.text(&format!("{p}.name"))?;
-    let kind = if version >= 3 {
-        f.int(&format!("{p}.kind"))?
-    } else {
-        0
-    };
-    let id = match kind {
+/// 種類 `kind` の空のレイヤーを、種類ごとの中身（塗りつぶしの値と有効・調整の設定と対象・参照レイヤーの有効なチャンネル）と一緒に一番上へ足す。
+fn add_layer_of_kind(
+    doc: &mut Document,
+    f: &Fields<'_>,
+    p: &str,
+    kind: i32,
+    name: &str,
+) -> Result<LayerId> {
+    Ok(match kind {
         0 => doc.add_layer(name)?,
         1 => {
             let mut values = Vec::new();
@@ -915,8 +937,22 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
                 .collect::<Result<Vec<_>>>()?;
             doc.add_adjustment_layer(name, settings, Some(&targets), None)?
         }
+        4 => {
+            let (enabled, _) = read_pointer(f, &format!("{p}.pointer"))?;
+            doc.add_pointer_layer_for_load(name, &enabled)?
+        }
         _ => doc.add_group(name, None)?,
+    })
+}
+
+fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Result<LayerLocks> {
+    let name = f.text(&format!("{p}.name"))?;
+    let kind = if version >= 3 {
+        f.int(&format!("{p}.kind"))?
+    } else {
+        0
     };
+    let id = add_layer_of_kind(doc, f, p, kind, name)?;
     doc.set_layer_visible(id, f.boolean(&format!("{p}.visible"))?)?;
     doc.set_layer_opacity(id, f.float(&format!("{p}.opacity"))?, false)?;
     let blend = f.int(&format!("{p}.blend"))?;
@@ -1142,6 +1178,74 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
             .map_err(|e| Error::from(e).in_context("定規をcoreにできません"))?;
     }
     Ok(locks)
+}
+
+/// 参照レイヤーの指す先と読む元（バージョン 39）。有効なチャンネルと設定を返す。指す先の ID は保存した ID（読み込みの終わりに置く）。
+fn read_pointer(f: &Fields<'_>, p: &str) -> Result<(Vec<Channel>, PointerSettings)> {
+    let target = match f.int(&format!("{p}.target"))? {
+        0 => PointerTarget::Layer(LayerId(core_id(f.guid(&format!("{p}.layer"))?))),
+        1 => PointerTarget::LayerSet(LayerSetId(core_id(f.guid(&format!("{p}.layer_set"))?))),
+        2 => PointerTarget::External(ExternalSet {
+            texture_set: core_id(f.guid(&format!("{p}.texture_set"))?),
+            layer_set: core_id(f.guid(&format!("{p}.layer_set"))?),
+        }),
+        t => {
+            return Err(Error::InvalidData(format!(
+                "{p}.target {t} は未知の指す先の種類です"
+            )))
+        }
+    };
+    let mut settings = PointerSettings::new(target);
+    let mut enabled = Vec::new();
+    for k in 0..f.int(&format!("{p}.channel_count"))? {
+        let item = format!("{p}.channels[{k}]");
+        let c = f.channel(&format!("{item}.channel"))?;
+        if f.boolean(&format!("{item}.enabled"))? {
+            enabled.push(c);
+        }
+        let source = f.int(&format!("{item}.source"))?;
+        let source = usize::try_from(source)
+            .ok()
+            .and_then(Channel::from_index)
+            .ok_or_else(|| Error::InvalidData(format!("{item}.source {source} は範囲外です")))?;
+        settings = settings.with_source(c, Some(source));
+    }
+    Ok((enabled, settings))
+}
+
+/// 参照レイヤーの指す先と、チャンネルごとの有効と読む元（続きの属性の印のビット 4。バージョン 39）。書くチャンネルは、有効なものと読む元を
+/// 替えたもの（番号の順）。
+fn write_pointer(
+    w: &mut Out<'_>,
+    layer: &yolu_core::Layer,
+    settings: &PointerSettings,
+) -> Result<()> {
+    match settings.target() {
+        PointerTarget::Layer(id) => {
+            w.int(0)?;
+            w.raw(&native_id(id.0))?;
+        }
+        PointerTarget::LayerSet(id) => {
+            w.int(1)?;
+            w.raw(&native_id(id.0))?;
+        }
+        PointerTarget::External(key) => {
+            w.int(2)?;
+            w.raw(&native_id(key.texture_set))?;
+            w.raw(&native_id(key.layer_set))?;
+        }
+    }
+    let mut channels: Vec<Channel> = layer.enabled_channels();
+    channels.extend(settings.sources().map(|(c, _)| c));
+    channels.sort();
+    channels.dedup();
+    w.int(channels.len() as i32)?;
+    for c in channels {
+        w.int(c.index() as i32)?;
+        w.boolean(layer.is_channel_enabled(c))?;
+        w.int(settings.source(c).index() as i32)?;
+    }
+    Ok(())
 }
 
 /// 塗りつぶしの点のグラデーション（続きの属性の印のビット 0）と、ベイクしたマップの源（ビット 3。バージョン 38）。
@@ -2386,6 +2490,8 @@ struct Out<'s> {
     rulers: bool,
     /// バージョン 38 の塗りつぶしのベイクしたマップの源を書けるか。
     fill_maps: bool,
+    /// バージョン 39 の参照レイヤーを書けるか。
+    pointers: bool,
 }
 impl<'s> Out<'s> {
     /// 正本の版 `version` の並びで書く。
@@ -2398,6 +2504,7 @@ impl<'s> Out<'s> {
             anti_alias: version >= ANTI_ALIAS_VERSION,
             rulers: version >= RULERS_VERSION,
             fill_maps: version >= LAYER_FILL_MAPS_VERSION,
+            pointers: version >= POINTER_LAYER_VERSION,
         }
     }
 }
@@ -2470,6 +2577,62 @@ fn write_fill_points_and_maps(
     Ok(())
 }
 
+/// 参照レイヤーなら、書く指す先（参照レイヤーは指す先を持ち、バージョン 39 で書く）。ほかの種類は None。
+fn written_pointer<'l>(
+    w: &Out<'_>,
+    layer: &'l yolu_core::Layer,
+) -> Result<Option<&'l PointerSettings>> {
+    let named = |why: &str| format!("レイヤー「{}」の{why}", layer.name());
+    let pointer = match (layer.kind(), layer.pointer()) {
+        (LayerKind::Pointer, Some(p)) => Some(p),
+        (LayerKind::Pointer, None) => {
+            return Err(Error::InvalidData(named(
+                "参照レイヤーの指す先がありません",
+            )))
+        }
+        _ => None,
+    };
+    check(
+        w.pointers || pointer.is_none(),
+        named("参照レイヤーはバージョン 39 で書く"),
+    )?;
+    Ok(pointer)
+}
+
+/// 調整レイヤーの設定と対象のチャンネル（`adjustment` の塊）。
+fn write_adjustment(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
+    let a = layer.adjustment().ok_or_else(|| {
+        Error::InvalidData(format!(
+            "レイヤー「{}」の調整の設定がありません",
+            layer.name()
+        ))
+    })?;
+    w.int(a.kind() as i32)?;
+    w.int(AdjustmentSettings::ALGORITHM_VERSION)?;
+    for v in [
+        a.input_black(),
+        a.input_white(),
+        a.gamma(),
+        a.output_black(),
+        a.output_white(),
+        a.hue(),
+        a.saturation(),
+        a.lightness(),
+    ] {
+        w.float(v)?;
+    }
+    // 64 からの種類（正本のバージョン 24）は、8 つの値を既定のまま書いたあとに種類ごとの欄が続く
+    if let Some(detail) = a.color_adjust() {
+        write_color_adjust(w, &detail)?;
+    }
+    let enabled = layer.enabled_channels();
+    w.int(enabled.len() as i32)?;
+    for c in enabled {
+        w.int(c.index() as i32)?;
+    }
+    Ok(())
+}
+
 /// 1 つのレイヤー（C# の `DocumentBinary.Write` のレイヤーの並び）。
 fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
     let named = |why: &str| format!("レイヤー「{}」の{why}", layer.name());
@@ -2511,10 +2674,12 @@ fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
         w.fill_maps || maps.is_empty(),
         named("ベイクしたマップの源はバージョン 38 で書く"),
     )?;
+    let pointer = written_pointer(w, layer)?;
     let ext: i32 = if points.is_empty() { 0 } else { 1 }
         | if layer.text().is_some() { 2 } else { 0 }
         | if layer.rulers().is_empty() { 0 } else { 4 }
-        | if maps.is_empty() { 0 } else { 8 };
+        | if maps.is_empty() { 0 } else { 8 }
+        | if pointer.is_none() { 0 } else { 16 };
     w.byte(
         u8::from(layer.clipping())
             | if locks == LayerLocks::NONE { 0 } else { 2 }
@@ -2573,32 +2738,7 @@ fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
     }
     write_fill_points_and_maps(w, &points, &maps)?;
     if layer.kind() == LayerKind::Adjustment {
-        let a = layer
-            .adjustment()
-            .ok_or_else(|| Error::InvalidData(named("調整の設定がありません")))?;
-        w.int(a.kind() as i32)?;
-        w.int(AdjustmentSettings::ALGORITHM_VERSION)?;
-        for v in [
-            a.input_black(),
-            a.input_white(),
-            a.gamma(),
-            a.output_black(),
-            a.output_white(),
-            a.hue(),
-            a.saturation(),
-            a.lightness(),
-        ] {
-            w.float(v)?;
-        }
-        // 64 からの種類（正本の版 24）は、8 つの値を既定のまま書いたあとに種類ごとの欄が続く
-        if let Some(detail) = a.color_adjust() {
-            write_color_adjust(w, &detail)?;
-        }
-        let enabled = layer.enabled_channels();
-        w.int(enabled.len() as i32)?;
-        for c in enabled {
-            w.int(c.index() as i32)?;
-        }
+        write_adjustment(w, layer)?;
     }
     let surfaces = layer.surface_channels();
     if layer.kind() == LayerKind::Fill && list {
@@ -2676,6 +2816,9 @@ fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
         for r in layer.rulers() {
             write_ruler(w, r)?;
         }
+    }
+    if let Some(p) = pointer {
+        write_pointer(w, layer, p)?;
     }
     Ok(())
 }

@@ -1416,3 +1416,36 @@ fn the_uv_island_variation_needs_a_model_and_is_listed_as_inactive_without_one()
     );
     assert!(note.ja.contains("モデルがありません"), "{note:?}");
 }
+
+#[test]
+fn layer_add_makes_a_pointer_layer_that_saves_and_refuses_a_missing_target() {
+    let fx = Fixture::new("layer-add-pointer");
+    fx.project("a.ylp");
+    let mut host = fx.host("a.ylp");
+    let base = layer_id(&mut host, "Base");
+    let e = edited(check_one_command(
+        &fx,
+        &mut host,
+        json!({"command": "layer.add", "args": {"kind": "pointer", "name": "Ref", "target": base}}),
+    ));
+    let Reply::Layer(pointer) = ok(
+        &mut host,
+        json!({"command": "layer.get", "args": {"layer": e.layer.unwrap()}}),
+    ) else {
+        panic!()
+    };
+    assert_eq!(pointer.summary.kind, LayerKindName::Pointer);
+    // 指す先が要る・ほかの種類に target は付けない
+    err(
+        &mut host,
+        json!({"command": "layer.add", "args": {"kind": "pointer", "name": "No target"}}),
+    );
+    err(
+        &mut host,
+        json!({"command": "layer.add", "args": {"kind": "paint", "target": base}}),
+    );
+    err(
+        &mut host,
+        json!({"command": "layer.add", "args": {"kind": "pointer", "target": "No such layer"}}),
+    );
+}

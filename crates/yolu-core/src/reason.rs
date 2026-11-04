@@ -573,6 +573,10 @@ pub enum Reason {
     LayerSetChannels,
     ChannelNotInLayerSet,
     FillMapChannel,
+    CannotPaintPointerLayer,
+    NotPointerLayer,
+    PointerCycle,
+    PointerTooDeep,
 }
 
 impl Reason {
@@ -1144,6 +1148,10 @@ impl Reason {
             Reason::LayerSetChannels => "レイヤーセットのチャンネルの組に、プロジェクトに無いチャンネルがある",
             Reason::ChannelNotInLayerSet => "レイヤーセットがそのチャンネルを扱わない",
             Reason::FillMapChannel => "塗りつぶしの焼いたマップのチャンネル",
+            Reason::CannotPaintPointerLayer => "参照レイヤーには描けない（指す先を描く）",
+            Reason::NotPointerLayer => "参照レイヤーではない",
+            Reason::PointerCycle => "指す先が循環する（指す先の中に、自分か自分を読むレイヤーがある）",
+            Reason::PointerTooDeep => "参照の連なりが 4 段を超える",
         }
     }
 }

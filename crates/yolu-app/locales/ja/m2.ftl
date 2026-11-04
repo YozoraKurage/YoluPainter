@@ -94,3 +94,4 @@ m2-blend-luminosity = 輝度
 m2-blend-darker-color = カラー比較（暗）
 m2-blend-lighter-color = カラー比較（明）
 m2-blend-pass-through = 通過
+m2-pointer = 参照レイヤー

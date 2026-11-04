@@ -248,6 +248,18 @@ impl Document {
         mask: bool,
     ) -> Result<(), CoreError> {
         let l = &self.layers[index];
+        // 参照レイヤーは、指す先を読めないチャンネル（既定値を出している）があれば、焼くと指す先が落ちるので断る
+        if content && l.kind == LayerKind::Pointer {
+            for c in l.enabled_channels() {
+                if let Some(issue) = self.pointer_channel_issue(index, c) {
+                    return Err(CoreError::InactiveEffect {
+                        layer: l.id,
+                        mask: false,
+                        reason: Box::new(crate::effects::InactiveReason::Pointer(issue)),
+                    });
+                }
+            }
+        }
         if content && l.is_decal() && l.fill.keys().any(|c| l.is_channel_enabled(*c)) {
             if let Some(why) = self.decal_problem(index) {
                 return Err(CoreError::InactiveEffect {
@@ -480,7 +492,7 @@ impl Document {
         for c in self.channels() {
             let kind = self.channel_kind(c)?;
             let normal = kind == ChannelKind::Normal;
-            let has = lower.surface(c).is_some() || lower.fill.contains_key(&c);
+            let has = lower.holds_channel(c);
             let on = has && lower.is_channel_enabled(c);
             let mut upper_shell = upper.clone();
             upper_shell.parent = None;

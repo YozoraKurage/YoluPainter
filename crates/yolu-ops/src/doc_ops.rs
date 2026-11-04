@@ -177,6 +177,7 @@ pub fn kind_name(kind: LayerKind) -> LayerKindName {
         LayerKind::Fill => LayerKindName::Fill,
         LayerKind::Adjustment => LayerKindName::Adjustment,
         LayerKind::Group => LayerKindName::Group,
+        LayerKind::Pointer => LayerKindName::Pointer,
     }
 }
 
@@ -424,6 +425,24 @@ pub fn inactive_texts(doc: &Document) -> Vec<Text> {
         .collect()
 }
 
+/// 参照レイヤーが指す先を読めない理由（英語）。
+fn pointer_issue_text(issue: yolu_core::PointerIssue) -> String {
+    use yolu_core::PointerIssue as P;
+    match issue {
+        P::MissingTarget => "its target is gone".to_owned(),
+        P::MissingInput => "the other texture set's result is not available yet".to_owned(),
+        P::InputOverBudget => {
+            "the other texture set's result does not fit in the memory budget".to_owned()
+        }
+        P::MissingChannel(c) => format!("the channel {c:?} to read is gone"),
+        P::Cycle => "its target loops back to it".to_owned(),
+        P::TooDeep => format!(
+            "pointers are nested more than {} levels deep",
+            yolu_core::MAX_POINTER_DEPTH
+        ),
+    }
+}
+
 fn inactive_text(e: &InactiveEffect) -> Text {
     use yolu_core::generator::Inactive as I;
     let what = match e.target {
@@ -456,6 +475,8 @@ fn inactive_text(e: &InactiveEffect) -> Text {
         InactiveTarget::FillImage(c) => format!("image ({c:?})"),
         InactiveTarget::FillPoints(c) => format!("point gradient ({c:?})"),
         InactiveTarget::FillMap(c) => format!("baked map ({c:?})"),
+        InactiveTarget::Pointer(Some(c)) => format!("pointer ({c:?})"),
+        InactiveTarget::Pointer(None) => "pointer".to_owned(),
     };
     let why = match &e.reason {
         InactiveReason::Generator(I::MissingMap(k)) => format!("no {k:?} map is available"),
@@ -486,13 +507,17 @@ fn inactive_text(e: &InactiveEffect) -> Text {
             "the UV island map does not fit in the working memory budget".to_owned()
         }
         InactiveReason::Rejected(_) => "the settings cannot be used".to_owned(),
+        InactiveReason::Pointer(issue) => pointer_issue_text(*issue),
+    };
+    // 参照レイヤーは入力を通すのでなく、そのチャンネルの既定値を出す
+    let does = if matches!(e.target, InactiveTarget::Pointer(_)) {
+        "shows the channel default"
+    } else {
+        "passes its input through"
     };
     Text::new(
         e.to_string(),
-        format!(
-            "Layer \"{}\": the {what} passes its input through ({why})",
-            e.layer_name
-        ),
+        format!("Layer \"{}\": the {what} {does} ({why})", e.layer_name),
     )
 }
 
@@ -575,6 +600,35 @@ fn adjustment_of(spec: &EffectSpec) -> Result<AdjustmentSettings, OpError> {
     Ok(AdjustmentSettings::from_catalog(&spec.kind, &values)?)
 }
 
+/// layer.add の参照レイヤー（同じテクスチャセットのレイヤー・グループを指す）。
+fn pointer_layer_add(
+    doc: &mut Document,
+    args: &LayerAddArgs,
+    above: Option<LayerId>,
+    misplaced: impl Fn(&str) -> OpError,
+) -> Result<LayerId, OpError> {
+    if !args.fill.is_empty() {
+        return Err(misplaced("fill"));
+    }
+    if args.adjustment.is_some() {
+        return Err(misplaced("adjustment"));
+    }
+    if !args.channels.is_empty() {
+        return Err(misplaced("channels"));
+    }
+    let target = args.target.as_deref().ok_or_else(|| {
+        OpError::invalid_request(
+            "参照レイヤーには target（指すレイヤー）が要ります",
+            "A pointer layer needs `target` (the layer it shows)",
+        )
+    })?;
+    let target = resolve_layer(doc, target)?;
+    let name = args.name.as_deref().unwrap_or("Pointer");
+    batch(doc, |d| {
+        d.add_pointer_layer(name, yolu_core::PointerTarget::Layer(target), above)
+    })
+}
+
 fn layer_add(
     facts: SetFacts<'_>,
     doc: &mut Document,
@@ -598,6 +652,9 @@ fn layer_add(
     };
     if args.kind != NewLayerKind::Text && args.text.is_some() {
         return Err(misplaced("text"));
+    }
+    if args.kind != NewLayerKind::Pointer && args.target.is_some() {
+        return Err(misplaced("target"));
     }
     let id = match args.kind {
         NewLayerKind::Paint | NewLayerKind::Group => {
@@ -695,6 +752,7 @@ fn layer_add(
                 d.add_text_layer(name, settings, &font.bytes, above, false)
             })?
         }
+        NewLayerKind::Pointer => pointer_layer_add(doc, args, above, misplaced)?,
     };
     Ok(edited(facts, doc, Some(id), None, before))
 }

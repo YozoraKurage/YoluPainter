@@ -146,6 +146,8 @@ fn describe(doc: &Document) {
                     *kinds.entry(a.kind() as u8).or_default() += 1;
                 }
             }
+            // PSD の取り込みは参照レイヤーを作らない
+            LayerKind::Pointer => {}
         }
         if l.mask().is_some() {
             masks += 1;

@@ -29,6 +29,7 @@ mod material;
 mod merge;
 mod operations;
 mod outputs;
+mod pointers;
 mod regions;
 mod resize;
 mod rulers;
@@ -556,6 +557,12 @@ pub(crate) enum Command {
     },
     /// レイヤーセットの一覧・出力の割り当て・レイヤーの所属の入れ替え。
     LayerSets(layer_sets::SetCommand),
+    /// 参照レイヤーの指す先・読む元の入れ替え。
+    Pointer {
+        id: LayerId,
+        old: Box<crate::pointer::PointerSettings>,
+        new: Box<crate::pointer::PointerSettings>,
+    },
 }
 
 pub(crate) struct Entry {
@@ -794,6 +801,8 @@ impl Document {
             layer.id = *id;
             layer.parent = layer.parent.map(|p| map[&p]);
         }
+        // 文書の中のレイヤーを指す参照レイヤーも新しい ID へ（文書に無いレイヤーを指すものはそのまま）
+        Self::remap_pointer_targets(&mut self.layers, &map);
         self.external_mutation();
         Ok(self)
     }
@@ -1083,7 +1092,7 @@ impl Document {
     ) -> Result<(), CoreError> {
         if let Some(k) = key {
             if self.coalesce == Some(k) && self.redo.is_empty() && !self.undo.is_empty() {
-                self.apply(&mut command)?;
+                self.apply_checking_pointers(&mut command)?;
                 let top = &mut self.undo.last_mut().expect("空でない").command;
                 match (top, command) {
                     (Command::Property { new: n, .. }, Command::Property { new, .. }) => *n = new,
@@ -1393,6 +1402,7 @@ impl Document {
                 Err(CoreError::Unsupported(Reason::CannotPaintAdjustmentLayer))
             }
             LayerKind::Group => Err(CoreError::Unsupported(Reason::CannotPaintGroup)),
+            LayerKind::Pointer => Err(CoreError::Unsupported(Reason::CannotPaintPointerLayer)),
         }
     }
 
@@ -1441,6 +1451,7 @@ impl Document {
         self.effects.generation += 1;
         self.release_effect_cache();
         self.refresh_anchor_readers();
+        self.refresh_pointer_readers();
     }
 
     /// 画素・タイルの直接の書き込みの後始末。`mark_target_tile` が元画素の変化の記録（評価のキャッシュの鍵）と、フィルターの届く範囲の
@@ -1450,6 +1461,7 @@ impl Document {
         self.clear_history_unchecked();
         self.revision += 1;
         self.refresh_anchor_readers();
+        self.refresh_pointer_readers();
     }
 
     /// レイヤーの画素・マスクに、ディスクのキャッシュから読めなかったタイルがあるか（読もうとして失敗したものだけ。履歴の写しは見ない）。
@@ -1615,7 +1627,7 @@ impl Document {
         mut command: Command,
         cost: u64,
     ) -> Result<(), CoreError> {
-        self.apply(&mut command)?;
+        self.apply_checking_pointers(&mut command)?;
         self.history_bump();
         self.push(Entry {
             command,
@@ -1678,6 +1690,26 @@ impl Document {
             .history_trimmed(dropped_undo, self.undo.len() + self.redo.len());
     }
 
+    /// 段を初めて当てる（積む前）。参照の図を変え得る段は、当てた後に前に無かった循環・深すぎる参照レイヤーができたら戻して断る
+    /// （取り消し・やり直しは、当てたときに確かめた状態へ戻るだけなので見ない）。
+    fn apply_checking_pointers(&mut self, command: &mut Command) -> Result<(), CoreError> {
+        let check = Self::may_change_pointers(command);
+        let before = if check {
+            self.pointer_violations()
+        } else {
+            Default::default()
+        };
+        self.apply(command)?;
+        if check {
+            if let Some(why) = self.new_pointer_violation(&before) {
+                self.revert(command)
+                    .expect("当てた段を戻すのは、当てる前の状態（予算の中だった）へ戻すこと");
+                return Err(CoreError::InvalidArgument(why));
+            }
+        }
+        Ok(())
+    }
+
     /// 段を当てる（やり直し・最初の実行）。
     fn apply(&mut self, command: &mut Command) -> Result<(), CoreError> {
         self.switch(command, false)
@@ -1705,6 +1737,7 @@ impl Document {
             )
         {
             self.refresh_anchor_readers();
+            self.refresh_pointer_readers();
         }
         result
     }
@@ -1810,21 +1843,12 @@ impl Document {
                 was_enabled,
                 now_enabled,
             } => {
-                let index = self.index_of(*id)?;
-                let layer = &mut self.layers[index];
                 let (value, enabled) = if backwards {
-                    (old, was_enabled)
+                    (*old, *was_enabled)
                 } else {
-                    (new, now_enabled)
+                    (*new, *now_enabled)
                 };
-                match value {
-                    Some(v) => layer.fill.insert(*channel, *v),
-                    None => layer.fill.remove(channel),
-                };
-                layer.set_enabled(*channel, *enabled);
-                self.mark_layer(index, Some(*channel));
-                self.mark_clipped_layers();
-                Ok(())
+                self.switch_fill_value(*id, *channel, value, enabled)
             }
             Command::SwapSmartMask { id, mask } => {
                 let i = self.index_of(*id)?;
@@ -1908,7 +1932,28 @@ impl Document {
             Command::Text(m) => self.switch_text(m, backwards),
             Command::Rulers { changes } => self.switch_rulers(changes, backwards),
             Command::LayerSets(m) => self.switch_layer_sets(m, backwards),
+            Command::Pointer { id, old, new } => self.switch_pointer(*id, old, new, backwards),
         }
+    }
+
+    /// 段: 塗りつぶしのチャンネルの値と有効を置く（値が None なら外す）。
+    fn switch_fill_value(
+        &mut self,
+        id: LayerId,
+        channel: Channel,
+        value: Option<Rgba8>,
+        enabled: bool,
+    ) -> Result<(), CoreError> {
+        let index = self.index_of(id)?;
+        let layer = &mut self.layers[index];
+        match value {
+            Some(v) => layer.fill.insert(channel, v),
+            None => layer.fill.remove(&channel),
+        };
+        layer.set_enabled(channel, enabled);
+        self.mark_layer(index, Some(channel));
+        self.mark_clipped_layers();
+        Ok(())
     }
 
     /// マスクを付ける（attach）か外す。段が持つマスクを文書と入れ替える。
@@ -1987,6 +2032,8 @@ impl Document {
     /// レイヤー 1 枚だけの印（グループは自分のマスクのタイルだけ。中身のレイヤーは `mark_layer` が子孫として別に呼ぶ）。レイヤーごとにすることは、
     /// 入れ子の中のレイヤーにも漏れなく働くよう、ここに置く。
     fn mark_layer_alone(&mut self, index: usize, channel: Option<Channel>) {
+        // 参照レイヤーの結果の鍵（指した先のレイヤーの変化の時計）
+        self.note_layer_change(index);
         // マスクの Anchor を読む段のために、このレイヤーのマスクの出力が変わったことを数える（入れ子の中のレイヤーも 1 回ずつ）
         self.note_mask_output(index);
         if self.layers[index].is_group() {
@@ -2156,7 +2203,7 @@ impl Document {
         }
     }
 
-    /// レイヤーが合成を変え得るチャンネル: 塗りつぶしは値のあるもの、調整は有効なもの、グループは全部、ラスターは面のあるもの。
+    /// レイヤーが合成を変え得るチャンネル: 塗りつぶしは値のあるもの、調整・参照レイヤーは有効なもの、グループは全部、ラスターは面のあるもの。
     fn covered_channels(&self, index: usize) -> Vec<Channel> {
         let l = &self.layers[index];
         match l.kind {
@@ -2164,6 +2211,7 @@ impl Document {
             LayerKind::Adjustment => l.enabled_channels(),
             LayerKind::Group => self.channels(),
             LayerKind::Raster => l.surface_channels(),
+            LayerKind::Pointer => l.enabled_channels(),
         }
     }
 
@@ -2835,7 +2883,7 @@ impl Document {
         }
     }
 
-    /// 描いている間の下の覚えを使う依頼（ストロークが無い・覚えを切っている・Anchor を読む効果がある・三角形の塗り・別のレイヤーへ書く
+    /// 描いている間の下の覚えを使う依頼（ストロークが無い・覚えを切っている・Anchor を読む効果がある・描いているレイヤーを参照レイヤーが読む・三角形の塗り・別のレイヤーへ書く
     /// 多チャンネルのストローク・ストロークのレイヤーが別のレイヤーセットのときは None）。
     fn memo_request(
         &self,
@@ -2851,6 +2899,8 @@ impl Document {
                 .iter()
                 .any(|s| s.layer_index != a.layer_index)
             || self.has_anchor_readers()
+            // 参照レイヤーは描いているレイヤーを（入れ子の参照・Anchor を通しても）読める: 下の参照レイヤーの出力も、描くと変わる
+            || self.pointer_reads_layer(a.layer)
             || self.layers.get(a.layer_index).is_none_or(|l| l.set != set)
         {
             return None;
@@ -3187,14 +3237,24 @@ impl Document {
                 })
                 .unwrap_or_default()
         };
-        let mut v = if self.has_anchor_readers() {
-            // Anchor を読む段の出力は、読む Anchor が変わった所（段より後の半径の分だけ広げて）も変わる
+        let anchors = self.has_anchor_readers();
+        let pointers = self.has_pointers();
+        let mut v = if anchors || pointers {
+            // Anchor を読む段の出力は、読む Anchor が変わった所（段より後の半径の分だけ広げて）も変わる。参照レイヤーの出力は、指す先の
+            // 読む元のチャンネルが変わった所（参照レイヤーのフィルターの半径の分だけ広げて）も変わる。互いを読み得るので、増えなくなるまで回す
             let mut sets: HashMap<Channel, std::collections::HashSet<TileCoord>> = self
                 .channels()
                 .into_iter()
                 .map(|c| (c, raw(c).into_iter().collect()))
                 .collect();
-            self.close_over_anchor_readers(since, &mut sets);
+            for _ in 0..=self.layers.len() {
+                if anchors {
+                    self.close_over_anchor_readers(since, &mut sets);
+                }
+                if !pointers || !self.close_over_pointer_readers(&mut sets) {
+                    break;
+                }
+            }
             sets.remove(&channel)
                 .map(|s| s.into_iter().collect())
                 .unwrap_or_default()

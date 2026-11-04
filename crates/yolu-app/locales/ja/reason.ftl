@@ -565,3 +565,7 @@ reason-post-correction-range = 後補正の強さ（0〜100）・表示倍率
 reason-layer-set-channels = レイヤーセットのチャンネルの組に、プロジェクトに無いチャンネルがある
 reason-channel-not-in-layer-set = レイヤーセットがそのチャンネルを扱わない
 reason-fill-map-channel = 塗りつぶしの焼いたマップのチャンネル
+reason-cannot-paint-pointer-layer = 参照レイヤーには描けない（指す先を描く）
+reason-not-pointer-layer = 参照レイヤーではない
+reason-pointer-cycle = 指す先が循環する（指す先の中に、自分か自分を読むレイヤーがある）
+reason-pointer-too-deep = 参照の連なりが 4 段を超える

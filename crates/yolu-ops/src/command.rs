@@ -249,6 +249,9 @@ pub enum NewLayerKind {
     Adjustment,
     /// A text layer whose Color pixels are drawn from editable text (give `text`).
     Text,
+    /// A pointer layer: no pixels of its own, it shows the result of another layer or group of the same texture set (give `target`).
+    /// Every channel reads the same channel of the target; masks, effects, blend modes and opacity apply on top as on other layers.
+    Pointer,
 }
 
 /// An effect kind with parameter values (see effect.list_kinds). Omitted parameters take their defaults.
@@ -285,6 +288,10 @@ pub struct LayerAddArgs {
     /// For a text layer: the text values. Omitted values take their defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<TextSpec>,
+    /// For a pointer layer: the layer or group it shows (id or name, in the same texture set). It must not contain the new layer,
+    /// and pointers may nest at most 4 levels deep.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
 }
 
 /// Horizontal alignment of text lines.

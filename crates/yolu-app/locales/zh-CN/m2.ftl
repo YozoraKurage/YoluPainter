@@ -94,3 +94,4 @@ m2-blend-luminosity = 明度
 m2-blend-darker-color = 深色
 m2-blend-lighter-color = 浅色
 m2-blend-pass-through = 穿透
+m2-pointer = 指向图层

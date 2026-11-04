@@ -94,3 +94,4 @@ m2-blend-luminosity = 광도
 m2-blend-darker-color = 어두운 색상
 m2-blend-lighter-color = 밝은 색상
 m2-blend-pass-through = 통과
+m2-pointer = 포인터 레이어

@@ -64,6 +64,7 @@ pub mod near_color;
 pub mod normal;
 pub mod padding;
 pub mod paths;
+pub mod pointer;
 mod ranges;
 mod reason;
 pub mod rulers;
@@ -116,6 +117,10 @@ pub use glam;
 pub use layer::{ChannelBlend, Layer, LayerId, LayerSetId, RasterMask};
 pub use normal::{HeightEdgeMode, NormalSettings, NormalYDirection};
 pub use paths::LayerPathEntry;
+pub use pointer::{
+    ExternalReach, ExternalSet, PointerInput, PointerIssue, PointerReach, PointerSettings,
+    PointerTarget, MAX_POINTER_DEPTH,
+};
 pub use reason::Reason;
 pub use rulers::{
     Ruler, RulerId, RulerKind, RulerPlace, RulerRef, RulerScope, RulerSpace, SpecialRulers,

@@ -835,6 +835,7 @@ pub fn layer_kind_label(lang: Lang, kind: LayerKind) -> &'static str {
         LayerKind::Fill => lang.t("m2-fill"),
         LayerKind::Adjustment => lang.t("m2-adjustment"),
         LayerKind::Group => lang.t("m2-group"),
+        LayerKind::Pointer => lang.t("m2-pointer"),
     }
 }
 
@@ -844,6 +845,7 @@ pub fn layer_kind_icon(kind: LayerKind) -> &'static str {
         LayerKind::Fill => "format_color_fill",
         LayerKind::Adjustment => "texture",
         LayerKind::Group => "folder",
+        LayerKind::Pointer => "target",
     }
 }
 

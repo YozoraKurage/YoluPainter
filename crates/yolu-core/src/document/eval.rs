@@ -28,6 +28,7 @@ use crate::fill_image::{
 use crate::filter::{self, GeneratorInput, ValueType};
 use crate::generator::{self, anchor, BoundGenerator, MapKind, MapState};
 use crate::layer::{LayerId, LayerSetId};
+use crate::pointer::{ExternalSet, PointerIssue, PointerTarget};
 use crate::surface::{Pixels, Surface, Tile};
 use crate::types::{Channel, ChannelKind, LayerKind, Rect, Rgba8, TileCoord};
 
@@ -185,6 +186,20 @@ pub(crate) struct EffectState {
     pub mask_serials: HashMap<LayerId, u64>,
     /// Anchor を読む段の解決の署名（変わったら、読むレイヤーを全部変わったことにする）。
     pub anchor_signature: Vec<AnchorSig>,
+    /// レイヤーごとの、最後に変わったときの時計（`clock`。画素・属性・効果・並びのどれでも）。参照レイヤーの結果の鍵（指した先の変化の印）。
+    pub layer_serials: HashMap<LayerId, u64>,
+    /// 外から渡した参照の入力（ほかのテクスチャセットの合成）の、鍵とチャンネルごとの画素の通し番号（画素が替わったときだけ新しい番号）。
+    pub pointer_serials: HashMap<(ExternalSet, Channel), u64>,
+    /// 参照の入力のうち、予算（`pointer_budget`）に収まらなかったもの（読まずに既定値を出す）。
+    pub pointer_over: std::collections::HashSet<(ExternalSet, Channel)>,
+    /// 参照の入力の画素を持っておく予算。
+    pub pointer_budget: u64,
+    /// 参照の入力が替わるたびに増える（参照レイヤーの解析の鍵）。
+    pub pointer_inputs_revision: u64,
+    /// 参照レイヤーの解決の署名（変わったら、その参照レイヤーを全部変わったことにする）。
+    pub pointer_signature: Vec<(LayerId, super::pointers::PointerState)>,
+    /// 参照レイヤーの解析（循環・深さ・指した先の変化の印）のキャッシュ。
+    pub pointer_analysis: Mutex<Option<Arc<super::pointers::PointerAnalysis>>>,
     pub cache: Mutex<EvalCache>,
     pub working_budget: u64,
     pub cache_budget: u64,
@@ -215,6 +230,13 @@ impl Default for EffectState {
             source: HashMap::new(),
             mask_serials: HashMap::new(),
             anchor_signature: Vec::new(),
+            layer_serials: HashMap::new(),
+            pointer_serials: HashMap::new(),
+            pointer_over: std::collections::HashSet::new(),
+            pointer_budget: 256 * 1024 * 1024,
+            pointer_inputs_revision: 1,
+            pointer_signature: Vec::new(),
+            pointer_analysis: Mutex::new(None),
             cache: Mutex::new(EvalCache::default()),
             working_budget: 256 * 1024 * 1024,
             cache_budget: 256 * 1024 * 1024,
@@ -348,6 +370,9 @@ struct Stamp {
     /// 継ぎ目をまたぐ段・アイランドごとのばらつきの段が読むモデルの UV の位相の世代（どちらも無ければ 0）。
     topology: u64,
     anchors: u64,
+    /// 参照レイヤーの指した先の変化の印（同じ文書の指す先は部分木・レイヤーセットと辿れる先の変化、ほかのテクスチャセットは渡された入力の画素の
+    /// 通し番号。参照レイヤーでなければ・読めなければ 0）。
+    pointer: u64,
 }
 
 /// 出力が依る設定（等しければ出力の式が同じ）。
@@ -361,6 +386,17 @@ struct Config {
     anchors: Vec<Option<AnchorStage>>,
     /// UV の継ぎ目をまたぐ帯の幅（0 はまたがない。`uv_seams`）。
     seam_band: u32,
+    /// 参照レイヤーの読み元（参照レイヤーのチャンネルだけ）。
+    pointer: Option<PointerConfig>,
+}
+
+/// 参照レイヤーのチャンネルの読み元: 指す先と読む元のチャンネル、読めないときに出す既定値と理由。
+#[derive(Clone, PartialEq, Debug)]
+struct PointerConfig {
+    target: PointerTarget,
+    source: Channel,
+    default: Rgba8,
+    issue: Option<PointerIssue>,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -410,6 +446,19 @@ pub(super) struct Spec {
     pub(super) seam: (u32, usize),
     /// アイランドごとのばらつきの段がある（モデルの UV アイランドの図を読む）。
     reads_islands: bool,
+    /// 継ぎ目をまたぐ近傍のフィルターを持つ参照レイヤーが読む、指す先の全面の合成（`prepare_shared` がブロックを並べる前に 1 回作り、どの
+    /// ブロックも共有する。継ぎ目の向こうの点はブロックの外にあるので、ブロックの矩形だけでは読めない）。
+    whole_pointer: OnceLock<Arc<Vec<u8>>>,
+}
+
+impl Spec {
+    /// 継ぎ目をまたいで評価する参照レイヤー（同じ文書を指し、読める）か。またぐなら、全面の合成を読み元にする。
+    fn reads_pointer_whole(&self) -> bool {
+        self.seam.0 > 0
+            && self.config.pointer.as_ref().is_some_and(|p| {
+                p.issue.is_none() && !matches!(p.target, PointerTarget::External(_))
+            })
+    }
 }
 
 /// 合成が読む評価済みの面（レイヤーの番号から）。内容とマスクは別。
@@ -591,6 +640,38 @@ impl filter::Source for FillSource<'_> {
 enum ChainSource<'a> {
     Surface(SurfaceSource<'a>),
     Fill(Box<FillSource<'a>>),
+    /// 参照レイヤーの読み元と文書の大きさ。
+    Pointer(PointerSource<'a>, (u32, u32)),
+}
+
+/// 参照レイヤーのチャンネルの読み元: 指す先を合成した矩形の画素、ほかのテクスチャセットの入力（UV で読む）、読めなければ既定値。
+enum PointerSource<'a> {
+    /// 既定値（読めない）。
+    Constant(Rgba8),
+    /// 同じ文書の指す先を合成した矩形（キャンバスの中。行は下から上）。矩形の外は透明。
+    Region { rect: Rect, pixels: Arc<Vec<u8>> },
+    /// ほかのテクスチャセットの合成（文書の大きさ `dims` へ引き伸ばして読む）。
+    External {
+        input: &'a crate::pointer::PointerInput,
+        dims: (u32, u32),
+    },
+}
+
+impl PointerSource<'_> {
+    fn get(&self, x: u32, y: u32) -> [u8; 4] {
+        match self {
+            Self::Constant(v) => v.to_array(),
+            Self::Region { rect, pixels } => {
+                if x < rect.x || y < rect.y || x >= rect.x + rect.width || y >= rect.y + rect.height
+                {
+                    return [0; 4];
+                }
+                let at = ((y - rect.y) as usize * rect.width as usize + (x - rect.x) as usize) * 4;
+                [pixels[at], pixels[at + 1], pixels[at + 2], pixels[at + 3]]
+            }
+            Self::External { input, dims } => input.sample(x, y, *dims).to_array(),
+        }
+    }
 }
 
 impl filter::Source for ChainSource<'_> {
@@ -598,12 +679,14 @@ impl filter::Source for ChainSource<'_> {
         match self {
             Self::Surface(s) => s.dimensions(),
             Self::Fill(s) => s.dimensions(),
+            Self::Pointer(_, dims) => *dims,
         }
     }
     fn pixel(&self, x: u32, y: u32) -> [u8; 4] {
         match self {
             Self::Surface(s) => s.pixel(x, y),
             Self::Fill(s) => s.pixel(x, y),
+            Self::Pointer(s, _) => s.get(x, y),
         }
     }
     fn read_row(&self, x: u32, y: u32, out: &mut [u8]) {
@@ -612,6 +695,11 @@ impl filter::Source for ChainSource<'_> {
             Self::Fill(s) => {
                 for (i, p) in out.chunks_exact_mut(4).enumerate() {
                     p.copy_from_slice(&s.pixel(x + i as u32, y));
+                }
+            }
+            Self::Pointer(s, _) => {
+                for (i, p) in out.chunks_exact_mut(4).enumerate() {
+                    p.copy_from_slice(&s.get(x + i as u32, y));
                 }
             }
         }
@@ -834,9 +922,17 @@ impl Document {
             .entry((id, key))
             .or_default()
             .insert(coord, serial);
+        self.effects.layer_serials.insert(id, serial);
         if matches!(target, super::Target::Mask) {
             self.note_mask_output(index);
         }
+    }
+
+    /// レイヤーの何かが変わったことを、レイヤーごとの時計に覚える（参照レイヤーの結果の鍵）。
+    pub(super) fn note_layer_change(&mut self, index: usize) {
+        self.effects.clock += 1;
+        let id = self.layers[index].id;
+        self.effects.layer_serials.insert(id, self.effects.clock);
     }
 
     /// レイヤーのマスクの出力が変わり得ることを覚える。マスクに Anchor があれば、マスクを読む段のあるどのレイヤーの出力も変わり得るので、変化の記録の
@@ -887,6 +983,15 @@ impl Document {
             y0: r.y0.saturating_sub(m),
             x1: (r.x1 + m).min(cols),
             y1: (r.y1 + m).min(rows),
+        }
+    }
+
+    /// 継ぎ目をまたぐ参照レイヤーが全ブロックで共有する、指す先の全面の合成のバイト数（そうでなければ 0）。
+    pub(super) fn pointer_whole_bytes(&self, spec: &Spec) -> u64 {
+        if spec.reads_pointer_whole() {
+            u64::from(self.width) * u64::from(self.height) * 4
+        } else {
+            0
         }
     }
 
@@ -984,6 +1089,23 @@ impl Document {
             });
         let reads_anchor = anchors.iter().any(Option::is_some);
         let reads_islands = chain.iter().any(|e| e.settings.reads_islands());
+        let pointer = match key {
+            SourceKey::Channel(c) if layer.kind == LayerKind::Pointer => {
+                let settings = layer.pointer.as_ref();
+                Some(PointerConfig {
+                    target: settings.map_or(
+                        PointerTarget::Layer(LayerId(0)),
+                        crate::pointer::PointerSettings::target,
+                    ),
+                    source: settings.map_or(c, |s| s.source(c)),
+                    default: self
+                        .channel_info(c)
+                        .map_or(Rgba8::TRANSPARENT, |i| i.default),
+                    issue: self.pointer_channel_issue(index, c),
+                })
+            }
+            _ => None,
+        };
         Spec {
             layer: index,
             id: layer.id,
@@ -994,6 +1116,7 @@ impl Document {
                 fill,
                 anchors,
                 seam_band: seam.0,
+                pointer,
             }),
             halo,
             global,
@@ -1001,6 +1124,7 @@ impl Document {
             reads_anchor,
             seam,
             reads_islands,
+            whole_pointer: OnceLock::new(),
         }
     }
 
@@ -1031,7 +1155,7 @@ impl Document {
             SourceKey::Mask => false,
         };
         let source = if matches!(spec.key, SourceKey::Channel(_))
-            && spec.config.fill.is_some()
+            && (spec.config.fill.is_some() || spec.config.pointer.is_some())
             && !fill_paths
         {
             0
@@ -1061,6 +1185,18 @@ impl Document {
                 self.journal.serial + 1
             } else {
                 0
+            },
+            pointer: match &spec.config.pointer {
+                Some(p) if p.issue.is_none() => match p.target {
+                    PointerTarget::External(key) => self
+                        .effects
+                        .pointer_serials
+                        .get(&(key, p.source))
+                        .copied()
+                        .unwrap_or(0),
+                    _ => self.pointer_target_signature(spec.layer),
+                },
+                _ => 0,
             },
         }
     }
@@ -1139,9 +1275,7 @@ impl Document {
         collect_layers(entries, &mut indices);
         for i in indices {
             let l = &self.layers[i];
-            if matches!(l.kind, LayerKind::Raster | LayerKind::Fill)
-                && l.has_evaluated_output(channel)
-            {
+            if l.outputs_pixels() && l.has_evaluated_output(channel) {
                 set.content.insert(
                     i,
                     self.output_surface_in(i, SourceKey::Channel(channel), region, cancel)?,
@@ -1202,7 +1336,7 @@ impl Document {
         };
         indices.into_iter().any(|i| {
             let l = &self.layers[i];
-            (matches!(l.kind, LayerKind::Raster | LayerKind::Fill)
+            (l.outputs_pixels()
                 && l.has_evaluated_output(channel)
                 && missing(i, SourceKey::Channel(channel)))
                 || (l
@@ -1236,9 +1370,7 @@ impl Document {
         };
         for i in indices {
             let l = &self.layers[i];
-            if matches!(l.kind, LayerKind::Raster | LayerKind::Fill)
-                && l.has_evaluated_output(channel)
-            {
+            if l.outputs_pixels() && l.has_evaluated_output(channel) {
                 set.content.insert(
                     i,
                     self.coarse_output_surface(
@@ -1481,9 +1613,7 @@ impl Document {
         let range = self.range_of_rect(Rect::new(0, 0, self.width, self.height));
         for k in indices {
             let l = &layers[k];
-            if matches!(l.kind, LayerKind::Raster | LayerKind::Fill)
-                && l.has_evaluated_output(channel)
-            {
+            if l.outputs_pixels() && l.has_evaluated_output(channel) {
                 set.content.insert(
                     k,
                     self.output_surface(doc_index[k], SourceKey::Channel(channel), range, cancel)?,
@@ -1593,6 +1723,18 @@ impl Document {
             // 自分の画像（または投影するベイクしたマップ）と、デカールの形の画像
             let _ = self.fill_chains(f);
         }
+        if let Some(p) = &spec.config.pointer {
+            // 指す先のレイヤーが使う物も、ブロックを並べる前に
+            self.prepare_pointer_members(p, cancel)?;
+            if spec.reads_pointer_whole() && self.seam_table_for(spec).is_some() {
+                // 継ぎ目の向こうを読む近傍の段のために、指す先の全面を 1 回だけ合成して全ブロックで共有する
+                if let PointerSource::Region { pixels, .. } =
+                    self.pointer_source(p, self.whole_range(), cancel)?
+                {
+                    let _ = spec.whole_pointer.set(pixels);
+                }
+            }
+        }
         Ok(())
     }
 
@@ -1628,7 +1770,9 @@ impl Document {
             );
         }
         let need = working.saturating_add(output).max(1);
-        ((self.effects.working_budget / need) as usize)
+        // 継ぎ目をまたぐ参照レイヤーの、指す先の全面の合成は、全ブロックで 1 つ共有して持つ
+        let shared = self.pointer_whole_bytes(spec);
+        ((self.effects.working_budget.saturating_sub(shared) / need) as usize)
             .clamp(1, rayon::current_num_threads().max(1))
     }
 
@@ -1733,8 +1877,7 @@ impl Document {
         cancel: Option<&AtomicBool>,
     ) -> Result<Option<Tile>, CoreError> {
         let l = &self.layers[index];
-        if matches!(l.kind, LayerKind::Raster | LayerKind::Fill) && l.has_evaluated_output(channel)
-        {
+        if l.outputs_pixels() && l.has_evaluated_output(channel) {
             let spec = self.make_spec(index, SourceKey::Channel(channel));
             let bt = self.block_tiles();
             let tiles = self.block_output(&spec, coord.x / bt, coord.y / bt, cancel)?;
@@ -1787,7 +1930,7 @@ impl Document {
         let ts = self.tile_size;
         let coord = TileCoord::new(x / ts, y / ts);
         let l = &self.layers[index];
-        if !matches!(l.kind, LayerKind::Raster | LayerKind::Fill) {
+        if !l.outputs_pixels() {
             return Ok(Rgba8::TRANSPARENT);
         }
         if l.has_evaluated_output(channel) {
@@ -1848,6 +1991,10 @@ impl Document {
                     || self.seam_reaches_content(spec.seam, spec.halo, coord, surface)
             }
             SourceKey::Channel(c) => {
+                // 参照レイヤーは、読めても読めなくても（既定値）キャンバス全体に出し得る
+                if spec.config.pointer.is_some() {
+                    return true;
+                }
                 if let Some(f) = &spec.config.fill {
                     if f.image.is_some() || f.decal {
                         return true;
@@ -2001,7 +2148,6 @@ impl Document {
         cancel: Option<&AtomicBool>,
         body: impl FnOnce(&Env<'_>) -> Result<R, CoreError>,
     ) -> Result<R, CoreError> {
-        let layer = &self.layers[spec.layer];
         let cfg = &*spec.config;
         let inputs = &self.effects.inputs;
         let dims = (self.width, self.height);
@@ -2131,28 +2277,8 @@ impl Document {
             Some(f) => self.fill_chains(f),
             None => (None, None),
         };
-        // 読み元
-        let source = match &cfg.fill {
-            None => {
-                let surface = match spec.key {
-                    SourceKey::Channel(c) => layer.surface(c),
-                    SourceKey::Mask => layer.mask.as_ref().map(|m| &m.surface),
-                };
-                ChainSource::Surface(SurfaceSource {
-                    surface,
-                    width: self.width,
-                    height: self.height,
-                    failed: OnceLock::new(),
-                })
-            }
-            Some(f) => ChainSource::Fill(Box::new(self.fill_source(
-                f,
-                own.as_deref(),
-                shape.as_deref(),
-                &maps,
-                frame,
-            )?)),
-        };
+        let chains = (own.as_deref(), shape.as_deref());
+        let source = self.chain_source(spec, chains, &maps, frame, anchor_tiles, cancel)?;
         let result = body(&Env {
             source: &source,
             value_type: cfg.value_type,
@@ -2166,6 +2292,54 @@ impl Document {
             }
         }
         result
+    }
+
+    /// 評価の読み元: レイヤーの面（チャンネルかマスク）、塗りつぶしの値・投影（`chains` は自分とデカールの形の画像のミップマップ）、参照レイヤーの
+    /// 指す先（`range` はフィルターの半径の分を広げた評価の範囲）。
+    fn chain_source<'a>(
+        &'a self,
+        spec: &'a Spec,
+        chains: (
+            Option<&'a ImageMipChain<'static>>,
+            Option<&'a ImageMipChain<'static>>,
+        ),
+        maps: &'a [generator::Map<'a>],
+        frame: Option<generator::ModelFrame>,
+        range: TileRange,
+        cancel: Option<&AtomicBool>,
+    ) -> Result<ChainSource<'a>, CoreError> {
+        let layer = &self.layers[spec.layer];
+        Ok(match (&spec.config.fill, &spec.config.pointer) {
+            (_, Some(p)) => {
+                let source = if spec.reads_pointer_whole() && self.seam_table_for(spec).is_some() {
+                    match spec.whole_pointer.get() {
+                        Some(pixels) => PointerSource::Region {
+                            rect: Rect::new(0, 0, self.width, self.height),
+                            pixels: pixels.clone(),
+                        },
+                        None => self.pointer_source(p, self.whole_range(), cancel)?,
+                    }
+                } else {
+                    self.pointer_source(p, range, cancel)?
+                };
+                ChainSource::Pointer(source, (self.width, self.height))
+            }
+            (None, None) => {
+                let surface = match spec.key {
+                    SourceKey::Channel(c) => layer.surface(c),
+                    SourceKey::Mask => layer.mask.as_ref().map(|m| &m.surface),
+                };
+                ChainSource::Surface(SurfaceSource {
+                    surface,
+                    width: self.width,
+                    height: self.height,
+                    failed: OnceLock::new(),
+                })
+            }
+            (Some(f), None) => ChainSource::Fill(Box::new(
+                self.fill_source(f, chains.0, chains.1, maps, frame)?,
+            )),
+        })
     }
 
     /// 塗りつぶしのチャンネルが読む、自分の画像（またはベイクしたマップ）のミップマップと、デカールの形の画像のミップマップ。UV で置き方が
@@ -2496,7 +2670,7 @@ impl Document {
                     if l.set != set {
                         continue;
                     }
-                    if matches!(l.kind, LayerKind::Raster | LayerKind::Fill)
+                    if l.outputs_pixels()
                         && l.has_evaluated_output(r.channel)
                         && l.is_channel_enabled(r.channel)
                         && l.has_content(r.channel, true)
@@ -2571,7 +2745,7 @@ impl Document {
             let l = &self.layers[i];
             let reachable = i <= host;
             let content = if reachable
-                && matches!(l.kind, LayerKind::Raster | LayerKind::Fill)
+                && l.outputs_pixels()
                 && (l.kind == LayerKind::Raster || l.has_evaluated_output(channel))
                 && l.is_channel_enabled(channel)
                 && l.has_content(channel, true)
@@ -2634,7 +2808,7 @@ impl Document {
                 let enabled = i <= host
                     && l.is_channel_enabled(channel)
                     && match l.kind {
-                        LayerKind::Group => true,
+                        LayerKind::Group | LayerKind::Pointer => true,
                         LayerKind::Adjustment => {
                             l.adjustment.as_ref().is_some_and(|a| a.applies_to(kind))
                         }
@@ -3118,6 +3292,134 @@ impl Document {
             }
         };
         Some(InactiveReason::Generator(why))
+    }
+}
+
+// ───────── 参照レイヤー ─────────
+
+impl Document {
+    /// 参照レイヤーのチャンネルの読み元を、タイルの範囲 `range`（フィルターの半径の分を広げた評価の範囲）について作る。
+    fn pointer_source(
+        &self,
+        p: &PointerConfig,
+        range: TileRange,
+        cancel: Option<&AtomicBool>,
+    ) -> Result<PointerSource<'_>, CoreError> {
+        if p.issue.is_some() {
+            return Ok(PointerSource::Constant(p.default));
+        }
+        if let PointerTarget::External(key) = p.target {
+            return Ok(match self.effects.inputs.pointer(key, p.source) {
+                Some(input) => PointerSource::External {
+                    input,
+                    dims: (self.width, self.height),
+                },
+                None => PointerSource::Constant(p.default),
+            });
+        }
+        let ts = self.tile_size;
+        let (x0, y0) = (range.x0 * ts, range.y0 * ts);
+        let rect = Rect::new(
+            x0,
+            y0,
+            (range.x1 * ts).min(self.width) - x0,
+            (range.y1 * ts).min(self.height) - y0,
+        );
+        let mut pixels = vec![0u8; rect.width as usize * rect.height as usize * 4];
+        self.pointer_region_into(p.target, p.source, rect, &mut pixels, cancel)?;
+        Ok(PointerSource::Region {
+            rect,
+            pixels: Arc::new(pixels),
+        })
+    }
+
+    /// 同じ文書の指す先の合成（チャンネル `source`）の矩形を、行を下から上に out へ。レイヤー・グループは、その部分木だけを透明から重ねた結果
+    /// （自身のマスク・不透明度・合成モードは掛かり、自身の表示の入り切りとクリッピングは見ない）。レイヤーセットはその合成（組に無いチャンネルは透明）。合成と同じ
+    /// `composite_entries_into` と評価（`evaluate_entries`）を通る。
+    fn pointer_region_into(
+        &self,
+        target: PointerTarget,
+        source: Channel,
+        rect: Rect,
+        out: &mut [u8],
+        cancel: Option<&AtomicBool>,
+    ) -> Result<(), CoreError> {
+        let kind = self.channel_kind(source)?;
+        let (set, entries) = self.pointer_entries(target, source, kind)?;
+        if entries.is_empty() || rect.is_empty() {
+            out.fill(0);
+            return Ok(());
+        }
+        let eval = self.evaluate_entries(&entries, source, rect, cancel)?;
+        let stack = self.set_stack(set, None, source, kind, Some(&eval));
+        crate::composite::composite_entries_into(
+            &stack,
+            &entries,
+            self.tile_size,
+            rect,
+            out,
+            crate::types::RowOrder::BottomUp,
+        )
+    }
+
+    /// 同じ文書の指す先の計画（指す先のレイヤーセットと、重ねる段）。指す先が無ければ断る。
+    fn pointer_entries(
+        &self,
+        target: PointerTarget,
+        source: Channel,
+        kind: ChannelKind,
+    ) -> Result<(LayerSetId, Vec<Entry>), CoreError> {
+        Ok(match target {
+            PointerTarget::Layer(id) => {
+                let index = self.index_of(id)?;
+                let set = self.layers[index].set;
+                let stack = self.set_stack(set, None, source, kind, None);
+                // 指す先自身の表示の入り切りは見ない（隠した元を、参照レイヤーだけで別の所に使える）
+                (
+                    set,
+                    stack
+                        .make_entry_ignoring_visibility(index)
+                        .into_iter()
+                        .collect(),
+                )
+            }
+            PointerTarget::LayerSet(set) => {
+                self.require_layer_set(set)?;
+                (set, self.set_stack(set, None, source, kind, None).plan())
+            }
+            PointerTarget::External(_) => {
+                return Err(CoreError::Unsupported(Reason::NotPointerLayer));
+            }
+        })
+    }
+
+    /// 参照レイヤーの指す先の、評価の要るレイヤー（入れ子の参照レイヤーも）の帯の写し・統計・画像のミップマップを、参照レイヤーのブロックを並べる
+    /// 前に作る（並べたあとで各ブロックが同時に作りに行かないように）。
+    fn prepare_pointer_members(
+        &self,
+        p: &PointerConfig,
+        cancel: Option<&AtomicBool>,
+    ) -> Result<(), CoreError> {
+        if p.issue.is_some() || matches!(p.target, PointerTarget::External(_)) {
+            return Ok(());
+        }
+        let kind = self.channel_kind(p.source)?;
+        let (_, entries) = self.pointer_entries(p.target, p.source, kind)?;
+        let mut indices = Vec::new();
+        collect_layers(&entries, &mut indices);
+        for i in indices {
+            let l = &self.layers[i];
+            if l.has_evaluated_output(p.source) {
+                self.prepare_shared(&self.make_spec(i, SourceKey::Channel(p.source)), cancel)?;
+            }
+            if l.mask
+                .as_ref()
+                .is_some_and(|m| !m.is_neutral() && m.has_active_filters())
+            {
+                self.prepare_shared(&self.make_spec(i, SourceKey::Mask), cancel)?;
+            }
+        }
+        Ok(())
     }
 }
 

@@ -217,6 +217,41 @@ fn blocks_tiles_and_stacked_neighbourhoods_do_not_change_the_bytes() {
     assert_eq!(run(32, 256), reference);
 }
 
+/// 参照レイヤーにぼかしを付けた出力（`tile`・`block` は評価の分け方）。指す先は、同じ中身のラスター（ぼかしの無い）。
+fn pointer_blur_output(topology: &Arc<UvTopology>, tile: u32, block: u32) -> Vec<u8> {
+    let (mut doc, base) = painted(topology, tile);
+    doc.set_filter_block_pixels(block).unwrap();
+    let p = doc
+        .add_pointer_layer("参照", yolu_core::PointerTarget::Layer(base), None)
+        .unwrap();
+    blur(&mut doc, p, 4);
+    with_model(&mut doc, topology);
+    assert!(doc.seams_active());
+    doc.layer_output(p, Channel::Color, Rect::new(0, 0, SIZE, SIZE))
+        .unwrap()
+}
+
+#[test]
+fn a_pointer_blur_crosses_the_seam_like_the_raster_it_reads_and_does_not_depend_on_blocks() {
+    let topology = straight();
+    // 同じ中身のラスターにぼかしを付けたもの
+    let (mut doc, layer) = painted(&topology, 16);
+    blur(&mut doc, layer, 4);
+    with_model(&mut doc, &topology);
+    let raster = doc
+        .layer_output(layer, Channel::Color, Rect::new(0, 0, SIZE, SIZE))
+        .unwrap();
+    // 継ぎ目の向こうのアイランドの色が入っている（ブロックの外を透明として読んでいない）
+    let a = at(&raster, 25, 16);
+    assert!(a[3] == 255 && a[2] > 40, "またぐ: {a:?}");
+    let reference = pointer_blur_output(&topology, 64, 64);
+    assert_eq!(reference, raster);
+    // ブロックの分け方・タイルの大きさによらない（継ぎ目の相手が別のブロックにある分け方でも）
+    assert_eq!(pointer_blur_output(&topology, 16, 16), reference);
+    assert_eq!(pointer_blur_output(&topology, 8, 32), reference);
+    assert_eq!(pointer_blur_output(&topology, 32, 256), reference);
+}
+
 #[test]
 fn another_model_gives_another_result() {
     let straight = straight();

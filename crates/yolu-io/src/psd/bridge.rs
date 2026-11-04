@@ -364,6 +364,8 @@ pub enum Refusal {
     NormalLevels,
     /// テキストレイヤーの値（このアプリのテキストの値は PSD のテキストレイヤーの形に無い）。
     Text,
+    /// 参照レイヤー（指す先を読む設定は PSD に形が無い）。
+    Pointer,
 }
 /// レイヤー 1 枚の断りの理由。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -396,6 +398,7 @@ impl Blocker {
             Refusal::Path => format!("レイヤー「{name}」にパスがあります。パスは PSD に書けません"),
             Refusal::NormalLevels => format!("調整「{name}」のレベル補正は、ファイルの向きが DirectX の Normal の PSD に書けません。緑だけ別の曲線になります"),
             Refusal::Text => format!("「{name}」はテキストレイヤーです。テキストの値は PSD に書けません"),
+            Refusal::Pointer => format!("「{name}」は参照レイヤーです。指す先を読む設定は PSD に書けません"),
         }
     }
 }

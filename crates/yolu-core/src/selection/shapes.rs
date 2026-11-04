@@ -444,7 +444,7 @@ impl Reference<'_> {
     }
 }
 
-/// レイヤーそのものの画素（C# の PaintLayer.CopyTile）: ラスターは面、塗りつぶしは値（キャンバスの中だけ）、調整・グループは無し。
+/// レイヤーそのものの画素（C# の PaintLayer.CopyTile）: ラスターは面、塗りつぶしは値（キャンバスの中だけ）、調整・グループ・参照レイヤーは無し。
 fn layer_tile(
     layer: &Layer,
     channel: Channel,
@@ -477,7 +477,8 @@ fn layer_tile(
                 }
             }
         }
-        LayerKind::Adjustment | LayerKind::Group => {}
+        // 参照レイヤーの中身は評価の出力（レイヤーそのものの画素は無い）
+        LayerKind::Adjustment | LayerKind::Group | LayerKind::Pointer => {}
     }
     Ok(())
 }

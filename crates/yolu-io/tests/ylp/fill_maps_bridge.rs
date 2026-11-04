@@ -120,7 +120,7 @@ fn path(native: &NativeDocument, tail: &str) -> String {
 #[test]
 fn map_sources_round_trip_in_version_38_with_the_same_composite() {
     assert_eq!(LAYER_FILL_MAPS_VERSION, 38);
-    assert_eq!(MAX_NATIVE_VERSION, LAYER_FILL_MAPS_VERSION);
+    const { assert!(MAX_NATIVE_VERSION >= LAYER_FILL_MAPS_VERSION) };
     let (doc, fill) = doc_with_maps();
     let native = NativeDocument::from_core(&doc).unwrap();
     assert_eq!(native.version(), LAYER_FILL_MAPS_VERSION);

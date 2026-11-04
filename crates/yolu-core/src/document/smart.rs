@@ -256,6 +256,8 @@ impl Document {
         let group = wrap.then(|| self.new_layer_id());
         // 配置のたびに、段・Anchor は新しい ID（写しの中の Anchor を読む段は写しの Anchor を読む）。置き先の決まりに収まらなければ断る
         self.renew_effect_ids(&mut copies);
+        // 写しの中を指す参照レイヤーは写しを指す（写しの外を指すものは、置き先に同じ ID が無ければ「指す先が無い」）
+        Self::remap_pointer_targets(&mut copies, &ids);
         self.check_layer_effects(&copies)?;
         let mut off = BTreeSet::new();
         for l in &mut copies {
@@ -474,6 +476,8 @@ impl SmartMaterial {
             l.id = ids[&l.id];
             l.parent = l.parent.map(|p| ids[&p]);
         }
+        // 素材の中を指す参照レイヤーは、素材の中の新しい ID を指す
+        Document::remap_pointer_targets(&mut self.layers, &ids);
         self
     }
     /// 保存用の独立した文書。画素は書き込み時に分離する。

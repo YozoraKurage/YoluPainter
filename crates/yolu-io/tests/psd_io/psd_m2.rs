@@ -145,6 +145,7 @@ fn snapshot(d: &Document) -> String {
                 .unwrap()
             }
             CoreKind::Group => {}
+            CoreKind::Pointer => write!(s, " pointer={:?}", l.pointer()).unwrap(),
         }
         s.push('\n');
     }

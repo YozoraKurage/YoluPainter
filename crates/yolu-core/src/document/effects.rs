@@ -5,7 +5,7 @@
 //! 評価は [`super::eval`]（合成のとき）。ここは設定の入れ物の変更と、変化の記録（そのレイヤーが出す所を作り直させる）まで。
 
 use crate::Reason;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use super::{CoalesceKey, Command, Document};
 use crate::effects::{
@@ -1749,11 +1749,24 @@ impl Document {
         for m in &inputs.maps {
             m.validate()?;
         }
+        // どの参照レイヤーも読まない入力と、予算に収まらない入力は、持たずに外す（読む入力が、読まない入力に予算の外へ押し出されない）
+        let over = fit_pointer_map(
+            &mut inputs.pointers,
+            &self.external_pointer_reads(),
+            self.effects.pointer_budget,
+        );
         let topology = !self.effects.inputs.same_topology(&inputs);
         let data = !self.effects.inputs.same_data(&inputs);
-        if !topology && !data {
+        let pointers = !self.effects.inputs.same_pointers(&inputs);
+        if !topology && !data && !pointers && over == self.effects.pointer_over {
             return Ok(());
         }
+        // 参照の入力だけが替わったときは、マップ・画像を読むレイヤーを評価し直さない（替わった鍵を指す参照レイヤーだけ）
+        let changed_pointers = if pointers {
+            self.renew_pointer_serials(&inputs)
+        } else {
+            Default::default()
+        };
         if topology {
             // UV の位相が替わると、継ぎ目をまたぐレイヤーの出力も変わる（前と後の両方で、またぐ所に印を付ける）
             self.mark_seam_readers();
@@ -1776,7 +1789,99 @@ impl Document {
             self.mark_seam_readers();
             self.mark_island_readers();
         }
+        if pointers || over != self.effects.pointer_over {
+            self.effects.pointer_inputs_revision += 1;
+            let mut changed = changed_pointers;
+            changed.extend(Self::over_changed(&over, &self.effects.pointer_over));
+            self.effects.pointer_over = over;
+            self.mark_pointer_readers(&changed);
+        }
         Ok(())
+    }
+
+    /// 入力を `next` に替える前に、参照の入力の画素の通し番号を付け直す（画素の同じ入力は前の番号のまま）。画素が替わった・増えた・
+    /// 無くなった入力の鍵を返す。
+    fn renew_pointer_serials(
+        &mut self,
+        next: &EffectInputs,
+    ) -> std::collections::HashSet<crate::pointer::ExternalSet> {
+        let mut changed = std::collections::HashSet::new();
+        let mut serials = HashMap::new();
+        for (k, c, input) in next.pointers() {
+            let kept = self
+                .effects
+                .inputs
+                .pointer(k, c)
+                .filter(|old| old.same_pixels(input))
+                .and_then(|_| self.effects.pointer_serials.get(&(k, c)).copied());
+            if kept.is_none() {
+                changed.insert(k);
+            }
+            serials.insert((k, c), kept.unwrap_or_else(super::eval::next_map_serial));
+        }
+        for (k, c) in self.effects.pointer_serials.keys() {
+            if !serials.contains_key(&(*k, *c)) {
+                changed.insert(*k);
+            }
+        }
+        self.effects.pointer_serials = serials;
+        changed
+    }
+
+    /// 予算に収まらない入力の組が替わった入力の鍵。
+    fn over_changed(
+        now: &std::collections::HashSet<(crate::pointer::ExternalSet, Channel)>,
+        before: &std::collections::HashSet<(crate::pointer::ExternalSet, Channel)>,
+    ) -> std::collections::HashSet<crate::pointer::ExternalSet> {
+        now.symmetric_difference(before).map(|(k, _)| *k).collect()
+    }
+
+    /// ほかのテクスチャセット `keys` を指す参照レイヤーを全部変わったことにする。
+    fn mark_pointer_readers(
+        &mut self,
+        keys: &std::collections::HashSet<crate::pointer::ExternalSet>,
+    ) {
+        if keys.is_empty() {
+            return;
+        }
+        let readers: Vec<usize> = (0..self.layers.len())
+            .filter(|&i| {
+                matches!(
+                    self.layers[i].pointer.as_ref().map(|p| p.target),
+                    Some(crate::pointer::PointerTarget::External(k)) if keys.contains(&k)
+                )
+            })
+            .collect();
+        for i in readers {
+            self.mark_layer(i, None);
+        }
+        self.mark_clipped_layers();
+    }
+
+    /// 参照レイヤーが読む、ほかのテクスチャセットの合成（[`EffectInputs::with_pointer`]）を持っておく予算（既定 256 MiB）。入力を鍵・チャンネルの
+    /// 順に詰め、収まらない入力は持たずに外し、それを読む参照レイヤーのチャンネルは既定値を出して理由を言う。予算を上げても外した入力は戻らない
+    /// （アプリが渡し直す。それまでは「入力が無い」と言う）。
+    pub fn pointer_input_budget_bytes(&self) -> u64 {
+        self.effects.pointer_budget
+    }
+    pub fn set_pointer_input_budget_bytes(&mut self, bytes: u64) {
+        let before = self.effects.pointer_budget;
+        if bytes == before {
+            return;
+        }
+        self.effects.pointer_budget = bytes;
+        let read = self.external_pointer_reads();
+        let mut over = fit_pointer_map(&mut self.effects.inputs.pointers, &read, bytes);
+        if bytes < before {
+            // 前に外した入力は、予算を下げても外れたまま
+            over.extend(self.effects.pointer_over.iter().copied());
+        }
+        let changed = Self::over_changed(&over, &self.effects.pointer_over);
+        self.effects.pointer_over = over;
+        if !changed.is_empty() {
+            self.effects.pointer_inputs_revision += 1;
+            self.mark_pointer_readers(&changed);
+        }
     }
 
     /// アイランドごとのばらつきの段のあるレイヤー（内容・マスク）が出す所に印を付ける（モデルの UV の位相・アイランドの図の予算が替わったとき）。
@@ -1992,7 +2097,7 @@ impl Document {
     }
 
     /// 効かない効果（有効な Generator の段で使えるマップ・Anchor が無いもの・値を見せているグラデーションと画像・出ていないデカール・
-    /// 焼いていないか古いベイクしたマップの源）の一覧。
+    /// 焼いていないか古いベイクしたマップの源・指す先を読めない参照レイヤー）の一覧。参照レイヤーはレイヤーごとに後ろへまとめる。
     pub fn inactive_effect_list(&self) -> Vec<InactiveEffect> {
         let mut out = Vec::new();
         for (i, l) in self.layers.iter().enumerate() {
@@ -2055,6 +2160,7 @@ impl Document {
                 }
             }
         }
+        self.pointer_inactive(&mut out);
         out
     }
 }
@@ -2084,4 +2190,31 @@ fn validate_fill_gradient(channel: Channel, g: &generator::Settings) -> Result<(
         generator::Error::Invalid(why) => CoreError::InvalidArgument(why),
         _ => CoreError::InvalidArgument(Reason::GradientSettings),
     })
+}
+
+/// 参照の入力の表を、読まれるもの（`read`）だけ・鍵とチャンネルの順に `budget` へ詰めたものにする（読まれない入力は黙って外し、収まらない入力は
+/// 外して返す）。
+fn fit_pointer_map(
+    map: &mut std::collections::BTreeMap<
+        (crate::pointer::ExternalSet, Channel),
+        crate::pointer::PointerInput,
+    >,
+    read: &std::collections::HashSet<(crate::pointer::ExternalSet, Channel)>,
+    budget: u64,
+) -> std::collections::HashSet<(crate::pointer::ExternalSet, Channel)> {
+    let mut used = 0u64;
+    let mut over = std::collections::HashSet::new();
+    map.retain(|key, input| {
+        if !read.contains(key) {
+            return false;
+        }
+        let bytes = input.bytes();
+        if used.saturating_add(bytes) > budget {
+            over.insert(*key);
+            return false;
+        }
+        used += bytes;
+        true
+    });
+    over
 }

@@ -565,3 +565,7 @@ reason-post-correction-range = Post correction strength (0–100) and view scale
 reason-layer-set-channels = The layer set's channels include a channel that is not in the project
 reason-channel-not-in-layer-set = The layer set does not handle that channel
 reason-fill-map-channel = Fill baked map channel
+reason-cannot-paint-pointer-layer = Cannot paint a pointer layer (paint its target)
+reason-not-pointer-layer = Not a pointer layer
+reason-pointer-cycle = The target loops back (it contains this layer or a layer that reads it)
+reason-pointer-too-deep = Pointers are nested more than 4 levels deep

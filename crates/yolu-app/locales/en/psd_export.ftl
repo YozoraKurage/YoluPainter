@@ -93,3 +93,5 @@ psd_export-curve = Curve
 psd_export-mixing = Mixing
 psd_export-curve-mixing = Curve/mixing
 psd_export-stops-color-opacity = { $cause } → stops: { $colors } color, { $opacities } opacity
+psd_export-pointer-layer = Pointer Layer
+psd_export-is-a-pointer-layer = "{ $name }" is a pointer layer
