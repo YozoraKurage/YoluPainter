@@ -588,6 +588,102 @@ fn images_dropped_on_the_project_shelf_grid_are_added_to_the_shelf_and_unreadabl
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// 3 枚（BaseColor・Normal・Roughness）と印の無い 1 枚をプロジェクトの棚の格子へ一度に落とすと、マテリアルが 1 つと、画像が足される。
+/// 取り込みのウィンドウは開かない。置くと塗りつぶしの各チャンネルにその画像が入る。
+fn pbr_files(dir: &Path) -> Vec<PathBuf> {
+    vec![
+        image_file(dir, "Wood_BaseColor.png", [120, 80, 40]),
+        image_file(dir, "Wood_Normal.png", [128, 128, 255]),
+        image_file(dir, "Wood_Roughness.png", [90, 90, 90]),
+        image_file(dir, "tip.png", [50, 60, 70]),
+    ]
+}
+
+#[test]
+fn several_images_dropped_on_the_project_shelf_grid_with_pbr_marks_become_a_material() {
+    let dir = temp_dir("pbr-on-grid");
+    let files = pbr_files(&dir);
+    let mut h = app(1280.0, 1400.0, 64);
+    let grid = open_assets(&mut h);
+    let count = |h: &H, kind: &str| {
+        h.shelf()
+            .resources()
+            .iter()
+            .filter(|r| r.kind == kind)
+            .count()
+    };
+    let (materials, images) = (count(&h, "material"), count(&h, "image"));
+    let paths: Vec<&Path> = files.iter().map(PathBuf::as_path).collect();
+    h.drop_files_at(grid.center(), &paths);
+    h.run();
+    assert!(!h.dropin().is_open(), "ウィンドウには並べない");
+    assert_eq!(count(&h, "material"), materials + 1, "{}", h.message());
+    // 使う 3 枚も、印の無い 1 枚も、画像としてアセットに並ぶ
+    assert_eq!(count(&h, "image"), images + 4, "{}", h.message());
+    assert!(
+        h.message().contains("マテリアル") && h.message().contains("Wood"),
+        "{}",
+        h.message()
+    );
+    let wood = h
+        .shelf()
+        .resources()
+        .iter()
+        .find(|r| r.kind == "material" && r.name == "Wood")
+        .expect("マテリアル Wood")
+        .id
+        .clone();
+    h.act(Action::Shelf(yolu_app::shelf::ShelfOp::Place {
+        id: wood,
+        target: yolu_app::shelf::PlaceTarget::Selected,
+    }));
+    h.run();
+    let layer = h.doc().layer(h.selected_layer().unwrap()).unwrap();
+    let channels: Vec<_> = layer.fill_images().map(|(c, _)| c).collect();
+    assert_eq!(
+        channels,
+        [
+            yolu_app::engine::Channel::Color,
+            yolu_app::engine::Channel::Roughness,
+            yolu_app::engine::Channel::Normal
+        ]
+    );
+    // 1 枚だけ落としたときは、印があっても今までどおり画像
+    let single = image_file(&dir, "Stone_Normal.png", [120, 130, 250]);
+    let (materials, images) = (count(&h, "material"), count(&h, "image"));
+    h.drop_files_at(grid.center(), &[&single]);
+    h.run();
+    assert_eq!(count(&h, "material"), materials);
+    assert_eq!(count(&h, "image"), images + 1);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// マテリアルの項目が足された格子（ja・en）。
+#[test]
+fn the_assets_grid_after_dropping_pbr_images_shows_the_material_item() {
+    let dir = temp_dir("pbr-shot");
+    let files = pbr_files(&dir);
+    for lang in Lang::JA_EN {
+        let mut h = app(1280.0, 1400.0, 64);
+        h.app_mut().set_lang(lang);
+        h.shelf_mut().show_builtin = false;
+        let grid = open_assets(&mut h);
+        let paths: Vec<&Path> = files.iter().map(PathBuf::as_path).collect();
+        h.drop_files_at(grid.center(), &paths);
+        for _ in 0..30 {
+            h.step();
+        }
+        h.run();
+        let panel = common::shot::group(&h, yolu_app::Tab::Assets);
+        common::shot::clean_region(
+            &mut h,
+            &format!("assets_pbr_material_{}", lang.pick("ja", "en")),
+            panel,
+        );
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 /// ライブラリの格子の上へ落とした PNG 以外の画像は、PNG に直してライブラリに置く。読めない形式は断る。
 #[test]
 fn images_of_other_formats_dropped_on_the_library_grid_become_pngs_in_the_library() {

@@ -4,9 +4,9 @@
 //! - 読めるのは `FORMATS` の表の形式だけ。拡張子で決める（中身の見分けはしない）。GIF は最初のフレームだけ。
 //! - 1 辺は 1〜8192、確保は 1 GiB まで（読む前にピークを数えて断る）。寸法はヘッダーで先に見て、画素を読む前に断る。
 //! - 整数の画素（8 ビット・16 ビット）は `image` の変換のまま 8 ビットへ（16 ビットは丸める）。ICC・ガンマは使わない。
-//! - 浮動小数の画素（EXR・HDR・浮動小数の TIFF）は線形の値として読み、色（R・G・B）は 0〜1 で切ってから sRGB へ直して 8 ビットへ、
-//!   アルファは線形のまま 0〜1 で切って 8 ビットへ。1 を超える値は 1 に潰れる（トーンマップはしない）。データのチャンネル
-//!   （ノーマル・ラフネスなど）の線形のままの取り込みはここではしない（どの画像もカラーとして入る）。
+//! - 浮動小数の画素（EXR・HDR・浮動小数の TIFF）は線形の値として読み、0〜1 で切ってから 8 ビットへ。`Transfer::Srgb`（既定）は色（R・G・B）を
+//!   sRGB へ直し、`Transfer::Linear` はデータのチャンネル（ノーマル・ラフネスなど）のために線形のまま 8 ビットへ。アルファは
+//!   どちらも線形のまま。1 を超える値は 1 に潰れる（トーンマップはしない）。整数の画素はどちらでも変えない。
 
 use std::io::{BufRead, Seek};
 use std::path::Path;
@@ -93,13 +93,42 @@ pub enum ReadError {
     Image(Problem),
 }
 
-/// ファイルを straight RGBA8（上の行が先）で読む。
+/// 浮動小数の画素を 8 ビットにするときの値の扱い（整数の画素には効かない）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Transfer {
+    /// 色: 線形の値を sRGB へ直す。
+    #[default]
+    Srgb,
+    /// データ（ノーマル・ラフネスなど）: 線形のまま。
+    Linear,
+}
+
+impl Transfer {
+    /// 線形の値（0〜1 で切る。NaN は 0）を 8 ビットへ。
+    fn to8(self, linear: f32) -> u8 {
+        match self {
+            Transfer::Srgb => srgb8(linear),
+            Transfer::Linear => alpha8(linear),
+        }
+    }
+}
+
+/// ファイルを straight RGBA8（上の行が先）で読む。浮動小数の画素は色として sRGB へ直す。
 pub fn read_file(
     path: &Path,
     format: image::ImageFormat,
 ) -> Result<(Vec<u8>, u32, u32), ReadError> {
+    read_file_as(path, format, Transfer::Srgb)
+}
+
+/// `read_file` の、浮動小数の画素の値の扱いを選べる形。
+pub fn read_file_as(
+    path: &Path,
+    format: image::ImageFormat,
+    transfer: Transfer,
+) -> Result<(Vec<u8>, u32, u32), ReadError> {
     let file = std::fs::File::open(path).map_err(ReadError::Io)?;
-    decode(std::io::BufReader::new(file), format).map_err(ReadError::Image)
+    decode_as(std::io::BufReader::new(file), format, transfer).map_err(ReadError::Image)
 }
 
 /// 読み出し口から straight RGBA8（上の行が先）で読む。寸法はヘッダーで先に見て、画素を読む前に断る。
@@ -109,8 +138,17 @@ pub fn decode<R: BufRead + Seek>(
     source: R,
     format: image::ImageFormat,
 ) -> Result<(Vec<u8>, u32, u32), Problem> {
+    decode_as(source, format, Transfer::Srgb)
+}
+
+/// `decode` の、浮動小数の画素の値の扱いを選べる形。
+pub fn decode_as<R: BufRead + Seek>(
+    source: R,
+    format: image::ImageFormat,
+    transfer: Transfer,
+) -> Result<(Vec<u8>, u32, u32), Problem> {
     if format == image::ImageFormat::OpenExr {
-        return decode_exr(source);
+        return decode_exr(source, transfer);
     }
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_SIDE);
@@ -137,7 +175,7 @@ pub fn decode<R: BufRead + Seek>(
         decoder.color_type(),
         image::ColorType::Rgb32F | image::ColorType::Rgba32F
     ) {
-        return decode_float(decoder, w, h);
+        return decode_float(decoder, w, h, transfer);
     }
     let img = image::DynamicImage::from_decoder(decoder).map_err(|e| match e {
         image::ImageError::Limits(_) => Problem::TooLarge,
@@ -168,6 +206,7 @@ fn decode_float(
     decoder: impl ImageDecoder,
     w: u32,
     h: u32,
+    transfer: Transfer,
 ) -> Result<(Vec<u8>, u32, u32), Problem> {
     let channels = usize::from(decoder.color_type().channel_count());
     let mut raw = vec![0u8; usize::try_from(decoder.total_bytes()).map_err(|_| Problem::TooLarge)?];
@@ -184,16 +223,24 @@ fn decode_float(
         } else {
             255
         };
-        out.extend_from_slice(&[srgb8(sample(0)), srgb8(sample(1)), srgb8(sample(2)), alpha]);
+        out.extend_from_slice(&[
+            transfer.to8(sample(0)),
+            transfer.to8(sample(1)),
+            transfer.to8(sample(2)),
+            alpha,
+        ]);
     }
     Ok((out, w, h))
 }
 
-/// EXR を `exr` クレートで直に読み、f32 の全画面のバッファを作らずに、画素を置く関数の中で RGBA8（色は sRGB・アルファは線形のまま）にする。
+/// EXR を `exr` クレートで直に読み、f32 の全画面のバッファを作らずに、画素を置く関数の中で RGBA8（色は `transfer` の値の扱い・アルファは線形のまま）にする。
 /// 寸法（表示ウィンドウ）はヘッダーで先に見て、1 辺の上限の外なら画素を読まずに断る。確保は RGBA8 の出力とチャンクの分だけ。
 /// レイヤーは最初の、深さの無い RGB のレイヤー。データウィンドウが表示ウィンドウからはみ出す画素は捨て、データウィンドウの外は
 /// （アルファの無いファイルは不透明の黒、あるファイルは透明）で埋める。
-fn decode_exr<R: BufRead + Seek>(source: R) -> Result<(Vec<u8>, u32, u32), Problem> {
+fn decode_exr<R: BufRead + Seek>(
+    source: R,
+    transfer: Transfer,
+) -> Result<(Vec<u8>, u32, u32), Problem> {
     use exr::prelude::*;
     let chunks = exr::block::read(source, false).map_err(|_| Problem::Unreadable)?;
     let header = chunks
@@ -230,7 +277,12 @@ fn decode_exr<R: BufRead + Seek>(source: R) -> Result<(Vec<u8>, u32, u32), Probl
                 let at = at.to_i32() + offset;
                 if (0..w as i32).contains(&at.x()) && (0..h as i32).contains(&at.y()) {
                     let i = (at.y() as usize * w + at.x() as usize) * 4;
-                    out[i..i + 4].copy_from_slice(&[srgb8(r), srgb8(g), srgb8(b), alpha8(a)]);
+                    out[i..i + 4].copy_from_slice(&[
+                        transfer.to8(r),
+                        transfer.to8(g),
+                        transfer.to8(b),
+                        alpha8(a),
+                    ]);
                 }
             },
         )
@@ -463,6 +515,38 @@ mod tests {
         }
         assert_eq!(rgba[3], 255);
         assert_eq!(&rgba[4..], [255, 0, 255, 255], "1 超は 255・負は 0");
+    }
+
+    /// データのチャンネル（ノーマル・ラフネスなど）の浮動小数は線形のまま 8 ビットへ（0.5 は 128 前後）。色は sRGB（0.5 は 188 前後）。
+    /// 整数の画素はどちらでも変わらない。
+    #[test]
+    fn float_images_read_as_data_keep_the_linear_value() {
+        let exr = image::DynamicImage::ImageRgba32F(
+            image::ImageBuffer::from_raw(2, 1, vec![0.5f32, 1.0, 0.0, 0.5, 4.0, -2.0, 0.25, 3.0])
+                .unwrap(),
+        );
+        let hdr = image::DynamicImage::ImageRgb32F(
+            image::ImageBuffer::from_raw(2, 1, vec![0.5f32, 0.5, 0.5, 8.0, -1.0, 0.25]).unwrap(),
+        );
+        let read_as = |image: &image::DynamicImage, format, transfer| {
+            decode_as(std::io::Cursor::new(write(image, format)), format, transfer).unwrap()
+        };
+        let (rgba, _, _) = read_as(&exr, image::ImageFormat::OpenExr, Transfer::Linear);
+        assert_eq!(rgba, [128, 255, 0, 128, 255, 0, 64, 255]);
+        let (rgba, _, _) = read_as(&hdr, image::ImageFormat::Hdr, Transfer::Linear);
+        for c in &rgba[..3] {
+            assert!(c.abs_diff(128) <= 2, "{rgba:?}");
+        }
+        assert!(rgba[6].abs_diff(64) <= 2, "{rgba:?}");
+        assert_eq!(&rgba[4..6], [255, 0], "1 超は 255・負は 0");
+        let (rgba, _, _) = read_as(&exr, image::ImageFormat::OpenExr, Transfer::Srgb);
+        assert_eq!(rgba[0], 188);
+        // 整数の画素は値の扱いに依らない
+        let png = pair([200, 100, 50, 255], [10, 20, 30, 128]);
+        for transfer in [Transfer::Srgb, Transfer::Linear] {
+            let (rgba, _, _) = read_as(&png, image::ImageFormat::Png, transfer);
+            assert_eq!(rgba, [200, 100, 50, 255, 10, 20, 30, 128]);
+        }
     }
 
     #[test]

@@ -48,6 +48,7 @@ shelf-applied-as-the-mask = 已套用為遮罩
 shelf-placed = 已放置
 shelf-cannot-remove-because-a-layer = 有圖層正在使用{ $name }，因此無法移除
 shelf-removed-from-the-project-s = 已從專案資源移除
+shelf-removed-image-used-by-materials = ，{ $list }指向此圖片，將無法再放置
 shelf-text = {""}
 shelf-too-large = 過大
 shelf-is-not-a-readable-smart = { $file }不是可讀取的智慧資源

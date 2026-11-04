@@ -12,6 +12,7 @@
 
 pub mod gizmo;
 pub mod inputs;
+mod pbrset;
 pub mod placement;
 pub mod points;
 
@@ -124,6 +125,8 @@ pub enum FillOp {
     },
     /// 棚へ PNG を取り込む（棚の画像として入る。文書は変えない）。
     ImportImage(PathBuf),
+    /// 一度に落とした画像を取り込む。名前の後ろの印で PBR のチャンネルに当てて、組をマテリアルにする（`pbrset`）。印の無い画像は画像として入る。
+    ImportImageSet(Vec<PathBuf>),
     /// PNG を選ぶウィンドウを開く。
     ImportImageDialog,
     // ── 画面だけ ──
@@ -459,6 +462,7 @@ impl AppState {
                 }
                 self.import_image_file(&path)
             }
+            FillOp::ImportImageSet(paths) => self.import_image_set(&paths),
             FillOp::ImageColorSpace { image, space } => {
                 if self.is_stroking() {
                     self.refuse(

@@ -1174,6 +1174,75 @@ fn headless_built_in_items_and_unreadable_ones_are_not_put_into_the_library() {
     assert!(dir.files().is_empty());
 }
 
+/// 画像を指すマテリアル・スマートマテリアルは、ほかのプロジェクトでは指す画像が無いので、ライブラリへ入れない（何も書かない）。
+/// 画像そのものは入れられる。
+#[test]
+fn headless_materials_that_point_at_assets_images_are_not_put_into_the_library() {
+    let dir = Dir::new("put-pointing");
+    let mut s = state(&dir);
+    s.shelf_mut().use_language(Lang::Ja);
+    // アセットの画像 2 枚と、それを指すマテリアル
+    let png = |name: &str, rgb: [u8; 3]| {
+        let path = dir.0.join(name);
+        image::RgbImage::from_pixel(4, 2, image::Rgb(rgb))
+            .save(&path)
+            .unwrap();
+        path
+    };
+    let files = vec![
+        png("Wood_Color.png", [200, 100, 50]),
+        png("Wood_Roughness.png", [90, 90, 90]),
+    ];
+    s.act(Action::Fill(yolu_app::fillfx::FillOp::ImportImageSet(
+        files,
+    )));
+    let find = |s: &AppState, kind: &str, name: &str| {
+        s.shelf()
+            .resources()
+            .iter()
+            .find(|r| r.kind == kind && r.name == name)
+            .unwrap_or_else(|| panic!("{kind} {name} がアセットに無い: {}", s.message()))
+            .id
+            .clone()
+    };
+    let material = find(&s, "material", "Wood");
+    // マテリアル: 断って、何も書かない
+    put_in_library(&mut s, &material);
+    assert!(
+        s.message().contains("画像を使っています") && s.message().contains("Wood"),
+        "{}",
+        s.message()
+    );
+    assert!(dir.files().is_empty(), "{:?}", dir.files());
+    // スマートマテリアル（置いた塗りつぶしレイヤーをアセットへ保存した物。画像を指したまま）も同じ
+    s.act(Action::Shelf(ShelfOp::Place {
+        id: material,
+        target: PlaceTarget::Selected,
+    }));
+    let layer = s.selected_layer().unwrap();
+    s.act(Action::Shelf(ShelfOp::SaveMaterial(layer)));
+    s.shelf_wait();
+    let smart = s
+        .shelf()
+        .resources()
+        .iter()
+        .find(|r| r.kind == "smartMaterial")
+        .unwrap_or_else(|| panic!("スマートマテリアルがアセットに無い: {}", s.message()))
+        .id
+        .clone();
+    put_in_library(&mut s, &smart);
+    assert!(
+        s.message().contains("画像を使っています"),
+        "{}",
+        s.message()
+    );
+    assert!(dir.files().is_empty(), "{:?}", dir.files());
+    // 画像は入れられる
+    let image = find(&s, "image", "Wood_Color");
+    put_in_library(&mut s, &image);
+    assert_eq!(dir.files().len(), 1, "{:?}", dir.files());
+}
+
 #[test]
 fn headless_a_slow_write_can_be_cancelled_and_leaves_nothing_behind() {
     // 旗が仕事のスレッドへ届くこと・画面側の状態（走っている間は次を断る・やめた書き込みのスレッドが終わるまで待つ）の試験。

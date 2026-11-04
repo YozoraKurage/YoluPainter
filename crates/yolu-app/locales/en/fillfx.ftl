@@ -26,3 +26,12 @@ fillfx-cannot-delete-the-point = Cannot delete the point
 fillfx-it-is-the-last-point = it is the last point
 fillfx-not-a-readable-image = Not a readable image
 fillfx-image-too-large-to-read = The image is too large to read
+fillfx-pbr-material-added = Material { $name } added ({ $n } { $n ->
+        [one] image
+       *[other] images
+    })
+fillfx-pbr-materials-added = { $count } materials added ({ $n } images)
+fillfx-pbr-images-added = { $n } added as plain { $n ->
+        [one] image
+       *[other] images
+    }

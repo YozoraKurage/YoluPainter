@@ -298,6 +298,23 @@ impl AppState {
         let Some(bytes) = self.shelf.shelf().content_arc(id) else {
             return;
         };
+        // アセットの画像を ID で指す素材は、ライブラリのファイルにすると、ほかのプロジェクトでは指す画像が無く置けない。入れる前に断る
+        // （読めない素材は今までどおり書く。読めないことは使うときに断る）
+        if kind.is_smart_file() {
+            if let Ok(material) = smart_material_from(lang, &bytes) {
+                if material.layers().iter().any(|l| {
+                    l.fill_images().next().is_some() || l.generator_images().next().is_some()
+                }) {
+                    return self.cannot(
+                        NoticeKind::Refusal,
+                        Source::Library,
+                        Attempt::LibraryAdd,
+                        Some(&name),
+                        lang.t("library-it-uses-images"),
+                    );
+                }
+            }
+        }
         let file_kind = match kind {
             ItemKind::Image => files::Kind::Image,
             _ => resource_kind(kind).expect("画像以外").0,

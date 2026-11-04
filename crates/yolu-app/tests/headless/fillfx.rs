@@ -1575,6 +1575,289 @@ fn headless_importing_a_png_adds_one_shelf_image_and_refuses_what_it_cannot_read
     let _ = std::fs::remove_dir_all(dir);
 }
 
+// ───────── 棚への取り込み: 名前の印で PBR のチャンネルに当てる ─────────
+
+/// 4 × 2 の単色の画像（形式は拡張子から）。
+fn solid_file(dir: &std::path::Path, name: &str, rgb: [u8; 3]) -> PathBuf {
+    let path = dir.join(name);
+    image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(4, 2, image::Rgb(rgb)))
+        .save(&path)
+        .unwrap();
+    path
+}
+
+/// `side` × `side` の単色の浮動小数の画像（EXR）。
+fn float_solid_file(dir: &std::path::Path, name: &str, side: u32, value: f32) -> PathBuf {
+    let path = dir.join(name);
+    image::DynamicImage::ImageRgb32F(image::Rgb32FImage::from_pixel(
+        side,
+        side,
+        image::Rgb([value; 3]),
+    ))
+    .save(&path)
+    .unwrap();
+    path
+}
+
+/// 棚の、その名前の項目（種類 `kind`）。
+fn shelf_item(s: &AppState, kind: &str, name: &str) -> yolu_io::Resource {
+    s.shelf()
+        .resources()
+        .iter()
+        .find(|r| r.kind == kind && r.name == name)
+        .unwrap_or_else(|| panic!("{kind} {name} が棚に無い: {}", s.message()))
+        .clone()
+}
+
+/// 棚の画像の、最初の画素（単色の画像で試す）。
+fn shelf_pixel(s: &AppState, id: &str) -> [u8; 4] {
+    let png = s.shelf().shelf().content_bytes(id).expect("画像の中身");
+    image::load_from_memory_with_format(png, image::ImageFormat::Png)
+        .unwrap()
+        .to_rgba8()
+        .get_pixel(0, 0)
+        .0
+}
+
+fn place_item(s: &mut AppState, id: &str) {
+    s.act(Action::Shelf(ShelfOp::Place {
+        id: id.to_owned(),
+        target: yolu_app::shelf::PlaceTarget::Selected,
+    }));
+}
+
+/// 3 枚（BaseColor・Normal・Roughness）と印の無い 1 枚を一度に落とすと、マテリアルが 1 つと、画像が足される。置くと塗りつぶしの各チャンネルに
+/// その画像が入り、1 回の Undo で戻る。
+#[test]
+fn headless_images_with_pbr_marks_become_a_material_that_places_as_a_fill_layer_with_each_image() {
+    let dir = temp_dir("pbr-material");
+    let files = vec![
+        solid_file(&dir, "Wood_BaseColor.png", [200, 100, 50]),
+        solid_file(&dir, "Wood_Normal.png", [100, 200, 255]),
+        solid_file(&dir, "Wood_Roughness.png", [90, 90, 90]),
+        solid_file(&dir, "tip.png", [5, 6, 7]),
+    ];
+    let mut s = AppState::new(32, 32);
+    let before = s.shelf().resources().len();
+    fill(&mut s, FillOp::ImportImageSet(files));
+    assert_eq!(s.shelf().resources().len(), before + 5, "{}", s.message());
+    let material = shelf_item(&s, "material", "Wood");
+    assert!(
+        s.message().contains("マテリアル")
+            && s.message().contains("Wood")
+            && s.message().contains("3 枚"),
+        "{}",
+        s.message()
+    );
+    // 判別できなかった 1 枚は、同じ知らせの中で数える
+    assert!(s.message().contains("1 枚"), "{}", s.message());
+    let color = shelf_item(&s, "image", "Wood_BaseColor");
+    let normal = shelf_item(&s, "image", "Wood_Normal");
+    let rough = shelf_item(&s, "image", "Wood_Roughness");
+    shelf_item(&s, "image", "tip");
+    assert_eq!(color.metadata["colorSpace"], "srgb");
+    assert_eq!(normal.metadata["colorSpace"], "linear");
+    assert_eq!(rough.metadata["colorSpace"], "linear");
+    assert!(s.shelf().changed && s.modified());
+    // 置く: 選んでいるレイヤーの上に塗りつぶしレイヤーが 1 つ。画像が各チャンネルに入る
+    let layers = s.doc().layers().len();
+    place_item(&mut s, &material.id);
+    assert_eq!(s.doc().layers().len(), layers + 1, "{}", s.message());
+    // 画素の無いマテリアルは拡大縮小する物が無いので、大きさを変えたとは言わない（文書は 32×32、画像は 4×2）
+    assert!(!s.message().contains("から変更"), "{}", s.message());
+    let placed = s.selected_layer().unwrap();
+    let layer = s.doc().layer(placed).unwrap();
+    let image = |r: &yolu_io::Resource| inputs::image_id(&r.id);
+    assert_eq!(layer.fill_image(Channel::Color), image(&color));
+    assert_eq!(layer.fill_image(Channel::Normal), image(&normal));
+    assert_eq!(layer.fill_image(Channel::Roughness), image(&rough));
+    assert_eq!(layer.fill_image(Channel::Metallic), None);
+    // 値の既定は画像の平均の色（画像が使えない所に出る）
+    assert_eq!(
+        layer.fill_value(Channel::Color),
+        Some(Rgba8::new(200, 100, 50, 255))
+    );
+    s.act(Action::Undo);
+    assert_eq!(s.doc().layers().len(), layers);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// データのチャンネルの浮動小数は線形のまま（0.5 → 128）、色は sRGB（0.5 → 188）。DirectX のノーマルは緑を反転して OpenGL に揃える。
+/// 8 ビットの画像はそのまま。
+#[test]
+fn headless_pbr_float_data_stays_linear_and_color_goes_to_srgb_and_a_directx_normal_flips_green() {
+    let dir = temp_dir("pbr-float");
+    let files = vec![
+        float_solid_file(&dir, "Rock_Roughness.exr", 4, 0.5),
+        float_solid_file(&dir, "Rock_Emission.exr", 4, 0.5),
+        solid_file(&dir, "Rock_Normal_DX.png", [100, 200, 255]),
+        solid_file(&dir, "Rock_Metallic.png", [77, 77, 77]),
+    ];
+    let mut s = AppState::new(32, 32);
+    fill(&mut s, FillOp::ImportImageSet(files));
+    let pixel = |name: &str| shelf_pixel(&s, &shelf_item(&s, "image", name).id);
+    for v in &pixel("Rock_Roughness")[..3] {
+        assert!(
+            v.abs_diff(128) <= 1,
+            "線形のまま: {:?}",
+            pixel("Rock_Roughness")
+        );
+    }
+    for v in &pixel("Rock_Emission")[..3] {
+        assert!(
+            v.abs_diff(188) <= 1,
+            "色は sRGB: {:?}",
+            pixel("Rock_Emission")
+        );
+    }
+    assert_eq!(pixel("Rock_Normal_DX"), [100, 55, 255, 255]);
+    assert_eq!(pixel("Rock_Metallic"), [77, 77, 77, 255]);
+    // 同じ前の名前なので、1 つのマテリアルに 4 つのチャンネル（Emission も標準のチャンネル）
+    let material = shelf_item(&s, "material", "Rock");
+    assert!(s.message().contains("4 枚"), "{}", s.message());
+    place_item(&mut s, &material.id);
+    let placed = s.selected_layer().unwrap();
+    let layer = s.doc().layer(placed).unwrap();
+    let channels: Vec<Channel> = layer.fill_images().map(|(c, _)| c).collect();
+    assert_eq!(
+        channels,
+        [
+            Channel::Roughness,
+            Channel::Metallic,
+            Channel::Normal,
+            Channel::Emission
+        ]
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// ORM は R・G・B を AO・Roughness・Metallic の 3 枚に分け、Glossiness は反転して Roughness にする。標準のチャンネルが無い AO は
+/// マテリアルに入れず、画像として足す。同じチャンネルが 2 つあれば大きい方を使い、もう片方は画像のまま。
+#[test]
+fn headless_pbr_orm_is_split_glossiness_is_inverted_and_the_larger_image_wins_a_channel() {
+    let dir = temp_dir("pbr-orm");
+    let files = vec![
+        solid_file(&dir, "Brick_ORM.png", [10, 20, 30]),
+        solid_file(&dir, "Plank_Gloss.png", [40, 40, 40]),
+        solid_file(&dir, "Plank_Color.png", [1, 2, 3]),
+        solid_file(&dir, "Plank_Albedo.png", [4, 5, 6]),
+        float_solid_file(&dir, "plank-diffuse.exr", 8, 0.1),
+    ];
+    let mut s = AppState::new(32, 32);
+    fill(&mut s, FillOp::ImportImageSet(files));
+    // 枚数は使ったファイルの数（ORM は 1 枚。Plank は 3 枚の Color から 1 枚）。ORM から分けた AO と、使わなかった Color 2 枚は画像のまま
+    assert!(
+        s.message()
+            .contains("マテリアルを 2 個追加しました（3 枚）")
+            && s.message().contains("画像として 3 枚を追加"),
+        "{}",
+        s.message()
+    );
+    let pixel = |s: &AppState, name: &str| shelf_pixel(s, &shelf_item(s, "image", name).id);
+    assert_eq!(pixel(&s, "Brick_AO"), [10, 10, 10, 255]);
+    assert_eq!(pixel(&s, "Brick_Roughness"), [20, 20, 20, 255]);
+    assert_eq!(pixel(&s, "Brick_Metallic"), [30, 30, 30, 255]);
+    let brick = shelf_item(&s, "material", "Brick");
+    place_item(&mut s, &brick.id);
+    let layer = s.doc().layer(s.selected_layer().unwrap()).unwrap();
+    let channels: Vec<Channel> = layer.fill_images().map(|(c, _)| c).collect();
+    assert_eq!(
+        channels,
+        [Channel::Roughness, Channel::Metallic],
+        "AO は入らない"
+    );
+    assert_eq!(
+        pixel(&s, "Plank_Gloss"),
+        [215, 215, 215, 255],
+        "Glossiness は反転して Roughness"
+    );
+    // 名前の組は大小文字と区切りを問わない。Color が 3 つ（4×2・4×2・8×8）→ 一番大きい 8×8 の plank-diffuse を使う
+    let plank = shelf_item(&s, "material", "Plank");
+    place_item(&mut s, &plank.id);
+    let layer = s.doc().layer(s.selected_layer().unwrap()).unwrap();
+    assert_eq!(
+        layer.fill_image(Channel::Color),
+        inputs::image_id(&shelf_item(&s, "image", "plank-diffuse").id)
+    );
+    assert_eq!(
+        layer.fill_image(Channel::Roughness),
+        inputs::image_id(&shelf_item(&s, "image", "Plank_Gloss").id)
+    );
+    // 使わなかった Color の 2 枚も、画像として棚にある
+    shelf_item(&s, "image", "Plank_Color");
+    shelf_item(&s, "image", "Plank_Albedo");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// 印の無い画像だけを何枚落としても、今までどおり画像として足す（マテリアルは作らない）。1 つのチャンネルしか無い組も画像のまま。
+#[test]
+fn headless_images_without_a_pbr_pair_are_added_as_plain_images() {
+    let dir = temp_dir("pbr-plain");
+    let files = vec![
+        solid_file(&dir, "wood.png", [1, 2, 3]),
+        solid_file(&dir, "sky.png", [4, 5, 6]),
+        solid_file(&dir, "Lone_Normal.png", [7, 8, 9]),
+    ];
+    let mut s = AppState::new(32, 32);
+    let before = s.shelf().resources().len();
+    fill(&mut s, FillOp::ImportImageSet(files));
+    assert_eq!(s.shelf().resources().len(), before + 3, "{}", s.message());
+    assert!(s.shelf().resources().iter().all(|r| r.kind != "material"));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// 使えるチャンネルが 1 つだけの組（Color と、マテリアルに入らない AO）はマテリアルにせず、2 枚とも画像として足す。
+#[test]
+fn headless_a_pbr_pair_with_one_usable_channel_is_added_as_images_not_a_material() {
+    let dir = temp_dir("pbr-one-channel");
+    let files = vec![
+        solid_file(&dir, "Solo_Color.png", [1, 2, 3]),
+        solid_file(&dir, "Solo_AO.png", [4, 5, 6]),
+    ];
+    let mut s = AppState::new(32, 32);
+    let before = s.shelf().resources().len();
+    fill(&mut s, FillOp::ImportImageSet(files));
+    assert_eq!(s.shelf().resources().len(), before + 2, "{}", s.message());
+    assert!(s.shelf().resources().iter().all(|r| r.kind != "material"));
+    assert!(s.message().contains("画像として 2 枚"), "{}", s.message());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// マテリアルが指す画像をアセットから消したあとは、置けない（画像の無い塗りつぶしを作らず、理由を言う）。
+#[test]
+fn headless_a_pbr_material_whose_image_was_removed_is_refused_when_placed() {
+    let dir = temp_dir("pbr-missing");
+    let files = vec![
+        solid_file(&dir, "Tile_Color.png", [1, 2, 3]),
+        solid_file(&dir, "Tile_Roughness.png", [4, 5, 6]),
+    ];
+    let mut s = AppState::new(32, 32);
+    fill(&mut s, FillOp::ImportImageSet(files));
+    let material = shelf_item(&s, "material", "Tile");
+    let rough = shelf_item(&s, "image", "Tile_Roughness");
+    s.act(Action::Shelf(ShelfOp::Remove(rough.id)));
+    assert!(s
+        .shelf()
+        .resources()
+        .iter()
+        .all(|r| r.name != "Tile_Roughness"));
+    // 消したと同時に、その画像を指していたマテリアルの名前を知らせる
+    assert!(
+        s.message().contains("Tile") && s.message().contains("置けなくなります"),
+        "{}",
+        s.message()
+    );
+    let layers = s.doc().layers().len();
+    place_item(&mut s, &material.id);
+    assert_eq!(s.doc().layers().len(), layers, "{}", s.message());
+    assert!(
+        s.message().contains("アセットにありません"),
+        "{}",
+        s.message()
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 // ───────── 棚への取り込みの断り ─────────
 
 /// 左下のタイルのキャンバスを単色にした 1 レイヤーの文書（棚へ「レイヤーを保存」できる中身）。

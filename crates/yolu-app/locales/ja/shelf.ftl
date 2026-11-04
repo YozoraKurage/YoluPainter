@@ -48,6 +48,7 @@ shelf-applied-as-the-mask = マスクにしました
 shelf-placed = 置きました
 shelf-cannot-remove-because-a-layer = { $name }はレイヤーが使っているので、アセットから消せません
 shelf-removed-from-the-project-s = アセットから消しました
+shelf-removed-image-used-by-materials = 、{ $list }はこの画像を指しているので、置けなくなります
 shelf-text = {""}
 shelf-too-large = 大きすぎます
 shelf-is-not-a-readable-smart = { $file }はスマート素材として読めません

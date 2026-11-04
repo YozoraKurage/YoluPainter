@@ -1497,11 +1497,15 @@ pub(crate) fn import_dropped(ctx: &egui::Context, state: &mut AppState, grid: Op
         state.apply(Action::Shelf(ShelfOp::LibraryAddFiles(dropped)));
         return;
     }
-    // プロジェクトの棚の格子の上: 画像は文書の画像として棚に足す（読めない形式は 1 つずつ理由つきで断る）。.ylsmart は棚へ読む
+    // プロジェクトの棚の格子の上: 画像は文書の画像として棚に足す（読めない形式は 1 つずつ理由つきで断る。2 枚以上は印で組にしてマテリアルへ）。.ylsmart は棚へ読む
     let (smarts, images): (Vec<PathBuf>, Vec<PathBuf>) =
         dropped.into_iter().partition(|p| is_ylsmart(p));
-    for image in images {
-        state.apply(Action::Fill(crate::fillfx::FillOp::ImportImage(image)));
+    // 2 枚以上を一度に落としたときは、名前の後ろの印で PBR のチャンネルに当て、組をマテリアルにする（印の無い画像は画像のまま）
+    use crate::fillfx::FillOp;
+    if images.len() >= 2 {
+        state.apply(Action::Fill(FillOp::ImportImageSet(images)));
+    } else if let Some(image) = images.into_iter().next() {
+        state.apply(Action::Fill(FillOp::ImportImage(image)));
     }
     if !smarts.is_empty() {
         state.apply(Action::Shelf(ShelfOp::ImportFiles(smarts)));

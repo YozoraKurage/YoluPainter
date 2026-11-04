@@ -26,3 +26,6 @@ fillfx-cannot-delete-the-point = 점을 삭제할 수 없습니다
 fillfx-it-is-the-last-point = 마지막 점입니다
 fillfx-not-a-readable-image = 읽을 수 있는 이미지가 아닙니다
 fillfx-image-too-large-to-read = 이미지가 너무 커서 읽을 수 없습니다
+fillfx-pbr-material-added = 머티리얼 { $name }을(를) 추가했습니다 (이미지 { $n }개)
+fillfx-pbr-materials-added = 머티리얼 { $count }개를 추가했습니다 (이미지 { $n }개)
+fillfx-pbr-images-added = 이미지로 { $n }개 추가

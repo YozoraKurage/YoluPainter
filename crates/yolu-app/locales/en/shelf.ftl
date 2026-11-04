@@ -48,6 +48,7 @@ shelf-applied-as-the-mask = Applied as the mask
 shelf-placed = Placed
 shelf-cannot-remove-because-a-layer = Cannot remove { $name } because a layer uses it
 shelf-removed-from-the-project-s = Removed from the project's assets
+shelf-removed-image-used-by-materials = { ", " }{ $list } pointed to this image and can no longer be placed
 shelf-text = {" "}
 shelf-too-large = Too large
 shelf-is-not-a-readable-smart = { $file } is not a readable smart asset

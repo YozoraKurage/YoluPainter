@@ -863,13 +863,43 @@ impl ShelfState {
         width: u32,
         height: u32,
     ) -> Result<String, String> {
+        self.add_image_in(lang, name, rgba, width, height, "srgb")
+    }
+
+    /// `add_image` の、画像の色空間（"srgb"・"linear"・"unspecified"）を選べる形（ノーマル・ラフネスなどデータの画像は "linear"）。
+    pub fn add_image_in(
+        &mut self,
+        lang: Lang,
+        name: &str,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+        space: &str,
+    ) -> Result<String, String> {
         if let Some(reason) = &self.unavailable {
             return Err(reason.reason(lang).to_owned());
         }
         let before = self.shelf.resources().len();
         let id = self
             .shelf
-            .add_image_without_origin(&new_resource_id(), name, rgba, width, height, "srgb")
+            .add_image_without_origin(&new_resource_id(), name, rgba, width, height, space)
+            .map_err(|e| crate::lang::shelf_io_error(lang, &e))?;
+        if self.shelf.resources().len() > before {
+            self.changed = true;
+        }
+        Ok(id)
+    }
+
+    /// マテリアル（塗りつぶしレイヤーを持つ .ylsmart の形のファイルのバイト列）を棚へ足す（出どころの記録なし）。足したら棚は「変えた」になる。
+    /// 棚を読めなかった・予算や個数の上限は理由を返す（棚は変わらない）。
+    pub fn add_material(&mut self, lang: Lang, name: &str, bytes: &[u8]) -> Result<String, String> {
+        if let Some(reason) = &self.unavailable {
+            return Err(reason.reason(lang).to_owned());
+        }
+        let before = self.shelf.resources().len();
+        let id = self
+            .shelf
+            .add_file_without_origin(&new_resource_id(), name, ResourceKind::Material, bytes)
             .map_err(|e| crate::lang::shelf_io_error(lang, &e))?;
         if self.shelf.resources().len() > before {
             self.changed = true;
@@ -1308,6 +1338,13 @@ pub(crate) fn inspect_smart_kind(
         Err(e) => out.block = Some(smart_block(&file, &e)),
     }
     (out, Some(file.kind()))
+}
+
+/// 捕まえた素材を .ylsmart のバイト列にする（アセットに足す素材のファイル。書き手はこのアプリ）。
+pub(crate) fn material_file_bytes(material: &SmartMaterial) -> Result<Vec<u8>, yolu_io::Error> {
+    Ok(SmartFile::from_core(material, &crate::project::writer())?
+        .file_bytes()
+        .to_vec())
 }
 
 /// 捕まえた素材を .ylsmart のバイト列にして、一覧の情報（サムネイル）を作る（別のスレッドでも呼ぶ）。`cancel` が立っていれば
@@ -2139,6 +2176,9 @@ impl AppState {
             self.ensure_selection();
             return;
         }
+        let Some(held) = self.claim_material_images(name, &material) else {
+            return;
+        };
         let (parent, position) = match target {
             PlaceTarget::At { parent, position } => (parent, position),
             _ => self.above_selected_slot(),
@@ -2169,13 +2209,16 @@ impl AppState {
                 text += "）";
                 self.info(Source::Assets, text);
             }
-            Err(e) => self.cannot(
-                NoticeKind::of_core(&e),
-                Source::Assets,
-                Attempt::Place,
-                Some(name),
-                &lang.core_error(&e),
-            ),
+            Err(e) => {
+                self.release_material_images(&held);
+                self.cannot(
+                    NoticeKind::of_core(&e),
+                    Source::Assets,
+                    Attempt::Place,
+                    Some(name),
+                    &lang.core_error(&e),
+                )
+            }
         }
         self.ensure_selection();
     }
@@ -2200,6 +2243,40 @@ impl AppState {
             parent,
             siblings.iter().position(|c| *c == id).map(|i| i + 1),
         )
+    }
+
+    /// アセットの画像（ID）を、画像の ID で指しているマテリアル・スマートマテリアルの名前。画素を持たない素材は小さいので、中身が大きい素材
+    /// （画素を持つスマートマテリアル）は読まずに見ない（消すたびに画面のスレッドで読み込まないため）。
+    fn shelf_materials_pointing_at(&self, id: &str) -> Vec<String> {
+        const SMALL: usize = 256 * 1024;
+        let lang = self.lang;
+        let Some(image) = crate::fillfx::inputs::image_id(id) else {
+            return Vec::new();
+        };
+        self.shelf
+            .shelf
+            .resources()
+            .iter()
+            .filter(|r| {
+                matches!(
+                    ItemKind::of(&r.kind),
+                    Some(ItemKind::Material | ItemKind::SmartMaterial)
+                )
+            })
+            .filter(|r| {
+                self.shelf
+                    .shelf
+                    .content_arc(&r.id)
+                    .filter(|bytes| bytes.len() <= SMALL)
+                    .and_then(|bytes| smart_material_from(lang, &bytes).ok())
+                    .is_some_and(|m| {
+                        m.layers()
+                            .iter()
+                            .any(|l| l.fill_images().any(|(_, i)| i == image))
+                    })
+            })
+            .map(|r| r.name.clone())
+            .collect()
     }
 
     /// 棚の画像をレイヤーが読んでいれば、消せない理由の文（読んでいなければ None。画像でない素材も None）。読み込んだプロジェクトの
@@ -2234,6 +2311,8 @@ impl AppState {
         if let Some(why) = self.shelf_image_in_use(id) {
             return self.refuse(Source::Assets, why);
         }
+        // 消す前に、この画像を指しているマテリアルを控える（消したあと、それらは置けなくなる）
+        let pointing = self.shelf_materials_pointing_at(id);
         match self.shelf.shelf.remove(id) {
             Ok(true) => {
                 self.shelf.inspected.remove(id);
@@ -2242,10 +2321,20 @@ impl AppState {
                 }
                 self.shelf.changed = true;
                 self.session.mark_modified();
-                self.info(
-                    Source::Assets,
-                    format!("{}: {name}", lang.t("shelf-removed-from-the-project-s")),
-                );
+                let mut text = format!("{}: {name}", lang.t("shelf-removed-from-the-project-s"));
+                if !pointing.is_empty() {
+                    let list = pointing
+                        .iter()
+                        .take(3)
+                        .map(|n| lang.quote(n))
+                        .collect::<Vec<_>>();
+                    let more = if pointing.len() > 3 { " …" } else { "" };
+                    text += &lang.f(
+                        "shelf-removed-image-used-by-materials",
+                        &[("list", &format!("{}{more}", list.join(", ")))],
+                    );
+                }
+                self.info(Source::Assets, text);
             }
             Ok(false) => {}
             Err(e) => self.cannot(
@@ -2464,9 +2553,9 @@ impl Attempt {
     }
 }
 
-/// 大きさが違って拡大縮小したときの知らせ（括弧の中に足す）。
+/// 大きさが違って拡大縮小したときの知らせ（括弧の中に足す）。画素の無い素材（塗りつぶしレイヤーだけのマテリアル）は拡大縮小する物が無いので出さない。
 fn resized_note(lang: Lang, material: &SmartMaterial, resampled: bool) -> String {
-    if !resampled {
+    if !resampled || material.pixel_bytes() == 0 {
         return String::new();
     }
     lang.f(

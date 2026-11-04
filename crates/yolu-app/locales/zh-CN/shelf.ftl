@@ -48,6 +48,7 @@ shelf-applied-as-the-mask = 已应用为蒙版
 shelf-placed = 已放置
 shelf-cannot-remove-because-a-layer = 有图层正在使用{ $name }，因此无法移除
 shelf-removed-from-the-project-s = 已从项目资源移除
+shelf-removed-image-used-by-materials = ，{ $list }指向此图片，将无法再放置
 shelf-text = {""}
 shelf-too-large = 过大
 shelf-is-not-a-readable-smart = { $file }不是可读取的智能资源

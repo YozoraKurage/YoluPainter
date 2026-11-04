@@ -26,3 +26,6 @@ fillfx-cannot-delete-the-point = 无法删除点
 fillfx-it-is-the-last-point = 这是最后一个点
 fillfx-not-a-readable-image = 不是可读取的图片
 fillfx-image-too-large-to-read = 图像太大，无法读取
+fillfx-pbr-material-added = 已加入材质 { $name }（{ $n } 张图片）
+fillfx-pbr-materials-added = 已加入 { $count } 个材质（{ $n } 张图片）
+fillfx-pbr-images-added = 另有 { $n } 张作为图片加入

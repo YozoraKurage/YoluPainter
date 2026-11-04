@@ -64,6 +64,7 @@ pub mod ops_host;
 pub mod pacing;
 pub mod panels;
 pub mod pathtool;
+pub mod pbr;
 pub mod pen;
 pub mod pie;
 pub mod prefs;

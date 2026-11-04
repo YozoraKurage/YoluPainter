@@ -83,9 +83,31 @@ When you drop PSDs and images (PNG, JPEG, TGA, WebP, TIFF, BMP, EXR, HDR, GIF) o
 - Opening a PSD row shows the same list as the "Import PSD Check" window. The layers go in with their groups, masks and blend modes. A PSD whose size differs from a texture set cannot go into that texture set (it is not resized), and cannot go into the assets.
 - Undo works once per destination texture set (several files into the same texture set are undone together).
 - After importing, the last destination texture set and layer set become current.
-- EXR and HDR are read as color: values are clipped to 0–1 (anything above 1 becomes 1), the linear values are converted to sRGB, and the result is 8 bits. Alpha is clipped to 0–1 as it is. There is no way to import them as linear data channels such as Normal or Roughness. 16-bit PNG and TIFF are rounded to 8 bits. A GIF is read from its first frame only.
+- EXR and HDR are read as color: values are clipped to 0–1 (anything above 1 becomes 1), the linear values are converted to sRGB, and the result is 8 bits. Alpha is clipped to 0–1 as it is. An image that its name marks as a data channel such as Normal or Roughness (see "Images dropped onto the project's grid" below) is made 8 bits while staying linear. 16-bit PNG and TIFF are rounded to 8 bits. A GIF is read from its first frame only.
 - Each side must be 1 to 8192, and reading uses at most 1 GiB of memory (the pixels as read plus the imported image). A floating-point TIFF holds its pixels twice while it is read, so one more than about 5700 pixels on a side (with alpha) or 6600 (without alpha) is refused as too large. DDS, AVIF, HEIC, JPEG XL, QOI and PSB cannot be read; they are listed with the reason and cannot be imported. A PNG dropped onto the brush list or the stencil image is read there as before.
 - An image dropped onto the assets grid is not listed in this window; it goes straight in. Onto the project's grid it is added to the project's assets, and onto the library's grid it is added to the library (converted to PNG unless it already is one). A format that cannot be read is refused with the reason. Dropping onto the grid does not make an undo step (the same as "Import from File…").
+
+### Images dropped onto the project's grid: names become a material
+
+When you drop two or more images at once onto the project's assets grid, the last mark in each file name (without the extension) picks the channel, and the images whose names before the mark are the same are added to the assets as one "Material". Marks are not case-sensitive, and the separators `_`, `-`, `.` and a space are all accepted.
+
+| Channel | Marks |
+|---|---|
+| Color | BaseColor, Albedo, Diffuse, Color, Col |
+| Normal | Normal, Nrm, Nor, NormalGL, NormalDX |
+| Roughness | Roughness, Rough, Rgh (Glossiness, Gloss and Smoothness are inverted into Roughness) |
+| Metallic | Metallic, Metalness, Metal, Mtl |
+| Height | Height, Displacement, Disp, Bump |
+| Emission | Emission, Emissive, Emit |
+| AO, Opacity | AO, AmbientOcclusion, Occlusion; Opacity, Alpha, Mask |
+| Packed | ORM, ARM (R is AO, G is Roughness, B is Metallic; each component is split into its own image) |
+
+- Placing the material puts each image into the matching channel of a fill layer. The material points to images in the same project's assets, so the images it uses are also listed in the assets as images. Once an image it points to is removed from the assets, the material cannot be placed.
+- A normal map is read as OpenGL (Y+) by default. If the name has `DX`, `DirectX` or `D3D` (as in `NormalDX`), the green channel is flipped to match OpenGL.
+- For EXR and HDR, Color and Emission are converted to sRGB; the other channels stay linear in 8 bits. 8-bit images are used as they are.
+- If two images have the same channel, the larger one is used and the other stays a plain image. AO and Opacity have no channel, so they do not go into the material and are added as images. Channels the document does not have are not used.
+- Images without a mark, and a mark that is the only channel in its group, are added as plain images as before. Only the name is read; whether the content fits the mark is not checked.
+- Dropping onto the library's grid does not make a material; the images are added as images.
 
 ## Export a PSD
 

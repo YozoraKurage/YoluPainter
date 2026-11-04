@@ -48,6 +48,7 @@ shelf-applied-as-the-mask = 마스크로 적용했습니다
 shelf-placed = 배치했습니다
 shelf-cannot-remove-because-a-layer = 레이어가 사용 중이어서 { $name }을(를) 제거할 수 없습니다
 shelf-removed-from-the-project-s = 프로젝트 에셋에서 제거했습니다
+shelf-removed-image-used-by-materials = { ", " }{ $list }이(가) 이 이미지를 가리키고 있어 더 이상 배치할 수 없습니다
 shelf-text = {" "}
 shelf-too-large = 너무 큽니다
 shelf-is-not-a-readable-smart = { $file }은(는) 읽을 수 있는 스마트 에셋이 아닙니다
