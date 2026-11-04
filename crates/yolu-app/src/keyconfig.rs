@@ -785,6 +785,7 @@ fn operation_key(op: keymap::Operation) -> &'static str {
         Rotate => "rotate",
         Pick => "pick",
         SnapOrbit => "snap_orbit",
+        LightOrbit => "light_orbit",
         CloneSource => "clone_source",
         SelectionAdd => "selection_add",
         SelectionSubtract => "selection_subtract",

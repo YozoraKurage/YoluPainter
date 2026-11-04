@@ -4,7 +4,8 @@
 //!   Ctrl を押した接触は、ペンは描かず、マウスは描く（2D のキャンバスと同じ）。
 //! - 右ドラッグで回す（動かさずに離すとスポイト。ポリゴン塗りつぶしのツールはアイランドのメニュー）。右を押している間の W/A/S/D/Q/E は視点の移動
 //!   （Shift で速く）。Alt + 右ドラッグはスナップ回転（ドラッグした向きへ、90° 隣の軸の視点に切り替える。Alt + 左は描き始めない）。中ドラッグか Space + 左ドラッグでパン、
-//!   ホイールで寄る・引く。Ctrl+Space + 左ドラッグは左右に動かして寄る・引く（動かさずに離すと寄る、Alt を足すと引く）。クローンのブラシでは、
+//!   ホイールで寄る・引く。Shift + 右ドラッグ（押した瞬間に Shift を持っているとき）は視点でなくライトの向きを回す（`light`。この間も W/A/S/D/Q/E は
+//!   キーの表へ渡さない）。Ctrl+Space + 左ドラッグは左右に動かして寄る・引く（動かさずに離すと寄る、Alt を足すと引く）。クローンのブラシでは、
 //!   Alt + 左を動かさずに離すと、そこがクローンの元（動かせば何もしない）。修飾は押しの始めに持っているもので決める。
 //! - ペンはマウスと同じ決まり: サイドボタンを押した接触は右ボタン、Alt・Space・Ctrl+Space を押した接触は左ボタンにそれらを足したもの。
 //!   描くのは、修飾もサイドボタンも無いペン先の接触だけ。行き先は触れた最初の点で決めて（`input::owner`。マウスの押しも同じ表）、離すまで変えない（`input::Press`）。
@@ -801,6 +802,7 @@ fn nav_of(button: PointerButton, m: &Modifiers, space: bool) -> Option<Nav> {
     match crate::keymap::gesture("view3d", button, m, space)? {
         Operation::Orbit => Some(Nav::Orbit),
         Operation::SnapOrbit => Some(Nav::SnapOrbit),
+        Operation::LightOrbit => Some(Nav::Light),
         Operation::Pan => Some(Nav::Pan),
         Operation::Zoom => Some(Nav::Zoom),
         _ => None,
@@ -901,7 +903,7 @@ fn nav_move(app: &mut AppState, rect: Rect, pos: Pos2, previous: Pos2) {
     };
     let d = match nav {
         // 回すドラッグは、押した所から `CLICK_DISTANCE` を超えるまで回さない（超えたら、押した所からの動きを全部当てる。パン・拡縮は今までどおり）
-        Nav::Orbit | Nav::SnapOrbit => {
+        Nav::Orbit | Nav::SnapOrbit | Nav::Light => {
             let Some(drag) = app.view3d.view.input.navigation.as_mut() else {
                 return;
             };
@@ -913,7 +915,7 @@ fn nav_move(app: &mut AppState, rect: Rect, pos: Pos2, previous: Pos2) {
         Nav::Pan | Nav::Zoom => pos - previous,
     };
     match nav {
-        Nav::Orbit | Nav::SnapOrbit | Nav::Pan => {
+        Nav::Orbit | Nav::SnapOrbit | Nav::Light | Nav::Pan => {
             super::navigation::move_by(app, rect, nav, d.x, d.y)
         }
         Nav::Zoom => {

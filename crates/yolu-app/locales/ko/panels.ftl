@@ -855,3 +855,5 @@ panels-remove-from-the-assets = { $name }을(를) 프로젝트 에셋에서 제�
 panels-point-number = 점 { $number }
 panels-point-number-color = 점 { $number } 색상
 panels-effects-on-the-mask = 마스크에 효과 { $count }개
+panels-auto-rotate-light-tip = 라이트 자동 회전
+panels-auto-rotate-light = 자동 회전

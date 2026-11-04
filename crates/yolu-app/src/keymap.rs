@@ -1044,6 +1044,8 @@ pub enum Operation {
     Pick,
     /// 3D ビューの視点を回す（Alt + 右）。ドラッグした向き（右・左・下・上）へ、今の視点から 90° 隣の軸の視点（正面・背面・右・左・上・下）に切り替える。
     SnapOrbit,
+    /// 3D ビューで、光の向きを回す（Shift + 右）。横の動きで方位、縦の動きで高さ。動かさずに離しても何もしない。
+    LightOrbit,
     /// クローンのブラシで、クローンの元を決める（2D・3D とも Alt + 左を動かさずに離す。動かせば、2D は表示を回し、3D は何もしない）。
     CloneSource,
     SelectionAdd,
@@ -1058,13 +1060,14 @@ pub enum Operation {
 
 impl Operation {
     /// 全部の組み合わせ。
-    pub const ALL: [Operation; 14] = [
+    pub const ALL: [Operation; 15] = [
         Self::Orbit,
         Self::Pan,
         Self::Zoom,
         Self::Rotate,
         Self::Pick,
         Self::SnapOrbit,
+        Self::LightOrbit,
         Self::CloneSource,
         Self::SelectionAdd,
         Self::SelectionSubtract,
@@ -1083,6 +1086,7 @@ impl Operation {
             Self::Rotate => lang.t("keymap-rotate"),
             Self::Pick => Tool::Eyedropper.name_in(lang),
             Self::SnapOrbit => lang.t("keymap-snap-orbit"),
+            Self::LightOrbit => lang.t("keymap-light-orbit"),
             Self::CloneSource => lang.t("keymap-set-clone-source"),
             Self::SelectionAdd => lang.t("keymap-add-to-selection"),
             Self::SelectionSubtract => lang.t("keymap-subtract-from-selection"),
@@ -1179,7 +1183,7 @@ const fn click_of(
 use PointerButton::{Middle, Primary, Secondary};
 
 /// マウスと修飾キーの組み合わせの全部。
-pub const GESTURES: [Gesture; 20] = numbered([
+pub const GESTURES: [Gesture; 21] = numbered([
     // 2D キャンバス: 中ボタンでパン、Alt + 左ドラッグで表示を回す（15° 刻み。Shift で自由。動かさずに離すとクローンの元）、右ボタンを押すとスポイト
     gesture_of(
         "canvas",
@@ -1230,7 +1234,7 @@ pub const GESTURES: [Gesture; 20] = numbered([
         (false, false, true),
         Operation::SelectionSubtract,
     )),
-    // 3D ビュー: 右ボタンで回す（動かさずに離すとスポイト）・Alt + 右でスナップ回転・中ボタンでパン・Space + 左でパン（Ctrl を足すと拡縮）・
+    // 3D ビュー: 右ボタンで回す（動かさずに離すとスポイト）・Alt + 右でスナップ回転・Shift + 右で光の向きを回す・中ボタンでパン・Space + 左でパン（Ctrl を足すと拡縮）・
     // Alt + 左を動かさずに離すとクローンの元。表の並びのテスト（`a_gesture_is_never_hidden_by_an_earlier_one`）は、条件の少ない行を
     // 先に置くことを許さないので、Alt を足した右の行は、修飾なしの右の行の上に置く（実際の照合は、`Keymap::with_gestures` が修飾の多い行を先にする）
     // （押しの始めに Alt を持っていたときだけ当たる。右で回している途中の Alt は押しの始めの修飾ではないので、替わらない）
@@ -1240,6 +1244,15 @@ pub const GESTURES: [Gesture; 20] = numbered([
         Secondary,
         (true, false, false),
         Operation::SnapOrbit,
+    ),
+    // Shift + 右ドラッグは光の向きを回す（押しの始めに Shift を持っているとき。動かさずに離す行は置かない: 何もしない。Alt + 右と同じ。
+    // 設定のファイルは（範囲・操作・離しか・同じ組の中の何番目か）で覚えるので、表の途中に置いても保存した割り当ては変わらない）
+    gesture_of(
+        "view3d",
+        None,
+        Secondary,
+        (false, true, false),
+        Operation::LightOrbit,
     ),
     gesture_of(
         "view3d",
@@ -1499,14 +1512,23 @@ mod tests {
         );
         assert_eq!(gesture("view3d", Primary, &alt, false), None);
         assert_eq!(gesture("view3d", Primary, &alt_shift, false), None);
-        // 外した組み合わせ: Shift + 右は、パンではなく回す（Shift は気にしない）。Alt + Shift + 右も、パンではなくスナップ回転
+        // Shift + 右は光の向きを回す（押しの始めの Shift。動かさずに離しても何もしない）。Alt + Shift + 右は、先に並んだスナップ回転
         assert_eq!(
             gesture("view3d", Secondary, &none, false),
             Some(Operation::Orbit)
         );
         assert_eq!(
             gesture("view3d", Secondary, &shift, false),
-            Some(Operation::Orbit)
+            Some(Operation::LightOrbit)
+        );
+        assert_eq!(
+            gesture("view3d", Secondary, &shift, true),
+            Some(Operation::LightOrbit)
+        );
+        assert_eq!(gesture("view3d", Primary, &shift, false), None);
+        assert_eq!(
+            gesture("view3d", Middle, &shift, false),
+            Some(Operation::Pan)
         );
         assert_eq!(
             gesture("view3d", Secondary, &alt_shift, false),

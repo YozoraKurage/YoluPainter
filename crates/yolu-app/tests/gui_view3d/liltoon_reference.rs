@@ -2199,3 +2199,48 @@ fn light_of_strength_one_matches_a_unity_directional_light() {
         }
     }
 }
+
+/// 3D の表示域の絵（`render` の後の描き直し）を返す。
+fn view_picture(h: &mut Harness<'static, YoluApp>) -> image::RgbaImage {
+    h.run();
+    h.run();
+    let image = h.render().expect("描ける");
+    let rect = h.state().view3d_rect().expect("3D のタブ");
+    image::imageops::crop_imm(
+        &image,
+        rect.left().round() as u32,
+        rect.top().round() as u32,
+        rect.width().round() as u32,
+        rect.height().round() as u32,
+    )
+    .to_image()
+}
+
+/// 球の中（絵の真ん中から半径 130 点の円。球は表示域の高さの約 3 分の 2）の、明るい側（明るさ 180 以上。影の側はこれより暗い）の画素の数。
+fn lit_pixels(view: &image::RgbaImage) -> usize {
+    let (cx, cy) = (view.width() as i64 / 2, view.height() as i64 / 2);
+    view.enumerate_pixels()
+        .filter(|(x, y, _)| (i64::from(*x) - cx).pow(2) + (i64::from(*y) - cy).pow(2) < 130 * 130)
+        .filter(|(_, _, p)| {
+            0.2126 * f32::from(p[0]) + 0.7152 * f32::from(p[1]) + 0.0722 * f32::from(p[2]) >= 180.0
+        })
+        .count()
+}
+
+#[test]
+fn the_sdf_shadow_edge_moves_when_the_light_azimuth_changes() {
+    let scenes = scenes();
+    let scene = scenes.iter().find(|s| s.name == "sdf").unwrap();
+    let (mut h, first) = render(scene, Some((600, 450)));
+    let mut lit = vec![lit_pixels(&first)];
+    // 光の方位を 3 段回す（同じ場面・同じ高さ。3D ビューの光を回す操作が当てる値と同じ）。SDF の影の境が動き、光の側の面積が方位に応じて変わる
+    for yaw in [-110.0, -80.0, -50.0] {
+        h.state_mut().apply(Action::View3d(Op::LightYaw(yaw)));
+        lit.push(lit_pixels(&view_picture(&mut h)));
+    }
+    println!("SDF の明るい側の画素の数（方位 -140・-110・-80・-50）: {lit:?}");
+    assert!(
+        lit.windows(2).all(|w| w[1] > w[0] + 1_000),
+        "方位を変えると影の境が動く（明るい側が広がる）: {lit:?}"
+    );
+}

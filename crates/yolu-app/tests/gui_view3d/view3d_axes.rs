@@ -232,3 +232,101 @@ fn snapshot_the_cube_in_orthographic_from_above() {
     // 正投影の立方体を見る、ウィンドウ全体の見本
     crate::common::shot::window(&mut h, "view3d_cube_orthographic");
 }
+
+/// 隅のアイコンの列のうち、ライトの自動回転のボタンは設定とモデル全体の間に並び、押すたびに入・切が替わる。設定のパネルの「ライト」の節にも同じ切り替えがある。
+#[test]
+fn the_light_spin_button_sits_between_settings_and_fit_and_toggles_the_spin() {
+    for lang in Lang::JA_EN {
+        let mut h = view(lang);
+        let spin = lang.pick("ライトを自動で回す", "Auto-rotate light");
+        let settings = lang.pick(
+            "光・環境・トーンマッピング",
+            "Light, environment, tone mapping",
+        );
+        let fit = lang.pick(
+            "モデル全体が見える位置へ戻す",
+            "Fit the whole model in view",
+        );
+        let (a, b, c) = (
+            h.get_by_label(settings).rect(),
+            h.get_by_label(spin).rect(),
+            h.get_by_label(fit).rect(),
+        );
+        assert!(
+            a.right() <= b.left() + 1.0 || a.bottom() <= b.top() + 1.0,
+            "{a:?} {b:?}"
+        );
+        assert!(
+            b.right() <= c.left() + 1.0 || b.bottom() <= c.top() + 1.0,
+            "{b:?} {c:?}"
+        );
+        assert!(!h.view3d().view.display.light_spin, "起動の直後は切");
+        // 回している間は毎フレーム描き直しを頼むので、`run`（描き直しが止まるまで）でなく `step` で進める
+        h.get_by_label(spin).click();
+        h.step();
+        assert!(h.view3d().view.display.light_spin);
+        // 設定のパネルの同じ切り替え（回している間は、パネルが開いても入のまま）
+        h.get_by_label(settings).click();
+        h.step();
+        let toggle = lang.pick("自動で回す", "Auto Rotate");
+        h.get_by_label(toggle).click();
+        h.step();
+        assert!(!h.view3d().view.display.light_spin);
+        h.get_by_label(toggle).click();
+        h.step();
+        assert!(h.view3d().view.display.light_spin);
+        // 切ると、その時の方位で止まり、描き直しの頼みも止まる（`run` が終わる）
+        h.get_by_label(toggle).click();
+        h.run();
+        let yaw = h.view3d().view.display.light_yaw;
+        h.run();
+        assert!(!h.view3d().view.display.light_spin);
+        assert_eq!(h.view3d().view.display.light_yaw, yaw);
+    }
+}
+
+/// 回している間（自動と Shift + 右ドラッグ）の、軸の印の中の光の印と、隅のアイコンの列。
+#[test]
+fn snapshot_the_light_mark_while_the_light_turns() {
+    use yolu_app::state::Action;
+    use yolu_app::view3d::display::Op;
+    let mut h = view(Lang::Ja);
+    // 自動で回している: 入のボタンと、軸の印の中の光の印（方位を決めてから、1 フレームだけ進めて撮る）
+    let content = h.state().view3d_rect().unwrap();
+    let corner = Rect::from_min_max(
+        pos2(content.right() - 140.0, content.top()),
+        pos2(content.right(), content.top() + 140.0),
+    );
+    h.get_by_label("ライトを自動で回す").click();
+    h.step();
+    assert!(h.view3d().view.display.light_spin);
+    h.state_mut().apply(Action::View3d(Op::LightYaw(-60.0)));
+    h.event(Event::PointerGone);
+    h.step();
+    crate::common::shot::region(&mut h, "view3d_light_spin_ja", corner);
+    h.state_mut().apply(Action::View3d(Op::LightSpin(false)));
+    h.run();
+    // Shift + 右ドラッグの間: 光の印だけが出て、自動の回転のボタンは切のまま
+    let at = content.center();
+    h.event(Event::PointerMoved(at));
+    h.event(Event::PointerButton {
+        pos: at,
+        button: PointerButton::Secondary,
+        pressed: true,
+        modifiers: Modifiers::SHIFT,
+    });
+    h.run();
+    h.event(Event::PointerMoved(at + vec2(60.0, -40.0)));
+    h.run();
+    assert!(yolu_app::view3d::light::dragging(h.app()));
+    assert!(!h.view3d().view.display.light_spin);
+    crate::common::shot::region(&mut h, "view3d_light_drag_ja", corner);
+    h.event(Event::PointerButton {
+        pos: at + vec2(60.0, -40.0),
+        button: PointerButton::Secondary,
+        pressed: false,
+        modifiers: Modifiers::SHIFT,
+    });
+    h.run();
+    assert!(!yolu_app::view3d::light::dragging(h.app()));
+}

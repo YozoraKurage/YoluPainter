@@ -615,6 +615,7 @@ pub static COMMANDS: &[Command] = &[
     // `color.eyedrop_temporary` は、描くツールで Alt + 左を押すと色を取る組み合わせだった ID。ショートカットの設定（段 6）で割り当てを戻せるように残す（今は右ボタンで色を取る）
     gesture("color.eyedrop_temporary", Operation::Pick),
     gesture("view.snap_orbit", Operation::SnapOrbit),
+    gesture("view.light_orbit", Operation::LightOrbit),
     gesture("brush.clone_source", Operation::CloneSource),
     gesture("selection.combine_add", Operation::SelectionAdd),
     gesture("selection.combine_subtract", Operation::SelectionSubtract),
@@ -1159,8 +1160,8 @@ mod tests {
         assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_some()), 95);
         assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_none()), 9);
         assert_eq!(count(|c| c.kind == Kind::Hold), 10);
-        assert_eq!(count(|c| c.kind == Kind::Gesture), 14);
+        assert_eq!(count(|c| c.kind == Kind::Gesture), 15);
         assert_eq!(count(|c| matches!(c.kind, Kind::Fixed(_))), 5);
-        assert_eq!(COMMANDS.len(), 133);
+        assert_eq!(COMMANDS.len(), 134);
     }
 }

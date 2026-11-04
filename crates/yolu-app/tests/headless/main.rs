@@ -25,6 +25,7 @@ mod guide_keys;
 mod island_variation;
 mod layer_set_channels;
 mod layer_sets;
+mod light_spin;
 mod liltoon_io;
 mod livelink_files;
 mod mcp_server;

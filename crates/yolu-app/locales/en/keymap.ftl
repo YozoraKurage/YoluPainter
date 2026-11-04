@@ -5,6 +5,7 @@ keymap-pan = Pan
 keymap-zoom = Zoom
 keymap-rotate = Rotate
 keymap-snap-orbit = Snap Orbit
+keymap-light-orbit = Rotate Light
 keymap-set-clone-source = Set Clone Source
 keymap-add-to-selection = Add to Selection
 keymap-subtract-from-selection = Subtract from Selection

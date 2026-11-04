@@ -77,9 +77,9 @@ Each move, rotation or scale is one undo step (one pose undo step for bones). A 
 
 ## View controls and `Alt`
 
-View controls are the same in 2D and 3D. `Alt` is a view control (rotating the view with `Alt` + left-drag in 2D, the snap orbit with `Alt` + right-drag in 3D) if it is held at the moment you press the button; if you press it after pressing the button, it is the tool's modifier (From center for shapes, rectangles and ellipses, breaking a path handle, and so on). In 2D, a drag of a selection or shape that starts with `Alt` held becomes a view rotation. In 3D, an `Alt` + left-drag neither moves the view nor starts painting (setting the clone source by releasing without moving works as before).
+View controls are the same in 2D and 3D. `Alt` is a view control (rotating the view with `Alt` + left-drag in 2D, the snap orbit with `Alt` + right-drag in 3D) if it is held at the moment you press the button; if you press it after pressing the button, it is the tool's modifier (From center for shapes, rectangles and ellipses, breaking a path handle, and so on). In 2D, a drag of a selection or shape that starts with `Alt` held becomes a view rotation. In 3D, an `Alt` + left-drag neither moves the view nor starts painting (setting the clone source by releasing without moving works as before). `Shift` in 3D works the same way: held at the moment you press the right button, it turns the light direction instead of the view (sideways for the azimuth, up and down for the elevation; releasing without moving does nothing).
 
-These combinations no longer work. In 3D, `Shift` + right-drag and `Alt` + `Shift` + left-drag (move; with `Shift` held, a right-drag orbits). In 2D, `R` + left-drag and `Shift` + middle-drag (rotate; with `Shift` held, a middle-drag pans). In 2D, `Alt`-click as a temporary eyedropper (`Alt` + left-drag now rotates the view, and the eyedropper moved to the right button). In 3D, `Alt` + left-drag as an orbit (the snap orbit is now `Alt` + right-drag, and a free orbit is a right-drag). In 3D, starting the right button with `Alt` held, then releasing `Alt` while the right button is still held to move the view with `W`/`A`/`S`/`D`/`Q`/`E` (that press is now a snap orbit; moving during an orbit you started with the right button alone still works).
+These combinations no longer work. In 3D, `Alt` + `Shift` + left-drag (move). In 2D, `R` + left-drag and `Shift` + middle-drag (rotate; with `Shift` held, a middle-drag pans). In 2D, `Alt`-click as a temporary eyedropper (`Alt` + left-drag now rotates the view, and the eyedropper moved to the right button). In 3D, `Alt` + left-drag as an orbit (the snap orbit is now `Alt` + right-drag, and a free orbit is a right-drag). In 3D, starting the right button with `Alt` held, then releasing `Alt` while the right button is still held to move the view with `W`/`A`/`S`/`D`/`Q`/`E` (that press is now a snap orbit; moving during an orbit you started with the right button alone still works).
 
 ## Situational keys and notes
 
@@ -91,7 +91,7 @@ These combinations no longer work. In 3D, `Shift` + right-drag and `Alt` + `Shif
 - The wheel also zooms. `Ctrl+Space` + left-drag zooms as you move horizontally, around the pressed point (releasing without moving zooms in, and adding `Alt` zooms out).
 - Rotating the 2D view goes in 15° steps, and is free with `Shift` also held. The 3D snap orbit (`Alt` + right-drag) switches from the current view to the axis view (front, back, right, left, top, bottom) 90° away in the direction you drag (whichever of horizontal and vertical is larger), once you move about 40 points from where you pressed. One drag switches only once; to keep going, release and press again.
 - Rotating the view right uses the `^` character, and the `=` key also works (keyboard layouts put the keys in different places).
-- While the right button is held in the 3D view, `W` / `S`, `A` / `D` and `Q` / `E` move the view forward / back, left / right and down / up (`Shift` for faster; meanwhile these keys are not used for switching tools and so on). In orthographic, `W` / `S` zoom in and out.
+- While the right button is held in the 3D view, `W` / `S`, `A` / `D` and `Q` / `E` move the view forward / back, left / right and down / up (pressing `Shift` after pressing the right button makes it faster, while holding `Shift` before pressing turns the light instead, and then the view does not move; during either, these keys are not used for switching tools and so on). In orthographic, `W` / `S` zoom in and out.
 - The 3D axis views (Front, Back, Right, Left, Top, Bottom) and Toggle Orthographic are in the View Pie Menu and on the axis widget in the top right of the 3D view (neither has a key at first). Choosing an axis view or switching to one with the snap orbit makes the view orthographic, and leaving the axis brings back perspective ("Axis views and orthographic" in [GUIDE_3D.md](GUIDE_3D.md)).
 - In Edit mode `H` hides the selected object's marker, so flip the 2D view with View → Flip View.
 - The stencil rotates with a left-drag while `Y` is held (15° steps with `Shift`), moves with a middle-drag or `Ctrl` + left-drag, and scales with a right-drag or `Alt` + left-drag (in 2D and 3D). It is not used while `N` is held.
@@ -102,7 +102,7 @@ These combinations no longer work. In 3D, `Shift` + right-drag and `Alt` + `Shif
 
 ## Pen
 
-The side buttons act as the right button (in 2D they pick a color; in 3D they orbit, and releasing without moving picks a color; with Polygon Fill in 2D they do nothing). `Space` and `Ctrl+Space` act the same as with the left mouse button. A pen tip touching with `Alt` held rotates the view in 2D, and in 3D it neither orbits nor paints. The 3D snap orbit is a side-button touch with `Alt` held. Only a pen tip with neither `Ctrl` nor a side button pressed (and the eraser end) paints, and a pen tip with `Shift` pressed draws a straight line (in 2D and 3D).
+The side buttons act as the right button (in 2D they pick a color; in 3D they orbit, and releasing without moving picks a color; with Polygon Fill in 2D they do nothing). `Space` and `Ctrl+Space` act the same as with the left mouse button. A pen tip touching with `Alt` held rotates the view in 2D, and in 3D it neither orbits nor paints. The 3D snap orbit is a side-button touch with `Alt` held, and turning the light is a side-button touch with `Shift` held. Only a pen tip with neither `Ctrl` nor a side button pressed (and the eraser end) paints, and a pen tip with `Shift` pressed draws a straight line (in 2D and 3D).
 
 ## Default assignments
 
@@ -258,6 +258,7 @@ The side buttons act as the right button (in 2D they pick a color; in 3D they or
 | Add to Selection (Selection) | Shift+Left Button | Paint |
 | Subtract from Selection (Selection) | Ctrl+Left Button | Paint |
 | Snap Orbit (3D) | Alt+Right Button | Everywhere & View |
+| Rotate Light (3D) | Shift+Right Button | Everywhere & View |
 | Orbit (3D) | Right Button | Everywhere & View |
 | Eyedropper (3D) | Right Button Released without Moving | Everywhere & View |
 | Pan (3D) | Middle Button | Everywhere & View |

@@ -947,3 +947,226 @@ fn the_axis_orthographic_setting_is_on_by_default_and_round_trips() {
     );
     std::fs::remove_file(path).unwrap();
 }
+
+// ───────── Shift + 右ドラッグで光の向きを回す ─────────
+
+fn light(h: &Harness<'_, Fixture>) -> (f32, f32) {
+    let d = &h.view3d().view.display;
+    (d.light_yaw, d.light_pitch)
+}
+
+/// 光の来る向きの、カメラの右への成分（大きいほど画面の右寄り）。
+fn light_on_screen_x(h: &Harness<'_, Fixture>) -> f32 {
+    let c = camera(h);
+    h.view3d()
+        .view
+        .display
+        .light_direction()
+        .dot(c.rotation() * Vec3::X)
+}
+
+/// 押す（マウスは右ボタン、ペンはサイドボタン）→ 動かす → 離す。修飾は押しの始めに持つ。
+fn drag_right(h: &mut Harness<'_, Fixture>, use_pen: bool, mods: Modifiers, path: &[egui::Vec2]) {
+    let at = pos2(375.0, 215.0);
+    h.event(Event::ModifiersChanged(mods));
+    if use_pen {
+        pen(h, at, true, true);
+    } else {
+        mouse(h, at, PointerButton::Secondary, true, mods);
+    }
+    let mut last = at;
+    for d in path {
+        last = at + *d;
+        if use_pen {
+            pen(h, last, true, true);
+        } else {
+            h.event(Event::PointerMoved(last));
+            h.step();
+        }
+    }
+    if use_pen {
+        pen(h, last, false, true);
+    } else {
+        mouse(h, last, PointerButton::Secondary, false, mods);
+    }
+    h.event(Event::ModifiersChanged(Modifiers::NONE));
+    h.step();
+}
+
+#[test]
+fn shift_right_drag_turns_the_light_by_the_orbit_sensitivity_and_leaves_the_view_alone() {
+    for use_pen in [false, true] {
+        let mut h = harness(Preferences::default());
+        let (yaw, pitch) = light(&h);
+        let (before_camera, before_x) = (camera(&h), light_on_screen_x(&h));
+        let modified = h.modified();
+        // 右へ 40 点・上へ 20 点: 視点の右ドラッグと同じ 1 点 0.35°（方位 14°・高さ 7°）。光は画面の右へ寄り、上がる
+        drag_right(
+            &mut h,
+            use_pen,
+            Modifiers::SHIFT,
+            &[vec2(20.0, -10.0), vec2(40.0, -20.0)],
+        );
+        let (yaw2, pitch2) = light(&h);
+        assert!(
+            ((yaw2 - yaw).abs() - 14.0).abs() < 1e-3,
+            "ペン {use_pen}: 方位 {yaw} → {yaw2}"
+        );
+        assert!(
+            (pitch2 - pitch - 7.0).abs() < 1e-3,
+            "ペン {use_pen}: 高さ {pitch} → {pitch2}"
+        );
+        assert!(light_on_screen_x(&h) > before_x, "光が画面の右へ寄る");
+        // 視点は動かず、押しの状態は残らず、文書は変わらない（取り消しの段も作らない）
+        assert_eq!(camera(&h), before_camera);
+        assert!(h.view3d().view.input.nav.is_none() && h.view3d().view.input.navigation.is_none());
+        assert!(!h.doc().can_undo());
+        assert_eq!(h.modified(), modified);
+    }
+}
+
+#[test]
+fn the_light_height_stops_at_the_range_and_the_azimuth_wraps_around() {
+    let mut h = harness(Preferences::default());
+    drag_right(&mut h, false, Modifiers::SHIFT, &[vec2(0.0, -2000.0)]);
+    assert_eq!(light(&h).1, 89.0);
+    drag_right(&mut h, false, Modifiers::SHIFT, &[vec2(0.0, 4000.0)]);
+    assert_eq!(light(&h).1, -89.0);
+    // 方位は 1 周を超えても -180〜180 に収まる
+    for _ in 0..4 {
+        drag_right(&mut h, false, Modifiers::SHIFT, &[vec2(600.0, 0.0)]);
+        let yaw = light(&h).0;
+        assert!((-180.0..=180.0).contains(&yaw), "{yaw}");
+    }
+}
+
+#[test]
+fn the_light_keeps_turning_the_same_way_across_the_screen_edge_during_one_drag() {
+    // 光が画面の端（カメラの真横）を通っても、1 回のドラッグの間は同じ向きに回り続ける（向きは押したときに決める）
+    let mut h = harness(Preferences::default());
+    let path: Vec<egui::Vec2> = (1..=40).map(|i| vec2(i as f32 * 10.0, 0.0)).collect();
+    let (yaw0, _) = light(&h);
+    let at = pos2(375.0, 215.0);
+    mouse(&mut h, at, PointerButton::Secondary, true, Modifiers::SHIFT);
+    let mut last = yaw0;
+    let mut sign = 0.0;
+    for d in path {
+        h.event(Event::PointerMoved(at + d));
+        h.step();
+        let mut step = light(&h).0 - last;
+        if step > 180.0 {
+            step -= 360.0;
+        }
+        if step < -180.0 {
+            step += 360.0;
+        }
+        if step.abs() > 1e-4 {
+            if sign == 0.0 {
+                sign = step.signum();
+            }
+            assert_eq!(step.signum(), sign, "向きが入れ替わった");
+        }
+        last = light(&h).0;
+    }
+    mouse(
+        &mut h,
+        at + vec2(400.0, 0.0),
+        PointerButton::Secondary,
+        false,
+        Modifiers::SHIFT,
+    );
+    assert_ne!(sign, 0.0);
+}
+
+#[test]
+fn right_drag_without_shift_still_orbits_the_view_and_leaves_the_light_alone() {
+    for use_pen in [false, true] {
+        let mut h = harness(Preferences::default());
+        let (light_before, camera_before) = (light(&h), camera(&h));
+        drag_right(&mut h, use_pen, Modifiers::NONE, &[vec2(40.0, 20.0)]);
+        assert_eq!(light(&h), light_before);
+        assert_ne!(
+            (camera(&h).yaw, camera(&h).pitch),
+            (camera_before.yaw, camera_before.pitch)
+        );
+    }
+}
+
+#[test]
+fn shift_right_released_without_moving_does_nothing() {
+    for use_pen in [false, true] {
+        let mut h = harness(Preferences::default());
+        let (light_before, camera_before) = (light(&h), camera(&h));
+        let at = pos2(375.0, 215.0);
+        let shift = Modifiers::SHIFT;
+        h.event(Event::ModifiersChanged(shift));
+        if use_pen {
+            pen(&mut h, at, true, true);
+        } else {
+            mouse(&mut h, at, PointerButton::Secondary, true, shift);
+        }
+        // 光を回す押しで、スポイト（右を動かさずに離す）の印は覚えない
+        assert!(matches!(
+            h.view3d().view.input.nav,
+            Some((view3d::Nav::Light, _))
+        ));
+        assert!(h.view3d().view.input.eyedrop.is_none());
+        let swatch = h.color().clone();
+        let message = h.message().to_owned();
+        if use_pen {
+            pen(&mut h, at + vec2(2.0, 1.0), true, true);
+            pen(&mut h, at + vec2(2.0, 1.0), false, true);
+        } else {
+            h.event(Event::PointerMoved(at + vec2(2.0, 1.0)));
+            h.step();
+            mouse(
+                &mut h,
+                at + vec2(2.0, 1.0),
+                PointerButton::Secondary,
+                false,
+                shift,
+            );
+        }
+        assert_eq!(light(&h), light_before, "遊びの中の揺れでは回さない");
+        assert_eq!(camera(&h), camera_before);
+        assert_eq!(h.color(), &swatch, "スポイトにならない");
+        assert_eq!(h.message(), message);
+    }
+}
+
+#[test]
+fn the_light_does_not_turn_while_a_stroke_is_being_drawn() {
+    let mut h = harness(Preferences::default());
+    let light_before = light(&h);
+    // 左ボタンのストロークの最中に Shift + 右を押しても始まらない
+    let at = pos2(375.0, 215.0);
+    mouse(&mut h, at, PointerButton::Primary, true, Modifiers::NONE);
+    h.event(Event::PointerMoved(at + vec2(10.0, 0.0)));
+    h.step();
+    assert!(h.app().is_stroking());
+    mouse(
+        &mut h,
+        at + vec2(10.0, 0.0),
+        PointerButton::Secondary,
+        true,
+        Modifiers::SHIFT,
+    );
+    assert!(h.view3d().view.input.nav.is_none());
+    h.event(Event::PointerMoved(at + vec2(80.0, 40.0)));
+    h.step();
+    assert_eq!(light(&h), light_before);
+    mouse(
+        &mut h,
+        at + vec2(80.0, 40.0),
+        PointerButton::Secondary,
+        false,
+        Modifiers::SHIFT,
+    );
+    mouse(
+        &mut h,
+        at + vec2(80.0, 40.0),
+        PointerButton::Primary,
+        false,
+        Modifiers::NONE,
+    );
+}

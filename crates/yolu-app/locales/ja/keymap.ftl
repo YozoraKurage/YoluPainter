@@ -5,6 +5,7 @@ keymap-pan = パン
 keymap-zoom = ズーム
 keymap-rotate = 回転
 keymap-snap-orbit = スナップ回転
+keymap-light-orbit = ライトの回転
 keymap-set-clone-source = クローンの元を決める
 keymap-add-to-selection = 選択範囲に追加
 keymap-subtract-from-selection = 選択範囲から引く

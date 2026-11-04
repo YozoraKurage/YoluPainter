@@ -893,16 +893,22 @@ fn the_pen_tip_paints_the_surface_and_the_side_button_orbits_it() {
 }
 
 #[test]
-fn the_pen_with_the_side_button_and_shift_orbits_and_no_longer_pans() {
+fn the_pen_with_the_side_button_and_shift_turns_the_light_and_neither_pans_nor_orbits() {
     let (mut h, rect) = cube_view();
     let at = screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5));
     let before = camera(&h);
+    let light = h.view3d().view.display.light_yaw;
     hold(&mut h, Modifiers::SHIFT);
     Pen::barrel().drag(&mut h, &[at, offset(at, 30.0, 0.0), offset(at, 60.0, 10.0)]);
     release_mods(&mut h);
     let after = camera(&h);
     assert_eq!(after.target, before.target, "Shift でもパンしない");
-    assert_ne!(after.yaw, before.yaw, "回す");
+    assert_eq!(
+        (after.yaw, after.pitch),
+        (before.yaw, before.pitch),
+        "視点は回さない"
+    );
+    assert_ne!(h.view3d().view.display.light_yaw, light, "光の向きを回す");
     assert_eq!(strokes(&h), 0);
 }
 

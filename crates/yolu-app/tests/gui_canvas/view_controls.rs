@@ -464,6 +464,52 @@ fn w_moves_the_view_forward_while_the_right_button_is_down_and_never_switches_th
 }
 
 #[test]
+fn w_and_shift_q_during_a_light_drag_reach_neither_the_tools_nor_the_view() {
+    let (mut h, rect) = cube_view();
+    let at = rect.center();
+    h.act(Action::SelectTool(Tool::Brush));
+    h.run();
+    let before = camera(&h);
+    let light = h.view3d().view.display.light_yaw;
+    // Shift を持ってから右を押す（光の回転）
+    mods(&mut h, Modifiers::SHIFT);
+    mouse(&h, at, PointerButton::Secondary, true, Modifiers::SHIFT);
+    h.step();
+    assert_eq!(nav(&h), Some((Nav::Light, PointerButton::Secondary)));
+    for _ in 0..3 {
+        key_event(&mut h, Key::W, true, Modifiers::SHIFT);
+        key_event(&mut h, Key::Q, true, Modifiers::SHIFT);
+        key_repeat(&mut h, Key::W, Modifiers::SHIFT);
+        key_repeat(&mut h, Key::Q, Modifiers::SHIFT);
+        h.step();
+    }
+    assert_eq!(
+        tool(&h),
+        Tool::Brush,
+        "Shift+W（ID の色で選択）に替わらない"
+    );
+    assert!(!h.sel().quick, "Shift+Q（クイックマスク）が入らない");
+    move_mouse(&mut h, at + vec2(30.0, 0.0));
+    h.step();
+    assert_eq!(camera(&h), before, "視点は動かない・回らない");
+    assert_ne!(h.view3d().view.display.light_yaw, light, "光は回る");
+    mouse(
+        &h,
+        at + vec2(30.0, 0.0),
+        PointerButton::Secondary,
+        false,
+        Modifiers::SHIFT,
+    );
+    h.step();
+    key_event(&mut h, Key::W, false, Modifiers::SHIFT);
+    key_event(&mut h, Key::Q, false, Modifiers::SHIFT);
+    mods(&mut h, Modifiers::NONE);
+    // 離したあとに押し直したキーは、今までどおり表へ届く
+    key_event(&mut h, Key::W, true, Modifiers::NONE);
+    assert_eq!(tool(&h), Tool::Wand, "光を離したあとの W は自動選択");
+}
+
+#[test]
 fn s_a_d_q_e_move_the_view_along_the_camera_axes_and_shift_is_three_times_faster() {
     let table = [
         (Key::S, Vec3::NEG_Z),
@@ -875,11 +921,13 @@ fn flying_makes_the_right_button_release_no_longer_a_click() {
 // ───────── 3D: 外した組み合わせ ─────────
 
 #[test]
-fn shift_with_the_right_button_and_alt_shift_with_the_right_button_no_longer_pan_in_3d() {
+fn shift_with_the_right_button_turns_the_light_and_alt_shift_with_the_right_button_no_longer_pans_in_3d(
+) {
     let (mut h, rect) = cube_view();
     let at = rect.center();
     let start = camera(&h);
-    // Shift + 右ドラッグ: パンしない（回す）
+    let light = h.view3d().view.display.light_yaw;
+    // Shift + 右ドラッグ: パンも視点の回転もしない（光の向きを回す）
     mods(&mut h, Modifiers::SHIFT);
     mouse(&h, at, PointerButton::Secondary, true, Modifiers::SHIFT);
     h.step();
@@ -895,7 +943,12 @@ fn shift_with_the_right_button_and_alt_shift_with_the_right_button_no_longer_pan
     mods(&mut h, Modifiers::NONE);
     let after = camera(&h);
     assert_eq!(after.target, start.target, "Shift + 右でパンしない");
-    assert_ne!(after.yaw, start.yaw, "回す");
+    assert_eq!(
+        (after.yaw, after.pitch),
+        (start.yaw, start.pitch),
+        "視点は回さない"
+    );
+    assert_ne!(h.view3d().view.display.light_yaw, light, "光の向きを回す");
     // Alt + Shift + 右ドラッグ: パンしない（スナップ回転）
     let start = camera(&h);
     let both = Modifiers::ALT | Modifiers::SHIFT;

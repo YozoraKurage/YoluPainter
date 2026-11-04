@@ -861,3 +861,5 @@ panels-effects-on-the-mask = { $count ->
         [one] 1 effect on the mask
        *[other] { $count } effects on the mask
     }
+panels-auto-rotate-light-tip = Auto-rotate light
+panels-auto-rotate-light = Auto Rotate

@@ -5,6 +5,7 @@ keymap-pan = 平移
 keymap-zoom = 缩放
 keymap-rotate = 旋转
 keymap-snap-orbit = 吸附环绕
+keymap-light-orbit = 旋转光源
 keymap-set-clone-source = 设置仿制来源
 keymap-add-to-selection = 增加至选区
 keymap-subtract-from-selection = 从选区减去

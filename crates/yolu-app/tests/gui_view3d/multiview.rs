@@ -344,6 +344,52 @@ fn a_user_channel_shows_alone_in_a_view() {
     assert_eq!(h.view3d_stats().unwrap().user_bytes, 0);
 }
 
+/// 並べた狭いビューでは、表示の種類の名前を詰めずに全部出し（名前が入らない幅では、隅のアイコンの列から「ライトを自動で回す」を外す）、広い 1 つのビューでは
+/// 今までどおりそのアイコンが出る。アイコンは名前（読み上げの木）で、名前の詰めは `fit` の記録で調べる。
+#[test]
+fn narrow_views_keep_the_whole_shading_name_and_drop_the_light_spin_icon() {
+    let spin = "ライトを自動で回す";
+    let mut wide = app_default(1400.0, 800.0, 128);
+    wide.view3d_mut().load_demo();
+    wide.run();
+    assert_eq!(
+        wide.query_all_by_label(spin).count(),
+        1,
+        "広い 1 つのビューではアイコンが出る"
+    );
+    let mut h = two_views();
+    hover(&mut h, SECOND);
+    h.act(Action::View3d(Op::ShadingOf(
+        SECOND,
+        Shading::Channel(Channel::Roughness),
+    )));
+    move_to(&h, pos2(1.0, 1.0));
+    h.run();
+    for id in [ViewId::FIRST, SECOND] {
+        assert!(
+            rect_of_view(&h, id).width() < 600.0,
+            "並べたビューは狭い: {:?}",
+            rect_of_view(&h, id)
+        );
+    }
+    // 長い名前（マテリアル (PBR)）の最初のビューにはアイコンが出ず、短い名前（ラフネス）の 2 つめのビューには入る
+    let icons: Vec<Rect> = h.query_all_by_label(spin).map(|n| n.rect()).collect();
+    assert_eq!(icons.len(), 1, "{icons:?}");
+    assert!(
+        rect_of_view(&h, SECOND).contains_rect(icons[0]),
+        "アイコンは短い名前の側だけ: {icons:?}"
+    );
+    yolu_app::ui::widgets::record_truncations(true);
+    yolu_app::ui::widgets::take_truncations();
+    h.step();
+    let truncated = yolu_app::ui::widgets::take_truncations();
+    yolu_app::ui::widgets::record_truncations(false);
+    assert!(
+        truncated.is_empty(),
+        "表示の種類の名前が「…」に詰められた: {truncated:?}"
+    );
+}
+
 #[test]
 fn snapshot_two_views_side_by_side() {
     let mut h = two_views();

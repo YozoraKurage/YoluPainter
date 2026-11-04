@@ -28,6 +28,8 @@ const REACH: f32 = 30.0;
 const BALL: f32 = 9.0;
 const NEG_BALL: f32 = 6.5;
 const CENTER: f32 = 6.0;
+/// 光の印の丸の半径。
+const LIGHT_BALL: f32 = 5.0;
 
 /// 印の中の押せる所。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -165,6 +167,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState, view: Rect, below: f32, live: bool)
                 },
             );
             let camera = app.view3d.view.camera;
+            let light =
+                super::light::active(app).then(|| app.view3d.view.display.light_direction());
             let hovered = response
                 .hover_pos()
                 .filter(|_| !response.dragged())
@@ -175,6 +179,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, view: Rect, below: f32, live: bool)
                 r,
                 hovered,
                 response.hovered() || response.dragged(),
+                light,
             );
             response.widget_info(|| {
                 WidgetInfo::labeled(WidgetType::Other, movable, lang.t("view3d-view-axes"))
@@ -225,6 +230,7 @@ fn paint(
     r: Rect,
     hovered: Option<Part>,
     active: bool,
+    light: Option<Vec3>,
 ) {
     let center = r.center();
     if active {
@@ -276,6 +282,27 @@ fn paint(
         CENTER,
         Stroke::new(1.5, if hot { Color32::WHITE } else { t::TEXT_DIM }),
     );
+    if let Some(direction) = light {
+        paint_light(painter, camera, center, direction);
+    }
+}
+
+/// 光の来る向きの印の色。
+const LIGHT: Color32 = Color32::from_rgb(255, 214, 90);
+
+/// 光の来る向き（モデルから光へ向かう単位ベクトル）の印。軸の丸と同じ射影で、中心から線を引いた先に小さな丸（カメラの側にあれば塗り、
+/// 向こう側なら輪だけ）。数値は出さない。
+fn paint_light(painter: &egui::Painter, camera: &OrbitCamera, center: Pos2, direction: Vec3) {
+    let q = camera.rotation();
+    let at = center + vec2(direction.dot(q * Vec3::X), -direction.dot(q * Vec3::Y)) * REACH;
+    // カメラの前の向きの成分が負なら、光はカメラの側にある
+    let near = direction.dot(q * Vec3::Z) <= 0.0;
+    painter.line_segment([center, at], Stroke::new(1.5, LIGHT.gamma_multiply(0.7)));
+    if near {
+        painter.circle_filled(at, LIGHT_BALL, LIGHT);
+    } else {
+        painter.circle_stroke(at, LIGHT_BALL, Stroke::new(2.0, LIGHT));
+    }
 }
 
 #[cfg(test)]

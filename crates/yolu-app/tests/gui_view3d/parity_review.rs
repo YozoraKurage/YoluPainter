@@ -415,6 +415,7 @@ fn observe_view3d(config: &[(u8, Option<Combo>)], press: Press) -> Vec<Operation
         found.push(match nav {
             Nav::Orbit => Operation::Orbit,
             Nav::SnapOrbit => Operation::SnapOrbit,
+            Nav::Light => Operation::LightOrbit,
             Nav::Pan => Operation::Pan,
             Nav::Zoom => Operation::Zoom,
         });

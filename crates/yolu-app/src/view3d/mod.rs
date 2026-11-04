@@ -11,6 +11,7 @@ pub mod gizmo;
 mod held;
 pub mod hide;
 pub mod input;
+pub mod light;
 mod liltoon_wgsl;
 pub mod look_gpu;
 pub mod model;
@@ -46,6 +47,8 @@ pub enum Nav {
     Pan,
     /// Ctrl+Space（寄る・引く）。
     Zoom,
+    /// Shift + 右ドラッグ（光の向きを回す。視点は動かさない）。
+    Light,
 }
 
 /// 3D ビューの入力の途中の状態。

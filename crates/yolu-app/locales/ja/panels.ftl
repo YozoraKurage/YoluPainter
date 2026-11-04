@@ -855,3 +855,5 @@ panels-remove-from-the-assets = { $name }をアセットから消しますか？
 panels-point-number = 点 { $number }
 panels-point-number-color = 点 { $number } の色
 panels-effects-on-the-mask = マスクに効果 { $count } 件
+panels-auto-rotate-light-tip = ライトを自動で回す
+panels-auto-rotate-light = 自動で回す

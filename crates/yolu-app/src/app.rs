@@ -2690,6 +2690,8 @@ impl YoluApp {
         release_tab_focus(&ctx, self.state.ui.hide_ui);
         // 3D ビューのタブのどれかが見えているか（次のフレームのキー入力・メニューの取り消しの行き先が読む）
         self.state.view3d.visible = self.view3d.any_drawn();
+        // 光を自動で回している間は、見えている 3D ビューの方位を進め、描き直しを頼み続ける
+        crate::view3d::light::tick(&ctx, &mut self.state);
         self.state.ui.canvas_visible = std::mem::take(&mut self.state.ui.canvas_drawn);
         if !self.state.ui.canvas_visible {
             release_hidden_canvas(&mut self.state);

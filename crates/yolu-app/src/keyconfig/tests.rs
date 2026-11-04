@@ -441,7 +441,12 @@ fn a_changed_mouse_combination_takes_effect_can_be_turned_off_and_conflicts_are_
         Some(ComboConflict::With(orbit))
     );
     assert!(app.keys.has_conflicts());
-    // Shift＋右ボタンなら、修飾の多い方が先に当たる（回転に隠れない）
+    // Shift＋右ボタンは、既定でライトを回す組み合わせ: ぶつかる（同じ押しは、先に並んだ方が当たる）
+    let light = GESTURES
+        .iter()
+        .find(|g| g.operation == keymap::Operation::LightOrbit)
+        .unwrap()
+        .index;
     app.keys.set_combo(
         pan,
         Some(Combo {
@@ -451,9 +456,24 @@ fn a_changed_mouse_combination_takes_effect_can_be_turned_off_and_conflicts_are_
             ctrl: false,
         }),
     );
+    assert_eq!(
+        app.keys.combo_conflict(pan),
+        Some(ComboConflict::With(light))
+    );
+    assert!(app.keys.has_conflicts());
+    // Ctrl＋右ボタンなら、修飾の多い方が先に当たる（回転に隠れない）
+    app.keys.set_combo(
+        pan,
+        Some(Combo {
+            button: PointerButton::Secondary,
+            alt: false,
+            shift: false,
+            ctrl: true,
+        }),
+    );
     assert!(!app.keys.has_conflicts());
     assert_eq!(
-        keymap::gesture("view3d", PointerButton::Secondary, &Modifiers::SHIFT, false),
+        keymap::gesture("view3d", PointerButton::Secondary, &Modifiers::CTRL, false),
         Some(keymap::Operation::Pan)
     );
     assert_eq!(

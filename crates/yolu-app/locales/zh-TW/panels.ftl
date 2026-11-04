@@ -855,3 +855,5 @@ panels-remove-from-the-assets = 要從資源中移除{ $name }嗎？
 panels-point-number = 點 { $number }
 panels-point-number-color = 點 { $number } 的顏色
 panels-effects-on-the-mask = 遮罩上有 { $count } 個效果
+panels-auto-rotate-light-tip = 自動旋轉光源
+panels-auto-rotate-light = 自動旋轉

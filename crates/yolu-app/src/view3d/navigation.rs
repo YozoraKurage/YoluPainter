@@ -197,6 +197,9 @@ pub struct Drag {
     material: yolu_core::geometry::MaterialSet,
     preferences: Preferences,
     resolved: Option<Anchor>,
+    /// 光の向きを回すドラッグで、方位が増える向きが画面の右か（+1）左か（-1）。押したときの光とカメラで決め、離すまで変えない
+    /// （光が画面の端を通るときに向きが入れ替わって、行き来しないように）。
+    light_turn: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -219,7 +222,13 @@ impl Drag {
             material: state.material.clone(),
             preferences,
             resolved: None,
+            light_turn: super::light::turn_direction(&state.view),
         }
+    }
+
+    /// 光の向きを回すドラッグの、方位が増える向き（`light::drag`）。
+    pub fn light_turn(&self) -> f32 {
+        self.light_turn
     }
 
     /// 回すドラッグ（右ボタン・Alt + 右）で、このポインタの位置を受けて回す量（画面の点）。押した所から `dead_zone` までは回さない（動かさずに離す
@@ -303,6 +312,12 @@ pub fn move_by(app: &mut AppState, rect: Rect, nav: Nav, dx: f32, dy: f32) {
     let Some(drag) = app.view3d.view.input.navigation.as_mut() else {
         return;
     };
+    if nav == Nav::Light {
+        // 光の回転はモデルへのレイを使わない
+        let turn = drag.light_turn();
+        super::light::drag(app, turn, dx, dy);
+        return;
+    }
     let anchor = drag.anchor(rect);
     let preferences = drag.preferences;
     let camera = &mut app.view3d.view.camera;
@@ -342,6 +357,7 @@ pub fn move_by(app: &mut AppState, rect: Rect, nav: Nav, dx: f32, dy: f32) {
             camera.zoom_towards(anchor.zoom, dx)
         }
         Nav::Zoom => camera.zoom(dx),
+        Nav::Light => {}
     }
 }
 
@@ -350,6 +366,17 @@ pub fn flying(app: &AppState) -> bool {
     matches!(
         app.view3d.view.input.nav,
         Some((Nav::Orbit, crate::state::key::PointerButton::Secondary))
+    )
+}
+
+/// 右ボタンで 3D の視点か光を回している間か。この間は、W/A/S/D/Q/E をキーの表（ツールの切り替えなど）へ渡さない（視点を動かすのは `flying` の間だけ）。
+pub fn takes_fly_keys(app: &AppState) -> bool {
+    matches!(
+        app.view3d.view.input.nav,
+        Some((
+            Nav::Orbit | Nav::Light,
+            crate::state::key::PointerButton::Secondary
+        ))
     )
 }
 

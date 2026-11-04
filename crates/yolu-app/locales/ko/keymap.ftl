@@ -5,6 +5,7 @@ keymap-pan = 패닝
 keymap-zoom = 확대/축소
 keymap-rotate = 회전
 keymap-snap-orbit = 오비트 스냅
+keymap-light-orbit = 라이트 회전
 keymap-set-clone-source = 복제 원본 지정
 keymap-add-to-selection = 선택 영역에 추가
 keymap-subtract-from-selection = 선택 영역에서 빼기

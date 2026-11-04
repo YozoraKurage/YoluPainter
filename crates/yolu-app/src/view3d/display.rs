@@ -138,6 +138,8 @@ pub struct Display {
     /// 主な光の来る向き（方位 yaw と高さ pitch、度。Unity 版と同じ: (sin yaw cos pitch, sin pitch, cos yaw cos pitch)）。
     pub light_yaw: f32,
     pub light_pitch: f32,
+    /// 光の方位を一定の速さで回し続けるか（画面だけの状態。保存せず、次の起動では切。`light::advance`）。
+    pub light_spin: bool,
     /// 主な光の強さ（1 が既定）と色。
     pub light_intensity: f32,
     pub light_color: [f32; 3],
@@ -185,6 +187,7 @@ impl Default for Display {
             shading: Shading::Material,
             light_yaw: d.x.atan2(d.z).to_degrees(),
             light_pitch: d.y.asin().to_degrees(),
+            light_spin: false,
             light_intensity: 1.0,
             light_color: [1.0; 3],
             ambient: [0.5; 3],
@@ -335,6 +338,7 @@ impl Display {
             Op::ShadowSoftness(v) => self.shadow_softness = finite(v, 0.0, 1.0, 0.25),
             Op::LightYaw(v) => self.light_yaw = finite(v, -180.0, 180.0, 0.0),
             Op::LightPitch(v) => self.light_pitch = finite(v, -89.0, 89.0, 0.0),
+            Op::LightSpin(on) => self.light_spin = on,
             Op::LightIntensity(v) => self.light_intensity = finite(v, 0.0, 4.0, 1.0),
             // 選べる数でなければ、それ以下でいちばん大きい選べる数（0 は 1 = 切）
             Op::Antialias(n) => {
@@ -404,6 +408,8 @@ pub enum Op {
     ShadowSoftness(f32),
     LightYaw(f32),
     LightPitch(f32),
+    /// 光の方位を回し続ける・止める（止めると、その時の方位のまま）。
+    LightSpin(bool),
     LightIntensity(f32),
     /// アンチエイリアスのサンプル数（`SAMPLE_CHOICES`。1 は切）。
     Antialias(u32),

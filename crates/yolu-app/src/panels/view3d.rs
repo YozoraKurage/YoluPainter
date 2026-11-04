@@ -695,6 +695,13 @@ impl View3dSlot {
             )
             .selected(app.view3d.view.display.settings_open),
         );
+        // 表示の種類の名前が詰めずに入る幅のビューにだけ出す（切り替えは設定のパネルの「ライト」にもある）
+        if light_spin_fits(ui, app, view, items.len() + 1) {
+            items.push(
+                w::CornerIcon::new("light_spin", "sync", lang.t("panels-auto-rotate-light-tip"))
+                    .selected(app.view3d.view.display.light_spin),
+            );
+        }
         items.push(
             w::CornerIcon::new(
                 "frame",
@@ -708,6 +715,9 @@ impl View3dSlot {
         if let Some(i) = out.clicked.filter(|_| live) {
             match items[i].id {
                 "settings" => app.apply(Action::View3d(Op::ToggleSettings)),
+                "light_spin" => app.apply(Action::View3d(Op::LightSpin(
+                    !app.view3d.view.display.light_spin,
+                ))),
                 "frame" => app.apply(Action::FrameModel),
                 _ => {}
             }
@@ -831,7 +841,21 @@ impl View3dSlot {
 
 /// 表示の種類のドロップダウンの幅の上限・下限（右上の隅のアイコンの列と軸の印にかからない幅）。
 const SHADING_DROPDOWN_MAX: f32 = 250.0;
-const SHADING_DROPDOWN_MIN: f32 = 110.0;
+const SHADING_DROPDOWN_MIN: f32 = 86.0;
+
+/// 表示の種類のドロップダウンの箱が、名前を詰めずに出すのに要る幅（名前の幅と、左の余白・右の矢印の分。`w::dropdown` の並びと合わせる）。
+fn shading_label_width(ui: &Ui, app: &AppState) -> f32 {
+    let name = display::shading_label(app, app.view3d.view.display.shading);
+    w::text_width(ui.painter(), &name, t::LABEL).ceil() + 26.0
+}
+
+/// 隅のアイコンの列に「ライトを自動で回す」を足しても（`others` はそれ以外のアイコンの数）、表示の種類の名前が詰めずに入るか。
+fn light_spin_fits(ui: &Ui, app: &AppState, view: Rect, others: usize) -> bool {
+    let n = others as f32 + 1.0;
+    let icons = n * w::CORNER_ICON_SIZE + (n - 1.0) * 2.0 + 4.0;
+    let room = view.width() - icons - 3.0 * w::CORNER_MARGIN;
+    room >= shading_label_width(ui, app).min(SHADING_DROPDOWN_MAX)
+}
 
 /// 表示域の左上の隅の、今のビューの表示の種類のドロップダウン（押すと、その下に表示の種類のメニュー。メニューはこのビューへ当てる）。
 /// 別のレイヤー（`egui::Area`）に置くので、下のビューの入力（描く・回す）は、ドロップダウンの上では始まらない。`icons_left` は右上の
@@ -919,6 +943,24 @@ fn overlay_skipped_tooltip(lang: crate::lang::Lang, skip: Skip) -> String {
     lang.with_reason(lang.t("panels-selection-not-shown-in-3d-tip"), reason)
 }
 
+/// 設定のパネルの「ライト」の節の、ライトを自動で回す切り替え（隅のアイコンと同じ値）。
+fn light_spin_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, on: bool) {
+    let r = rows.row(22.0, 4.0);
+    let lang = app.lang;
+    let now = w::toggle(
+        ui,
+        r,
+        "view3d.set.light_spin",
+        lang.t("panels-auto-rotate-light"),
+        on,
+        None,
+        true,
+    );
+    if now != on {
+        app.apply(Action::View3d(Op::LightSpin(now)));
+    }
+}
+
 /// 3D の絵が元の大きさより縮んでいることの印のツールチップ（隅の警告のアイコン）: 縮めた段と短い理由。`by_budget` は縮めがメモリの予算で
 /// 決まったか（None は分からない: メッシュマップ）。
 fn reduced_tooltip(lang: crate::lang::Lang, level: u32, by_budget: Option<bool>) -> String {
@@ -932,7 +974,7 @@ fn reduced_tooltip(lang: crate::lang::Lang, level: u32, by_budget: Option<bool>)
 }
 
 const PANEL_WIDTH: f32 = 252.0;
-const PANEL_HEIGHT: f32 = 464.0;
+const PANEL_HEIGHT: f32 = 490.0;
 /// 設定のパネルの「画質」の面の高さ（内容が少ないので低い）。
 const QUALITY_HEIGHT: f32 = 204.0;
 
@@ -1238,6 +1280,7 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                 true,
                 Op::LightPitch,
             );
+            light_spin_row(ui, app, &mut rows, d.light_spin);
             let r = rows.row(22.0, 4.0);
             let shadows = w::toggle(
                 ui,

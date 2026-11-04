@@ -711,8 +711,8 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
         && !app.is_stroking()
         && app.transform.drag.is_none();
     let mut arrows: Vec<((f64, f64), bool)> = Vec::new();
-    // 右ボタンを押して 3D の視点を動かしている間は、W/A/S/D/Q/E を視点の移動に使う（ツールの切り替えなどの表のキーに渡さない）
-    let flying = crate::view3d::navigation::flying(app);
+    // 右ボタンを押して 3D の視点を回している間は W/A/S/D/Q/E を視点の移動に使い、光を回している間も、ツールの切り替えなどの表のキーに渡さない
+    let flying = crate::view3d::navigation::takes_fly_keys(app);
     ctx.input_mut(|i| {
         // キーの段 1「途中の操作」: 右を押している間の W/A/S/D/Q/E は視点の移動（表の `Scope::During` の行。下の段へ渡さない）
         crate::keymap::take_fly_keys(i, &mut app.view3d.view.input.fly_held, flying);
