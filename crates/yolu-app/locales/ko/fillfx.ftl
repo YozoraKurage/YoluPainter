@@ -1,0 +1,27 @@
+# 화면 문구(fillfx). 키는 "fillfx-" 에 영어 문장에서 딴 짧은 이름을 붙인 것이며, 툴팁의 키는 -tip으로 끝납니다.
+
+fillfx-the-shape-is-out-of = 도형이 범위를 벗어났습니다
+fillfx-the-ruler-is-out-of = 자가 범위를 벗어났습니다
+fillfx-ruler-edit-cancelled = 자 편집을 취소했습니다
+fillfx-shape-edit-cancelled = 도형 편집을 취소했습니다
+fillfx-invalid-projection = 투영이 올바르지 않습니다
+fillfx-not-a-fill-layer = 채우기 레이어가 아닙니다
+fillfx-image-set = 이미지를 지정했습니다
+fillfx-image-removed = 이미지를 제거했습니다
+fillfx-no-model = 모델이 없습니다
+fillfx-no-such-image-in-the = 프로젝트 에셋에 그런 이미지가 없습니다
+fillfx-cannot-read-the-image = 이미지를 읽을 수 없습니다
+fillfx-not-on-the-model = 모델 위가 아닙니다
+fillfx-surface-of-another-texture-set = 다른 텍스처 세트({ $name })의 면입니다.
+fillfx-decal-placed = 데칼을 배치했습니다
+fillfx-decal-placed-is-not-shown = 데칼을 배치했습니다. { $name }은(는) 아직 표시되지 않습니다({ $why }).
+fillfx-image-added-to-the-project = 프로젝트 에셋에 이미지를 추가했습니다
+fillfx-already-in-the-project-s = 이미 프로젝트 에셋에 있습니다
+fillfx-cannot-import = { $name }을(를) 가져올 수 없습니다
+fillfx-not-a-readable-png = 읽을 수 있는 PNG가 아닙니다
+fillfx-image-sides-must-be-1 = 이미지의 변은 1~8192여야 합니다
+fillfx-cannot-add-a-point = 점을 추가할 수 없습니다
+fillfx-up-to-64-points = 최대 64개까지
+fillfx-cannot-delete-the-point = 점을 삭제할 수 없습니다
+fillfx-it-is-the-last-point = 마지막 점입니다
+fillfx-not-a-readable-image = 읽을 수 있는 이미지가 아닙니다

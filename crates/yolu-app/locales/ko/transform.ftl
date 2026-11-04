@@ -1,0 +1,36 @@
+# 화면 문구(transform). 키는 "transform-" 에 영어 문장에서 딴 짧은 이름을 붙인 것이며, 툴팁의 키는 -tip으로 끝납니다.
+
+transform-liquify-input-limit-reached = 픽셀 유동화의 입력 한도에 도달했습니다
+transform-no-layer-with-pixels-to = 이동할 픽셀이 있는 레이어가 없습니다.
+transform-no-pixels-to-move-inside = 선택 영역 안에 이동할 픽셀이 없습니다.
+transform-no-pixels-to-move = 이동할 픽셀이 없습니다.
+transform-that-would-collapse-the-layer = 레이어가 없어져 버립니다.
+transform-transform-cancelled = 변형을 취소했습니다.
+transform-bilinear = 쌍선형
+transform-nearest = 최근접
+transform-flip-horizontal = 좌우 반전
+transform-flip-vertical = 상하 반전
+transform-rotate-90-counter-clockwise = 시계 반대 방향으로 90° 회전
+transform-rotate-90-clockwise = 시계 방향으로 90° 회전
+transform-resampling = 리샘플링
+transform-bilinear-smooths-nearest-keeps-hard-tip = 쌍선형은 부드럽게, 최근접은 픽셀을 또렷하게 유지합니다. 픽셀 단위 이동, 90° 회전, 뒤집기는 어느 쪽이든 픽셀을 그대로 복사합니다
+transform-mesh = 메시
+transform-columns = 열
+transform-rows = 행
+transform-numeric = 수치
+transform-horizontal-offset-is-right-tip = 가로 오프셋(+는 오른쪽)
+transform-vertical-offset-is-up-tip = 세로 오프셋(+는 위쪽)
+transform-width = 너비
+transform-horizontal-scale-a-negative-value-tip = 가로 배율(음수면 뒤집힘)
+transform-height = 높이
+transform-vertical-scale-a-negative-value-tip = 세로 배율(음수면 뒤집힘)
+transform-angle = 각도
+transform-counter-clockwise-about-the-centre-tip = 이동하는 대상의 중심을 기준으로 시계 반대 방향
+transform-bilinear-smooths-nearest-keeps-hard-2-tip = 쌍선형은 부드럽게, 최근접은 픽셀을 또렷하게 유지합니다
+transform-apply = 적용
+transform-transform-by-these-numbers-one-tip = 이 수치로 변형합니다(실행 취소 1단계)
+transform-reset = 초기화
+transform-back-to-no-change-tip = 변경 없음으로 되돌립니다
+transform-diameter = 지름
+transform-strength = 강도
+transform-restore-how-strongly-pixels-go-tip = 복원: 이 픽셀 유동화 세션의 시작 상태로 픽셀을 얼마나 강하게 되돌릴지

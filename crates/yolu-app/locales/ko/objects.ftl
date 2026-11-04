@@ -1,0 +1,33 @@
+# 화면 문구(objects). 키는 "objects-" 에 영어 문장에서 딴 짧은 이름을 붙인 것이며, 툴팁의 키는 -tip으로 끝납니다.
+
+objects-projection-placement = 투영 배치
+objects-gradient-decal = 그레이디언트 데칼
+objects-filter-shape = 필터의 도형
+objects-point = 점
+objects-path = 패스
+objects-ruler = 자
+objects-nothing-is-selected = 선택된 것이 없습니다
+objects-cannot-delete = 삭제할 수 없습니다
+objects-it-is-the-fill-layer = 채우기 레이어의 투영입니다
+objects-move = 이동
+objects-rotate = 회전
+objects-scale = 크기 조절
+objects-local = {" "}로컬 { $a }
+objects-local-2 = {" "}로컬 { $p }
+objects-cannot-move-the-path = 패스를 이동할 수 없습니다
+objects-no-model = 모델이 없습니다
+objects-point-is-not-on-the = 점 { $i }이(가) 면 위에 없습니다
+objects-the-3d-view-is-not = 3D 뷰가 표시되어 있지 않습니다
+objects-used-in-edit-or-pose = 편집 또는 포즈 모드에서 사용합니다
+objects-points-can-only-be-moved = 점은 이동만 할 수 있습니다
+objects-no-bone-is-selected = 선택된 본이 없습니다
+objects-another-operation-is-in-progress = 다른 작업이 진행 중입니다
+objects-cannot-scale = 크기를 조절할 수 없습니다
+objects-a-negative-factor-cannot-be = 음수 배율은 사용할 수 없습니다
+objects-the-3d-view-is-in = 3D 뷰가 다른 창에 있습니다
+objects-it-has-no-default-placement = 기본 배치가 없습니다
+objects-cannot-do = { $name }을(를) 할 수 없습니다
+objects-cannot-delete-the = { $name }을(를) 삭제할 수 없습니다
+objects-cannot-reset-the-position = 위치를 초기화할 수 없습니다
+objects-cannot-reset-the-rotation = 회전을 초기화할 수 없습니다
+objects-cannot-reset-the-scale = 크기를 초기화할 수 없습니다

@@ -12,11 +12,11 @@ Values are written to `YoluPainter/settings.conf` in the settings folder (`%APPD
 
 | Item | What it does |
 |---|---|
-| Language | 日本語, English or 繁體中文. The screen changes as soon as you choose |
+| Language | 日本語, English, 繁體中文, 简体中文 or 한국어. The screen changes as soon as you choose |
 
 ### Language
 
-When the settings have no language yet (such as the first start), the app starts in the OS language: Japanese or Traditional Chinese (Taiwan, Hong Kong, Macau) when the OS uses one of them, English otherwise. The OS language is read from the display language on Windows, the first language YoluPainter has in the list of preferred languages on Mac, and `LC_ALL`, `LC_MESSAGES` and `LANG` on Linux. The environment variable `YOLUPAINTER_LANG` (`ja`, `en` or `zh-TW`) takes precedence. The Traditional Chinese screen draws its text with Noto Sans TC from the `fonts` folder of the download (if it is missing, a notice appears and the bundled font is used). Once a language has been saved to the settings, the app always starts in it.
+When the settings have no language yet (such as the first start), the app starts in the OS language: Japanese, Traditional Chinese (Taiwan, Hong Kong, Macau), Simplified Chinese or Korean when the OS uses one of them, English otherwise. The OS language is read from the display language on Windows, the first language YoluPainter has in the list of preferred languages on Mac, and `LC_ALL`, `LC_MESSAGES` and `LANG` on Linux. The environment variable `YOLUPAINTER_LANG` (`ja`, `en`, `zh-TW`, `zh-CN` or `ko`) takes precedence. The Traditional Chinese, Simplified Chinese and Korean screens draw their text with Noto Sans (TC, SC and KR respectively) from the `fonts` folder of the download (if it is missing, a notice appears and the bundled font is used). Once a language has been saved to the settings, the app always starts in it.
 
 ## Pen
 

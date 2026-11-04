@@ -21,7 +21,7 @@ The tag is a BCP 47 language tag (`ja`, `en`, `zh-TW`, `zh-CN`, `ko`, ...). Any 
 | `crates/yolu-ops/src/text.rs` | A `Lang` value and a row in `IDS` (tag, locale name prefixes, Windows language IDs) |
 | `crates/yolu-app/src/lang.rs` | A `Lang` value and a row in `TABLE` (the name in the language itself, quotation marks, parentheses, full stop, font) |
 
-`zh-CN` (简体中文) and `ko` (한국어) already have rows, so adding their folder is enough to make them selectable.
+日本語, English, 繁體中文 (`zh-TW`), 简体中文 (`zh-CN`) and 한국어 (`ko`) already have rows in both files. A new language needs a row in each, together with its folder.
 A folder without a row in the table is refused at build time.
 
 On the first start, the language follows the OS (the display language on Windows, the preferred languages on Mac, `LC_ALL`, `LC_MESSAGES` and `LANG` on Linux).

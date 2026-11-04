@@ -67,9 +67,10 @@ const TABLE: [Info; 5] = [
     },
     Info {
         name: "한국어",
-        // 訳が入るときに、訳の使い方に合わせて決め直す
-        quote: ["\"", "\""],
-        paren: [" (", ")"],
+        // 名前の引用は小さな引用符 ‘ ’（国立国語院の文章符号規定で、項目名・強調を括る物。“ ” は発話の引用）。
+        // 理由の括弧は半角の ( ) で、前の語に付ける（「…할 수 없습니다(이유).」。.ftl の 593 か所が `…(…)` の形）。句点は ASCII の "."。ハングルは大小文字が無い。
+        quote: ["‘", "’"],
+        paren: ["(", ")"],
         stop: ".",
         lower_first: false,
         font: Some(&font::NOTO_SANS_KR),
@@ -389,6 +390,8 @@ mod tests {
         assert_eq!(lang(&[("YOLUPAINTER_LANG", "zh-TW")]), Lang::ZhTw);
         assert_eq!(lang(&[("LANG", "zh_CN.UTF-8")]), Lang::ZhCn);
         assert_eq!(lang(&[("YOLUPAINTER_LANG", "zh-CN")]), Lang::ZhCn);
+        assert_eq!(lang(&[("LANG", "ko_KR.UTF-8")]), Lang::Ko);
+        assert_eq!(lang(&[("YOLUPAINTER_LANG", "ko")]), Lang::Ko);
         assert_eq!(lang(&[("LANG", "ja_JP.UTF-8")]), Lang::Ja);
         assert_eq!(lang(&[("LANG", "ja")]), Lang::Ja);
         assert_eq!(lang(&[("LANG", "en_US.UTF-8")]), Lang::En);
@@ -507,6 +510,27 @@ mod tests {
         assert_eq!(zh.tag(), "zh-TW");
     }
 
+    /// 한국어の書式: ‘ ’ の引用・半角の括弧（前の語に付ける）・ASCII の句点。続く文の頭は小文字にしない（ハングルに大小は無い）。
+    #[test]
+    fn korean_formats_like_the_table() {
+        let ko = Lang::Ko;
+        assert_eq!(ko.quote("A"), "‘A’");
+        assert_eq!(
+            ko.with_reason("저장할 수 없습니다.", "에셋이 가득 찼습니다."),
+            "저장할 수 없습니다(에셋이 가득 찼습니다)."
+        );
+        assert_eq!(
+            ko.with_reason("저장할 수 없습니다", ""),
+            "저장할 수 없습니다."
+        );
+        assert_eq!(
+            ko.in_set("A", "Krita 파일을 읽을 수 없습니다."),
+            "텍스처 세트 ‘A’에서 Krita 파일을 읽을 수 없습니다."
+        );
+        assert_eq!(ko.name(), "한국어");
+        assert_eq!(ko.tag(), "ko");
+    }
+
     /// Mac の優先する言語の一覧: 読める先頭の言語。選べない言語・知らない言語は英語。環境変数は見ない。
     #[test]
     fn on_mac_the_preferred_languages_decide() {
@@ -525,7 +549,7 @@ mod tests {
         assert_eq!(lang(&[], &["de"]), Lang::En);
         // 一覧の上から、選べる最初の言語（先頭が選べない言語でも、次を見る）
         assert_eq!(lang(&[], &["zh-Hans-CN", "ja-JP"]), Lang::ZhCn);
-        assert_eq!(lang(&[], &["ko-KR", "ja-JP"]), Lang::Ja);
+        assert_eq!(lang(&[], &["ko-KR", "ja-JP"]), Lang::Ko);
         assert_eq!(lang(&[], &["fr-FR", "ja-JP"]), Lang::Ja);
         assert_eq!(lang(&[], &["zh-Hant-TW", "ja-JP"]), Lang::ZhTw);
         assert_eq!(lang(&[], &["fr-FR", "zh-Hans-CN"]), Lang::ZhCn);
@@ -542,7 +566,7 @@ mod tests {
             (Lang::En, "en", "English", "\""),
             (Lang::ZhTw, "zh-TW", "繁體中文", "「"),
             (Lang::ZhCn, "zh-CN", "简体中文", "“"),
-            (Lang::Ko, "ko", "한국어", "\""),
+            (Lang::Ko, "ko", "한국어", "‘"),
         ] {
             assert_eq!(Lang::EVERY[lang as usize], lang);
             assert_eq!(lang.tag(), tag);
@@ -558,10 +582,10 @@ mod tests {
         assert_eq!(Lang::Ko.info().font, Some(&font::NOTO_SANS_KR));
     }
 
-    /// 表: 選べる言語は `locales/` のフォルダの言語で、日本語・英語・繁體中文・简体中文がある。タグで引ける。
+    /// 表: 選べる言語は `locales/` のフォルダの言語で、日本語・英語・繁體中文・简体中文・한국어がある。タグで引ける。
     #[test]
     fn the_table_lists_the_languages_with_texts() {
-        for lang in [Lang::Ja, Lang::En, Lang::ZhTw, Lang::ZhCn] {
+        for lang in [Lang::Ja, Lang::En, Lang::ZhTw, Lang::ZhCn, Lang::Ko] {
             assert!(Lang::ALL.contains(&lang), "{lang:?}");
             assert_eq!(Lang::from_tag(lang.tag()), Some(lang));
         }

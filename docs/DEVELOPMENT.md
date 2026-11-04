@@ -119,7 +119,7 @@ CI の定義は `actionlint .github/workflows/*.yml` で実行せずに検査で
 
 ## 画面の文字と、パネルだけの確かめ
 
-画面の文字は、言語ごとに `crates/yolu-app/locales/<タグ>/<モジュール>.ftl`（Fluent。`ja`・`en`・`zh-TW`）に置き、コードはキーで引きます（引数の無い文は `Lang::t`、引数のある文は `Lang::f`、core の断りの理由は `Lang::reason`）。文は実行ファイルに埋め込みます（`build.rs` が `locales/` の下のフォルダを全部埋めます）。その言語に無いキーは英語の文で出ます。
+画面の文字は、言語ごとに `crates/yolu-app/locales/<タグ>/<モジュール>.ftl`（Fluent。`ja`・`en`・`zh-TW`・`zh-CN`・`ko`）に置き、コードはキーで引きます（引数の無い文は `Lang::t`、引数のある文は `Lang::f`、core の断りの理由は `Lang::reason`）。文は実行ファイルに埋め込みます（`build.rs` が `locales/` の下のフォルダを全部埋めます）。その言語に無いキーは英語の文で出ます。
 日英でキーの組と引数の名前が同じこと、コードが引くキーが両方にあること、どこからも引かれないキーが無いこと、ほかの言語のキーと引数が英語にあることは `cargo test -p yolu-app --test headless ftl_keys::` が見ます。
 言語ごとの名前・引用の印・括弧・句点・フォントは `crates/yolu-app/src/lang.rs` の言語の表に、タグと OS の言語の見分けは `crates/yolu-ops/src/text.rs` に置きます（訳の足し方は [CONTRIBUTING.md](../CONTRIBUTING.md)）。
 `Lang::pick(日, 英)` はテストと `yolu-mock` の下書きで日英の文を比べる・書くためのもので、本番の画面の文には使いません（日本語のほかの言語で英語になるため）。core・yolu-io の日本語の診断の文をそのまま出す所は `Lang::core_text(日, 英)` です。

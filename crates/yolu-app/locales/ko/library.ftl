@@ -1,0 +1,28 @@
+# 화면 문구(library). 키는 "library-" 에 영어 문장에서 딴 짧은 이름을 붙인 것이며, 툴팁의 키는 -tip으로 끝납니다.
+
+library-reduced-from-16-to-8 = 16비트에서 8비트로 줄였습니다
+library-project = 프로젝트
+library-library = 라이브러리
+library-this-project-s-assets-saved-tip = 이 프로젝트의 에셋(.ylp에 저장됨)
+library-your-library-a-folder-shared-tip = 내 라이브러리(폴더, 프로젝트 간 공유)
+library-already-writing-to-the-library = 이미 라이브러리에 쓰고 있습니다
+library-finishing-the-cancelled-write = 취소한 쓰기를 마무리하고 있습니다
+library-added-to-the-library = 라이브러리에 { $added }개를 추가했습니다.
+library-text = {" "}
+library-no-library-location = 라이브러리 위치가 없습니다
+library-writing-to-the-library = 라이브러리에 쓰는 중
+library-the-write-stopped-midway = 쓰기가 중간에 멈췄습니다
+library-built-in-items-cannot-be = 기본 제공 항목은 라이브러리에 추가할 수 없습니다.
+library-layer-not-found = 레이어를 찾을 수 없습니다
+library-removed-from-the-library = 라이브러리에서 제거했습니다
+library-not-a-fill-layer = 채우기 레이어가 아닙니다
+library-it-uses-images = 이미지를 사용합니다
+library-cannot-read-the-list = 목록을 읽을 수 없습니다
+library-not-a-readable-png = 읽을 수 있는 PNG가 아닙니다
+library-image-sides-must-be-1 = 이미지의 변은 1~8192여야 합니다
+library-wrong-format = 형식이 올바르지 않습니다
+library-too-large = 너무 큽니다
+library-were-already-in-the-library = { $existing }개는 이미 라이브러리에 있습니다.
+library-is-already-in-the-library = { $name }은(는) 이미 라이브러리에 있습니다.
+library-files-count = 파일 { $count }개
+library-added-file-to-the-library = 라이브러리에 { $name }을(를) 추가했습니다.

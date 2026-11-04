@@ -1,0 +1,32 @@
+# 화면 문구(windows). 키는 "windows-" 에 영어 문장에서 딴 짧은 이름을 붙인 것이며, 툴팁의 키는 -tip으로 끝납니다.
+
+windows-and-more = 외 { $existing }개
+windows-files-to-replace = 교체할 파일
+windows-of-images-already-exist = { $total }개 중 { $existing }개의 이미지가 이미 있습니다
+windows-cancel = 취소
+windows-replace = 교체
+windows-replaces-the-files-with-the-tip = 이름이 같은 파일을 교체합니다
+windows-close-window = 창 닫기
+windows-normal = 노멀
+windows-linear = 선형
+windows-replaced = 교체됨
+windows-new = 신규
+windows-exported-images = 내보낸 이미지
+windows-close = 닫기
+windows-files = 파일 { $many }개
+windows-replace-the-imported-psd = 가져온 PSD 교체
+windows-this-project-was-imported-from-tip = 이 프로젝트는 이 PSD에서 가져온 것입니다. 내보낸 PSD로 교체합니다
+windows-replaces-the-files-with-the-2-tip = 이름이 같은 파일을 내보낸 PSD로 교체합니다
+windows-px = { $pixels }px
+windows-merge-layers = 레이어 병합
+windows-the-look-changes = 외형이 바뀝니다
+windows-merge = 병합
+windows-merges-even-though-the-look-tip = 외형이 바뀌어도 병합합니다(실행 취소하면 레이어가 돌아옵니다)
+windows-psd-import = PSD 가져오기
+windows-psd-export = PSD 내보내기
+windows-cancel-tip = 취소
+windows-saving = 저장 중
+windows-text = ,{" "}
+windows-there-are-unsaved-changes = 저장하지 않은 변경 사항이 있습니다.
+windows-running-jobs-will-be-cancelled = 실행 중인 작업({ $names })이 취소됩니다. 종료할까요?
+windows-there-are-unsaved-changes-and = 저장하지 않은 변경 사항이 있으며, 실행 중인 작업({ $names })이 취소됩니다.
