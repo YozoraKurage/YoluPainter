@@ -45,3 +45,4 @@ settings-cache-folder = 캐시 폴더
 settings-cache-limit = 캐시 한도
 settings-setting = 설정
 settings-alignment = 정렬
+settings-effect-memory = 효과 메모리

@@ -1879,3 +1879,49 @@ fn the_vsync_row_defaults_off_shows_the_restart_note_and_is_written_only_when_on
     assert!(!h.app().settings().vsync);
     let _ = h.get_by_label("垂直同期 ・ 再起動で反映");
 }
+
+#[test]
+fn headless_the_effect_memory_is_shared_by_the_sets_with_most_for_the_current_one() {
+    let mut s = AppState::new(256, 256);
+    s.prefs_mut().ram_mib = 16384;
+    let core_default = s.doc().filter_cache_budget_bytes();
+    let (_, shape) = s.receive_link_model(&two_sets_model());
+    shape.expect("3D に読める");
+    assert_eq!(s.sets().len(), 2);
+    let (first, second) = (s.sets().current_index(), 1 - s.sets().current_index());
+    // 設定を読むまでは core の既定のまま
+    assert_eq!(s.doc().filter_cache_budget_bytes(), core_default);
+    // 自動（16 GB: 2048 MiB）: 今のセットに 3/4、しまってあるセットに 1/4
+    s.load_settings(without_cache());
+    s.sync_budgets();
+    assert_eq!(s.set_doc(first).filter_cache_budget_bytes(), 1536 * MIB);
+    assert_eq!(s.set_doc(second).filter_cache_budget_bytes(), 512 * MIB);
+    // 切り替えると配り直す
+    s.switch_set(second).unwrap();
+    assert_eq!(s.set_doc(second).filter_cache_budget_bytes(), 1536 * MIB);
+    assert_eq!(s.set_doc(first).filter_cache_budget_bytes(), 512 * MIB);
+    // 選んだ値もすぐに配る（合計は設定を超えない）
+    set(&mut s, Pref::Budget(BudgetKind::Effects, Budget::Mib(1024)));
+    assert_eq!(s.set_doc(second).filter_cache_budget_bytes(), 768 * MIB);
+    assert_eq!(s.set_doc(first).filter_cache_budget_bytes(), 256 * MIB);
+    // 範囲の外は端に寄せる
+    set(&mut s, Pref::Budget(BudgetKind::Effects, Budget::Mib(1)));
+    assert_eq!(s.settings().effect_cache_budget, Budget::Mib(256));
+    let total: u64 = (0..2)
+        .map(|i| s.set_doc(i).filter_cache_budget_bytes())
+        .sum();
+    assert_eq!(total, 256 * MIB);
+}
+
+#[test]
+fn headless_effect_cache_shares_never_exceed_the_total() {
+    assert_eq!(prefs::effect_cache_shares(1000, 1, 0), vec![1000]);
+    assert_eq!(prefs::effect_cache_shares(1000, 0, 0), Vec::<u64>::new());
+    for sets in 2..9 {
+        for total in [0u64, 7, 1 << 20, 3 << 30] {
+            let shares = prefs::effect_cache_shares(total, sets, 1);
+            assert_eq!(shares.iter().sum::<u64>(), total, "{sets} {total}");
+            assert!(shares[1] >= total / 4 * 3);
+        }
+    }
+}

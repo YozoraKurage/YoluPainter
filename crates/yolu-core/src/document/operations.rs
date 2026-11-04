@@ -185,7 +185,7 @@ impl Document {
         d.effects.pointer_inputs_revision = effects.pointer_inputs_revision;
         d.effects.topology_revision = effects.topology_revision;
         d.effects.working_budget = effects.working_budget;
-        d.effects.cache_budget = effects.cache_budget;
+        d.effects.cache_budget = effects.cache_budget.min(super::eval::COPY_CACHE_BUDGET);
         d.effects.image_cache_budget = effects.image_cache_budget;
         d.effects.seam_budget = effects.seam_budget;
         d.effects.block_pixels = effects.block_pixels;

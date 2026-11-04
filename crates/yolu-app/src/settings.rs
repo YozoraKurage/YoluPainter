@@ -69,10 +69,17 @@ pub enum BudgetKind {
     Source,
     /// 1 回の操作（ストローク・塗りつぶし）の巻き戻し用。
     Stroke,
+    /// 効果（フィルター・塗りつぶしの画像など）を評価した出力を持っておくキャッシュ（画面の名前は「効果のメモリ」）。
+    Effects,
 }
 
 impl BudgetKind {
-    pub const ALL: [BudgetKind; 3] = [BudgetKind::Undo, BudgetKind::Source, BudgetKind::Stroke];
+    pub const ALL: [BudgetKind; 4] = [
+        BudgetKind::Undo,
+        BudgetKind::Source,
+        BudgetKind::Stroke,
+        BudgetKind::Effects,
+    ];
 
     /// 設定のファイルのキー。
     pub fn key(self) -> &'static str {
@@ -80,6 +87,7 @@ impl BudgetKind {
             BudgetKind::Undo => "undo_budget_mib",
             BudgetKind::Source => "source_budget_mib",
             BudgetKind::Stroke => "stroke_budget_mib",
+            BudgetKind::Effects => "effect_cache_budget_mib",
         }
     }
 
@@ -90,21 +98,25 @@ impl BudgetKind {
             BudgetKind::Undo => (0, 16384),
             BudgetKind::Source => (16, 65536),
             BudgetKind::Stroke => (8, 8192),
+            BudgetKind::Effects => (256, 16384),
         }
     }
 
-    /// 自動のときの MiB: 物理メモリの一定の割合（レイヤーのメモリ 1/2・取り消し 1/8・1 回の操作 1/16）を、小さい機械でも作業できる
-    /// 下限と、メモリを積んだ機械でも頭打ちにする上限で挟む（16 GB で 取り消し 2048・レイヤーのメモリ 8192・1 回の操作 1024。
-    /// 64 GB で 8192・32768・4096。上限は 16384・65536・4096）。
+    /// 自動のときの MiB: 物理メモリの一定の割合（レイヤーのメモリ 1/2・取り消し 1/8・1 回の操作 1/16・効果のメモリ 1/8）を、小さい PC でも
+    /// 作業できる下限と、メモリを積んだ PC でも頭打ちにする上限で挟む（16 GB で 取り消し 2048・レイヤーのメモリ 8192・1 回の操作 1024・
+    /// 効果のメモリ 2048。64 GB で 8192・32768・4096・8192。上限は 16384・65536・4096・16384）。効果のメモリは評価した出力の写しで、捨てても
+    /// 作り直せる。4096² の 1 レイヤー 1 チャンネルの出力が 64 MiB なので、下限の 512 MiB で 8 枚ぶん。
     ///
     /// 予算は使えるメモリの天井で、予約ではない: 文書が実際に使うときに取り、使っていない分は先に確保しない（予算の値で配列を作る所は
-    /// 無い）。大きな値を既定にしても、小さな文書を開いているアプリが使うメモリは変わらない。3 つの割合の合計（11/16）は 3 つが同時に天井まで
-    /// 使われる前提ではなく、超える操作を断る・古い履歴を捨てる境目の位置を決める。
+    /// 無い）。大きな値を既定にしても、小さな文書を開いているアプリが使うメモリは変わらない。4 つの割合の合計（13/16）は 4 つが同時に天井まで
+    /// 使われる前提ではなく、超える操作を断る・古い履歴を捨てる境目の位置を決める（効果のメモリだけは、断る境目でなく、超えた分を捨てる
+    /// 境目）。画像のミップマップは別枠で、文書ごとに 256 MiB の決め打ち（この予算には含めない）。
     pub fn automatic_mib(self, ram_mib: u64) -> u32 {
         let (div, lo, hi) = match self {
             BudgetKind::Undo => (8, 256, 16384),
             BudgetKind::Source => (2, 256, 65536),
             BudgetKind::Stroke => (16, 64, 4096),
+            BudgetKind::Effects => (8, 512, 16384),
         };
         (ram_mib / div).clamp(lo, hi) as u32
     }
@@ -115,6 +127,7 @@ impl BudgetKind {
             BudgetKind::Undo => &[0, 256, 512, 1024, 2048, 4096, 8192, 16384],
             BudgetKind::Source => &[512, 1024, 2048, 4096, 8192, 16384, 32768, 65536],
             BudgetKind::Stroke => &[64, 128, 256, 512, 1024, 2048, 4096],
+            BudgetKind::Effects => &[256, 512, 1024, 2048, 4096, 8192, 16384],
         }
     }
 }
@@ -211,6 +224,7 @@ pub struct Settings {
     pub undo_budget: Budget,
     pub source_budget: Budget,
     pub stroke_budget: Budget,
+    pub effect_cache_budget: Budget,
     /// 取り消し履歴の予算を超えても残す直近の段数。
     pub min_undo_steps: u32,
     /// CPU の処理に使うスレッドの数（None は自動 = 論理プロセッサの数。起動のときに決まる）。
@@ -281,6 +295,7 @@ impl Default for Settings {
             undo_budget: Budget::Auto,
             source_budget: Budget::Auto,
             stroke_budget: Budget::Auto,
+            effect_cache_budget: Budget::Auto,
             min_undo_steps: DEFAULT_MIN_UNDO_STEPS,
             cpu_threads: None,
             compositing: Compositing::Auto,
@@ -319,6 +334,7 @@ impl Settings {
             BudgetKind::Undo => self.undo_budget,
             BudgetKind::Source => self.source_budget,
             BudgetKind::Stroke => self.stroke_budget,
+            BudgetKind::Effects => self.effect_cache_budget,
         }
     }
 
@@ -327,6 +343,7 @@ impl Settings {
             BudgetKind::Undo => self.undo_budget = budget,
             BudgetKind::Source => self.source_budget = budget,
             BudgetKind::Stroke => self.stroke_budget = budget,
+            BudgetKind::Effects => self.effect_cache_budget = budget,
         }
     }
 
@@ -343,6 +360,7 @@ impl Settings {
             undo: bytes(BudgetKind::Undo),
             source: bytes(BudgetKind::Source),
             stroke: bytes(BudgetKind::Stroke),
+            effects: bytes(BudgetKind::Effects),
             min_undo_steps: self.min_undo_steps as usize,
         }
     }
@@ -391,6 +409,8 @@ pub struct Budgets {
     pub undo: u64,
     pub source: u64,
     pub stroke: u64,
+    /// 効果のメモリ（全テクスチャセットの合計。`sync_budgets` がセットに配る）。
+    pub effects: u64,
     pub min_undo_steps: usize,
 }
 
@@ -503,6 +523,7 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "undo_budget_mib" => lang.t("settings-undo-history"),
         "source_budget_mib" => lang.t("settings-layer-memory"),
         "stroke_budget_mib" => lang.t("settings-one-operation"),
+        "effect_cache_budget_mib" => lang.t("settings-effect-memory"),
         "min_undo_steps" => lang.t("settings-minimum-undo-steps"),
         "cpu_threads" => lang.t("settings-cpu-threads"),
         "compositing" => lang.t("settings-display-compositing"),
@@ -1128,6 +1149,7 @@ mod tests {
             undo_budget: Budget::Mib(512),
             source_budget: Budget::Mib(4096),
             stroke_budget: Budget::Auto,
+            effect_cache_budget: Budget::Mib(2048),
             min_undo_steps: 12,
             cpu_threads: Some(4),
             compositing: Compositing::Cpu,
@@ -2030,6 +2052,7 @@ mod tests {
             "disk_cache=off",
             "disk_cache_limit_gib=16",
             "external_ops_port=23456",
+            "effect_cache_budget_mib=2048",
         ] {
             assert!(written.lines().any(|l| l == line), "{line}\n{written}");
         }
@@ -2041,6 +2064,7 @@ mod tests {
         back.export_form = crate::export::ExportForm::default();
         back.undo_budget = Budget::Auto;
         back.source_budget = Budget::Auto;
+        back.effect_cache_budget = Budget::Auto;
         back.min_undo_steps = DEFAULT_MIN_UNDO_STEPS;
         back.cpu_threads = None;
         back.compositing = Compositing::Auto;
@@ -2071,6 +2095,7 @@ mod tests {
             undo_budget: Budget::Mib(0),
             source_budget: Budget::Mib(65536),
             stroke_budget: Budget::Mib(8),
+            effect_cache_budget: Budget::Mib(16384),
             cpu_threads: Some(MAX_CPU_THREADS),
             min_undo_steps: 0,
             ..Settings::default()
@@ -2450,16 +2475,17 @@ mod tests {
 
     #[test]
     fn automatic_budgets_follow_the_memory_in_the_share_each_one_needs() {
-        // (物理メモリ, 取り消し, レイヤーのメモリ, 1 回の操作) の MiB: 割合は 1/8・1/2・1/16。下限は小さい機械でも作業できる量、上限は大きい機械の値
-        for (ram, undo, source, stroke) in [
-            (512, 256, 256, 64),
-            (1024, 256, 512, 64),
-            (8192, 1024, 4096, 512),
-            (16384, 2048, 8192, 1024),
-            (32768, 4096, 16384, 2048),
-            (65536, 8192, 32768, 4096),
-            (131072, 16384, 65536, 4096),
-            (1 << 20, 16384, 65536, 4096),
+        // (物理メモリ, 取り消し, レイヤーのメモリ, 1 回の操作, 効果のメモリ) の MiB: 割合は 1/8・1/2・1/16・1/8。下限は小さい PC でも作業できる量、
+        // 上限は大きい PC の値
+        for (ram, undo, source, stroke, effects) in [
+            (512, 256, 256, 64, 512),
+            (1024, 256, 512, 64, 512),
+            (8192, 1024, 4096, 512, 1024),
+            (16384, 2048, 8192, 1024, 2048),
+            (32768, 4096, 16384, 2048, 4096),
+            (65536, 8192, 32768, 4096, 8192),
+            (131072, 16384, 65536, 4096, 16384),
+            (1 << 20, 16384, 65536, 4096, 16384),
         ] {
             assert_eq!(
                 BudgetKind::Undo.automatic_mib(ram),
@@ -2476,6 +2502,11 @@ mod tests {
                 stroke,
                 "1 回の操作 @ {ram}"
             );
+            assert_eq!(
+                BudgetKind::Effects.automatic_mib(ram),
+                effects,
+                "効果のメモリ @ {ram}"
+            );
         }
         // 設定からバイトへ: 自動はメモリから、数はそのまま
         let s = Settings {
@@ -2489,6 +2520,7 @@ mod tests {
                 undo: 2048 << 20,
                 source: 100 << 20,
                 stroke: 1024 << 20,
+                effects: 2048 << 20,
                 min_undo_steps: 7
             }
         );

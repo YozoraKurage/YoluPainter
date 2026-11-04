@@ -45,3 +45,4 @@ settings-cache-folder = 快取資料夾
 settings-cache-limit = 快取上限
 settings-setting = 設定
 settings-alignment = 對齊
+settings-effect-memory = 效果記憶體

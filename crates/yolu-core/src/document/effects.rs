@@ -1986,7 +1986,8 @@ impl Document {
         }
         Ok(need)
     }
-    /// 評価済みのタイルを持っておく予算（派生の表示用。古いものから捨てる。0 なら持たない）。
+    /// 評価済みのタイル（評価したブロックと Anchor のタイルの合計。画像のミップマップは別枠）を持っておく予算（派生の表示用。0 なら持たない）。
+    /// 超えたら、一度だけ使われた物を擬似乱数の順で、尽きたら 2 度以上使われた物を古い順で捨てる（`eval_residency`）。
     pub fn filter_cache_budget_bytes(&self) -> u64 {
         self.effects.cache_budget
     }

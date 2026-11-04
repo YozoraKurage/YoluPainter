@@ -15,6 +15,10 @@
 //!   セットを切り替える・開くときに入れ直す。自動は物理メモリから（`settings::BudgetKind`）。描いている間は入れず、終わったフレームで
 //!   入れる。1 回の操作・最小の取り消し段数はセットごとの値のまま（1 回の操作は同時に 1 つしか走らない）。今の画素がすでに予算を
 //!   超えているときは画素を捨てず、予算をその量まで広げて知らせる（それ以上は足せない）。
+//! - **効果のメモリ**（評価した効果の出力のキャッシュ）もプロジェクト全体の上限で、今のセットに 3/4、しまってあるセットに残りを等しく配り、
+//!   セットを切り替えるときに配り直す（`effect_cache_shares`）。超えた分は捨てて、次に読むときに作り直す（断る操作は無い）。文書の中では評価したブロックと Anchor のタイルを合わせて数え
+//!   （Anchor のタイルは 1/4 まで）、合計が配られた量を超えない。画像のミップマップは含めず、別に文書ごとに 256 MiB。文書の写し（書き出し・PSD・
+//!   バケツなど）は、配られた量にかかわらず 256 MiB までで評価し直す。
 //! - **CPU のスレッド**は rayon の全体のスレッドプールで、起動のときに決まる（`settings::apply_thread_setting`）。変えた値は次の起動から
 //!   効くので、行に「再起動で反映」と出す。
 //! - **ディスクキャッシュ**（既定は入。「メモリ」の区分）は、メモリの上限（レイヤーのメモリと取り消し履歴の予算の和）を超えた分のタイルの中身を、置き場所の
@@ -540,6 +544,7 @@ impl AppState {
         if doc.source_budget_bytes() != source {
             let _ = doc.set_source_budget_bytes(source);
         }
+        self.sync_effect_cache_budgets(wanted.effects);
         if !over {
             self.prefs.over = None;
         } else if self.prefs.over != Some((id, source)) {
@@ -549,6 +554,18 @@ impl AppState {
                 Source::Settings,
                 lang.t("prefs-the-layer-memory-is-already"),
             );
+        }
+    }
+
+    /// 効果のメモリ（全セットの合計 `total`）をセットの文書に配る（`effect_cache_shares`）。同じ値は入れ直さない。
+    fn sync_effect_cache_budgets(&mut self, total: u64) {
+        let current = self.session.sets.current_index();
+        let shares = effect_cache_shares(total, self.session.sets.len(), current);
+        for (i, share) in shares.into_iter().enumerate() {
+            let doc = self.set_doc_mut(i);
+            if doc.filter_cache_budget_bytes() != share {
+                doc.set_filter_cache_budget_bytes(share);
+            }
         }
     }
 
@@ -600,6 +617,23 @@ fn budget_name(lang: Lang, kind: BudgetKind, budget: Budget, ram_mib: u64) -> St
         }
         Budget::Mib(n) => format!("{n} MiB"),
     }
+}
+
+/// 効果のメモリの合計 `total` を、`sets` 個のテクスチャセットに配る（`current` が今のセット）。合計は `total` を超えない。
+///
+/// 今のセットに 3/4、しまってあるセットに残りの 1/4 を等しく（セットが 1 つなら全部を今のセットに）。描く・設定を変える・見せるチャンネルを
+/// 替えるのは今のセットで、評価し直しが何度も起きるのもそこ。しまってあるセットは 3D ビューに出すために合成されるが、中身は替わらないので、
+/// 一度合成した後にキャッシュから読む回数は少ない。使った量に応じて配る形（レイヤーのメモリと同じ）は採らない: キャッシュは予算いっぱいまで
+/// 使われるので、先に使ったセットが取り続ける。
+pub fn effect_cache_shares(total: u64, sets: usize, current: usize) -> Vec<u64> {
+    if sets <= 1 {
+        return vec![total; sets];
+    }
+    let others = total / 4 / (sets as u64 - 1);
+    let own = total - others * (sets as u64 - 1);
+    (0..sets)
+        .map(|i| if i == current { own } else { others })
+        .collect()
 }
 
 /// ディスクに置ける量: 上限（書けなくなった後は、そのとき置いていた量まで）。

@@ -5,7 +5,7 @@
 //!   「評価済みの面」（[`Surface`]）のタイルとして合成に渡し、合成の式は元の画素の面を読むときと同じ。
 //! - キャッシュは派生の表示用（保存の正本にしない）。鍵（[`Stamp`]）は、レイヤーの効果の設定そのものの写し・元画素のタイルごとの通し番号
 //!   （ぼかしなどの半径の分だけ広げたウィンドウ。正規化は全部）・外から渡した入力の版・Anchor を読む段では変化の記録の通し番号。
-//!   鍵が等しければ出力は等しい。予算を超えたら古いブロックから捨てる。
+//!   鍵が等しければ出力は等しい。予算を超えたら、一度だけ使った物から捨てる（`eval_residency`）。
 //! - 評価の途中で取り消したら、完成したブロックだけがキャッシュに残る（途中の画素は公開しない）。
 
 use crate::Reason;
@@ -15,6 +15,7 @@ use std::sync::atomic::AtomicBool;
 use rayon::prelude::*;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
+use super::eval_residency::Residency;
 use super::Document;
 use crate::composite::{Entry, Stack};
 use crate::effects::{
@@ -218,6 +219,10 @@ pub(crate) struct AnchorSig {
     pub read: anchor::ReadMode,
 }
 
+/// 文書の写し（書き出し・バケツ・参照の写し・PSD・準備）が、空のキャッシュから評価し直すときの評価のキャッシュの予算の上限。
+/// 一度だけの合成にはこれで足り、生きている文書とは別にもう 1 つ設定の予算まで埋まることを防ぐ。
+pub(super) const COPY_CACHE_BUDGET: u64 = 256 * 1024 * 1024;
+
 impl Default for EffectState {
     fn default() -> Self {
         EffectState {
@@ -319,14 +324,10 @@ fn shared_chains() -> MutexGuard<'static, HashMap<ChainKey, std::sync::Weak<Imag
 
 #[derive(Default)]
 pub(crate) struct EvalCache {
-    blocks: HashMap<BlockKey, BlockEntry>,
+    blocks: Residency<BlockKey, BlockEntry>,
     stats: HashMap<(LayerId, SourceKey), StatsEntry>,
-    anchors: HashMap<(LayerId, Channel, TileCoord), AnchorEntry>,
-    chains: HashMap<ChainKey, ChainEntry>,
-    bytes: u64,
-    anchor_bytes: u64,
-    chain_bytes: u64,
-    clock: u64,
+    anchors: Residency<(LayerId, Channel, TileCoord), AnchorEntry>,
+    chains: Residency<ChainKey, Arc<ImageMipChain<'static>>>,
     counters: EffectCounters,
 }
 
@@ -343,8 +344,6 @@ type BlockTiles = Arc<Vec<(TileCoord, Option<Tile>)>>;
 struct BlockEntry {
     stamp: Stamp,
     tiles: BlockTiles,
-    bytes: u64,
-    used: u64,
 }
 struct StatsEntry {
     stamp: Stamp,
@@ -353,11 +352,6 @@ struct StatsEntry {
 struct AnchorEntry {
     stamp: (u64, u64),
     tile: Option<Arc<Vec<u8>>>,
-    used: u64,
-}
-struct ChainEntry {
-    chain: Arc<ImageMipChain<'static>>,
-    used: u64,
 }
 
 /// 出力が等しいことの鍵。
@@ -821,8 +815,8 @@ impl Document {
     pub fn effect_counters(&self) -> EffectCounters {
         let c = self.cache();
         EffectCounters {
-            cache_bytes: c.bytes + c.anchor_bytes,
-            image_cache_bytes: c.chain_bytes,
+            cache_bytes: c.blocks.bytes() + c.anchors.bytes(),
+            image_cache_bytes: c.chains.bytes(),
             ..c.counters
         }
     }
@@ -840,7 +834,7 @@ impl Document {
             kind == ChannelKind::Color,
             kind == ChannelKind::Scalar,
         );
-        self.cache().chains.get(&key).map(|e| e.chain.clone())
+        self.cache().chains.peek(&key).cloned()
     }
 
     /// 持っている評価済みのタイルを全部捨てる（次に読むときに作り直す）。
@@ -850,60 +844,19 @@ impl Document {
         c.stats.clear();
         c.anchors.clear();
         c.chains.clear();
-        c.bytes = 0;
-        c.anchor_bytes = 0;
-        c.chain_bytes = 0;
     }
 
+    /// 予算を超えた分を捨てる（捨て方は `eval_residency`）。評価したブロックと Anchor のタイルは合わせて評価のキャッシュの予算まで
+    /// （Anchor のタイルは予算の 1/4 まで、ブロックは予算から Anchor のタイルの今の量を引いた分まで。Anchor のタイルが少なければ、
+    /// ブロックがその分を使える）。画像のミップマップは別枠で、画像の予算まで。
     pub(super) fn trim_effect_cache(&self) {
         let budget = self.effects.cache_budget;
         let image_budget = self.effects.image_cache_budget;
         let mut c = self.cache();
-        if c.bytes > budget {
-            let mut all: Vec<(u64, BlockKey, u64)> = c
-                .blocks
-                .iter()
-                .map(|(k, e)| (e.used, k.clone(), e.bytes))
-                .collect();
-            all.sort_by_key(|e| e.0);
-            for (_, key, bytes) in all {
-                if c.bytes <= budget / 4 * 3 {
-                    break;
-                }
-                c.blocks.remove(&key);
-                c.bytes -= bytes;
-            }
-        }
-        if c.anchor_bytes > budget {
-            let mut all: Vec<(u64, (LayerId, Channel, TileCoord), u64)> = c
-                .anchors
-                .iter()
-                .map(|(k, e)| (e.used, *k, e.tile.as_ref().map_or(0, |t| t.len() as u64)))
-                .collect();
-            all.sort_by_key(|e| e.0);
-            for (_, key, bytes) in all {
-                if c.anchor_bytes <= budget / 4 * 3 {
-                    break;
-                }
-                c.anchors.remove(&key);
-                c.anchor_bytes -= bytes;
-            }
-        }
-        if c.chain_bytes > image_budget {
-            let mut all: Vec<(u64, (String, u8, bool), u64)> = c
-                .chains
-                .iter()
-                .map(|(k, e)| (e.used, k.clone(), e.chain.bytes()))
-                .collect();
-            all.sort_by_key(|e| e.0);
-            for (_, key, bytes) in all {
-                if c.chain_bytes <= image_budget {
-                    break;
-                }
-                c.chains.remove(&key);
-                c.chain_bytes -= bytes;
-            }
-        }
+        c.anchors.trim(budget / 4, false);
+        let blocks = budget.saturating_sub(c.anchors.bytes());
+        c.blocks.trim(blocks, false);
+        c.chains.trim(image_budget, true);
     }
 
     // ───────── 元画素の変化の記録 ─────────
@@ -1796,16 +1749,10 @@ impl Document {
             bx,
             by,
         };
-        let mut c = self.cache();
-        c.clock += 1;
-        let clock = c.clock;
-        let e = c.blocks.get_mut(&key)?;
-        if e.stamp == stamp {
-            e.used = clock;
-            Some(e.tiles.clone())
-        } else {
-            None
-        }
+        self.cache()
+            .blocks
+            .hit(&key, |e| e.stamp == stamp)
+            .map(|e| e.tiles.clone())
     }
 
     /// ブロックを評価して、予算に収まればキャッシュに持つ。
@@ -1833,20 +1780,13 @@ impl Document {
             let mut c = self.cache();
             c.counters.blocks_evaluated += 1;
             if self.effects.cache_budget >= bytes && self.effects.cache_budget > 0 {
-                c.clock += 1;
-                let used = c.clock;
-                if let Some(old) = c.blocks.remove(&key) {
-                    c.bytes -= old.bytes;
-                }
-                c.bytes += bytes;
                 c.blocks.insert(
                     key,
                     BlockEntry {
                         stamp,
                         tiles: tiles.clone(),
-                        bytes,
-                        used,
                     },
+                    bytes,
                 );
             }
         }
@@ -2526,12 +2466,8 @@ impl Document {
         build: impl FnOnce(u64) -> Result<ImageMipChain<'static>, fill_image::FillError>,
     ) -> Result<Arc<ImageMipChain<'static>>, InactiveReason> {
         {
-            let mut c = self.cache();
-            c.clock += 1;
-            let clock = c.clock;
-            if let Some(e) = c.chains.get_mut(&key) {
-                e.used = clock;
-                return Ok(e.chain.clone());
+            if let Some(chain) = self.cache().chains.hit(&key, |_| true) {
+                return Ok(chain.clone());
             }
         }
         let budget = self.effects.image_cache_budget;
@@ -2559,16 +2495,8 @@ impl Document {
             } else {
                 c.counters.mip_chains_built += 1;
             }
-            c.clock += 1;
-            let used = c.clock;
-            c.chain_bytes += chain.bytes();
-            c.chains.insert(
-                key,
-                ChainEntry {
-                    chain: chain.clone(),
-                    used,
-                },
-            );
+            let bytes = chain.bytes();
+            c.chains.insert(key, chain.clone(), bytes);
         }
         self.trim_effect_cache();
         Ok(chain)
@@ -2598,16 +2526,7 @@ impl Document {
         if dropped.is_empty() {
             return;
         }
-        let mut c = self.cache();
-        let mut freed = 0;
-        c.chains.retain(|k, e| {
-            let keep = !dropped.contains(&k.0);
-            if !keep {
-                freed += e.chain.bytes();
-            }
-            keep
-        });
-        c.chain_bytes -= freed;
+        self.cache().chains.retain(|k, _| !dropped.contains(&k.0));
     }
 
     // ───────── Anchor ─────────
@@ -2720,14 +2639,8 @@ impl Document {
         // 変化の記録の通し番号（どのレイヤーのどの変化でも進む）と世代が同じなら、合成は同じ
         let stamp = (self.journal.serial, self.effects.generation);
         {
-            let mut c = self.cache();
-            c.clock += 1;
-            let clock = c.clock;
-            if let Some(e) = c.anchors.get_mut(&key) {
-                if e.stamp == stamp {
-                    e.used = clock;
-                    return Ok(e.tile.clone());
-                }
+            if let Some(e) = self.cache().anchors.hit(&key, |e| e.stamp == stamp) {
+                return Ok(e.tile.clone());
             }
         }
         let kind = self.channel_kind(channel)?;
@@ -2861,21 +2774,15 @@ impl Document {
         {
             let mut c = self.cache();
             c.counters.anchor_tiles_composited += 1;
-            c.clock += 1;
-            let used = c.clock;
             let len = tile.as_ref().map_or(0, |t| t.len() as u64);
             if self.effects.cache_budget > 0 {
-                if let Some(old) = c.anchors.remove(&key) {
-                    c.anchor_bytes -= old.tile.as_ref().map_or(0, |t| t.len() as u64);
-                }
-                c.anchor_bytes += len;
                 c.anchors.insert(
                     key,
                     AnchorEntry {
                         stamp,
                         tile: tile.clone(),
-                        used,
                     },
+                    len,
                 );
             }
         }

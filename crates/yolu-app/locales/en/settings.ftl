@@ -45,3 +45,4 @@ settings-cache-folder = Cache folder
 settings-cache-limit = Cache limit
 settings-setting = Setting
 settings-alignment = Alignment
+settings-effect-memory = Effect memory

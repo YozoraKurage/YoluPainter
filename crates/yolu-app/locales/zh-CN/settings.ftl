@@ -45,3 +45,4 @@ settings-cache-folder = 缓存文件夹
 settings-cache-limit = 缓存上限
 settings-setting = 设置
 settings-alignment = 对齐
+settings-effect-memory = 效果内存

@@ -163,7 +163,7 @@ pub enum Item {
 
 impl Item {
     /// 項目の全部（探す欄・区分の表・試験が全部を数える）。足したら `rank` の `match` も直す（コンパイルが教える）。
-    pub const ALL: [Item; 26] = [
+    pub const ALL: [Item; 27] = [
         Item::Language,
         Item::PenInput,
         Item::TabletPressure,
@@ -190,6 +190,7 @@ impl Item {
         Item::UpdateStartup,
         Item::UpdateBeta,
         Item::BakeRayQuery,
+        Item::Budget(BudgetKind::Effects),
     ];
 
     /// `ALL` の中の番号。項目を足して `ALL` に入れ忘れたときに、試験が見つける（`match` が全部の項目を数えるので、足すとコンパイルが通らない）。
@@ -221,6 +222,7 @@ impl Item {
             Item::UpdateStartup => 23,
             Item::UpdateBeta => 24,
             Item::BakeRayQuery => 25,
+            Item::Budget(BudgetKind::Effects) => 26,
         }
     }
 
@@ -399,6 +401,16 @@ fn choice_in(
         LABEL_WIDTH,
     );
     response.clicked().then_some(Request::Open(which, b))
+}
+
+/// 予算の行のツールチップ（効果のメモリは名前だけ）。
+fn budget_tip(lang: Lang, kind: BudgetKind) -> &'static str {
+    match kind {
+        BudgetKind::Undo => lang.t("prefs-memory-for-the-undo-history-tip"),
+        BudgetKind::Source => lang.t("prefs-the-most-memory-all-layers-tip"),
+        BudgetKind::Stroke => lang.t("prefs-undo-data-one-stroke-or-tip"),
+        BudgetKind::Effects => crate::settings::setting_name(lang, kind.key()),
+    }
 }
 
 fn choice(
@@ -707,11 +719,7 @@ pub(super) fn draw_item(
             }
         }
         Item::Budget(kind) => {
-            let tip = match kind {
-                BudgetKind::Undo => lang.t("prefs-memory-for-the-undo-history-tip"),
-                BudgetKind::Source => lang.t("prefs-the-most-memory-all-layers-tip"),
-                BudgetKind::Stroke => lang.t("prefs-undo-data-one-stroke-or-tip"),
-            };
+            let tip = budget_tip(lang, kind);
             out.requests.extend(choice(
                 ui,
                 rows,

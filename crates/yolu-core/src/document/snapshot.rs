@@ -95,7 +95,7 @@ impl Document {
         copy.effects.pointer_inputs_revision = effects.pointer_inputs_revision;
         copy.effects.topology_revision = effects.topology_revision;
         copy.effects.working_budget = effects.working_budget;
-        copy.effects.cache_budget = effects.cache_budget;
+        copy.effects.cache_budget = effects.cache_budget.min(super::eval::COPY_CACHE_BUDGET);
         copy.effects.image_cache_budget = effects.image_cache_budget;
         copy.effects.seam_budget = effects.seam_budget;
         copy.effects.block_pixels = effects.block_pixels;
@@ -355,6 +355,22 @@ mod tests {
                 .tile_count()
         );
         assert!(shared >= 16);
+    }
+
+    /// `edit_copy`（準備・バケツ・参照の写しの元）も、評価のキャッシュの予算は写しの上限までにする。
+    #[test]
+    fn edit_copy_caps_the_effect_cache_budget() {
+        let mut doc = Document::with_tile_size(8, 8, 8).unwrap();
+        doc.set_filter_cache_budget_bytes(4096 << 20);
+        assert_eq!(
+            doc.edit_copy().unwrap().filter_cache_budget_bytes(),
+            256 << 20
+        );
+        doc.set_filter_cache_budget_bytes(1 << 20);
+        assert_eq!(
+            doc.edit_copy().unwrap().filter_cache_budget_bytes(),
+            1 << 20
+        );
     }
 
     /// 投影した（ミップマップを使う）マップの源は、snapshot・`edit_copy` の写しでも、元と同じ通し番号の鍵で評価する（作り直さず、元が持つミップマップを

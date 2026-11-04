@@ -66,6 +66,7 @@ mod parity_views;
 mod pose;
 mod pose_takes;
 mod pose_ui;
+mod ref_fill_measure;
 mod replay_input;
 mod sets;
 mod tool_keys_3d;

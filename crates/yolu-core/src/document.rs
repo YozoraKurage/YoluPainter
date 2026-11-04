@@ -17,6 +17,7 @@ mod clone_source;
 mod edits;
 mod effects;
 mod eval;
+mod eval_residency;
 mod layer_path;
 mod layer_sets;
 mod saved_mark;

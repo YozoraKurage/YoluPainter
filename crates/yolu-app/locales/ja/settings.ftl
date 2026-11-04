@@ -45,3 +45,4 @@ settings-cache-folder = キャッシュの場所
 settings-cache-limit = キャッシュの上限
 settings-setting = 設定
 settings-alignment = アライメント
+settings-effect-memory = 効果のメモリ
