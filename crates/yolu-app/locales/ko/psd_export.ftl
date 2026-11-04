@@ -64,6 +64,7 @@ psd_export-inactive-filters = 비활성 필터
 psd_export-inactive-mask-filters = 비활성 마스크 필터
 psd_export-anchor = 앵커
 psd_export-mask-anchor = 마스크 앵커
+psd_export-set-does-not-use-channel = 레이어 세트가 이 채널을 사용하지 않음
 psd_export-normal-blending = 노멀의 합성 방식
 psd_export-as-colors = 색상 식으로
 psd_export-max-diff = 최대 차이 { $max_diff }

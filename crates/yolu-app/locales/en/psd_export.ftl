@@ -64,6 +64,7 @@ psd_export-inactive-filters = Inactive filters
 psd_export-inactive-mask-filters = Inactive mask filters
 psd_export-anchor = Anchor
 psd_export-mask-anchor = Mask anchor
+psd_export-set-does-not-use-channel = Layer set does not use this channel
 psd_export-normal-blending = Normal blending
 psd_export-as-colors = As colors
 psd_export-max-diff = Max diff { $max_diff }

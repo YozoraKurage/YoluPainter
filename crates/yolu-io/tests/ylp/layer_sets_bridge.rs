@@ -1,9 +1,12 @@
 //! レイヤーセット（正本の版 36、頭の `layer_sets`・`route` とレイヤーの末尾の `set`）。既定の形（名前の空の 1 つに全部のチャンネルを割り当てた形）は
-//! 前の版のまま同じバイト列。往復・版の選び方・壊れた割り当てと所属の拒否・.ylp への保存を試す。
-use yolu_core::{Channel, Document, LayerId, LayerSetId, Rgba8};
+//! 前のバージョンのまま同じバイト列。往復・バージョンの選び方・壊れた割り当てと所属の拒否・.ylp への保存を試す。扱うチャンネルの組（正本のバージョン 37、`layer_sets[i]` の
+//! `channels_low`・`channels_high`）は、どの組も全部のチャンネルならバージョン 36 以下のまま書く。
+use yolu_core::{
+    Channel, ChannelInfo, ChannelKind, ColorSpace, Document, LayerId, LayerSetId, Rgba8,
+};
 use yolu_io::{
     MaterialRef, NativeDocument, NativeValue, Project, SaveTarget, SetSpec, WriterInfo,
-    LAYER_SETS_VERSION, RULERS_VERSION, UNITY_NATIVE_VERSION,
+    LAYER_SETS_VERSION, LAYER_SET_CHANNELS_VERSION, RULERS_VERSION, UNITY_NATIVE_VERSION,
 };
 
 fn writer() -> WriterInfo {
@@ -219,4 +222,186 @@ fn a_ylp_keeps_the_layer_sets() {
     assert_eq!(core.layer_sets(), d.layer_sets());
     assert_eq!(composites(&core), composites(&d));
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// `with_sets` に、影のマスクのレイヤーセットだけが扱うユーザーチャンネルを足し、出力もそこから取る。メインには全部のチャンネルの塗りつぶし。
+fn with_channel_sets() -> (Document, LayerSetId, LayerSetId, Channel) {
+    let (mut d, first, shadow) = with_sets();
+    let mask = d
+        .add_channel_in_set(
+            ChannelInfo {
+                name: "マスク".into(),
+                kind: ChannelKind::Scalar,
+                color_space: ColorSpace::Linear,
+                default: Rgba8::new(0, 0, 0, 255),
+            },
+            shadow,
+        )
+        .unwrap();
+    d.add_fill_layer(
+        "塗り",
+        &[
+            (Channel::Color, Rgba8::new(9, 9, 9, 255)),
+            (mask, Rgba8::new(90, 90, 90, 255)),
+        ],
+        Some(d.layers()[0].id()),
+    )
+    .unwrap();
+    // 影のマスクは Color も扱うので、Color の出力は影のまま。Height を外す
+    let channels = d.layer_set_channels(shadow).unwrap() & !Channel::Height.bit();
+    d.set_layer_set_channels(shadow, channels).unwrap();
+    d.clear_history().unwrap();
+    (d, first, shadow, mask)
+}
+
+#[test]
+fn set_channels_round_trip_in_version_37() {
+    let (d, first, shadow, mask) = with_channel_sets();
+    assert_eq!(
+        d.layer_set_channels(first).unwrap(),
+        d.standard_channel_bits()
+    );
+    let native = NativeDocument::from_core(&d).unwrap();
+    assert_eq!(native.version(), LAYER_SET_CHANNELS_VERSION);
+    const { assert!(LAYER_SET_CHANNELS_VERSION > LAYER_SETS_VERSION) };
+    assert!(native.field("layer_sets[0].channels_low").is_some());
+    assert_eq!(
+        native.field("layer_sets[1].channels_high"),
+        Some(&NativeValue::Int(0))
+    );
+    let again = NativeDocument::read(&native.to_bytes()).unwrap();
+    assert_eq!(again.to_bytes(), native.to_bytes());
+    let back = again.to_core().unwrap();
+    assert_eq!(back.layer_sets(), d.layer_sets());
+    assert_eq!(
+        back.layer_set_channels(shadow).unwrap() & mask.bit(),
+        mask.bit()
+    );
+    for c in d.channels() {
+        assert_eq!(
+            back.channel_output(c).unwrap(),
+            d.channel_output(c).unwrap()
+        );
+    }
+    assert_eq!(back.channel_output(mask).unwrap(), Some(shadow));
+    assert_eq!(composites(&back), composites(&d));
+    assert_eq!(
+        NativeDocument::from_core(&back).unwrap().to_bytes(),
+        native.to_bytes()
+    );
+}
+
+#[test]
+fn a_version_36_document_reads_every_set_with_every_channel() {
+    // 組の欄の無いバージョン 36 の正本（どのレイヤーセットも全部のチャンネル）
+    let (d, first, shadow) = with_sets();
+    let native = NativeDocument::from_core(&d).unwrap();
+    assert_eq!(native.version(), LAYER_SETS_VERSION);
+    assert!(native.field("layer_sets[0].channels_low").is_none());
+    let back = native.to_core().unwrap();
+    for s in [first, shadow] {
+        assert_eq!(back.layer_set_channels(s).unwrap(), back.channel_bits());
+    }
+    assert_eq!(composites(&back), composites(&d));
+    // 組を全部に戻せば、バージョン 36 の同じバイト列
+    let (mut e, _, shadow, mask) = with_channel_sets();
+    e.remove_channel(mask).unwrap();
+    let all = e.channel_bits();
+    e.set_layer_set_channels(shadow, all).unwrap();
+    e.set_layer_set_channels(e.layer_sets()[0].id, all).unwrap();
+    assert_eq!(
+        NativeDocument::from_core(&e).unwrap().version(),
+        LAYER_SETS_VERSION
+    );
+}
+
+#[test]
+fn broken_set_channels_are_refused() {
+    let (d, _, _, mask) = with_channel_sets();
+    let native = NativeDocument::from_core(&d).unwrap();
+    // 文書に無いチャンネルのビット・割り当て先が組に持たない（マスクを影から外す・Color を影から外す）
+    let shadow_low = match native.field("layer_sets[1].channels_low") {
+        Some(NativeValue::Int(v)) => *v,
+        other => panic!("{other:?}"),
+    };
+    for (path, value) in [
+        ("layer_sets[0].channels_high", NativeValue::Int(1)),
+        ("layer_sets[0].channels_low", NativeValue::Int(1 << 20)),
+        (
+            "layer_sets[1].channels_low",
+            NativeValue::Int(shadow_low & !(mask.bit() as i32)),
+        ),
+        (
+            "layer_sets[1].channels_low",
+            NativeValue::Int(shadow_low & !(Channel::Color.bit() as i32)),
+        ),
+    ] {
+        assert!(
+            native.with_value(path, value.clone()).is_err(),
+            "{path} = {value:?}"
+        );
+    }
+    // バージョン 37 の欄は、バージョン 36 の数では読めない（並びが合わない）
+    let mut older = native.to_bytes();
+    older[8..12].copy_from_slice(&LAYER_SETS_VERSION.to_le_bytes());
+    assert!(NativeDocument::read(&older).is_err());
+}
+
+#[test]
+fn set_channels_at_the_edges_of_the_two_halves_round_trip() {
+    // 番号 31（下位 32 ビットの最上位）・32（上位の最下位）・63（上位の最上位）。作れる最大の番号は 63
+    let mut d = Document::with_tile_size(8, 8, 8).unwrap();
+    let main = d.layer_sets()[0].id;
+    let mut made = Vec::new();
+    for i in 0..(Channel::MAX - Channel::STANDARD_COUNT) {
+        let info = ChannelInfo {
+            name: format!("c{i}"),
+            kind: ChannelKind::Scalar,
+            color_space: ColorSpace::Linear,
+            default: Rgba8::new(0, 0, 0, 255),
+        };
+        made.push(d.add_channel(info).unwrap());
+    }
+    let pick = |i: usize| made[i - Channel::STANDARD_COUNT];
+    assert_eq!(pick(63).index(), 63);
+    let edges = pick(31).bit() | pick(32).bit() | pick(63).bit();
+    let set = d.add_layer_set_with("端", edges).unwrap();
+    d.set_channel_output(pick(63), Some(set)).unwrap();
+    d.set_channel_output(pick(31), Some(set)).unwrap();
+    d.clear_history().unwrap();
+    let native = NativeDocument::from_core(&d).unwrap();
+    assert_eq!(native.version(), LAYER_SET_CHANNELS_VERSION);
+    // 31 は下位の符号付き int の最上位ビット（負の値）、32 と 63 は上位
+    assert_eq!(
+        native.field("layer_sets[1].channels_low"),
+        Some(&NativeValue::Int(i32::MIN))
+    );
+    assert_eq!(
+        native.field("layer_sets[1].channels_high"),
+        Some(&NativeValue::Int(i32::MIN | 1))
+    );
+    let back = NativeDocument::read(&native.to_bytes())
+        .unwrap()
+        .to_core()
+        .unwrap();
+    assert_eq!(back.layer_sets(), d.layer_sets());
+    assert_eq!(back.layer_set_channels(set).unwrap(), edges);
+    for i in [30usize, 31, 32, 33, 62, 63] {
+        assert_eq!(
+            back.layer_set_channels(set).unwrap() & pick(i).bit() != 0,
+            [31, 32, 63].contains(&i),
+            "{i}"
+        );
+        assert_eq!(
+            back.channel_output(pick(i)).unwrap(),
+            d.channel_output(pick(i)).unwrap(),
+            "{i}"
+        );
+    }
+    assert_eq!(back.channel_output(pick(63)).unwrap(), Some(set));
+    assert_eq!(back.channel_output(pick(32)).unwrap(), Some(main));
+    assert_eq!(
+        NativeDocument::from_core(&back).unwrap().to_bytes(),
+        native.to_bytes()
+    );
 }

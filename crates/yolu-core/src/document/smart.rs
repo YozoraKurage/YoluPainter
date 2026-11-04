@@ -488,6 +488,8 @@ impl SmartMaterial {
             l.set = set;
         }
         d.channels = self.channel_info.clone();
+        // 断片のレイヤーセットは断片の全部のチャンネルを扱う（新しい文書の組は標準のチャンネルだけ）
+        d.layer_sets[0].channels = d.channel_bits();
         Ok(d)
     }
 }

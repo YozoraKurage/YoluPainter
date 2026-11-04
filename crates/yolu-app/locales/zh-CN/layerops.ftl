@@ -13,6 +13,7 @@ layerops-paths-became-pixels = 路径已转为像素
 layerops-hidden-children-dropped = 已略过隐藏的子项目
 layerops-pixels-of-disabled-channels-dropped = 已略过停用通道的像素
 layerops-text-became-pixels = 文本已转为像素
+layerops-pixels-of-channels-outside-set-dropped = 已略过此图层集不使用的通道的像素
 layerops-text = ；
 layerops-merged = 已合并
 layerops-merged-into = 已合并至 { $name }

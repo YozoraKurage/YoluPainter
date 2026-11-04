@@ -570,6 +570,8 @@ pub enum Reason {
     LayersSizeDiffersFromCanvas,
     SweepRange,
     PostCorrectionRange,
+    LayerSetChannels,
+    ChannelNotInLayerSet,
 }
 
 impl Reason {
@@ -1138,6 +1140,8 @@ impl Reason {
             Reason::LayersSizeDiffersFromCanvas => "入れるレイヤーの大きさがキャンバスと違う",
             Reason::SweepRange => "はらい（0〜1）",
             Reason::PostCorrectionRange => "後補正の強さ（0〜100）・表示倍率",
+            Reason::LayerSetChannels => "レイヤーセットのチャンネルの組に、プロジェクトに無いチャンネルがある",
+            Reason::ChannelNotInLayerSet => "レイヤーセットがそのチャンネルを扱わない",
         }
     }
 }

@@ -60,11 +60,15 @@ pub const RULERS_VERSION: i32 = 35;
 /// レイヤーセットが 2 つ以上か、名前を付けたか、出力の割り当てを全部のチャンネルが 1 つのレイヤーセットから取る形から変えた文書だけがこの版になり、
 /// 0.6.x までのスタンドアロンは版の範囲の外として断る（形式は docs/YLP_FORMAT.md）。この版の文書は版 27〜35 の中身も読み書きできる。
 pub const LAYER_SETS_VERSION: i32 = 36;
+/// レイヤーセットの扱うチャンネルの組（頭の `layer_sets[i]` の末尾の `channels_low`・`channels_high`）を足したバージョン。組が文書の全部のチャンネルでない
+/// レイヤーセットのある文書だけがこのバージョンになり、0.7.x までのスタンドアロンはバージョンの範囲の外として断る（形式は docs/YLP_FORMAT.md、理由は
+/// docs/YLP_DECISIONS.md）。このバージョンの文書はバージョン 27〜36 の中身も読み書きできる。
+pub const LAYER_SET_CHANNELS_VERSION: i32 = 37;
 /// この読み手が読める一番新しい版。読める版の集合は 1〜`MIXING_VERSION`・`SPLIT_VERSION`（26。分けた正本の識別）・`PATHS_VERSION`（27）・
 /// `EFFECTS_VERSION`（28）・`POINT_GRADIENT_VERSION`（29）・`TEXT_VERSION`（30）・`SEAMS_VERSION`（32）・`BAKE_PRIORITY_VERSION`（33）・
-/// `ANTI_ALIAS_VERSION`（34）・`RULERS_VERSION`（35）・`LAYER_SETS_VERSION`（36）で、間の 31 は意味を決めておらず断る（版を割り振ったら
-/// `is_known_version` へ足す）。
-pub const MAX_NATIVE_VERSION: i32 = LAYER_SETS_VERSION;
+/// `ANTI_ALIAS_VERSION`（34）・`RULERS_VERSION`（35）・`LAYER_SETS_VERSION`（36）・`LAYER_SET_CHANNELS_VERSION`（37）で、間の 31 は意味を
+/// 決めておらず断る（バージョンを割り振ったら `is_known_version` へ足す）。
+pub const MAX_NATIVE_VERSION: i32 = LAYER_SET_CHANNELS_VERSION;
 /// レイヤーの後に手動の ID の色の塊（`YLID`）を置ける版。書き手の版（21 以上）はどれもこれ以上なので、色のために版を上げることは無い。
 pub(crate) const MANUAL_ID_COLORS_VERSION: i32 = 19;
 /// 標準のチャンネルの数（番号 0〜5。Unity 版の PaintChannel）。
@@ -440,7 +444,7 @@ impl ByteSource for PartStream {
 pub const SPLIT_VERSION: i32 = 26;
 
 /// 正本の版の数（外の版）が、意味の決まった版か。1〜`MIXING_VERSION`・`SPLIT_VERSION`・`PATHS_VERSION`・`EFFECTS_VERSION`・
-/// `POINT_GRADIENT_VERSION`・`TEXT_VERSION`・`SEAMS_VERSION`・`BAKE_PRIORITY_VERSION`・`ANTI_ALIAS_VERSION`・`RULERS_VERSION` だけで、間の 31 は読まない（`MAX_NATIVE_VERSION` までの範囲で通すと、意味の無い版を版 25 の並びとして読んでしまう）。
+/// `POINT_GRADIENT_VERSION`・`TEXT_VERSION`・`SEAMS_VERSION`・`BAKE_PRIORITY_VERSION`・`ANTI_ALIAS_VERSION`・`RULERS_VERSION`・`LAYER_SETS_VERSION`・`LAYER_SET_CHANNELS_VERSION` だけで、間の 31 は読まない（`MAX_NATIVE_VERSION` までの範囲で通すと、意味の無い版を版 25 の並びとして読んでしまう）。
 fn is_known_version(version: i32) -> bool {
     (1..=MIXING_VERSION).contains(&version)
         || version == SPLIT_VERSION
@@ -453,6 +457,7 @@ fn is_known_version(version: i32) -> bool {
         || version == ANTI_ALIAS_VERSION
         || version == RULERS_VERSION
         || version == LAYER_SETS_VERSION
+        || version == LAYER_SET_CHANNELS_VERSION
 }
 
 /// 正本をレイヤーごとに読む（頭 → レイヤー 0, 1, … → 終わり）。レイヤーごとに項目を取り出せる（流して core へ入れる読みが、レイヤー 1 枚ぶんだけ持つため）。
@@ -516,7 +521,7 @@ impl<'a> Parse<'a> {
             check(
                 is_known_version(stored),
                 format!(
-                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{PATHS_VERSION}・{EFFECTS_VERSION}・{POINT_GRADIENT_VERSION}・{TEXT_VERSION}・{SEAMS_VERSION}・{BAKE_PRIORITY_VERSION}・{ANTI_ALIAS_VERSION}・{RULERS_VERSION}・{LAYER_SETS_VERSION})"
+                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{PATHS_VERSION}・{EFFECTS_VERSION}・{POINT_GRADIENT_VERSION}・{TEXT_VERSION}・{SEAMS_VERSION}・{BAKE_PRIORITY_VERSION}・{ANTI_ALIAS_VERSION}・{RULERS_VERSION}・{LAYER_SETS_VERSION}・{LAYER_SET_CHANNELS_VERSION})"
                 ),
             )?;
             check(parts.is_none(), "分けていない正本に部分があります")?;
@@ -551,7 +556,7 @@ impl<'a> Parse<'a> {
             r.block("bake_priority", bake_priority)?;
         }
         let layer_sets = if version >= LAYER_SETS_VERSION {
-            layer_sets(&mut r, &user)?
+            layer_sets(&mut r, &user, version)?
         } else {
             Vec::new()
         };
@@ -876,11 +881,16 @@ struct Layer {
     rulers: Vec<[u8; 16]>,
 }
 /// 版 36 の頭のレイヤーセット: 数（1〜`yolu_core::MAX_LAYER_SETS`）、レイヤーセットごとに ID（空でない・重ならない）と名前（制御文字なし）、
-/// 出力の割り当ての数（文書のチャンネルの数）と、チャンネルの番号の昇順に番号（文書のチャンネル）と取るレイヤーセットの ID（空は既定値。空でなければ
-/// 一覧にあるもの）。返すのはレイヤーセットの ID の並び。
-fn layer_sets(r: &mut Reader<'_>, user: &UserChannels) -> Result<Vec<[u8; 16]>> {
+/// バージョン 37 からは扱うチャンネルの組（下位 32 ビットと上位 32 ビットの int。文書のチャンネルのビットだけ）、出力の割り当ての数（文書のチャンネルの数）と、
+/// チャンネルの番号の昇順に番号（文書のチャンネル）と取るレイヤーセットの ID（空は既定値。空でなければ一覧にあるもので、バージョン 37 はそのチャンネルを
+/// 組に持つもの）。返すのはレイヤーセットの ID の並び。
+fn layer_sets(r: &mut Reader<'_>, user: &UserChannels, version: i32) -> Result<Vec<[u8; 16]>> {
     let n = r.int("layer_set_count", 1, yolu_core::MAX_LAYER_SETS as i32)?;
+    let channels: Vec<i32> = (0..STANDARD_CHANNELS).chain(user.keys().copied()).collect();
+    let present = channels.iter().fold(0u64, |b, c| b | 1u64 << c);
     let mut ids: Vec<[u8; 16]> = Vec::with_capacity(n as usize);
+    // バージョン 36 までは、どのレイヤーセットも文書の全部のチャンネルを扱う
+    let mut sets_channels: Vec<u64> = Vec::with_capacity(n as usize);
     for i in 0..n {
         r.block(&format!("layer_sets[{i}]"), |r| {
             let id = r.id("id", false)?;
@@ -891,18 +901,35 @@ fn layer_sets(r: &mut Reader<'_>, user: &UserChannels) -> Result<Vec<[u8; 16]>> 
                 !name.chars().any(char::is_control),
                 "レイヤーセットの名前が不正です",
             )?;
+            let bits = if version >= LAYER_SET_CHANNELS_VERSION {
+                let low = r.int("channels_low", i32::MIN, i32::MAX)? as u32;
+                let high = r.int("channels_high", i32::MIN, i32::MAX)? as u32;
+                let bits = u64::from(high) << 32 | u64::from(low);
+                check(
+                    bits & !present == 0,
+                    "レイヤーセットの扱うチャンネルに、プロジェクトに無いチャンネルがあります",
+                )?;
+                bits
+            } else {
+                present
+            };
+            sets_channels.push(bits);
             Ok(())
         })?;
     }
-    let channels: Vec<i32> = (0..STANDARD_CHANNELS).chain(user.keys().copied()).collect();
     r.int("route_count", channels.len() as i32, channels.len() as i32)?;
     for (i, c) in channels.iter().enumerate() {
         r.block(&format!("route[{i}]"), |r| {
             r.int("channel", *c, *c)?;
             let set = r.id("set", true)?;
+            if set == [0; 16] {
+                return Ok(());
+            }
+            let at = ids.iter().position(|id| *id == set);
+            check(at.is_some(), "出力の割り当てのレイヤーセットがありません")?;
             check(
-                set == [0; 16] || ids.contains(&set),
-                "出力の割り当てのレイヤーセットがありません",
+                at.is_some_and(|k| sets_channels[k] & 1u64 << c != 0),
+                "出力の割り当てのレイヤーセットが、そのチャンネルを扱いません",
             )
         })?;
     }

@@ -1201,6 +1201,22 @@ impl AppState {
         if let Some(channel) = outputs(&self.session.doc, set).first() {
             self.m2_ui(UiOp::PaintChannel(*channel));
         }
+        // 描く・見せるチャンネルがレイヤーセットの組に無ければ、組の最初のチャンネルへ（組が空なら替えない）
+        let channels = self.session.doc.layer_set_channels(set).unwrap_or(0);
+        if let Some(first) = self
+            .session
+            .doc
+            .channels()
+            .into_iter()
+            .find(|c| channels & c.bit() != 0)
+        {
+            if channels & self.m2.paint_channel.bit() == 0 {
+                self.m2_ui(UiOp::PaintChannel(first));
+            }
+            if channels & self.m2.display_channel.bit() == 0 {
+                self.m2_ui(UiOp::DisplayChannel(first));
+            }
+        }
     }
 
     /// キャンバスの右上の、描くチャンネルのボタンの中身（今の描くチャンネルのアイコンと名前）。

@@ -5,8 +5,11 @@
 //!   レイヤーだけで行い（[`Document::set_stack`]）、チャンネル c の最終の結果は、割り当てたレイヤーセットの c の合成。割り当てが無ければ c の既定値。
 //! - 一番上の段の兄弟は、同じレイヤーセットのレイヤーだけ（グループの子は親と同じレイヤーセット）。並べ替え・親子・グループにまとめる・結合は、
 //!   同じレイヤーセットの中だけで行い、またぐ要求は断る。
-//! - 新しい文書・前の版の文書は、名前の空のレイヤーセット 1 つに全部のチャンネルを割り当てた形で、合成も保存のバイトもレイヤーセットの無かった
-//!   ときと同じ。
+//! - レイヤーセットは扱うチャンネルの組（[`LayerSetInfo::channels`]）を持つ。組に無いチャンネルは、そのレイヤーセットの合成に入らない（計画が空で、
+//!   レイヤーの入切もそのチャンネルでは数えない）。出力の割り当ては、そのチャンネルを組に持つレイヤーセットへだけ向けられる。組のビットは文書に在る
+//!   チャンネルだけ。
+//! - 新しい文書・前のバージョンの文書は、名前の空のレイヤーセット 1 つに全部のチャンネルを割り当てた形（組も全部のチャンネル）で、合成も保存のバイトも
+//!   レイヤーセットの無かったときと同じ。
 
 use crate::Reason;
 use std::collections::HashMap;
@@ -23,11 +26,13 @@ pub const MAX_LAYER_SETS: usize = 256;
 /// レイヤーセットの名前の上限（UTF-8 のバイト。保存の文字列の上限と同じ）。
 const MAX_NAME_BYTES: usize = 4096;
 
-/// レイヤーセットの ID と名前（名前は空でもよい。空は画面が言語ごとの既定の名前で見せる）。
+/// レイヤーセットの ID・名前（空でもよい。空は画面が言語ごとの既定の名前で見せる）・扱うチャンネルの組。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LayerSetInfo {
     pub id: LayerSetId,
     pub name: String,
+    /// 扱うチャンネルの組（チャンネルの番号のビット。[`Channel::bit`] と同じ並び）。空でもよい（どのチャンネルも合成しない下書き）。
+    pub channels: u64,
 }
 
 /// チャンネルの番号ごとの出力の割り当て。
@@ -60,6 +65,27 @@ fn check_name(name: &str) -> Result<(), CoreError> {
     Ok(())
 }
 
+/// `channel` の計画の中に、実際の中身（画素のあるタイル・塗りつぶしの値・フィルターや Generator の出力になるラスターのレイヤー）が在るか。
+/// 計画に出るだけの空のラスターの面（新しいレイヤーが持つ）は中身に数えない。
+pub(crate) fn plan_holds_content(
+    layers: &[Layer],
+    plan: &[crate::composite::Entry],
+    channel: Channel,
+) -> bool {
+    plan.iter().any(|e| {
+        let l = &layers[e.layer];
+        let own = match l.kind() {
+            crate::LayerKind::Fill => true,
+            crate::LayerKind::Raster => {
+                !l.filters.is_empty() || l.surface(channel).is_some_and(|s| s.tile_count() > 0)
+            }
+            _ => false,
+        };
+        own || plan_holds_content(layers, &e.children, channel)
+            || plan_holds_content(layers, &e.clips, channel)
+    })
+}
+
 impl Document {
     // ───────── 読む ─────────
 
@@ -74,18 +100,56 @@ impl Document {
         Ok(self.route[channel.index()])
     }
 
+    /// レイヤーセットの扱うチャンネルの組（チャンネルの番号のビット。[`Channel::bit`] と同じ並び）。無いレイヤーセットは断る。
+    pub fn layer_set_channels(&self, set: LayerSetId) -> Result<u64, CoreError> {
+        Ok(self.layer_sets[self.require_layer_set(set)?].channels)
+    }
+
+    /// 文書に在るチャンネルのビット。
+    pub fn channel_bits(&self) -> u64 {
+        self.channels().into_iter().fold(0, |b, c| b | c.bit())
+    }
+
+    /// 文書に在る標準のチャンネル（番号が [`Channel::STANDARD_COUNT`] 未満）のビット。新しいレイヤーセットの既定の組。
+    pub fn standard_channel_bits(&self) -> u64 {
+        self.channels()
+            .into_iter()
+            .filter(|c| c.is_standard())
+            .fold(0, |b, c| b | c.bit())
+    }
+
+    /// レイヤーセットの合成にチャンネルが入るか（組にあるか）。無いレイヤーセットは false。
+    pub(crate) fn set_has_channel(&self, set: LayerSetId, channel: Channel) -> bool {
+        self.layer_sets
+            .iter()
+            .any(|s| s.id == set && s.channels & channel.bit() != 0)
+    }
+
+    /// レイヤーセット `set` のレイヤーが、組に無い `channel` に表示の中身（画素・塗りつぶしの値）を持つか。持てば、そのチャンネルの合成に入らない
+    /// （書き出しや結合は、その中身を黙って捨てないよう知らせる）。組にあるチャンネルは false。結合と同じ物差し（そのレイヤーセットの計画に、画素のあるタイル・塗りつぶしの値・効果の出力のどれかを持つレイヤーが在るか。空の面だけのレイヤーは数えない）。
+    pub fn layer_set_has_content_outside_channel(&self, set: LayerSetId, channel: Channel) -> bool {
+        if self.set_has_channel(set, channel) {
+            return false;
+        }
+        self.channel_kind(channel).is_ok_and(|kind| {
+            let stack = crate::composite::Stack::in_set(&self.layers, set, channel, kind, None);
+            plan_holds_content(&self.layers, &stack.plan(), channel)
+        })
+    }
+
     /// レイヤーが入っているレイヤーセット。
     pub fn layer_set_of(&self, id: LayerId) -> Result<LayerSetId, CoreError> {
         Ok(self.layers[self.index_of(id)?].set)
     }
 
-    /// レイヤーセットが 1 つで、名前が空で、文書の全部のチャンネルをそこへ割り当てた形か（新しい文書・前の版の文書の形。保存はこの形なら
-    /// レイヤーセットを書かない）。
+    /// レイヤーセットが 1 つで、名前が空で、組が文書の全部のチャンネルで、全部のチャンネルをそこへ割り当てた形か（新しい文書・前のバージョンの文書の形。
+    /// 保存はこの形ならレイヤーセットを書かない）。
     pub fn has_default_layer_sets(&self) -> bool {
         let [only] = self.layer_sets.as_slice() else {
             return false;
         };
         only.name.is_empty()
+            && only.channels == self.channel_bits()
             && self
                 .channels()
                 .into_iter()
@@ -180,7 +244,7 @@ impl Document {
         }
     }
 
-    fn table_entry(&self, new: Table) -> Entry {
+    pub(super) fn table_entry(&self, new: Table) -> Entry {
         let cost = 64
             + new
                 .sets
@@ -203,12 +267,99 @@ impl Document {
         self.execute(entry.command, entry.cost)
     }
 
+    /// 段が 1 つならそのまま、2 つ以上なら 1 回の Undo にまとめて当てる。
+    pub(super) fn execute_steps(
+        &mut self,
+        kind: HistoryKind,
+        mut steps: Vec<Entry>,
+    ) -> Result<(), CoreError> {
+        if steps.len() == 1 {
+            let only = steps.pop().expect("1 つ");
+            return self.execute(only.command, only.cost);
+        }
+        self.execute_group_as(kind, steps)
+    }
+
+    /// チャンネルを足すときの一覧と割り当て（`set` があればその組に入れて割り当てを `set` に、無ければ番号の今の割り当て先の組に入れる）。
+    /// 変わらなければ None。
+    pub(super) fn table_with_channel(
+        &self,
+        channel: Channel,
+        set: Option<LayerSetId>,
+    ) -> Option<Table> {
+        let mut table = self.table();
+        let target = set.or(table.route[channel.index()])?;
+        if let Some(s) = set {
+            table.route[channel.index()] = Some(s);
+        }
+        let info = table.sets.iter_mut().find(|s| s.id == target)?;
+        info.channels |= channel.bit();
+        (info.channels != self.layer_sets.iter().find(|s| s.id == target)?.channels
+            || table.route != self.route)
+            .then_some(table)
+    }
+
+    /// チャンネルを消すときの一覧（全部のレイヤーセットの組からビットを外す。割り当ては変えない）。変わらなければ None。
+    pub(super) fn table_without_channel(&self, channel: Channel) -> Option<Table> {
+        let mut table = self.table();
+        let mut changed = false;
+        for s in &mut table.sets {
+            changed |= s.channels & channel.bit() != 0;
+            s.channels &= !channel.bit();
+        }
+        changed.then_some(table)
+    }
+
+    /// 読み込み用: 足したチャンネルを、番号の今の割り当て先の組に入れる（履歴なし）。
+    pub(super) fn add_channel_to_route_set(&mut self, channel: Channel) {
+        if let Some(set) = self.route[channel.index()] {
+            if let Some(info) = self.layer_sets.iter_mut().find(|s| s.id == set) {
+                info.channels |= channel.bit();
+            }
+        }
+    }
+
+    /// 組が文書に在るチャンネルだけか（無いチャンネルのビットは断る）。
+    fn check_channels(&self, channels: u64) -> Result<(), CoreError> {
+        if channels & !self.channel_bits() != 0 {
+            return Err(CoreError::InvalidArgument(Reason::LayerSetChannels));
+        }
+        Ok(())
+    }
+
+    /// 一覧と割り当ての決まり: 組は文書に在るチャンネルだけ、文書に在るチャンネルの割り当て先はそのチャンネルを組に持つ。
+    fn check_table(&self, sets: &[LayerSetInfo], route: &Route) -> Result<(), CoreError> {
+        for s in sets {
+            self.check_channels(s.channels)?;
+        }
+        for c in self.channels() {
+            if let Some(s) = route[c.index()] {
+                if !sets.iter().any(|t| t.id == s && t.channels & c.bit() != 0) {
+                    return Err(CoreError::InvalidArgument(Reason::ChannelNotInLayerSet));
+                }
+            }
+        }
+        Ok(())
+    }
+
     // ───────── 編集（どれも 1 回の Undo） ─────────
 
-    /// 空のレイヤーセットを一覧の最後に足す。出力の割り当ては変えない。
+    /// 空のレイヤーセットを一覧の最後に足す。組は文書の標準のチャンネル（[`standard_channel_bits`](Self::standard_channel_bits)）。
+    /// 出力の割り当ては変えない。
     pub fn add_layer_set(&mut self, name: &str) -> Result<LayerSetId, CoreError> {
+        let channels = self.standard_channel_bits();
+        self.add_layer_set_with(name, channels)
+    }
+
+    /// 空のレイヤーセットを、扱うチャンネルの組 `channels`（文書に在るチャンネルのビット。空でもよい）で一覧の最後に足す。出力の割り当ては変えない。
+    pub fn add_layer_set_with(
+        &mut self,
+        name: &str,
+        channels: u64,
+    ) -> Result<LayerSetId, CoreError> {
         self.ensure_no_stroke()?;
         check_name(name)?;
+        self.check_channels(channels)?;
         if self.layer_sets.len() >= MAX_LAYER_SETS {
             return Err(CoreError::InvalidArgument(Reason::TooManyLayerSets));
         }
@@ -217,12 +368,36 @@ impl Document {
         table.sets.push(LayerSetInfo {
             id,
             name: name.to_owned(),
+            channels,
         });
         self.execute_table(table)?;
         Ok(id)
     }
 
-    /// 空のレイヤーを `set` に足す（Color のチャンネルを持つ。1 回の Undo）。`above` があればそのすぐ上（`above` と同じグループの中。
+    /// レイヤーセットの扱うチャンネルの組を替える（文書に在るチャンネルのビット。空でもよい）。外したチャンネルの出力の割り当てがこのレイヤーセット
+    /// なら、割り当てを外す（None。最終の結果はそのチャンネルの既定値。ほかのレイヤーセットへは移さない）。1 回の Undo。
+    pub fn set_layer_set_channels(
+        &mut self,
+        set: LayerSetId,
+        channels: u64,
+    ) -> Result<(), CoreError> {
+        self.ensure_no_stroke()?;
+        let at = self.require_layer_set(set)?;
+        self.check_channels(channels)?;
+        if self.layer_sets[at].channels == channels {
+            return Ok(());
+        }
+        let mut table = self.table();
+        table.sets[at].channels = channels;
+        for c in self.channels() {
+            if channels & c.bit() == 0 && table.route[c.index()] == Some(set) {
+                table.route[c.index()] = None;
+            }
+        }
+        self.execute_table(table)
+    }
+
+    /// 空のレイヤーを `set` に足す（Color のチャンネルを持ち、Color を有効にする。1 回の Undo）。`above` があればそのすぐ上（`above` と同じグループの中。
     /// `above` は `set` のレイヤー）、無ければ `set` の一番上の段の一番上。空のレイヤーセットへレイヤーを足す口は、これだけ
     /// （`add_layer_above` の `above` を省くと、最初のレイヤーセットへ入る）。
     pub fn add_layer_in_set(
@@ -231,22 +406,34 @@ impl Document {
         set: LayerSetId,
         above: Option<LayerId>,
     ) -> Result<LayerId, CoreError> {
+        self.add_layer_in_set_on(name, set, above, Channel::Color)
+    }
+
+    /// [`add_layer_in_set`](Self::add_layer_in_set) の、持つ・有効にするチャンネルを選ぶ形（文書に無いチャンネルは断る）。
+    pub fn add_layer_in_set_on(
+        &mut self,
+        name: &str,
+        set: LayerSetId,
+        above: Option<LayerId>,
+        channel: Channel,
+    ) -> Result<LayerId, CoreError> {
         self.ensure_no_stroke()?;
+        self.require_channel(channel)?;
         // 足し先を先に確かめる（レイヤーの ID を無駄に振らない）
         self.placement_in(above, Some(set))?;
         let id = self.new_layer_id();
         let mut layer = Layer::new(id, name, crate::types::LayerKind::Raster);
         layer.put_surface(
-            Channel::Color,
+            channel,
             Some(crate::Surface::new(self.width, self.height, self.tile_size)),
         );
-        layer.set_enabled(Channel::Color, true);
+        layer.set_enabled(channel, true);
         self.insert_new_in(layer, above, Some(set), 128)
     }
 
     /// レイヤーセットを画素ごと写し、元のすぐ後に置く（レイヤー・効果・Anchor・定規の ID は新しく振る。写しの中の Anchor を読む段は写しの
     /// Anchor を読む）。name が None なら同じ名前。タイルは写し元と共有し（書いたときに複製）、画素の予算には全部数え、超えるなら何も変えずに断る。
-    /// 出力の割り当ては変えない。
+    /// 扱うチャンネルの組は写す。出力の割り当ては変えない。
     pub fn duplicate_layer_set(
         &mut self,
         set: LayerSetId,
@@ -255,6 +442,7 @@ impl Document {
         self.ensure_no_stroke()?;
         let at = self.require_layer_set(set)?;
         let name = name.unwrap_or(&self.layer_sets[at].name).to_owned();
+        let channels = self.layer_sets[at].channels;
         check_name(&name)?;
         if self.layer_sets.len() >= MAX_LAYER_SETS {
             return Err(CoreError::InvalidArgument(Reason::TooManyLayerSets));
@@ -280,7 +468,9 @@ impl Document {
         }
         self.renew_effect_ids(&mut copies);
         let mut table = self.table();
-        table.sets.insert(at + 1, LayerSetInfo { id, name });
+        table
+            .sets
+            .insert(at + 1, LayerSetInfo { id, name, channels });
         let mut steps = vec![self.table_entry(table)];
         if !copies.is_empty() {
             steps.push(Entry {
@@ -370,7 +560,8 @@ impl Document {
         self.execute_group_as(HistoryKind::LayerSets, steps)
     }
 
-    /// チャンネルの出力の割り当てを変える（None はそのチャンネルの既定値）。最終の結果がそのチャンネルのキャンバス全体で変わる。
+    /// チャンネルの出力の割り当てを変える（None はそのチャンネルの既定値）。最終の結果がそのチャンネルのキャンバス全体で変わる。`set` がそのチャンネルを
+    /// 組に持たなければ断る。
     pub fn set_channel_output(
         &mut self,
         channel: Channel,
@@ -380,6 +571,9 @@ impl Document {
         self.require_channel(channel)?;
         if let Some(s) = set {
             self.require_layer_set(s)?;
+            if !self.set_has_channel(s, channel) {
+                return Err(CoreError::InvalidArgument(Reason::ChannelNotInLayerSet));
+            }
         }
         if self.route[channel.index()] == set {
             return Ok(());
@@ -474,7 +668,8 @@ impl Document {
     }
 
     /// [`insert_layers_from`](Self::insert_layers_from) の、入れ先を新しいレイヤーセット（名前 `name`、一覧の最後）にする形。レイヤーセットを
-    /// 足すのとレイヤーを入れるのは 1 回の Undo。出力の割り当ては変えない。新しいレイヤーセットと、入れたレイヤーの ID を返す。
+    /// 足すのとレイヤーを入れるのは 1 回の Undo。新しいレイヤーセットの組は文書の標準のチャンネル。出力の割り当ては変えない。新しいレイヤーセットと、
+    /// 入れたレイヤーの ID を返す。
     pub fn insert_layers_as_layer_set(
         &mut self,
         source: &Document,
@@ -492,6 +687,7 @@ impl Document {
         table.sets.push(LayerSetInfo {
             id,
             name: name.to_owned(),
+            channels: self.standard_channel_bits(),
         });
         let mut steps = vec![self.table_entry(table)];
         if !copies.is_empty() {
@@ -603,12 +799,14 @@ impl Document {
 
     /// 書き出し用の写し（履歴なし、タイルは共有）: レイヤーセットごとのレイヤーを、一番上の段のグループ 1 つずつに包み、レイヤーセット 1 つにする。
     /// グループは分離（Normal）で、中身はそのレイヤーセットの合成と同じになる。並びはレイヤーセットの並びの最初が一番上。名前は `names[i]`、表示は
-    /// `visible[i]`（`i` はレイヤーセットの並びの番号）。出力の割り当てのあるチャンネルは、写しの 1 つのレイヤーセットへ割り当てる。グループを足して
-    /// 入れ子が上限を超えるなら断る。
+    /// `visible[i]`（`i` はレイヤーセットの並びの番号）。出力の割り当てのあるチャンネルは、写しの 1 つのレイヤーセット（組は文書の全部のチャンネル）へ
+    /// 割り当てる。書き出すチャンネル `channel` を組に持たないレイヤーセットは、中身を入れない空のグループにする（そのレイヤーセットの `channel` の
+    /// 合成は空なので、グループの合成も同じ）。グループを足して入れ子が上限を超えるなら断る。
     pub fn layer_sets_as_groups(
         &self,
         names: &[String],
         visible: &[bool],
+        channel: Channel,
     ) -> Result<Document, CoreError> {
         if names.len() != self.layer_sets.len() || visible.len() != self.layer_sets.len() {
             return Err(CoreError::InvalidArgument(
@@ -630,7 +828,8 @@ impl Document {
         let mut layers = Vec::with_capacity(self.layers.len() + self.layer_sets.len());
         for (k, info) in self.layer_sets.iter().enumerate().rev() {
             let gid = copy.new_layer_id();
-            for l in self.layers.iter().filter(|l| l.set == info.id) {
+            let has = info.channels & channel.bit() != 0;
+            for l in self.layers.iter().filter(|l| has && l.set == info.id) {
                 let mut l = l.clone();
                 let own = l.set;
                 let masked = l.mask.as_mut().map(|m| &mut m.filters);
@@ -654,6 +853,7 @@ impl Document {
         copy.layers = layers;
         copy.layer_sets.truncate(1);
         copy.layer_sets[0].name.clear();
+        copy.layer_sets[0].channels = copy.channel_bits();
         for r in copy.route.iter_mut() {
             *r = r.map(|_| only);
         }
@@ -664,9 +864,10 @@ impl Document {
 
     // ───────── 読み込み ─────────
 
-    /// 読み込み用: レイヤーセットの一覧・出力の割り当て・レイヤーの所属を置く（履歴を消す）。`members` はレイヤーの並びの順の所属。
+    /// 読み込み用: レイヤーセットの一覧（扱うチャンネルの組を含む）・出力の割り当て・レイヤーの所属を置く（履歴を消す）。`members` はレイヤーの並びの順の所属。
     /// 割り当ての無いチャンネル（`route` に挙げないチャンネル）は最初のレイヤーセットへ。一覧が空・ID が 0 か重なる・在らないレイヤーセットを
-    /// 指す・グループの子が親と違うレイヤーセット・文書に無いチャンネル・同じチャンネルを 2 度挙げる、のどれかなら断って何も変えない。
+    /// 指す・グループの子が親と違うレイヤーセット・文書に無いチャンネル・同じチャンネルを 2 度挙げる・組に文書に無いチャンネルがある・割り当て先が
+    /// そのチャンネルを組に持たない、のどれかなら断って何も変えない。組の欄の無い前のバージョンは、組を [`channel_bits`](Self::channel_bits) にして渡す。
     pub fn set_layer_sets_for_load(
         &mut self,
         sets: Vec<LayerSetInfo>,
@@ -715,6 +916,7 @@ impl Document {
             seen |= c.bit();
             table[c.index()] = s;
         }
+        self.check_table(&sets, &table)?;
         self.layer_sets = sets;
         self.route = table;
         for (l, m) in self.layers.iter_mut().zip(members) {
@@ -753,6 +955,31 @@ impl Document {
         }
     }
 
+    /// レイヤーセットの組が変わったときの印: 組に入った・外れたチャンネルごとに、そのレイヤーセットのレイヤーが持つタイル（そのレイヤーセットの
+    /// 合成が、レイヤーの合成と透明の間で変わる所。レイヤーの表示を切り替えたときと同じ印）。
+    fn mark_channels_change(&mut self, before: &[LayerSetInfo]) {
+        let changed: Vec<(LayerSetId, u64)> = self
+            .layer_sets
+            .iter()
+            .filter_map(|s| {
+                let old = before.iter().find(|b| b.id == s.id)?.channels;
+                (old != s.channels).then_some((s.id, old ^ s.channels))
+            })
+            .collect();
+        for (set, bits) in changed {
+            for i in 0..self.layers.len() {
+                let l = &self.layers[i];
+                if l.parent.is_some() || l.set != set {
+                    continue;
+                }
+                for c in (0..Channel::MAX).filter(|c| bits & (1u64 << c) != 0) {
+                    let channel = Channel::from_index(c).expect("64 未満");
+                    self.mark_layer(i, Some(channel));
+                }
+            }
+        }
+    }
+
     // ───────── 段を当てる ─────────
 
     pub(super) fn switch_layer_sets(
@@ -768,11 +995,12 @@ impl Document {
                     .filter(|&i| self.route[i] != to.route[i])
                     .filter_map(|i| Some((Channel::from_index(i)?, self.route[i], to.route[i])))
                     .collect();
-                self.layer_sets = to.sets.clone();
+                let before = std::mem::replace(&mut self.layer_sets, to.sets.clone());
                 self.route = to.route;
                 for (c, from, to) in changed {
                     self.mark_route_change(c, from, to);
                 }
+                self.mark_channels_change(&before);
                 Ok(())
             }
             SetCommand::Members {

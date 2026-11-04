@@ -13,6 +13,7 @@ layerops-paths-became-pixels = パスは画素になった
 layerops-hidden-children-dropped = 隠した子は除いた
 layerops-pixels-of-disabled-channels-dropped = 無効のチャンネルの画素は除いた
 layerops-text-became-pixels = テキストは画素になった
+layerops-pixels-of-channels-outside-set-dropped = このレイヤーセットが扱わないチャンネルの画素は除いた
 layerops-text = ・
 layerops-merged = 結合
 layerops-merged-into = 結合しました: { $name }

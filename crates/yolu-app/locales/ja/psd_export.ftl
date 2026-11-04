@@ -64,6 +64,7 @@ psd_export-inactive-filters = 効いていないフィルター
 psd_export-inactive-mask-filters = 効いていないマスクのフィルター
 psd_export-anchor = アンカー
 psd_export-mask-anchor = マスクのアンカー
+psd_export-set-does-not-use-channel = レイヤーセットがこのチャンネルを扱わない
 psd_export-normal-blending = 法線の重ね方
 psd_export-as-colors = 色の式で重なる
 psd_export-max-diff = 最大差 { $max_diff }

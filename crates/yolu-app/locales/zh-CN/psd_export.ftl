@@ -64,6 +64,7 @@ psd_export-inactive-filters = 未生效的滤镜
 psd_export-inactive-mask-filters = 未生效的蒙版滤镜
 psd_export-anchor = 锚点
 psd_export-mask-anchor = 蒙版锚点
+psd_export-set-does-not-use-channel = 图层集不使用此通道
 psd_export-normal-blending = 法线混合方式
 psd_export-as-colors = 以颜色方式混合
 psd_export-max-diff = 最大差异 { $max_diff }

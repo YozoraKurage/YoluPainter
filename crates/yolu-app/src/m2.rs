@@ -1257,9 +1257,9 @@ impl AppState {
             })
     }
 
-    /// 新しいユーザーチャンネルの出力は、そのチャンネルの名前のレイヤーセット（空のレイヤー 1 枚つき）を作ってそこへ
-    /// （チャンネルを足す・レイヤーセットを足す・出力の割り当ては、1 回の取り消し）。描く先はそのレイヤーセットの空のレイヤー
-    /// （描くチャンネルを足したときに、すぐ描ける）。
+    /// 新しいユーザーチャンネルの出力は、そのチャンネルの名前のレイヤーセット（扱うチャンネルはそのチャンネルだけ。そのチャンネルを有効にした
+    /// 空のレイヤー 1 枚つき）を作ってそこへ（レイヤーセットを足す・チャンネルを足す・出力の割り当ては、1 回の取り消し）。描く先はそのレイヤーセットの
+    /// 空のレイヤー（描くチャンネルを足したときに、すぐ描ける）。
     fn add_channel_with_layer_set(&mut self, info: ChannelInfo) -> Result<(), CoreError> {
         let lang = self.lang;
         let set_name = self.unique_layer_set_name(&info.name);
@@ -1268,10 +1268,9 @@ impl AppState {
             .session
             .doc
             .batch_as(yolu_core::HistoryKind::Channel, |d| {
-                let channel = d.add_channel(info)?;
-                let set = d.add_layer_set(&set_name)?;
-                d.add_layer_in_set(&layer_name, set, None)?;
-                d.set_channel_output(channel, Some(set))?;
+                let set = d.add_layer_set_with(&set_name, 0)?;
+                let channel = d.add_channel_in_set(info, set)?;
+                d.add_layer_in_set_on(&layer_name, set, None, channel)?;
                 Ok((channel, set))
             })?;
         self.m2.paint_channel = channel;

@@ -562,3 +562,5 @@ reason-water-edge-range = 수채화 가장자리(너비 0.1–20, 불투명도�
 reason-layers-size-differs-from-canvas = 삽입할 레이어의 크기가 캔버스와 다릅니다
 reason-sweep-range = 삐침(0–1)
 reason-post-correction-range = 후보정 강도(0–100)와 뷰 배율
+reason-layer-set-channels = 레이어 세트의 채널에 프로젝트에 없는 채널이 있습니다
+reason-channel-not-in-layer-set = 레이어 세트가 그 채널을 다루지 않습니다

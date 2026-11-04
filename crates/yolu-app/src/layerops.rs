@@ -142,6 +142,9 @@ pub fn merge_notes_text(lang: Lang, notes: u8) -> String {
     if notes & 16 != 0 {
         parts.push(lang.t("layerops-text-became-pixels"));
     }
+    if notes & 32 != 0 {
+        parts.push(lang.t("layerops-pixels-of-channels-outside-set-dropped"));
+    }
     parts.join(lang.t("layerops-text"))
 }
 

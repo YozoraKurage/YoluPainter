@@ -562,3 +562,5 @@ reason-water-edge-range = 水彩境界（幅 0.1〜20・透明度影響と明度
 reason-layers-size-differs-from-canvas = 入れるレイヤーの大きさがキャンバスと違う
 reason-sweep-range = はらい（0〜1）
 reason-post-correction-range = 後補正の強さ（0〜100）・表示倍率
+reason-layer-set-channels = レイヤーセットのチャンネルの組に、プロジェクトに無いチャンネルがある
+reason-channel-not-in-layer-set = レイヤーセットがそのチャンネルを扱わない

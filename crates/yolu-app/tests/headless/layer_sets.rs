@@ -88,6 +88,30 @@ fn a_new_user_channel_gets_a_layer_set_of_its_name_with_one_empty_layer_in_one_u
 }
 
 #[test]
+fn a_new_user_channels_layer_set_handles_only_that_channel_and_its_first_layer_paints_it() {
+    let mut s = AppState::new(64, 64);
+    let (base, _) = first(&s);
+    let (channel, set) = add_shadow(&mut s);
+    assert_eq!(s.doc().layer_set_channels(set).unwrap(), channel.bit());
+    // メインの組は標準のチャンネルのまま（メインのレイヤーは影の強度に効かない）
+    assert_eq!(
+        s.doc().layer_set_channels(base).unwrap(),
+        s.doc().standard_channel_bits()
+    );
+    let layer = s.doc().layer(s.selected_layer().unwrap()).unwrap();
+    assert!(layer.is_channel_enabled(channel));
+    assert!(!layer.is_channel_enabled(Channel::Color));
+    // 組に無いチャンネルの出力の割り当ては断り、何も変えない
+    let steps = s.doc().undo_count();
+    s.act(Action::M2(Edit::LayerSets(LayerSetEdit::Output {
+        channel: Channel::Color,
+        set: Some(set),
+    })));
+    assert_eq!(s.doc().undo_count(), steps);
+    assert_eq!(s.doc().channel_output(Channel::Color).unwrap(), Some(base));
+}
+
+#[test]
 fn choosing_a_layer_set_switches_the_list_the_layer_and_the_paint_channel_at_once() {
     let mut s = AppState::new(64, 64);
     let (base, base_layer) = first(&s);
@@ -109,11 +133,25 @@ fn choosing_a_layer_set_switches_the_list_the_layer_and_the_paint_channel_at_onc
     s.act(Action::M2Ui(UiOp::SelectLayerSet(shadow)));
     assert_eq!(s.selected_layer(), Some(shadow_layer));
     assert_eq!(s.m2().paint_channel, shadow_channel);
-    // どのチャンネルも出力していないレイヤーセットでは、描くチャンネルは今のまま
+    // どのチャンネルも出力していないレイヤーセットでは、描くチャンネルが組にあれば今のまま、無ければ組の最初のチャンネル（新しいレイヤーセットの
+    // 組は標準のチャンネルで、影の強度は無い）
     s.act(Action::M2(Edit::LayerSets(LayerSetEdit::New)));
     let draft = s.app().layer_set();
     assert!(layersets::outputs(s.doc(), draft).is_empty());
-    assert_eq!(s.m2().paint_channel, shadow_channel);
+    assert_eq!(s.m2().paint_channel, Channel::Color);
+    assert_eq!(s.m2().display_channel, Channel::Color);
+    s.act(Action::M2Ui(UiOp::PaintChannel(Channel::Height)));
+    s.act(Action::M2Ui(UiOp::SelectLayerSet(base)));
+    s.act(Action::M2Ui(UiOp::SelectLayerSet(draft)));
+    assert_eq!(
+        s.m2().paint_channel,
+        Channel::Color,
+        "メインに入ると、メインが出力している最初のチャンネル"
+    );
+    s.act(Action::M2Ui(UiOp::PaintChannel(Channel::Height)));
+    s.act(Action::M2Ui(UiOp::SelectLayerSet(draft)));
+    assert_eq!(s.m2().paint_channel, Channel::Height, "組にあれば今のまま");
+    let _ = shadow_channel;
     // 描いている間は替えない
     s.act(Action::M2Ui(UiOp::SelectLayerSet(base)));
     assert_eq!(s.app().layer_set(), base);
@@ -189,6 +227,9 @@ fn the_output_assignment_changes_the_final_result_and_one_undo_restores_it() {
     let mut s = AppState::new(64, 64);
     let (base, base_layer) = first(&s);
     let (_, shadow) = add_shadow(&mut s);
+    // 影のレイヤーセットは影の強度だけを扱うので、カラーも扱うようにする（組に無いチャンネルへは割り当てられない）
+    let bits = s.doc().layer_set_channels(shadow).unwrap() | Channel::Color.bit();
+    s.doc_mut().set_layer_set_channels(shadow, bits).unwrap();
     s.doc_mut().set_pixel(base_layer, 3, 3, RED).unwrap();
     let before = s
         .doc()
@@ -397,7 +438,9 @@ fn layer_sets_survive_a_save_and_the_current_one_is_not_saved() {
     s.doc_mut().set_pixel(base_layer, 5, 5, RED).unwrap();
     let (channel, shadow) = add_shadow(&mut s);
     let shadow_layer = s.selected_layer().unwrap();
-    s.doc_mut().set_pixel(shadow_layer, 6, 6, BLUE).unwrap();
+    s.doc_mut()
+        .set_channel_pixel(shadow_layer, channel, 6, 6, BLUE)
+        .unwrap();
     assert_eq!(s.app().layer_set(), shadow);
     let route_before = s.doc().channel_output(channel).unwrap();
     s.act(Action::SaveProjectAs(path.clone()));
@@ -409,10 +452,10 @@ fn layer_sets_survive_a_save_and_the_current_one_is_not_saved() {
     assert!(t.message().starts_with("開きました"), "{}", t.message());
     assert_eq!(set_names(&t), ["マテリアル", "影の強度"]);
     assert_eq!(t.doc().channel_output(channel).unwrap(), route_before);
+    // 影のレイヤーセットの組（影の強度だけ）も保存される
+    assert_eq!(t.doc().layer_set_channels(shadow).unwrap(), channel.bit());
     assert_eq!(
-        t.doc()
-            .composite_set_pixel(shadow, Channel::Color, 6, 6)
-            .unwrap(),
+        t.doc().composite_set_pixel(shadow, channel, 6, 6).unwrap(),
         BLUE
     );
     // 今のレイヤーセットは保存しない: 開いたときは最初のレイヤーセット（その一番上のレイヤー）
@@ -649,4 +692,30 @@ fn text_path_and_fill_layers_added_to_an_empty_set_go_into_that_set() {
     assert_eq!(s.doc().undo_count(), steps);
     assert_eq!(s.app().layer_set(), shadow);
     assert_eq!(s.selected_layer(), None);
+}
+
+#[test]
+fn the_notes_say_when_content_of_channels_outside_the_set_is_left_out() {
+    // 表示レイヤーの結合の知らせ（ビット 32）と、PSD の書き出しの知らせ（レイヤーセットが扱わないチャンネル）
+    assert_eq!(
+        yolu_app::layerops::merge_notes_text(Lang::Ja, 32),
+        "このレイヤーセットが扱わないチャンネルの画素は除いた"
+    );
+    assert_eq!(
+        yolu_app::layerops::merge_notes_text(Lang::En, 32),
+        "Pixels of channels this layer set doesn't use dropped"
+    );
+    assert_eq!(
+        yolu_app::layerops::merge_notes_text(Lang::En, 8 | 32),
+        "Pixels of disabled channels dropped; Pixels of channels this layer set doesn't use dropped"
+    );
+    let note = yolu_io::psd::ExportNote {
+        layer: "影".into(),
+        action: yolu_io::psd::NoteAction::DroppedSetContent,
+    };
+    let (what, how) = yolu_app::psd_export::note_columns(Lang::En, &note);
+    assert_eq!(what, "Layer set does not use this channel");
+    assert_eq!(how, "Dropped");
+    let (what, _) = yolu_app::psd_export::note_columns(Lang::Ja, &note);
+    assert_eq!(what, "レイヤーセットがこのチャンネルを扱わない");
 }

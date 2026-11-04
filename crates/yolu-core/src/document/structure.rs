@@ -7,7 +7,7 @@
 use crate::Reason;
 use std::collections::{HashMap, HashSet};
 
-use super::{Command, Document, Order};
+use super::{Command, Document, Entry, HistoryKind, Order};
 use crate::adjust::AdjustmentSettings;
 use crate::error::CoreError;
 use crate::layer::{ChannelBlend, Layer, LayerId, LayerSetId};
@@ -725,8 +725,28 @@ impl Document {
 
     // ───────── チャンネルの一覧 ─────────
 
-    /// ユーザーチャンネルを足す（番号は 6 からの空き。名前は文書の中で重ならない）。1 回の Undo。
+    /// ユーザーチャンネルを足す（番号は 6 からの空き。名前は文書の中で重ならない）。新しいチャンネルは、その番号の出力の割り当て先のレイヤーセット
+    /// （新しい文書では最初のレイヤーセット）の組に入る（割り当てが無ければ、どの組にも入らない）。1 回の Undo。
     pub fn add_channel(&mut self, info: ChannelInfo) -> Result<Channel, CoreError> {
+        self.add_channel_routed(info, None)
+    }
+
+    /// ユーザーチャンネルを足し、レイヤーセット `set` の組に入れて、出力の割り当てを `set` にする（1 回の Undo）。
+    pub fn add_channel_in_set(
+        &mut self,
+        info: ChannelInfo,
+        set: LayerSetId,
+    ) -> Result<Channel, CoreError> {
+        self.require_layer_set(set)?;
+        self.add_channel_routed(info, Some(set))
+    }
+
+    /// `add_channel`・`add_channel_in_set` の本体（`set` が None なら、番号の今の割り当て先の組に入れる）。
+    fn add_channel_routed(
+        &mut self,
+        info: ChannelInfo,
+        set: Option<LayerSetId>,
+    ) -> Result<Channel, CoreError> {
         self.ensure_no_stroke()?;
         info.validate()?;
         if self.channels.iter().flatten().any(|c| c.name == info.name) {
@@ -736,15 +756,20 @@ impl Document {
             .find(|&i| self.channels.get(i).is_none_or(|c| c.is_none()))
             .ok_or(CoreError::InvalidArgument(Reason::TooManyChannels))?;
         let channel = Channel::from_index(index).expect("64 未満");
-        self.execute(
-            Command::ChannelInfo {
+        let mut steps = vec![Entry {
+            kind: HistoryKind::Channel,
+            command: Command::ChannelInfo {
                 channel,
                 old: None,
                 new: Some(info),
                 contents: Vec::new(),
             },
-            64,
-        )?;
+            cost: 64,
+        }];
+        if let Some(table) = self.table_with_channel(channel, set) {
+            steps.push(self.table_entry(table));
+        }
+        self.execute_steps(HistoryKind::Channel, steps)?;
         Ok(channel)
     }
 
@@ -768,6 +793,8 @@ impl Document {
             self.channels.resize(i + 1, None);
         }
         self.channels[i] = Some(info);
+        // 番号の割り当て先の組に入れる（`add_channel` と同じ。バージョン 36 以下の正本の組は、あとで全部のチャンネルに置き直される）
+        self.add_channel_to_route_set(channel);
         self.external_mutation();
         Ok(())
     }
@@ -833,15 +860,22 @@ impl Document {
             .filter_map(|l| l.surface(channel))
             .map(|s| s.allocated_bytes())
             .sum();
-        self.execute(
-            Command::ChannelInfo {
+        // 全部のレイヤーセットの組からも外す（同じ 1 回の Undo で戻る）
+        let mut steps = Vec::new();
+        if let Some(table) = self.table_without_channel(channel) {
+            steps.push(self.table_entry(table));
+        }
+        steps.push(Entry {
+            kind: HistoryKind::Channel,
+            command: Command::ChannelInfo {
                 channel,
                 old: Some(old),
                 new: None,
                 contents: Vec::new(),
             },
-            64 + bytes,
-        )
+            cost: 64 + bytes,
+        });
+        self.execute_steps(HistoryKind::Channel, steps)
     }
 
     /// チャンネルの一覧の段を当てる（backwards なら戻す）。

@@ -237,7 +237,8 @@ fn summary(lang: Lang, sections: &[(Channel, Vec<ExportNote>)]) -> String {
                 | NoteAction::DroppedFilters(_)
                 | NoteAction::DroppedMaskFilters(_)
                 | NoteAction::DroppedAnchor
-                | NoteAction::DroppedMaskAnchor => dropped += 1,
+                | NoteAction::DroppedMaskAnchor
+                | NoteAction::DroppedSetContent => dropped += 1,
                 NoteAction::NormalBlend => other += 1,
                 _ => baked += 1,
             }
@@ -498,6 +499,10 @@ pub fn note_columns(lang: Lang, note: &ExportNote) -> (String, String) {
         ),
         NoteAction::DroppedAnchor => (lang.t("psd_export-anchor").into(), dropped),
         NoteAction::DroppedMaskAnchor => (lang.t("psd_export-mask-anchor").into(), dropped),
+        NoteAction::DroppedSetContent => (
+            lang.t("psd_export-set-does-not-use-channel").into(),
+            dropped,
+        ),
         NoteAction::NormalBlend => (
             lang.t("psd_export-normal-blending").into(),
             lang.t("psd_export-as-colors").into(),

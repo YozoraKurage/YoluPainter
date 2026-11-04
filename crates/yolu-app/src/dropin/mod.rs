@@ -851,7 +851,15 @@ fn put_items(
                 let name = unique_layer_set_name_in(lang, d, base);
                 match item {
                     Item::Psd(source) => d.insert_layers_as_layer_set(source, &name)?.0,
-                    Item::Image { .. } => d.add_layer_set(&name)?,
+                    // 画像の塗りつぶしは描くチャンネルに置くので、新しいレイヤーセットの組にそのチャンネルも入れる
+                    Item::Image { .. } => {
+                        let paint = if d.channel_info(paint).is_some() {
+                            paint.bit()
+                        } else {
+                            0
+                        };
+                        d.add_layer_set_with(&name, d.standard_channel_bits() | paint)?
+                    }
                 }
             }
             Dest::Set(_, set) => {

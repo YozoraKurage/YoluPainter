@@ -293,9 +293,9 @@ impl Channel {
     pub const fn is_standard(self) -> bool {
         (self.0 as usize) < Self::STANDARD_COUNT
     }
-    /// 有効なチャンネルの印のビット。
+    /// 有効なチャンネルの印・レイヤーセットの組のビット（`1 << 番号`）。
     #[inline]
-    pub(crate) const fn bit(self) -> u64 {
+    pub const fn bit(self) -> u64 {
         1u64 << self.0
     }
     /// 標準のチャンネルの名前（C# の列挙の名前と同じ綴り）。ユーザーチャンネルは None。

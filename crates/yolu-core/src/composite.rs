@@ -88,6 +88,8 @@ pub(crate) struct Stack<'a> {
     kind: ChannelKind,
     /// 評価したレイヤーの出力（フィルター・Generator・画像・グラデーションを通したもの）。あれば、元の画素の代わりに読む。
     eval: Option<&'a EvalSet>,
+    /// どのレイヤーも計画に出さない（レイヤーセットの組に無いチャンネルの計画）。
+    empty: bool,
 }
 
 impl<'a> Stack<'a> {
@@ -112,6 +114,18 @@ impl<'a> Stack<'a> {
         Self::build(layers, Some(set), channel, kind, eval)
     }
 
+    /// どのレイヤーも出さない計画（レイヤーセットの組に無いチャンネル。合成は透明で、どのレイヤーもそのチャンネルの合成に出ない）。
+    pub(crate) fn nothing(layers: &'a [Layer], channel: Channel, kind: ChannelKind) -> Self {
+        Stack {
+            layers,
+            children: std::collections::HashMap::new(),
+            channel,
+            kind,
+            eval: None,
+            empty: true,
+        }
+    }
+
     fn build(
         layers: &'a [Layer],
         set: Option<LayerSetId>,
@@ -132,6 +146,7 @@ impl<'a> Stack<'a> {
             channel,
             kind,
             eval,
+            empty: false,
         }
     }
 
@@ -196,6 +211,9 @@ impl<'a> Stack<'a> {
     }
 
     pub(crate) fn make_entry(&self, i: usize) -> Option<Entry> {
+        if self.empty {
+            return None;
+        }
         let l = &self.layers[i];
         if l.is_group() {
             if !l.visible || l.opacity_in(self.channel) <= 0.0 {

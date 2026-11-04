@@ -593,7 +593,9 @@ fn layer_set_output_entries(app: &AppState, channel: Channel) -> Vec<Entry<Actio
     let doc = &app.session.doc;
     let current = doc.channel_output(channel).ok().flatten();
     let free = app.can_edit();
+    // そのチャンネルを組に持つレイヤーセットだけ（ほかへは割り当てられない）
     let mut entries: Vec<Entry<Action>> = (0..doc.layer_sets().len())
+        .filter(|&i| doc.layer_sets()[i].channels & channel.bit() != 0)
         .map(|i| {
             let id = doc.layer_sets()[i].id;
             Entry::item(

@@ -13,6 +13,7 @@ layerops-paths-became-pixels = Paths became pixels
 layerops-hidden-children-dropped = Hidden children dropped
 layerops-pixels-of-disabled-channels-dropped = Pixels of disabled channels dropped
 layerops-text-became-pixels = Text became pixels
+layerops-pixels-of-channels-outside-set-dropped = Pixels of channels this layer set doesn't use dropped
 layerops-text = ;{" "}
 layerops-merged = Merged
 layerops-merged-into = Merged into { $name }

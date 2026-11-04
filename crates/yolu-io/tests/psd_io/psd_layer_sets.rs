@@ -1,7 +1,9 @@
 //! PSD の書き出しのレイヤーセット: 2 つ以上なら、レイヤーセットごとに一番上の段のグループ（名前はレイヤーセットの名前、空なら `Set <番号>`）にする。
 //! 表示するのは書き出すチャンネルを出力しているレイヤーセットのグループだけで、読み戻した合成は最終の結果と同じ。出力の割り当てが無いチャンネルは、グループを全部非表示にして一番下に既定値の `Default` を足す。1 つ（で割り当てがある）なら今と同じ PSD。
 use yolu_core::{Channel, Document, LayerId, Rgba8};
-use yolu_io::psd::{self, ExportControl, ExportMode, ExportOptions, Layer, LayerKind, Limits};
+use yolu_io::psd::{
+    self, ExportControl, ExportMode, ExportOptions, Layer, LayerKind, Limits, NoteAction,
+};
 
 fn paint(d: &mut Document, id: LayerId, c: Rgba8, x0: u32, x1: u32) {
     for y in 0..d.height() {
@@ -167,4 +169,84 @@ fn an_unassigned_channel_is_exported_with_a_default_fill_below_hidden_groups() {
             .unwrap(),
         want
     );
+}
+
+#[test]
+fn a_layer_set_without_the_channel_becomes_an_empty_group() {
+    let mut d = Document::with_tile_size(32, 16, 8).unwrap();
+    let a = d.add_layer("下地").unwrap();
+    paint(&mut d, a, Rgba8::new(200, 30, 30, 255), 0, 32);
+    let first = d.layer_sets()[0].id;
+    // Roughness だけを扱うレイヤーセット（Color の画素を持つレイヤーがあっても、Color の合成には入らない）
+    let rough = d
+        .add_layer_set_with("ラフネス", Channel::Roughness.bit())
+        .unwrap();
+    let b = d.add_layer_in_set("r", rough, None).unwrap();
+    paint(&mut d, b, Rgba8::new(10, 10, 10, 255), 0, 16);
+    d.set_channel_output(Channel::Roughness, Some(rough))
+        .unwrap();
+    let out = export(&d, Channel::Color);
+    let mut top = names(&out.layers);
+    top.sort();
+    assert_eq!(
+        top,
+        [("Set 1".to_owned(), true), ("ラフネス".to_owned(), false)]
+    );
+    for g in &out.layers {
+        let inner: Vec<_> = children(g).iter().map(|l| l.name.clone()).collect();
+        if g.name == "ラフネス" {
+            assert!(inner.is_empty(), "組の外のチャンネルは書かない: {inner:?}");
+        } else {
+            assert_eq!(inner, ["下地"]);
+        }
+    }
+    // Roughness の書き出しでは、ラフネスのレイヤーセットに中身があり、メインは Roughness も扱うので中身がある
+    let out = export(&d, Channel::Roughness);
+    for g in &out.layers {
+        assert_eq!(children(g).len(), 1, "{}", g.name);
+    }
+    let _ = first;
+}
+
+#[test]
+fn a_set_without_the_channel_that_holds_pixels_in_it_is_noted_once() {
+    let mut d = Document::with_tile_size(32, 16, 8).unwrap();
+    let a = d.add_layer("下地").unwrap();
+    paint(&mut d, a, Rgba8::new(200, 30, 30, 255), 0, 32);
+    let rough = d
+        .add_layer_set_with("ラフネス", Channel::Roughness.bit())
+        .unwrap();
+    // Color の画素を持つレイヤーが 2 枚: 注記はレイヤーセットで 1 件
+    for name in ["r1", "r2"] {
+        let b = d.add_layer_in_set(name, rough, None).unwrap();
+        paint(&mut d, b, Rgba8::new(10, 10, 10, 255), 0, 16);
+    }
+    let ctl = ExportControl::default();
+    let notes = |d: &Document, c: Channel| {
+        psd::plan_export(d, &ExportOptions::new(c, ExportMode::Bake), &ctl)
+            .unwrap()
+            .notes
+    };
+    let color = notes(&d, Channel::Color);
+    let dropped: Vec<_> = color
+        .iter()
+        .filter(|n| n.action == NoteAction::DroppedSetContent)
+        .collect();
+    assert_eq!(dropped.len(), 1, "{color:?}");
+    assert_eq!(dropped[0].layer, "ラフネス");
+    assert!(dropped[0].message().contains("ラフネス"));
+    // 組に持つチャンネルの書き出しでは出ない（メインは Roughness も扱い、ラフネスは Roughness を扱う）
+    assert!(!notes(&d, Channel::Roughness)
+        .iter()
+        .any(|n| n.action == NoteAction::DroppedSetContent));
+    // 中身が無ければ出ない（組の外のチャンネルに画素を持つレイヤーが無い）
+    let mut empty = Document::with_tile_size(32, 16, 8).unwrap();
+    empty.add_layer("下地").unwrap();
+    let rough = empty
+        .add_layer_set_with("ラフネス", Channel::Roughness.bit())
+        .unwrap();
+    empty.add_layer_in_set("空", rough, None).unwrap();
+    assert!(!notes(&empty, Channel::Color)
+        .iter()
+        .any(|n| n.action == NoteAction::DroppedSetContent));
 }

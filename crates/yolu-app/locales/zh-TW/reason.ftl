@@ -562,3 +562,5 @@ reason-water-edge-range = 水彩邊界（寬度 0.1～20、透明度影響與明
 reason-layers-size-differs-from-canvas = 要插入的圖層大小與畫布不同
 reason-sweep-range = 掃筆（0～1）
 reason-post-correction-range = 後修正強度（0～100）與顯示倍率
+reason-layer-set-channels = 圖層集的通道包含專案中不存在的通道
+reason-channel-not-in-layer-set = 圖層集不處理該通道

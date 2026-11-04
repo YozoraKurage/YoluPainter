@@ -153,10 +153,10 @@ fn pressing_a_layer_set_row_switches_the_set_the_list_and_the_paint_channel_at_o
     assert_eq!(h.m2().paint_channel, s.channel);
     let layer = h.selected_layer().unwrap();
     assert_eq!(h.doc().layer_set_of(layer).unwrap(), s.shadow);
-    // 下書きの行: どのチャンネルも出力していないので、描くチャンネルは今のまま
+    // 下書きの行: どのチャンネルも出力していない。下書きの組（標準のチャンネル）に影の強度は無いので、描くチャンネルは組の最初のカラー
     click(&mut h, rows[2].center());
     assert_eq!(h.app().layer_set(), s.draft);
-    assert_eq!(h.m2().paint_channel, s.channel);
+    assert_eq!(h.m2().paint_channel, Channel::Color);
     // マテリアルの行: カラー
     click(&mut h, rows[0].center());
     assert_eq!(h.app().layer_set(), s.material);
@@ -416,9 +416,11 @@ fn the_channel_row_dropdown_changes_the_final_result_in_one_undo() {
         h.popup().as_ref().map(|p| p.kind),
         Some(PopupKind::M2(Popup::LayerSetOutput(Channel::Color)))
     );
-    for name in ["マテリアル", "影のマスク", "下書き", "なし"] {
+    // 項目は、カラーを組に持つレイヤーセットだけ（影のマスクは影の強度だけを扱う）
+    for name in ["マテリアル", "下書き", "なし"] {
         popup_item(&h, name);
     }
+    assert!(!popup_has(&h, "影のマスク"));
     let steps = h.doc().undo_count();
     let at = popup_item(&h, "なし").center();
     click(&mut h, at);
@@ -432,12 +434,30 @@ fn the_channel_row_dropdown_changes_the_final_result_in_one_undo() {
         Some(s.material)
     );
     assert_eq!(px(&h), RED);
-    // 影の強度の行: 影のマスクが選ばれている
+    // 影の強度の行: 影の強度を組に持つのは影のマスクだけ（下書き・マテリアルは出さない）
     let at = channel_dropdown(&h, s.channel).center();
     click(&mut h, at);
-    let at = popup_item(&h, "下書き").center();
+    popup_item(&h, "影のマスク");
+    assert!(!popup_has(&h, "下書き"));
+    assert!(!popup_has(&h, "マテリアル"));
+    let at = popup_item(&h, "なし").center();
     click(&mut h, at);
-    assert_eq!(h.doc().channel_output(s.channel).unwrap(), Some(s.draft));
+    assert_eq!(h.doc().channel_output(s.channel).unwrap(), None);
+}
+
+/// 開いているポップアップの中に、その名前の項目があるか。
+fn popup_has(h: &Harness<'_, YoluApp>, label: &str) -> bool {
+    let body = h
+        .state()
+        .state
+        .ui
+        .popup
+        .as_ref()
+        .expect("popup open")
+        .state
+        .rect;
+    h.query_all_by_label(label)
+        .any(|n| body.contains_rect(n.rect()))
 }
 
 /// 2D のキャンバスが描いた表示の画素（画面の点の下）。`canvas_pixel` は最終の結果を読むので、ここでは描いた表示を読む。

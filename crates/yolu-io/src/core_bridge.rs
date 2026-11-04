@@ -5,9 +5,9 @@
 //! （版 8・10・18）、レイヤーの後の手動の ID の色（版 19）。core に無い項目は先に検査して断り、部分変換を返さない。
 use crate::native::{
     ADJUST_VERSION, ANTI_ALIAS_VERSION, BAKE_PRIORITY_VERSION, EFFECTS_VERSION, LAYER_SETS_VERSION,
-    MANUAL_ID_COLORS_VERSION, MIXING_VERSION, PATHS_VERSION, POINT_GRADIENT_VERSION,
-    PROCEDURAL_VERSION, RULERS_VERSION, SEAMS_VERSION, TEXT_VERSION, UNITY_NATIVE_VERSION,
-    USER_CHANNELS_VERSION,
+    LAYER_SET_CHANNELS_VERSION, MANUAL_ID_COLORS_VERSION, MIXING_VERSION, PATHS_VERSION,
+    POINT_GRADIENT_VERSION, PROCEDURAL_VERSION, RULERS_VERSION, SEAMS_VERSION, TEXT_VERSION,
+    UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
 use crate::{
     check, check_budget, Error, NativeDocument, NativeValue as V, Result, Unwritable,
@@ -360,7 +360,7 @@ impl CoreLoad {
             doc.set_filter_seams_for_load(f.boolean("filter_seams")?);
         }
         let layer_sets = if version >= LAYER_SETS_VERSION {
-            Some(read_layer_sets(f)?)
+            Some(read_layer_sets(f, version, doc.channel_bits())?)
         } else {
             None
         };
@@ -480,14 +480,23 @@ pub(crate) fn id_colors_of(fields: &[crate::NativeField]) -> Result<IdColorAssig
         .map_err(|e| Error::InvalidData(format!("手動の ID の色を core の形にできません: {e}")))
 }
 
-/// 版 36 の頭のレイヤーセットと出力の割り当て（読み手が数・ID・並びを確かめた後）。割り当ての空の ID は既定値（None）。
-fn read_layer_sets(f: &Fields<'_>) -> Result<LoadedLayerSets> {
+/// バージョン 36 の頭のレイヤーセットと出力の割り当て（読み手が数・ID・並びを確かめた後）。割り当ての空の ID は既定値（None）。扱うチャンネルの組は
+/// バージョン 37 から読み、バージョン 36 は文書の全部のチャンネル（`all`）。
+fn read_layer_sets(f: &Fields<'_>, version: i32, all: u64) -> Result<LoadedLayerSets> {
     let sets = (0..f.int("layer_set_count")?)
         .map(|i| {
             let p = format!("layer_sets[{i}]");
+            let channels = if version >= LAYER_SET_CHANNELS_VERSION {
+                let low = f.int(&format!("{p}.channels_low"))? as u32;
+                let high = f.int(&format!("{p}.channels_high"))? as u32;
+                u64::from(high) << 32 | u64::from(low)
+            } else {
+                all
+            };
             Ok(LayerSetInfo {
                 id: LayerSetId(core_id(f.guid(&format!("{p}.id"))?)),
                 name: f.text(&format!("{p}.name"))?.to_owned(),
+                channels,
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -556,7 +565,8 @@ fn path_brush(path: &LayerPath) -> BrushSettings {
     }
 }
 
-/// 文書の正本の版（使う機能で決まる）: レイヤーセットが既定の形（名前の空の 1 つに全部のチャンネルを割り当てた形）でなければ 36（版 27〜35 の中身も
+/// 文書の正本のバージョン（使う機能で決まる）: 扱うチャンネルの組が文書の全部のチャンネルでないレイヤーセットがあれば 37（バージョン 27〜36 の中身も読み書きできるバージョン）、
+/// レイヤーセットが既定の形（名前の空の 1 つに全部のチャンネルを割り当てた形）でなければ 36（バージョン 27〜35 の中身も
 /// 読み書きできる版）、定規を持つレイヤー（グループ）か、線対称の 2D のパスがあれば 35（版 27〜34 の中身も読み書きできる版）、
 /// パスのブラシのアンチエイリアス（なし 以外）があれば 34（版 27〜33 の中身も読み書きできる版）、
 /// 重なった UV のベイクの優先を既定から変えていれば 33（版 27〜32 の中身も読み書きできる版）、
@@ -569,7 +579,10 @@ fn path_brush(path: &LayerPath) -> BrushSettings {
 /// 手動の ID の色（版 19 から）は 21 以上のどの版でも書けるので、版を決めない（色だけを持つ文書は Unity 版が読める 21 のまま）。
 pub(crate) fn version_of(doc: &Document) -> i32 {
     let user = doc.channels().into_iter().any(|c| !c.is_standard());
-    if !doc.has_default_layer_sets() {
+    let all = doc.channel_bits();
+    if doc.layer_sets().iter().any(|s| s.channels != all) {
+        LAYER_SET_CHANNELS_VERSION
+    } else if !doc.has_default_layer_sets() {
         LAYER_SETS_VERSION
     } else if uses_rulers_version(doc) {
         RULERS_VERSION
@@ -748,6 +761,11 @@ fn write_head_after_version(w: &mut Out<'_>, doc: &Document, version: i32) -> Re
         for s in doc.layer_sets() {
             w.raw(&native_id(s.id.0))?;
             w.text(&s.name)?;
+            // バージョン 37: 扱うチャンネルの組（下位 32 ビット・上位 32 ビット）
+            if version >= LAYER_SET_CHANNELS_VERSION {
+                w.int(s.channels as u32 as i32)?;
+                w.int((s.channels >> 32) as u32 as i32)?;
+            }
         }
         let channels = doc.channels();
         w.int(channels.len() as i32)?;

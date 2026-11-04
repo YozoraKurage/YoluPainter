@@ -514,12 +514,14 @@ fn loading_layer_sets_checks_ids_routes_and_group_members() {
     let g = d.group_layers(&[b], "g").unwrap();
     let s1 = LayerSetId(11);
     let s2 = LayerSetId(22);
+    let channels = d.channel_bits();
     let sets = |names: &[(LayerSetId, &str)]| {
         names
             .iter()
             .map(|(id, n)| yolu_core::LayerSetInfo {
                 id: *id,
                 name: (*n).to_owned(),
+                channels,
             })
             .collect::<Vec<_>>()
     };

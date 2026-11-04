@@ -221,6 +221,9 @@ pub enum NoteAction {
     },
     /// テキストレイヤー。画素はテキストの値から描いた結果のままで、テキストの値は PSD に残らない（PSD のテキストレイヤーは書かない）。
     BakedText,
+    /// レイヤーセットが書き出すチャンネルを扱わない（組に無い）ので、そのレイヤーセットのレイヤーがそのチャンネルに持つ画素・塗りつぶしの値は書かない
+    /// （グループは中身の無いまま残る）。注記のレイヤーの名前は、レイヤーセットの名前（空なら `Set <番号>`）。レイヤーセット 1 つにつき 1 件。
+    DroppedSetContent,
 }
 
 /// グラデーションマップを停止点へ展開した理由（PSD のグラデーションに形が無いもののうち、使っていたもの）。
@@ -312,6 +315,9 @@ impl ExportNote {
             NoteAction::BakedText => {
                 format!("テキストレイヤー「{name}」は画素のレイヤーとして書きました。テキストの値は PSD に残りません")
             }
+            NoteAction::DroppedSetContent => format!(
+                "レイヤーセット「{name}」は書き出すチャンネルを扱わないので、そのレイヤーが持つこのチャンネルの画素は書きませんでした"
+            ),
         }
     }
 }
@@ -1101,6 +1107,7 @@ pub fn plan_export(
     options: &ExportOptions,
     ctl: &ExportControl,
 ) -> Result<ExportPlan> {
+    let dropped_sets = sets_dropping_content(d, options.channel);
     let wrapped = layer_sets_as_groups(d, options.channel)?;
     let d = wrapped.as_ref().unwrap_or(d);
     precheck(d, options.channel, &ctl.limits())?;
@@ -1196,6 +1203,11 @@ pub fn plan_export(
             action: NoteAction::NormalBlend,
         })
     }
+    plan.notes
+        .extend(dropped_sets.into_iter().map(|layer| ExportNote {
+            layer,
+            action: NoteAction::DroppedSetContent,
+        }));
     // 丸めの差: 丸めた設定だけを替えた写しの合成と、今の合成を比べる（隠した調整は合成に出ないので 0）
     let mut base: Option<Vec<u8>> = None;
     for (note, id, rounding, shown) in rounded {
@@ -2005,17 +2017,9 @@ pub(super) fn from_core_strict(d: &CoreDocument, ctl: &ExportControl) -> Result<
     Ok(Builder::new(d, &ExportOptions::color(), ctl, true)?.run(Compression::Raw)?)
 }
 
-/// レイヤーセットが 2 つ以上なら、レイヤーセットごとに一番上の段のグループ（分離）へ包んだ写し。グループの名前はレイヤーセットの名前で、空なら
-/// `Set <並びの番号（1 から）>`。表示するのは、書き出すチャンネルを出力しているレイヤーセットのグループだけ（PSD の合成が最終の結果と同じになる）。
-/// 書き出すチャンネルの出力の割り当てが無いときは、最終の結果がそのチャンネルの既定値なので、グループは全部非表示にして、一番下に既定値で塗った
-/// 表示のレイヤー（`Default`）を足す。割り当てがあってレイヤーセットが 1 つなら None（今の文書のまま書く。レイヤーセットの無かったときと同じバイト列）。
-fn layer_sets_as_groups(d: &CoreDocument, channel: Channel) -> Result<Option<CoreDocument>> {
-    let sets = d.layer_sets();
-    let output = d.channel_output(channel)?;
-    if sets.len() < 2 && output.is_some() {
-        return Ok(None);
-    }
-    let names: Vec<String> = sets
+/// レイヤーセットの名前（空なら `Set <並びの番号（1 から）>`）。
+fn layer_set_names(d: &CoreDocument) -> Vec<String> {
+    d.layer_sets()
         .iter()
         .enumerate()
         .map(|(i, s)| {
@@ -2025,9 +2029,35 @@ fn layer_sets_as_groups(d: &CoreDocument, channel: Channel) -> Result<Option<Cor
                 s.name.clone()
             }
         })
-        .collect();
+        .collect()
+}
+
+/// 書き出すチャンネルを組に持たないのに、そのチャンネルに表示の中身を持つレイヤーがあるレイヤーセットの名前（並びの順）。書き出しでは
+/// 中身の無いグループになり、その中身は PSD に入らない。
+fn sets_dropping_content(d: &CoreDocument, channel: Channel) -> Vec<String> {
+    layer_set_names(d)
+        .into_iter()
+        .zip(d.layer_sets())
+        .filter(|(_, s)| d.layer_set_has_content_outside_channel(s.id, channel))
+        .map(|(name, _)| name)
+        .collect()
+}
+
+/// レイヤーセットが 2 つ以上なら、レイヤーセットごとに一番上の段のグループ（分離）へ包んだ写し。グループの名前はレイヤーセットの名前で、空なら
+/// `Set <並びの番号（1 から）>`。表示するのは、書き出すチャンネルを出力しているレイヤーセットのグループだけ（PSD の合成が最終の結果と同じになる）。
+/// 書き出すチャンネルの出力の割り当てが無いときは、最終の結果がそのチャンネルの既定値なので、グループは全部非表示にして、一番下に既定値で塗った
+/// 表示のレイヤー（`Default`）を足す。書き出すチャンネルを扱わないレイヤーセットは、中身の無いグループにする（そのレイヤーセットのそのチャンネルの
+/// 合成は空。組の外のチャンネルの画素を書かない）。割り当てがあってレイヤーセットが 1 つなら None（今の文書のまま書く。レイヤーセットの無かったときと
+/// 同じバイト列）。
+fn layer_sets_as_groups(d: &CoreDocument, channel: Channel) -> Result<Option<CoreDocument>> {
+    let sets = d.layer_sets();
+    let output = d.channel_output(channel)?;
+    if sets.len() < 2 && output.is_some() {
+        return Ok(None);
+    }
+    let names = layer_set_names(d);
     let visible: Vec<bool> = sets.iter().map(|s| Some(s.id) == output).collect();
-    let mut wrapped = d.layer_sets_as_groups(&names, &visible)?;
+    let mut wrapped = d.layer_sets_as_groups(&names, &visible, channel)?;
     if output.is_none() {
         let default = d
             .channel_info(channel)

@@ -13,6 +13,7 @@ layerops-paths-became-pixels = 패스를 픽셀로 바꿨습니다
 layerops-hidden-children-dropped = 숨겨진 하위 항목을 제외했습니다
 layerops-pixels-of-disabled-channels-dropped = 비활성화된 채널의 픽셀을 제외했습니다
 layerops-text-became-pixels = 텍스트를 픽셀로 바꿨습니다
+layerops-pixels-of-channels-outside-set-dropped = 이 레이어 세트가 사용하지 않는 채널의 픽셀은 제외했습니다
 layerops-text = ;{" "}
 layerops-merged = 병합했습니다
 layerops-merged-into = { $name }에 병합했습니다

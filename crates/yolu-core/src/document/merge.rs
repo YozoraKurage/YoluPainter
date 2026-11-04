@@ -27,7 +27,7 @@ pub struct LayerMergeReport {
     pub result_id: LayerId,
     pub method: MergeMethod,
     /// C# MergeNotes のビット（1: フィルター・Generator を画素へ焼いた、2: パスを画素にした、4: 隠した子を除去、8: 無効チャンネルを除去）と、
-    /// Rust だけのビット 16（テキストレイヤーの値を外して画素にした）。
+    /// Rust だけのビット 16（テキストレイヤーの値を外して画素にした）と 32（表示レイヤーの結合で、レイヤーセットの組に無いチャンネルの中身を除いた）。
     pub notes: u8,
     pub compared_pixels: u64,
     pub changed_pixels: u64,
@@ -666,9 +666,10 @@ impl Document {
         if removed.is_empty() {
             return Err(CoreError::MergeRefused(MergeRefusal::NothingVisible));
         }
+        let outside = self.outside_set_notes(set, &removed)?;
         removed.retain(|id| !self.layer(*id).expect("レイヤー").is_group());
         self.ensure_members_editable(&removed)?;
-        let mut notes = self.disabled_notes(&removed);
+        let mut notes = self.disabled_notes(&removed) | outside;
         for (i, l) in self.layers.iter().enumerate() {
             if removed.contains(&l.id) {
                 self.refuse_inactive_effects(i, true, true)?;
@@ -703,9 +704,11 @@ impl Document {
             .then(|| in_place.iter().map(|&i| self.layers[i].clone()).collect());
         let members: &[Layer] = picked.as_deref().unwrap_or(&self.layers);
         let mut output_tiles: BTreeMap<Channel, BTreeSet<TileCoord>> = BTreeMap::new();
+        // レイヤーセットの組に無いチャンネルは、そのレイヤーセットの合成に入らないので結合しない
         for c in self.channels() {
             let kind = self.channel_kind(c)?;
-            if Stack::new(members, c, kind, None).plan().is_empty() {
+            if !self.set_has_channel(set, c) || Stack::new(members, c, kind, None).plan().is_empty()
+            {
                 continue;
             }
             // 全部のレイヤーの評価した出力（効果を焼く）。評価した面のタイルは、元の画素の無い所へ出した効果の分も読むタイルに足す
@@ -756,6 +759,32 @@ impl Document {
             .iter()
             .filter(|l| removed.contains(&l.id))
             .try_for_each(|l| self.ensure_pixels_editable(l.id, false))
+    }
+    /// 結合しない組の外のチャンネルに、外すレイヤー（グループを含む。親子の並びを保つ）の画素・塗りつぶし・効果の出力があれば 32
+    /// （結合と同じ物差し: 計画に、画素のあるタイル・塗りつぶしの値・効果の出力を持つレイヤーが在るか）。
+    fn outside_set_notes(
+        &self,
+        set: LayerSetId,
+        removed: &HashSet<LayerId>,
+    ) -> Result<u8, CoreError> {
+        let removed_stack: Vec<Layer> = self
+            .layers
+            .iter()
+            .filter(|l| removed.contains(&l.id))
+            .cloned()
+            .collect();
+        for c in self.channels() {
+            if !self.set_has_channel(set, c)
+                && super::layer_sets::plan_holds_content(
+                    &removed_stack,
+                    &Stack::new(&removed_stack, c, self.channel_kind(c)?, None).plan(),
+                    c,
+                )
+            {
+                return Ok(32);
+            }
+        }
+        Ok(0)
     }
     fn disabled_notes(&self, removed: &HashSet<LayerId>) -> u8 {
         if self

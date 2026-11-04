@@ -725,6 +725,7 @@ impl Document {
             layer_sets: vec![LayerSetInfo {
                 id: first,
                 name: String::new(),
+                channels: Channel::ALL.iter().fold(0, |b, c| b | c.bit()),
             }],
             route: [Some(first); Channel::MAX],
             channels: Channel::ALL
@@ -2803,7 +2804,8 @@ impl Document {
     }
 
     /// レイヤーセットの合成の、ただ 1 つの組み立て口: `set` のレイヤーだけを計画に入れる（並びは写さず、計画が他のレイヤーセットのレイヤーを
-    /// 飛ばす。計画の番号は文書の並びの番号のまま）。`below` があれば、並びのその番号より前のレイヤーだけ。
+    /// 飛ばす。計画の番号は文書の並びの番号のまま）。`below` があれば、並びのその番号より前のレイヤーだけ。`channel` が `set` の組に無ければ、
+    /// どのレイヤーも出さない空の計画（合成は透明）。
     pub(crate) fn set_stack<'a>(
         &'a self,
         set: LayerSetId,
@@ -2816,6 +2818,9 @@ impl Document {
             Some(index) => &self.layers[..index],
             None => &self.layers[..],
         };
+        if !self.set_has_channel(set, channel) {
+            return Stack::nothing(layers, channel, kind);
+        }
         Stack::in_set(layers, set, channel, kind, eval)
     }
 
