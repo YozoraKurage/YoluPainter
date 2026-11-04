@@ -416,6 +416,29 @@ fn mask_and_group_smart_core_roundtrip_keeps_layers_and_pixels() {
         assert_eq!(before.layers().len(), after.layers().len());
     }
 }
+/// レイヤーセットを使っていない断片（スマートマテリアル・スマートマスク・マテリアル）は、前の Unity 版が読めるバージョンのまま書く（文書の ID を
+/// 新しくしても、最初のレイヤーセットの ID が決まりの ID のままなので、レイヤーセットを書かない）。
+#[test]
+fn fragments_without_layer_sets_keep_the_version_the_unity_native_reader_opens() {
+    let mut d = Document::with_tile_size(16, 16, 8).unwrap();
+    let a = d.add_layer("a").unwrap();
+    d.add_layer_mask(a).unwrap();
+    let fill = d
+        .add_fill_layer("f", &[(Channel::Color, Rgba8::new(9, 8, 7, 255))], None)
+        .unwrap();
+    for m in [
+        d.capture_smart_material(&[a], "m").unwrap(),
+        d.capture_smart_mask(a, "k").unwrap(),
+        d.capture_material(fill, "fill").unwrap(),
+    ] {
+        let file = SmartFile::from_core(&m, &writer()).unwrap();
+        assert!(
+            file.fragment().version() <= UNITY_NATIVE_VERSION,
+            "{}",
+            file.fragment().version()
+        );
+    }
+}
 #[test]
 fn all_file_kinds_roundtrip_and_count_the_embedded_pixels() {
     use yolu_io::shelf::ResourceKind;

@@ -350,6 +350,12 @@ fn the_layer_menu_is_one_list_for_the_menu_bar_and_the_right_click() {
         let blank = shell::popup_entries(&s, PopupKind::M2(yolu_app::m2_menu::Popup::LayerBlank));
         assert_eq!(shape(&bar), shape(&blank), "{lang:?}");
         let labels: Vec<_> = names(&bar);
+        // ポインターレイヤーを作成は、選んだレイヤーが無いあいだは押せない
+        assert!(matches!(
+            bar.iter().find(|e| e.label()
+                == Some(lang.pick("ポインターレイヤーを作成", "Create Pointer Layer"))),
+            Some(Entry::Item { enabled: false, .. })
+        ));
         assert_eq!(
             labels,
             [
@@ -363,6 +369,10 @@ fn the_layer_menu_is_one_list_for_the_menu_bar_and_the_right_click() {
                         .to_owned()
                 ),
                 Some(lang.pick("新規パスレイヤー", "New Path Layer").to_owned()),
+                Some(
+                    lang.pick("ポインターレイヤーを作成", "Create Pointer Layer")
+                        .to_owned()
+                ),
                 None,
                 Some(lang.pick("新規グループ", "New Group").to_owned()),
             ]
@@ -439,6 +449,7 @@ fn the_layer_menu_goes_add_then_effects_then_groups_then_the_rest() {
             ja_en("新規塗りつぶしレイヤー", "New Fill Layer"),
             ja_en("新規調整レイヤー", "New Adjustment Layer"),
             ja_en("新規パスレイヤー", "New Path Layer"),
+            ja_en("ポインターレイヤーを作成", "Create Pointer Layer"),
             None,
             ja_en("フィルターを追加", "Add Filter"),
             ja_en("ジェネレーターを追加", "Add Generator"),
@@ -1359,6 +1370,53 @@ fn the_menu_bar_opens_the_fill_submenu_on_hover_and_a_click_in_it_makes_the_laye
     assert_eq!(h.doc().layers().len(), 2);
     h.act(Action::Undo);
     assert_eq!(h.doc().layers().len(), 1, "1 回の取り消しで戻る");
+}
+
+/// 窓の高さに入らない入れ子のメニューも、ホイールで下へ送れば全部の項目に届き、選べる（根のメニューも入らない高さ）。
+#[test]
+fn a_submenu_taller_than_the_window_scrolls_to_its_last_item_by_the_wheel() {
+    let mut h = app(1280.0, 240.0, 64);
+    let at = menu_title(&h, "レイヤー").center();
+    click(&mut h, at);
+    hover(&mut h, pos2(640.0, 120.0));
+    let parent = popup_item(&h, "新規調整レイヤー");
+    hover(&mut h, parent.center());
+    assert_eq!(depth(&h), 1, "乗せると右に開く");
+    let sub = h.popup().as_ref().unwrap().state.sub_rects()[0];
+    let last = AdjustmentKind::ALL
+        .last()
+        .unwrap()
+        .name(Lang::Ja)
+        .to_owned();
+    let seen = |h: &Harness<'_, YoluApp>| {
+        let sub = h.popup().as_ref().unwrap().state.sub_rects()[0];
+        h.query_all_by_label(&last)
+            .map(|n| n.rect())
+            .find(|r| sub.contains_rect(*r))
+    };
+    assert!(seen(&h).is_none(), "初めは一番下の項目は見えない: {sub:?}");
+    hover(&mut h, pos2(parent.right() - 2.0, parent.center().y));
+    hover(&mut h, sub.center());
+    for _ in 0..10 {
+        if seen(&h).is_some() {
+            break;
+        }
+        h.event(Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, -60.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run();
+    }
+    let at = seen(&h).expect("送ると一番下の項目が見える").center();
+    assert_eq!(depth(&h), 1, "送っても入れ子は開いたまま");
+    click(&mut h, at);
+    assert!(h.popup().is_none(), "選んだら閉じる");
+    let id = h.selected_layer().unwrap();
+    assert_eq!(h.doc().layer(id).unwrap().kind(), LayerKind::Adjustment);
+    h.act(Action::Undo);
+    assert_eq!(h.doc().layers().len(), 1);
 }
 
 /// 下から a・b・c の 3 つのレイヤーがある画面（選んでいるのは一番上の c）。

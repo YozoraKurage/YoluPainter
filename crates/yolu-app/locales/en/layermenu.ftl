@@ -13,5 +13,4 @@ layermenu-decal-placed = Decal placed
 layermenu-decal-placed-is-not-shown = Decal placed. { $name } is not shown yet ({ $why }).
 layermenu-image-fill-added = Image fill added
 layermenu-gradient-decal-added = Gradient decal added
-layermenu-new-pointer-layer = New Pointer Layer
 layermenu-create-pointer-layer = Create Pointer Layer

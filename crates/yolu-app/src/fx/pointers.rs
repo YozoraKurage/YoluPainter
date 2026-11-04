@@ -34,7 +34,8 @@ pub const UNSET: ExternalSet = ExternalSet {
 /// ポインターレイヤーの操作（`FxOp::Pointer`。どれも 1 回の Undo）。
 #[derive(Clone, Debug, PartialEq)]
 pub enum PointerOp {
-    /// 選んでいるレイヤーのすぐ上に作る（`Some` はそのレイヤー・グループを指す。`None` は指す先なしで作り、プロパティで選ぶ）。
+    /// 選んでいるレイヤーのすぐ上に作る（`Some` はそのレイヤー・グループを指す。`None` は指す先なしで作る。メニューは `Some` だけで、`None` は
+    /// 指す先が無い状態を作る試験・計測・見本の文書が使う）。
     New(Option<LayerId>),
     /// 指す先を替える。
     Target {

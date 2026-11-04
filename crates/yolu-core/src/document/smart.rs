@@ -483,7 +483,7 @@ impl SmartMaterial {
     /// 保存用の独立した文書。画素は書き込み時に分離する。
     pub fn fragment_document(&self) -> Result<Document, CoreError> {
         let mut d = Document::with_tile_size(self.width, self.height, self.tile_size)?;
-        d.id = self.document_id;
+        d.rekey_document(self.document_id);
         d.normal_settings = self.normal_settings;
         d.layers = self.layers.clone();
         // 断片は 1 つのレイヤーセット（新しい文書の最初のもの）に入る

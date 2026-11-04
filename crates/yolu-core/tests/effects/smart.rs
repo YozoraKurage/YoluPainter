@@ -1,7 +1,7 @@
 use yolu_core::smart::{SmartKind, SmartMaterial, SmartPlacement, SmartResampling};
 use yolu_core::{
     BlendMode, BrushSettings, Channel, ChannelBlend, ChannelInfo, ChannelKind, ColorSpace,
-    CoreError, Document, LayerId, LayerKind, LayerLocks, Rgba8,
+    CoreError, Document, LayerId, LayerKind, LayerLocks, LayerSetId, Rgba8,
 };
 /// 文書の変わったかどうかの目安: レイヤーの数・画素のバイト数・版・Undo の有無。
 fn state(d: &Document) -> (usize, u64, u64, bool) {
@@ -266,6 +266,27 @@ fn disabled_user_channel_content_is_refused_without_the_same_channel() {
         }
         same.undo().unwrap();
         assert!(same.layers().is_empty());
+    }
+}
+#[test]
+fn a_fragment_has_the_default_single_layer_set_of_its_own_new_document_id() {
+    let mut d = Document::with_tile_size(4, 4, 2).unwrap();
+    let a = d.add_layer("a").unwrap();
+    d.add_layer_mask(a).unwrap();
+    let kinds = [
+        d.capture_smart_material(&[a], "m").unwrap(),
+        d.capture_smart_mask(a, "k").unwrap(),
+    ];
+    for m in kinds {
+        let f = m.fragment_document().unwrap();
+        assert_ne!(f.id(), d.id(), "断片の文書の ID は新しい");
+        // 最初のレイヤーセットの ID は断片の文書の ID から決まる（書くとレイヤーセットを書かず、開くと同じ ID に戻る）
+        assert!(f.has_default_layer_sets());
+        assert_eq!(f.layer_sets()[0].id, LayerSetId::first_of(f.id()));
+        assert!(f
+            .layers()
+            .iter()
+            .all(|l| l.layer_set() == f.layer_sets()[0].id));
     }
 }
 #[test]

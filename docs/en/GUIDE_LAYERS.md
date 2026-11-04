@@ -14,7 +14,7 @@ Create layers with the buttons in the action strip of the Layers panel (right be
 | New Fill Layer | Solid Color, Gradient Decal, Image or Decal ([GUIDE_FILL.md](GUIDE_FILL.md)) |
 | New Adjustment Layer | See “Adjustment layers” below |
 | New Path Layer | A layer with one path that has no points. It switches to the Path tool, and the first point you place becomes a path of this layer ([GUIDE_PATHS.md](GUIDE_PATHS.md)) |
-| New Pointer Layer | A layer that reads the composite of another layer, group or layer set (see “Pointer layers” below) |
+| Create Pointer Layer | A layer that points at the selected layer or group and reads its composite (see “Pointer layers” below) |
 | New Group | A container for layers |
 
 - **Select**: click a row. `Ctrl`+click adds or removes, `Shift`+click selects a range, and `Ctrl+Shift`+click adds a range.
@@ -71,7 +71,7 @@ Effects (Anchors, generators, the clone source and so on) read only within the l
 
 A pointer layer has no pixels of its own: it reads the composite of its target and uses it as its pixels. When you repaint the target, the pointer layer follows. Masks, filters, the blend mode and opacity apply on top of it like any other layer. Use it, for example, to lay a blurred copy of a pattern elsewhere, or to use what you painted in another texture set as the source of a mask in this one.
 
-- **Create**: New Pointer Layer creates a pointer layer with no target yet (choose it in Properties). Create Pointer Layer in the right-click menu of a layer or group creates a pointer layer that points at that layer or group, right above the selected layer. Each is one undo step.
+- **Create**: Create Pointer Layer in the Layer menu (the same list in the menu bar and the right-click menu of a layer) creates a pointer layer that points at the selected (right-clicked) layer or group, right above it. You can change the target later in Properties. It is unavailable while no layer is selected. One undo step.
 - **Target**: choose it with Target in the Pointer section of Properties. You can choose a layer or group of this texture set (the result of that layer or group alone, without the layers below; its own mask, opacity and blend mode apply; the layer or group itself is read even when hidden, so you can use a hidden source elsewhere), a layer set of this texture set, or a layer set of another texture set (listed under each texture set's name). Another texture set's image is read by UV and stretched when the sizes differ.
 - **Read from**: the rows under Read from choose, for each channel, which channel of the target to read. The default is the same channel. Values are read as stored, without color space or type conversion.
 - **Loops and depth**: a target that contains the layer itself or a layer that reads it (across texture sets too), and pointer layers nested more than 4 levels deep, cannot be made. Such targets cannot be chosen in the list, and hovering shows why. Operations that would cause this (reordering, moving to a layer set, undo and so on) are refused too, and a .ylp in that state is not opened.

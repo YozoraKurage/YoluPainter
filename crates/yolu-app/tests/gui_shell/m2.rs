@@ -6,7 +6,7 @@ use crate::common::drive::Drive;
 
 use super::shots;
 use common::*;
-use egui::{pos2, Key, Modifiers, PointerButton};
+use egui::{pos2, Key, Modifiers, PointerButton, Rect};
 use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
 use yolu_app::engine::{BlendMode, Channel, LayerKind};
@@ -148,6 +148,67 @@ fn the_layer_menu_moves_a_layer_up_and_down_with_one_undo_each() {
     assert_eq!(order(&h), vec![a, c, b], "下への 1 回の取り消し");
     undo(&mut h);
     assert_eq!(order(&h), vec![a, b, c], "上への 1 回の取り消し");
+}
+
+/// 開いているメニューの根の段で、項目 `label` が描かれている（見えている）矩形。
+fn visible_popup_item(h: &Harness<'_, YoluApp>, label: &str) -> Option<Rect> {
+    let body = h.state().state.ui.popup.as_ref()?.state.rect;
+    h.query_all_by_label(label)
+        .map(|n| n.rect())
+        .find(|r| body.contains_rect(*r))
+}
+
+/// 一番小さい窓（1280×800）で、レイヤーのメニューは画面の高さに入らない。下の項目はホイールでも、つまみのドラッグ（ペンの接触・指も同じ左ボタン）でも届き、選べる。
+#[test]
+fn the_layer_menu_taller_than_the_smallest_window_reaches_its_last_item_by_the_wheel_and_the_handle(
+) {
+    let mut h = app(1280.0, 800.0, 128);
+    apply(&mut h, Action::NewLayer);
+    apply(&mut h, Action::NewLayer);
+    let b = h.doc().layers()[1].id();
+    let name = h.doc().layer(b).unwrap().name().to_owned();
+    let layers = h.doc().layers().len();
+    let last = "レイヤーを削除";
+    // ホイール
+    open_layer_menu(&mut h, &name);
+    let body = h.state().state.ui.popup.as_ref().unwrap().state.rect;
+    assert!(
+        body.height() >= h.ctx.content_rect().height() - 2.0 * yolu_app::ui::menu::MARGIN - 1.0,
+        "メニューが窓の高さを使い切る（入らない）: {body:?}"
+    );
+    assert!(
+        visible_popup_item(&h, last).is_none(),
+        "初めは一番下の項目は見えない"
+    );
+    let at = popup_item_scrolled(&mut h, last).center();
+    assert!(h.state().state.ui.popup.as_ref().unwrap().state.scroll > 0.0);
+    click(&mut h, at);
+    assert_eq!(h.doc().layers().len(), layers - 1, "届いて選べる");
+    undo(&mut h);
+    assert_eq!(h.doc().layers().len(), layers);
+    // つまみのドラッグ（右の縁の、上のつまみを下の端まで）
+    let name = h
+        .doc()
+        .layer(h.doc().layers()[1].id())
+        .unwrap()
+        .name()
+        .to_owned();
+    open_layer_menu(&mut h, &name);
+    let body = h.state().state.ui.popup.as_ref().unwrap().state.rect;
+    let x = body.right() - 4.0;
+    drag(
+        &mut h,
+        &[
+            pos2(x, body.top() + 8.0),
+            pos2(x, body.top() + 40.0),
+            pos2(x, body.bottom() + 20.0),
+        ],
+    );
+    let at = visible_popup_item(&h, last)
+        .expect("つまみを下へ動かすと一番下の項目が見える")
+        .center();
+    click(&mut h, at);
+    assert_eq!(h.doc().layers().len(), layers - 1);
 }
 
 #[test]

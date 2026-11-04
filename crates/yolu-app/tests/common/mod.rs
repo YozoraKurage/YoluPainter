@@ -338,6 +338,39 @@ pub fn popup_item(h: &Harness<'_, YoluApp>, label: &str) -> Rect {
     rect_of(h, label, |r| body.contains_rect(r))
 }
 
+/// 開いているメニューの根の段の、項目 `label` の矩形。画面の高さに入らないメニューは、見えない行が描かれないので、見つかるまで
+/// ホイールで下へ送る（ポインタをメニューの中ほどに置いて、1 回 120 点ずつ）。送り切っても無ければ失敗する。
+pub fn popup_item_scrolled(h: &mut Harness<'_, YoluApp>, label: &str) -> Rect {
+    use egui_kittest::kittest::Queryable;
+    for _ in 0..40 {
+        let body = h
+            .state()
+            .state
+            .ui
+            .popup
+            .as_ref()
+            .expect("popup open")
+            .state
+            .rect;
+        if let Some(r) = h
+            .query_all_by_label(label)
+            .map(|n| n.rect())
+            .find(|r| body.contains_rect(*r))
+        {
+            return r;
+        }
+        move_to(h, body.center());
+        h.event(Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -120.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: Modifiers::NONE,
+        });
+        h.run();
+    }
+    panic!("{label}: メニューを送り切っても見つからない")
+}
+
 pub fn key(h: &Harness<'_, YoluApp>, key: egui::Key, modifiers: Modifiers) {
     h.event(Event::Key {
         key,
@@ -494,7 +527,7 @@ pub fn open_layer_menu(h: &mut Harness<'_, YoluApp>, name: &str) {
 /// レイヤーの組の行 `name` を右クリックして、出たメニューの項目 `item` を押す（帯から外した操作は、このメニューにある）。
 pub fn choose_in_layer_menu(h: &mut Harness<'_, YoluApp>, name: &str, item: &str) {
     open_layer_menu(h, name);
-    let at = popup_item(h, item).center();
+    let at = popup_item_scrolled(h, item).center();
     click(h, at);
 }
 

@@ -1,7 +1,7 @@
 //! レイヤーを足すメニューの部品（メニューバーの「レイヤー」・レイヤーの右クリック・レイヤーの一覧の空白の右クリックが同じものを使う。
 //! レイヤーのパネルの下の帯のボタンは、新規レイヤー・塗りつぶし・調整だけ）: 「新規レイヤー」「新規塗りつぶしレイヤー ▸」「新規調整レイヤー ▸」
-//! 「新規パスレイヤー」「新規ポインターレイヤー」と、レイヤー・グループを右クリックしたときの「ポインターレイヤーを作成」（そのレイヤー・
-//! グループを指す。作る操作は `fx::pointers`。どちらも 1 回の Undo）。
+//! 「新規パスレイヤー」「ポインターレイヤーを作成」（選んでいる・右クリックしたレイヤー・グループを指す。作る操作は `fx::pointers`。1 回の Undo。
+//! 指す先は後から「プロパティ」で替えられる）。
 //!
 //! 塗りつぶしの種類は単色・グラデーションデカール・画像・デカール。グラデーションは形（ボックス・球・平面）の一覧をもう 1 段の
 //! 入れ子に開き、選んだ形で新しい塗りつぶしレイヤーを作る（名前は塗りつぶしの欄の「形」と同じ）。画像とデカールは棚の画像の一覧（その下に
@@ -12,7 +12,9 @@ use std::path::PathBuf;
 
 use yolu_core::fill_image::ProjectionMode;
 use yolu_core::generator::Shape;
-use yolu_core::{Channel, ChannelKind, ImageId, LayerId, LayerKind};
+use yolu_core::{
+    Channel, ChannelKind, CoreError, ImageId, LayerId, LayerKind, Reason, MAX_POINTER_DEPTH,
+};
 
 use crate::fillfx::{default_fallback, inputs, placement, FillOp};
 use crate::fx::names;
@@ -40,19 +42,31 @@ pub enum Op {
     PathLayer,
 }
 
-/// 「新規レイヤー」「新規塗りつぶしレイヤー ▸」「新規調整レイヤー ▸」「新規パスレイヤー」「新規ポインターレイヤー」と、`layer`（右クリックした
-/// レイヤー・グループ）があれば「ポインターレイヤーを作成」。
+/// 「新規レイヤー」「新規塗りつぶしレイヤー ▸」「新規調整レイヤー ▸」「新規パスレイヤー」と、`layer`（選んでいる・右クリックしたレイヤー・
+/// グループ）を指す「ポインターレイヤーを作成」。`layer` が無い、またはそれがポインターレイヤーで、指すと連なりが上限を超える間は押せない。
 pub fn creation_entries(app: &AppState, layer: Option<LayerId>) -> Vec<Entry<Action>> {
     let free = !app.is_stroking();
     let mut v = new_layer_entries(app, free);
-    let new = |target| Action::Fx(crate::fx::FxOp::Pointer(PointerOp::New(target)));
-    v.push(Entry::item(app.lang.t("layermenu-new-pointer-layer"), new(None)).enabled(free));
-    if let Some(id) = layer.filter(|id| app.session.doc.layer(*id).is_some()) {
-        v.push(
-            Entry::item(app.lang.t("layermenu-create-pointer-layer"), new(Some(id))).enabled(free),
-        );
+    let target = layer.filter(|id| app.session.doc.layer(*id).is_some());
+    let too_deep = target.is_some_and(|id| pointer_chain_is_full(app, id));
+    let action = Action::Fx(crate::fx::FxOp::Pointer(PointerOp::New(target)));
+    let mut create = Entry::item(app.lang.t("layermenu-create-pointer-layer"), action)
+        .enabled(free && target.is_some() && !too_deep);
+    if too_deep {
+        let why = CoreError::InvalidArgument(Reason::PointerTooDeep);
+        create = create.tooltip(app.lang.core_error(&why));
     }
+    v.push(create);
     v
+}
+
+/// `id` がポインターレイヤーで、それを指す新しいポインターレイヤーを足すと、連なりが上限を超える（または循環している）か。
+fn pointer_chain_is_full(app: &AppState, id: LayerId) -> bool {
+    match app.session.doc.pointer_depth(id) {
+        Ok(Some(depth)) => depth + 1 > MAX_POINTER_DEPTH,
+        Ok(None) => true,
+        Err(_) => false,
+    }
 }
 
 fn new_layer_entries(app: &AppState, free: bool) -> Vec<Entry<Action>> {

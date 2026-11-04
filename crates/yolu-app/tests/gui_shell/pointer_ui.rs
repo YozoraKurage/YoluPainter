@@ -1,4 +1,4 @@
-//! ポインターレイヤーの画面: レイヤーの右クリックの「ポインターレイヤーを作成」、追加のメニューの「新規ポインターレイヤー」、プロパティの指す先と読む元。
+//! ポインターレイヤーの画面: レイヤーの右クリックとメニューバーの「レイヤー」の「ポインターレイヤーを作成」、プロパティの指す先と読む元。
 use crate::common;
 use crate::common::drive::Drive;
 
@@ -27,18 +27,25 @@ fn the_layer_context_menu_creates_a_pointer_to_that_layer_in_one_undo() {
 }
 
 #[test]
-fn the_add_menu_creates_a_pointer_and_the_properties_show_its_target_and_sources() {
+fn the_menu_bar_creates_a_pointer_to_the_selected_layer_and_the_properties_show_its_target_and_sources(
+) {
     let mut h = app(1280.0, 800.0, 64);
-    let name = h
-        .doc()
-        .layer(h.selected_layer().unwrap())
-        .unwrap()
-        .name()
-        .to_owned();
-    choose_in_layer_menu(&mut h, &name, "新規ポインターレイヤー");
+    let target = h.selected_layer().unwrap();
+    h.doc_mut().clear_history().unwrap();
+    h.run();
+    let title = rect_of(&h, "レイヤー", |r| r.top() < 30.0);
+    click(&mut h, title.center());
+    let at = popup_item_scrolled(&mut h, "ポインターレイヤーを作成").center();
+    click(&mut h, at);
     h.run();
     let id = h.selected_layer().unwrap();
     assert_eq!(h.doc().layer(id).unwrap().kind(), LayerKind::Pointer);
+    assert_eq!(
+        h.doc().layer(id).unwrap().pointer().unwrap().target(),
+        PointerTarget::Layer(target),
+        "メニューバーから選んでも、選んでいるレイヤーを指す"
+    );
+    assert_eq!(h.doc().undo_count(), 1);
     // 上の見出しを閉じて、ポインターの欄をウィンドウの中に入れる
     for key in ["layer", "locks"] {
         h.ui_mut().sections.insert(key, false);
@@ -115,4 +122,37 @@ fn snapshots_of_the_pointer_properties_and_the_open_target_list_in_both_language
         common::shot::region(&mut h, &format!("pointer_target_list_{name}"), rect);
         results.extend_harness(&mut h);
     }
+}
+
+/// 「ポインターレイヤーを作成」が押せるか（`layer` はメニューを開いたレイヤー。無ければ選んだレイヤーが無い形）。
+fn create_pointer_is_on(
+    s: &yolu_app::state::AppState,
+    layer: Option<yolu_app::engine::LayerId>,
+) -> bool {
+    use yolu_app::ui::menu::Entry;
+    yolu_app::shell::layer_menu(s, layer).iter().any(|e| {
+        matches!(e, Entry::Item { label, enabled: true, .. } if label == "ポインターレイヤーを作成")
+    })
+}
+
+#[test]
+fn the_create_item_is_off_without_a_layer_and_when_the_chain_is_full() {
+    use yolu_app::fx::pointers::PointerOp;
+    use yolu_app::fx::FxOp;
+    use yolu_app::state::{Action, AppState};
+    let mut s = AppState::new(64, 64);
+    let raster = s.session.selected_layer.unwrap();
+    assert!(create_pointer_is_on(&s, Some(raster)));
+    assert!(
+        !create_pointer_is_on(&s, None),
+        "選んだレイヤーが無ければ押せない"
+    );
+    // 指す連なりが上限までの間は押せ、上限になったら押せない（指すと上限を超える）
+    let mut last = raster;
+    for _ in 0..yolu_core::MAX_POINTER_DEPTH {
+        assert!(create_pointer_is_on(&s, Some(last)));
+        s.apply(Action::Fx(FxOp::Pointer(PointerOp::New(Some(last)))));
+        last = s.session.selected_layer.unwrap();
+    }
+    assert!(!create_pointer_is_on(&s, Some(last)));
 }

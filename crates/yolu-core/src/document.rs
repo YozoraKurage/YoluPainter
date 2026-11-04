@@ -779,6 +779,25 @@ impl Document {
         })
     }
 
+    /// 文書の ID を `document_id` に替える。最初のレイヤーセットの ID は文書の ID から決まる（`LayerSetId::first_of`）ので、その ID を
+    /// 持つレイヤーセットと、それを指す組・レイヤーの所属も、新しい文書の ID の物へ同じように替える（文書の ID を付け替える道は全部これを通る）。
+    pub(crate) fn rekey_document(&mut self, document_id: u128) {
+        let (old_first, new_first) = (
+            LayerSetId::first_of(self.id),
+            LayerSetId::first_of(document_id),
+        );
+        for info in self.layer_sets.iter_mut().filter(|i| i.id == old_first) {
+            info.id = new_first;
+        }
+        for r in self.route.iter_mut().filter(|r| **r == Some(old_first)) {
+            *r = Some(new_first);
+        }
+        for layer in self.layers.iter_mut().filter(|l| l.set == old_first) {
+            layer.set = new_first;
+        }
+        self.id = document_id;
+    }
+
     /// 読み込み直後の文書とレイヤーに保存済みのIDを復元する（レイヤーは下からの順）。
     /// 呼び出し前のIDを持つ履歴は消す。進行中のストローク・空ID・重複IDは拒否する。
     /// 文書を消費するので、読み込みが完了するまで外部へ公開しないこと。
@@ -795,21 +814,7 @@ impl Document {
         {
             return Err(CoreError::InvalidArgument(Reason::PersistentIds));
         }
-        // 最初のレイヤーセットの ID は文書の ID から決まる（`LayerSetId::first_of`）ので、文書の ID を替えたら同じように替える
-        let (old_first, new_first) = (
-            LayerSetId::first_of(self.id),
-            LayerSetId::first_of(document_id),
-        );
-        for info in self.layer_sets.iter_mut().filter(|i| i.id == old_first) {
-            info.id = new_first;
-        }
-        for r in self.route.iter_mut().filter(|r| **r == Some(old_first)) {
-            *r = Some(new_first);
-        }
-        for layer in self.layers.iter_mut().filter(|l| l.set == old_first) {
-            layer.set = new_first;
-        }
-        self.id = document_id;
+        self.rekey_document(document_id);
         // グループの中のレイヤーの親も新しい ID へ（並びは同じなので、古い ID → 新しい ID の表で引く）
         let map: HashMap<LayerId, LayerId> = self
             .layers

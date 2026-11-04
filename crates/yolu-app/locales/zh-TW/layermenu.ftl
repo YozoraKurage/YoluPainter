@@ -13,5 +13,4 @@ layermenu-decal-placed = 已放置貼花
 layermenu-decal-placed-is-not-shown = 已放置貼花。{ $name }尚未顯示（{ $why }）。
 layermenu-image-fill-added = 已新增圖片填色
 layermenu-gradient-decal-added = 已新增漸層貼花
-layermenu-new-pointer-layer = 新增指向圖層
 layermenu-create-pointer-layer = 建立指向圖層
