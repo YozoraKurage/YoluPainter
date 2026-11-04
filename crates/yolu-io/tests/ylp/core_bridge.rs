@@ -449,3 +449,76 @@ fn a_merged_clipped_layer_without_color_keeps_the_look_after_reopening() {
     let second = NativeDocument::from_core(&reopened).unwrap().to_bytes();
     assert!(first == second, "保存し直すと正本が変わる");
 }
+
+/// 色の面を持たないラスター（色の出力が無かった結合の結果。前のバージョンの保存の形）を開き、面を作る操作をして取り消すと、保存の
+/// 正本が操作の前と全バイト同じ。やり直しで操作の直後と同じ正本に戻り、もう一度取り消すと操作の前に戻る。
+#[test]
+fn undoing_paint_on_a_raster_without_a_color_surface_saves_the_same_bytes() {
+    use yolu_core::material::ChannelPaint;
+    fn bytes(doc: &Document) -> Vec<u8> {
+        NativeDocument::from_core(doc).unwrap().to_bytes()
+    }
+    fn opened() -> (Document, LayerId) {
+        let mut d = Document::new(64, 64).unwrap();
+        let a = d.add_layer("a").unwrap();
+        let b = d.add_layer("b").unwrap();
+        let merged = d.merge_layers(&[a, b], 0).unwrap().result_id;
+        let reopened = NativeDocument::read(&bytes(&d)).unwrap().to_core().unwrap();
+        assert!(reopened
+            .layer(merged)
+            .unwrap()
+            .surface(Channel::Color)
+            .is_none());
+        (reopened, merged)
+    }
+    let paint = [ChannelPaint::new(
+        Channel::Color,
+        Rgba8::new(200, 30, 20, 255),
+    )];
+    let brush = BrushSettings::default();
+    type Op = Box<dyn Fn(&mut Document, LayerId)>;
+    let ops: Vec<(&str, Op)> = vec![
+        (
+            "begin_stroke",
+            Box::new(|d, id| {
+                let mut s = d.begin_stroke(id, &BrushSettings::default()).unwrap();
+                s.add_point(d, 32.0, 32.0, 1.0, Default::default()).unwrap();
+                d.end_stroke(s).unwrap();
+            }),
+        ),
+        (
+            "begin_material_stroke",
+            Box::new({
+                move |d, id| {
+                    let mut s = d.begin_material_stroke(id, &paint, &brush).unwrap();
+                    s.add_point(d, 32.0, 32.0, 1.0, Default::default()).unwrap();
+                    d.end_stroke(s).unwrap();
+                }
+            }),
+        ),
+        (
+            "fill_material",
+            Box::new({
+                move |d, id| {
+                    assert!(d.fill_material(id, &paint, 1.0, None, false).unwrap());
+                }
+            }),
+        ),
+    ];
+    for (name, op) in ops {
+        let (mut d, id) = opened();
+        let before = bytes(&d);
+        op(&mut d, id);
+        let after = bytes(&d);
+        assert!(before != after, "{name}: 操作で正本が変わらない");
+        assert!(d.undo().unwrap());
+        assert!(bytes(&d) == before, "{name}: 取り消しても正本が前と違う");
+        assert!(d.redo().unwrap());
+        assert!(bytes(&d) == after, "{name}: やり直しても正本が直後と違う");
+        assert!(d.undo().unwrap());
+        assert!(
+            bytes(&d) == before,
+            "{name}: もう一度取り消しても正本が前と違う"
+        );
+    }
+}

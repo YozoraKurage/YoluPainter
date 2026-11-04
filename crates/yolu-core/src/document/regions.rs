@@ -211,12 +211,9 @@ impl Document {
             parts: Vec::new(),
         };
         for c in channels {
-            if !self.layers[index].is_channel_enabled(c.channel) {
-                let had = self.layers[index].surface(c.channel).is_some();
-                self.switch_channel_enabled(layer, c.channel, true, had, false)?;
-                command.enabled.push((c.channel, had));
-            }
-            self.ensure_surface(index, c.channel);
+            command
+                .enabled
+                .extend(self.open_channel(layer, index, c.channel)?);
         }
         let mut rollback = 0;
         for c in channels {

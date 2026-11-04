@@ -84,6 +84,8 @@ pub use crate::layer::{Layer, LayerId, LayerSetId};
 mod cache_tests;
 #[cfg(test)]
 mod memo_tests;
+#[cfg(test)]
+mod surface_tests;
 pub use eval::EffectCounters;
 pub(crate) use eval::EvalSet;
 pub use uv_seams::SeamFallback;
@@ -397,6 +399,13 @@ pub(crate) enum Property {
     ChannelBlend(Channel, ChannelBlend),
 }
 
+/// `ensure_surface` が面を作ったときの、作る前の状態（取り消しで有効の印を戻す）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SurfaceMade {
+    /// 面を作る前に、そのチャンネルは有効だったか（面を持たないまま有効の印だけ立っていても、面は作る）。
+    pub(crate) was_enabled: bool,
+}
+
 /// レイヤーの並びと入れ子（下から上の ID と親）。
 type Order = Vec<(LayerId, Option<LayerId>)>;
 
@@ -417,9 +426,9 @@ pub(crate) enum Command {
         layer: LayerId,
         target: Target,
         changes: Vec<TileChange>,
-        /// この段で初めてチャンネルの面を作った（`Target::Channel` のときだけ）。取り消しで空に戻った面を外してチャンネルを無効に戻し、
+        /// この段で初めてチャンネルの面を作った（`Target::Channel` のときだけ）。取り消しで空に戻った面を外して有効の印を作る前に戻し、
         /// やり直しで作り直す（空の面でもレイヤーは合成に入るので、残すと見た目が戻らない）。
-        created: bool,
+        created: Option<SurfaceMade>,
     },
     /// まとまり（レイヤー、またはグループと中身。len 枚）を index へ入れる。
     Insert {
@@ -1260,7 +1269,11 @@ impl Document {
                     }
                     Err(e) => {
                         // 1 枚ずつ呼ぶなら、面を作るのは最初の 1 枚。それが断られたときだけ面を消す
-                        self.drop_created_surface(index, channel, created && b == 0 && k == 0);
+                        self.drop_created_surface(
+                            index,
+                            channel,
+                            created.filter(|_| b == 0 && k == 0),
+                        );
                         return Err(e);
                     }
                 }
@@ -1382,28 +1395,38 @@ impl Document {
         }
     }
 
-    /// ラスターレイヤーの面が無ければ作って有効にする（履歴には入らない。取り消すときは drop_created_surface で外す）。作ったら true。
-    fn ensure_surface(&mut self, index: usize, channel: Channel) -> bool {
+    /// ラスターレイヤーの面が無ければ作って有効にする（履歴には入らない）。作ったら、作る前の有効の印を返す。呼び手は、断る・何も
+    /// 変えずに終わる・取り消すときに [`Document::drop_created_surface`] に渡して外す。履歴の段は `created` に持ち、取り消しで外してやり直しで
+    /// 作り直す。面と有効の印を作る・外すのは、この組だけ。
+    fn ensure_surface(&mut self, index: usize, channel: Channel) -> Option<SurfaceMade> {
         let (w, h, ts) = (self.width, self.height, self.tile_size);
         let layer = &mut self.layers[index];
         if layer.surface(channel).is_some() {
-            return false;
+            return None;
         }
+        let made = SurfaceMade {
+            was_enabled: layer.is_channel_enabled(channel),
+        };
         layer.put_surface(channel, Some(Surface::new(w, h, ts)));
         layer.set_enabled(channel, true);
         // 空の面でもそのチャンネルでレイヤーが合成に入る（クリッピングの組が増えれば、下地のグループが分離になる）
         if layer.clipping {
             self.mark_clip_bases();
         }
-        true
+        Some(made)
     }
 
-    /// ensure_surface で作った面を、断ったときに外す（作る前と同じに）。
-    fn drop_created_surface(&mut self, index: usize, channel: Channel, created: bool) {
-        if created {
+    /// `ensure_surface` で作った面を外し、有効の印を作る前に戻す（作る前と同じに）。`created` が None なら何もしない。
+    fn drop_created_surface(
+        &mut self,
+        index: usize,
+        channel: Channel,
+        created: Option<SurfaceMade>,
+    ) {
+        if let Some(made) = created {
             let layer = &mut self.layers[index];
             layer.put_surface(channel, None);
-            layer.set_enabled(channel, false);
+            layer.set_enabled(channel, made.was_enabled);
             if layer.clipping {
                 self.mark_clip_bases();
             }
@@ -2157,17 +2180,17 @@ impl Document {
         layer: LayerId,
         target: Target,
         changes: &[TileChange],
-        created: bool,
+        created: Option<SurfaceMade>,
         backwards: bool,
     ) -> Result<(), CoreError> {
         let index = self.index_of(layer)?;
         let created = match target {
-            Target::Channel(c) if created => Some(c),
+            Target::Channel(c) => created.map(|made| (c, made)),
             _ => None,
         };
         // やり直しで作り直した面（断ったら外して、作る前と同じに戻す）
         let remade = match (created, backwards) {
-            (Some(c), false) => self.ensure_surface(index, c).then_some(c),
+            (Some((c, _)), false) => self.ensure_surface(index, c).map(|made| (c, made)),
             _ => None,
         };
         let growth = self.growth_for(index, target);
@@ -2202,34 +2225,40 @@ impl Document {
                 },
             );
         }
-        if let Some(c) = remade {
+        if let Some((c, _)) = remade {
             self.mark_layer(index, Some(c));
         }
         for c in changes {
             self.mark_target_tile(index, target, c.coord);
         }
-        if let (Some(c), true) = (created, backwards) {
-            self.drop_empty_created_surface(index, c);
+        if let (Some((c, made)), true) = (created, backwards) {
+            self.drop_empty_created_surface(index, c, Some(made));
         }
         Ok(())
     }
 
-    /// restore_tiles がやり直しで作り直した面を、断ったときに外す（面を作ってから予算を確かめるので、断ると面と有効が残る）。
-    fn undo_remade_surface(&mut self, index: usize, remade: Option<Channel>) {
-        if let Some(c) = remade {
-            self.drop_created_surface(index, c, true);
+    /// restore_tiles がやり直しで作り直した面を、断ったときに外す（面を作ってから予算を確かめるので、断ると面と有効の印が残る）。
+    fn undo_remade_surface(&mut self, index: usize, remade: Option<(Channel, SurfaceMade)>) {
+        if let Some((c, made)) = remade {
+            self.drop_created_surface(index, c, Some(made));
         }
     }
 
-    /// ストロークが作った面が空なら外し、チャンネルを無効に戻す（作る前と同じ合成に）。外したら true。
-    fn drop_empty_created_surface(&mut self, index: usize, channel: Channel) -> bool {
-        if !self.layers[index]
-            .surface(channel)
-            .is_some_and(|s| s.tile_count() == 0)
+    /// 操作が作った面が空なら外し、有効の印を作る前に戻す（作る前と同じ合成に）。外したら true。`created` が None なら何もしない。
+    fn drop_empty_created_surface(
+        &mut self,
+        index: usize,
+        channel: Channel,
+        created: Option<SurfaceMade>,
+    ) -> bool {
+        if created.is_none()
+            || !self.layers[index]
+                .surface(channel)
+                .is_some_and(|s| s.tile_count() == 0)
         {
             return false;
         }
-        self.drop_created_surface(index, channel, true);
+        self.drop_created_surface(index, channel, created);
         self.mark_layer(index, Some(channel));
         true
     }
@@ -2522,12 +2551,12 @@ impl Document {
             }
         }
         let created = match target {
-            Target::Channel(c) if state.created_surface => Some(c),
+            Target::Channel(_) => state.created_surface,
             _ => None,
         };
         // 画素を変えなかったストロークは、始めに作った空の面も残さない（段を積まないので、見た目も保存の中身も始める前のまま）
-        if let (Some(c), true) = (created, changes.is_empty()) {
-            self.drop_empty_created_surface(state.layer_index, c);
+        if let (Target::Channel(c), true) = (target, changes.is_empty()) {
+            self.drop_empty_created_surface(state.layer_index, c, created);
         }
         let result = StrokeResult {
             changed: !changes.is_empty(),
@@ -2550,7 +2579,7 @@ impl Document {
                     layer: state.layer,
                     target,
                     changes,
-                    created: created.is_some(),
+                    created,
                 },
                 cost,
             });
@@ -2657,8 +2686,9 @@ impl Document {
         for coord in coords {
             self.mark_target_tile(state.layer_index, target, coord);
         }
-        if let (Target::Channel(c), true) = (target, state.created_surface) {
-            restored |= self.drop_empty_created_surface(state.layer_index, c);
+        if let Target::Channel(c) = target {
+            restored |=
+                self.drop_empty_created_surface(state.layer_index, c, state.created_surface);
         }
         if restored {
             self.revision += 1;

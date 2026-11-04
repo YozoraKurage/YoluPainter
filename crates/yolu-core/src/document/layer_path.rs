@@ -173,18 +173,20 @@ impl Document {
         let old_channels: Vec<Channel> = list_channels(&old_paths);
         let channels: BTreeSet<Channel> = paints.iter().chain(&old_channels).copied().collect();
         // レイヤーで有効でないチャンネルを有効にする（取り消しで戻す）
-        let mut enabled: Vec<(Channel, bool)> = Vec::new();
+        let mut enabled: Vec<super::material::Opened> = Vec::new();
         for c in &paints {
             if !self.layers[index].is_channel_enabled(*c) && !old_channels.contains(c) {
                 let had = self.layers[index].surface(*c).is_some();
                 self.switch_channel_enabled(layer, *c, true, had, false)?;
-                enabled.push((*c, had));
+                enabled.push(super::material::Opened {
+                    channel: *c,
+                    was_enabled: false,
+                    had_surface: had,
+                });
             }
         }
-        let undo_enabling = |doc: &mut Document, enabled: &[(Channel, bool)]| {
-            for (c, had) in enabled.iter().rev() {
-                let _ = doc.switch_channel_enabled(layer, *c, true, *had, true);
-            }
+        let undo_enabling = |doc: &mut Document, enabled: &[super::material::Opened]| {
+            let _ = doc.close_channels(layer, enabled);
         };
         let mut parts: Vec<(Target, Vec<TileChange>)> = Vec::new();
         let mut rollback = 0u64;
@@ -503,7 +505,7 @@ impl Document {
         if self.layers[index].kind != LayerKind::Fill {
             return Err(CoreError::Unsupported(Reason::FillPathPixelsNeedFillLayer));
         }
-        if self.ensure_surface(index, channel) {
+        if self.ensure_surface(index, channel).is_some() {
             self.external_mutation();
         }
         Ok(())

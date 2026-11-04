@@ -9,7 +9,7 @@
 use crate::Reason;
 use rayon::prelude::*;
 
-use super::{Command, Document, Entry, Target, TileChange};
+use super::{Command, Document, Entry, SurfaceMade, Target, TileChange};
 use crate::blend::blend;
 use crate::error::CoreError;
 use crate::layer::LayerId;
@@ -124,6 +124,7 @@ impl Document {
         let r = self.edit_region(
             index,
             Target::Channel(channel),
+            created,
             region,
             move |start, amount| fill_pixel(start, color, opacity, amount, erase, keep_alpha),
         );
@@ -153,7 +154,7 @@ impl Document {
             return Err(CoreError::Unsupported(Reason::LayerHasNoMask));
         }
         self.refuse_lock(layer, super::LayerLocks::ALL)?;
-        self.edit_region(index, Target::Mask, region, move |start, coverage| {
+        self.edit_region(index, Target::Mask, None, region, move |start, coverage| {
             mask_fill_pixel(start, amount, coverage, reveal)
         })
     }
@@ -184,6 +185,7 @@ impl Document {
         &mut self,
         index: usize,
         target: Target,
+        created: Option<SurfaceMade>,
         region: Option<&SelectionMask>,
         pixel: F,
     ) -> Result<bool, CoreError>
@@ -191,7 +193,7 @@ impl Document {
         F: Fn(Rgba8, f64) -> Rgba8 + Sync,
     {
         let effective = self.effective_region(region)?;
-        self.edit_effective(index, target, effective, |_, _, start, amount| {
+        self.edit_effective(index, target, created, effective, |_, _, start, amount| {
             pixel(start, amount)
         })
     }
@@ -202,6 +204,7 @@ impl Document {
         &mut self,
         index: usize,
         target: Target,
+        created: Option<SurfaceMade>,
         effective: Option<SelectionMask>,
         pixel: F,
     ) -> Result<bool, CoreError>
@@ -236,7 +239,7 @@ impl Document {
                 layer,
                 target,
                 changes,
-                created: false,
+                created,
             },
             cost,
         });

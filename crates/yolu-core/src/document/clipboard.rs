@@ -696,6 +696,7 @@ impl Document {
         let result = self.edit_effective(
             index,
             Target::Channel(channel),
+            created,
             effective,
             |x, y, start, amount| {
                 let o = (y as usize * width + x as usize) * 4;

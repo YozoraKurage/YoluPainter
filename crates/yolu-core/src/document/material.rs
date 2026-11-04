@@ -6,11 +6,21 @@ use crate::Reason;
 pub(super) struct MaterialState {
     pub started: bool,
     pub extra: Vec<StrokeState>,
-    pub(super) enabled: Vec<(Channel, bool)>,
+    pub(super) enabled: Vec<Opened>,
+}
+/// 材質の操作が有効にした・面を作ったチャンネルの、作る前の状態。取り消しで有効の印を戻し、作った面は空のとき外す。やり直しで
+/// 作り直す。
+#[derive(Clone, Copy)]
+pub(super) struct Opened {
+    pub(super) channel: Channel,
+    /// 作る前に有効だったか（無効のチャンネルは有効にし、有効なのに面が無いチャンネルは面だけ作る）。
+    pub(super) was_enabled: bool,
+    /// 作る前に面があったか（無効のチャンネルの面は、有効にする前からあることがある）。
+    pub(super) had_surface: bool,
 }
 pub(crate) struct MaterialCommand {
     pub(super) layer: LayerId,
-    pub(super) enabled: Vec<(Channel, bool)>,
+    pub(super) enabled: Vec<Opened>,
     pub(super) parts: Vec<(Target, Vec<TileChange>)>,
 }
 impl Document {
@@ -147,12 +157,7 @@ impl Document {
         self.next_stroke += 1;
         let mut states = Vec::new();
         for c in channels {
-            if !self.layers[index].is_channel_enabled(c.channel) {
-                let had = self.layers[index].surface(c.channel).is_some();
-                self.switch_channel_enabled(layer, c.channel, true, had, false)?;
-                enabled.push((c.channel, had));
-            }
-            self.ensure_surface(index, c.channel);
+            enabled.extend(self.open_channel(layer, index, c.channel)?);
             let kind = self.channel_kind(c.channel)?;
             let mut brush = if crate::brush::carries_color(kind) {
                 brush.clone()
@@ -297,9 +302,7 @@ impl Document {
         let enabled = std::mem::take(&mut self.material.enabled);
         self.material.started = false;
         if parts.is_empty() {
-            for &(c, had) in enabled.iter().rev() {
-                self.switch_channel_enabled(layer, c, true, had, true)?;
-            }
+            self.close_channels(layer, &enabled)?;
             return Ok(result);
         }
         self.push_material(MaterialCommand {
@@ -351,10 +354,9 @@ impl Document {
                 self.mark_target_tile(index, target, coord);
             }
         }
-        for (c, had) in std::mem::take(&mut self.material.enabled).into_iter().rev() {
-            self.switch_channel_enabled(layer, c, true, had, true)
-                .expect("進行中のレイヤー");
-        }
+        let enabled = std::mem::take(&mut self.material.enabled);
+        self.close_channels(layer, &enabled)
+            .expect("進行中のレイヤー");
         self.material.started = false;
         self.revision += 1;
         true
@@ -386,9 +388,7 @@ impl Document {
             self.ensure_source_growth(delta as u64)?;
         }
         if !backwards {
-            for &(c, had) in &m.enabled {
-                self.switch_channel_enabled(m.layer, c, true, had, false)?;
-            }
+            self.reopen_channels(m.layer, &m.enabled)?;
         }
         // 全体の増分を先に検証済み。個別の増分で再拒否しない。
         for (target, changes) in &m.parts {
@@ -407,8 +407,63 @@ impl Document {
             }
         }
         if backwards {
-            for &(c, had) in m.enabled.iter().rev() {
-                self.switch_channel_enabled(m.layer, c, true, had, true)?;
+            self.close_channels(m.layer, &m.enabled)?;
+        }
+        Ok(())
+    }
+    /// 材質の操作で描くチャンネルを開く: 無効なら有効にし（面が無ければ作る）、有効なのに面が無ければ面を作る。何も変えなければ None。
+    /// 取り消しは [`Document::close_channels`]、やり直しは [`Document::reopen_channels`]。
+    pub(super) fn open_channel(
+        &mut self,
+        layer: LayerId,
+        index: usize,
+        channel: Channel,
+    ) -> Result<Option<Opened>, CoreError> {
+        if !self.layers[index].is_channel_enabled(channel) {
+            let had_surface = self.layers[index].surface(channel).is_some();
+            self.switch_channel_enabled(layer, channel, true, had_surface, false)?;
+            return Ok(Some(Opened {
+                channel,
+                was_enabled: false,
+                had_surface,
+            }));
+        }
+        Ok(self.ensure_surface(index, channel).map(|_| Opened {
+            channel,
+            was_enabled: true,
+            had_surface: false,
+        }))
+    }
+    /// [`Document::open_channel`] で開いたチャンネルを、作る前に戻す（画素を戻した後に呼ぶ。作った面は空のときだけ外す。
+    /// 開いた順の逆に）。
+    pub(super) fn close_channels(
+        &mut self,
+        layer: LayerId,
+        opened: &[Opened],
+    ) -> Result<(), CoreError> {
+        let index = self.index_of(layer)?;
+        for o in opened.iter().rev() {
+            if o.was_enabled {
+                self.drop_empty_created_surface(
+                    index,
+                    o.channel,
+                    Some(SurfaceMade { was_enabled: true }),
+                );
+            } else {
+                self.switch_channel_enabled(layer, o.channel, true, o.had_surface, true)?;
+            }
+        }
+        Ok(())
+    }
+    /// 取り消した [`Document::open_channel`] をやり直す（画素を戻す前に呼ぶ）。
+    fn reopen_channels(&mut self, layer: LayerId, opened: &[Opened]) -> Result<(), CoreError> {
+        let index = self.index_of(layer)?;
+        for o in opened {
+            if o.was_enabled {
+                self.ensure_surface(index, o.channel);
+                self.mark_layer(index, Some(o.channel));
+            } else {
+                self.switch_channel_enabled(layer, o.channel, true, o.had_surface, false)?;
             }
         }
         Ok(())

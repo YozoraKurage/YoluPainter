@@ -214,8 +214,12 @@ impl Document {
         let mut changed = false;
         if x0 < x1 && y0 < y1 {
             let region = SelectionMask::rectangle(self, x0, y0, x1, y1);
-            changed =
-                self.edit_effective(index, Target::Mask, Some(region), |x, y, start, _amount| {
+            changed = self.edit_effective(
+                index,
+                Target::Mask,
+                None,
+                Some(region),
+                |x, y, start, _amount| {
                     let o = (((y as i64 - oy) * cw + (x as i64 - ox)) * 4) as usize;
                     let alpha = src[o + 3] as u32;
                     if alpha == 0 {
@@ -232,7 +236,8 @@ impl Document {
                     } else {
                         Rgba8::new(0, 0, 0, hide as u8)
                     }
-                })?;
+                },
+            )?;
             if changed {
                 if let Some(entry) = self.undo.last_mut() {
                     entry.kind = HistoryKind::PasteMask;

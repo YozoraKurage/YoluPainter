@@ -242,23 +242,23 @@ impl Document {
         backwards: bool,
     ) -> Result<(), CoreError> {
         let index = self.index_of(id)?;
-        let (w, h, ts) = (self.width, self.height, self.tile_size);
-        let layer = &mut self.layers[index];
         if backwards {
-            layer.set_enabled(channel, !enabled);
-            // 有効にして初めて作った面は、空のままなら外す（空の面が残ると保存の中身が変わる）
-            if !had_surface && !layer.is_channel_enabled(channel) {
-                if let Some(s) = layer.surface(channel) {
-                    if s.tile_count() == 0 {
-                        layer.put_surface(channel, None);
-                    }
-                }
+            self.layers[index].set_enabled(channel, !enabled);
+            // 有効にして初めて作った面は、空のままなら外す（空の面が残ると保存の中身が変わる）。無効に戻したので、外すときの
+            // 有効の印は「無効だった」
+            if enabled && !had_surface {
+                self.drop_empty_created_surface(
+                    index,
+                    channel,
+                    Some(super::SurfaceMade { was_enabled: false }),
+                );
             }
         } else {
-            if enabled && layer.kind == LayerKind::Raster && layer.surface(channel).is_none() {
-                layer.put_surface(channel, Some(Surface::new(w, h, ts)));
+            // 面の無いラスターレイヤーのチャンネルを有効にすると面を作る（作る口は ensure_surface だけ）
+            if enabled && self.layers[index].kind == LayerKind::Raster {
+                self.ensure_surface(index, channel);
             }
-            layer.set_enabled(channel, enabled);
+            self.layers[index].set_enabled(channel, enabled);
         }
         self.mark_layer(index, Some(channel));
         self.mark_clipped_layers();
