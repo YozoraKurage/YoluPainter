@@ -845,10 +845,7 @@ fn saving_names_the_effects_that_are_not_in_the_composite_png() {
         message.contains("効いていない効果 1 件は合成の PNG に入っていません"),
         "{message}"
     );
-    assert!(
-        message.contains("厚みのマップがありません"),
-        "{message}"
-    );
+    assert!(message.contains("厚みのマップがありません"), "{message}");
     // 設定は正本に残る（開き直すと、効かない効果があるので読むだけで、理由に出る）
     let mut again = app(1280.0, 800.0, 256);
     again.act(Action::OpenProject(path));
