@@ -2672,17 +2672,7 @@ impl YoluApp {
         self.state.view3d.visible = self.view3d.any_drawn();
         self.state.ui.canvas_visible = std::mem::take(&mut self.state.ui.canvas_drawn);
         if !self.state.ui.canvas_visible {
-            self.state
-                .rulers
-                .note_pointer(crate::rulers::Place::Canvas, false);
-        }
-        // 隠れたビューは、ペンが離れたのを受け取れない（タブの見出しをつかんで動かしているあいだなど）。ペンの押しの印と、ペンが回し・
-        // パン・拡縮していた途中を、見えるようになるまで持ち越さない（印が残ると、ペンの押しとみなしてマウスの押しを使わなくなる）
-        if !self.state.ui.canvas_visible {
-            self.state.drafting_cancel_canvas();
-            self.state.drafting.pen_down = None;
-            self.state.canvas.pen_press = None;
-            crate::canvas::nav::cancel(&mut self.state);
+            release_hidden_canvas(&mut self.state);
         }
         self.drop_hidden_view3d();
 
@@ -3043,6 +3033,24 @@ impl eframe::App for YoluApp {
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         egui::Rgba::from(t::WINDOW_BG).to_array()
+    }
+}
+
+/// キャンバスのタブが隠れたフレームの片づけ。隠れたビューは、ペンが離れたのを受け取れない（タブの見出しをつかんで動かしているあいだなど）。
+/// ペンの押しの印と、ペンが回し・パン・拡縮していた途中を、見えるようになるまで持ち越さない（印が残ると、ペンの押しとみなしてマウスの押しを
+/// 使わなくなる）。2D の点のドラッグとストロークも、離したのを受け取れない。残すと 3D の点の押しを断り続ける（`canvas.stroke` は 2D の流れだけが
+/// 持つ。3D のドラッグは `in_3d` で外す）。フォーカスを失ったときと同じく、そこまでで終える。
+fn release_hidden_canvas(state: &mut AppState) {
+    state
+        .rulers
+        .note_pointer(crate::rulers::Place::Canvas, false);
+    state.drafting_cancel_canvas();
+    state.drafting.pen_down = None;
+    state.canvas.pen_press = None;
+    crate::canvas::nav::cancel(state);
+    let point_drag_2d = state.fillfx.point_drag.as_ref().is_some_and(|d| !d.in_3d);
+    if point_drag_2d || state.canvas.stroke.is_some() {
+        crate::canvas::finish_stroke(state, false);
     }
 }
 

@@ -1285,6 +1285,34 @@ fn a_pen_press_does_not_outlive_a_canvas_that_was_hidden_and_the_next_touch_pain
 }
 
 #[test]
+fn a_mouse_stroke_ends_where_it_was_when_the_canvas_tab_is_hidden() {
+    let mut h = app(1280.0, 800.0, 256);
+    let c = canvas_rect(&h).center();
+    m_press(&h, c);
+    h.step();
+    move_to(&h, offset(c, 30.0, 0.0));
+    h.step();
+    move_to(&h, offset(c, 60.0, 0.0));
+    h.step();
+    assert!(h.canvas().stroke.is_some(), "ストロークの途中");
+    assert!(h.doc().has_active_stroke());
+    // 押したまま 3D のタブへ切り替える（キャンバスは隠れ、マウスの離しを受け取れない）
+    click_tab(&mut h, Tab::View3d);
+    h.run();
+    assert!(!h.ui().canvas_visible, "キャンバスは隠れた");
+    assert!(h.canvas().stroke.is_none(), "ストロークの印を捨てた");
+    assert!(!h.doc().has_active_stroke(), "ストロークを取り残さない");
+    assert!(!h.app().is_stroking());
+    // 離しの代わりに、そこまでで確定している（フォーカスを失ったときと同じ）
+    assert_eq!(strokes(&h), 1);
+    m_release(&h, offset(c, 60.0, 0.0));
+    click_tab(&mut h, Tab::Canvas);
+    h.run();
+    assert_eq!(strokes(&h), 1, "戻しても増えない");
+    assert!(h.canvas().stroke.is_none());
+}
+
+#[test]
 fn a_pen_press_does_not_outlive_a_3d_view_that_was_hidden_and_never_picks_a_clone_source() {
     for (emulate, side_button) in [
         (Emulate::No, false),

@@ -1216,6 +1216,54 @@ fn a_pen_drag_on_a_point_in_the_2d_canvas_is_one_undo_and_escape_puts_it_back() 
 }
 
 #[test]
+fn hiding_the_canvas_tab_ends_a_2d_point_drag_so_a_3d_point_can_be_grabbed() {
+    use yolu_app::fillfx::points;
+    let (mut h, _) = window();
+    let layer = points_layer(&mut h);
+    let uv = yolu_core::fill_points::PointGradient {
+        space: yolu_core::fill_points::PointSpace::Uv,
+        spread: 0.1,
+        points: vec![yolu_core::fill_points::GradientPoint {
+            position: [0.5, 0.5, 0.0],
+            color: yolu_app::engine::Rgba8::new(10, 20, 30, 255),
+        }],
+    };
+    apply(
+        &mut h,
+        Action::Fill(FillOp::Points {
+            layer,
+            channel: Channel::Color,
+            points: Some(Box::new(uv)),
+            coalesce: false,
+        }),
+    );
+    click_tab(&mut h, Tab::Canvas);
+    h.run();
+    let r = canvas_rect(&h);
+    let (w, hh) = (st(&h).doc().width(), st(&h).doc().height());
+    let view = st(&h).view().view(r, w, hh);
+    let at = view.to_screen(w as f64 * 0.25, hh as f64 * 0.75);
+    // 点を掴んで動かしている途中で、離す前にキャンバスのタブを隠す（離したのは受け取れない）
+    pen_frames(&mut h, &[(at, true), (at + vec2(10.0, -4.0), true)]);
+    assert!(points::dragging(st(&h)), "2D で点を掴んでいる");
+    assert!(st(&h).canvas().stroke.is_some());
+    click_tab(&mut h, Tab::View3d);
+    h.run();
+    assert!(!st(&h).ui().canvas_visible, "キャンバスは隠れた");
+    assert!(!points::dragging(st(&h)), "点のドラッグが残らない");
+    assert!(st(&h).canvas().stroke.is_none(), "ストロークの印も残らない");
+    assert!(
+        !st(&h).is_stroking(),
+        "3D の点の押しを断る条件が残らない（`points::press` は is_stroking と点のドラッグで断る）"
+    );
+    // 離しを受け取れなかった続きの状態でも、戻したあとの次の押しは新しい押しになる
+    pen_frames(&mut h, &[(at, false)]);
+    click_tab(&mut h, Tab::Canvas);
+    h.run();
+    assert!(!points::dragging(st(&h)));
+}
+
+#[test]
 fn the_point_gradient_panel_and_its_markers_draw_in_both_languages() {
     for lang in yolu_app::lang::Lang::ALL {
         let (mut h, rect) = window();
