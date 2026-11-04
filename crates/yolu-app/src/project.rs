@@ -286,13 +286,15 @@ pub fn open_recovered(state: &mut AppState, project: Project) {
     open_project(state, project, Opened::Recovered, budget);
 }
 
-/// 開いた中身（ファイルなら保存先と印つき）で今の状態を置き換える。
-fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u64) {
-    let entries = project.migrated_entries();
-    let mut parts = Vec::with_capacity(project.sets().len());
-    let mut read_only = Vec::new();
-    let mut selection_issues = Vec::new();
-    // セットごとの正本を、別々のスレッドで流して core の文書にする（セットは互いに独立。持つのはスレッドごとにレイヤー 1 枚ぶん）
+/// セットごとの正本を、別々のスレッドで流して core の文書にする（セットは互いに独立。持つのはスレッドごとにレイヤー 1 枚ぶん）。
+/// テクスチャセットをまたぐポインターレイヤーの循環・連なりの上限の超えがあれば（同じ文書の中は core が読み込みで断る）、開かずに理由を
+/// 出して None（今の状態は変えない。復旧の世代は断らない）。
+fn convert_sets(
+    state: &mut AppState,
+    project: &Project,
+    file: &Opened,
+    budget: u64,
+) -> Option<Vec<Result<Document, String>>> {
     let lang = state.lang;
     let converted: Vec<Result<Document, String>> = std::thread::scope(|scope| {
         let running: Vec<_> = project
@@ -305,6 +307,38 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
             .map(|h| h.join().unwrap_or_else(|_| Err(reading_stopped(lang))))
             .collect()
     });
+    let docs: Vec<(&str, &Document)> = project
+        .sets()
+        .iter()
+        .zip(&converted)
+        .filter_map(|(set, doc)| Some((set.id.as_str(), doc.as_ref().ok()?)))
+        .collect();
+    let Some(why) = state.pointer_load_issue(&docs) else {
+        return Some(converted);
+    };
+    if matches!(file, Opened::Recovered) {
+        // 復旧の世代は、書き置きが残っている限りデータに戻れる唯一の道なので、断らない。またぐ循環・深すぎる参照レイヤーは、その理由で
+        // 効いていない状態で開く（`AppState::pointer_wants` が指す先を読まず、プロパティと書き出しの注記が理由を出す）
+        return Some(converted);
+    }
+    let head = match file {
+        Opened::File(path, _) | Opened::Backup(path) => cannot_open(lang, path),
+        Opened::Recovered => lang.t("project-cannot-open-the-recovery").to_owned(),
+    };
+    state.fail(Source::Open, lang.with_reason(head, why));
+    None
+}
+
+/// 開いた中身（ファイルなら保存先と印つき）で今の状態を置き換える。
+fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u64) {
+    let entries = project.migrated_entries();
+    let mut parts = Vec::with_capacity(project.sets().len());
+    let mut read_only = Vec::new();
+    let mut selection_issues = Vec::new();
+    let lang = state.lang;
+    let Some(converted) = convert_sets(state, &project, &file, budget) else {
+        return;
+    };
     for (set, converted) in project.sets().iter().zip(converted) {
         let native = &set.document;
         let (w, h) = (native.width() as u32, native.height() as u32);

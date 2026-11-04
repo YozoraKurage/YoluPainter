@@ -1488,7 +1488,12 @@ impl AppState {
         let prior = self.message_begin();
         // 記録中なら、命令にできる操作を記録する（入れ子の操作は外の操作として 1 回）
         let pending = crate::automation::record::before(self, &action);
+        // テクスチャセットをまたぐポインターレイヤーの循環・深すぎるが新しくできる操作は、当てた後に戻して断る（core は 1 つの文書しか見ない）
+        let guard = action.edits_document().then(|| self.pointer_guard());
         self.apply_action(action);
+        if let Some(guard) = guard {
+            self.pointer_settle(guard);
+        }
         self.drop_foreign_ruler_selection();
         crate::automation::record::after(self, pending);
         self.message_end(prior);

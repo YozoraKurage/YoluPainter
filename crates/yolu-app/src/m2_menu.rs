@@ -130,6 +130,20 @@ pub enum Popup {
     ProjectionAlignment,
     /// テクスチャセットのパネルの「＋」（テクスチャセットを追加・レイヤーセットを追加）。
     AddSet,
+    /// ポインターレイヤーの指す先・チャンネルの読む元。
+    PointerTarget(crate::engine::LayerId),
+    PointerSource(crate::engine::LayerId, Channel),
+}
+
+/// チャンネルのパネルの足すボタンの項目（種類を選ぶ）。
+fn new_channel_entries(app: &AppState, free: bool) -> Vec<Entry<Action>> {
+    [ChannelKind::Color, ChannelKind::Scalar, ChannelKind::Normal]
+        .iter()
+        .map(|k| {
+            let info = new_channel_info(new_channel_name(app, *k), *k);
+            Entry::item(channel_format(&info), Action::M2(Edit::AddChannel(info))).enabled(free)
+        })
+        .collect()
 }
 
 fn tips(
@@ -480,13 +494,7 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
             app.m2.brush.dual.as_ref().map(|d| d.mode),
             BrushOp::DualMode,
         ),
-        Popup::NewChannel => [ChannelKind::Color, ChannelKind::Scalar, ChannelKind::Normal]
-            .iter()
-            .map(|k| {
-                let info = new_channel_info(new_channel_name(app, *k), *k);
-                Entry::item(channel_format(&info), Action::M2(Edit::AddChannel(info))).enabled(free)
-            })
-            .collect(),
+        Popup::NewChannel => new_channel_entries(app, free),
         Popup::ChannelKind(channel) => match app.session.doc.channel_info(channel) {
             Some(info) => channel_kind_entries(channel, info, free),
             None => Vec::new(),
@@ -517,6 +525,9 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
             layer_set_entries(app, popup, free)
         }
         Popup::ChannelContext(channel) => channel_context_entries(app, channel, free),
+        Popup::PointerTarget(_) | Popup::PointerSource(..) => {
+            crate::panels::pointer_props::entries(app, popup)
+        }
     }
 }
 

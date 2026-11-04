@@ -363,6 +363,8 @@ impl OpHost for AppHost<'_> {
         }
         let state = &mut *self.state;
         let current = index == state.session.sets.current_index();
+        // テクスチャセットをまたぐポインターレイヤーの循環・深すぎるが新しくできる書き換え（取り消し・やり直し・並べ替えなど）は、戻して断る
+        let guard = state.pointer_guard_at(index);
         let doc = state.set_doc_mut(index);
         // 直前の画面の操作（スライダーなど）の段に混ざらないよう、取り消しのまとめを切る
         doc.end_coalescing();
@@ -376,6 +378,12 @@ impl OpHost for AppHost<'_> {
             doc,
         );
         if (doc.id(), doc.revision()) != before {
+            if let Some(e) = state.pointer_revert(guard) {
+                if current {
+                    state.ensure_selection();
+                }
+                return Err(OpError::from_core(&e));
+            }
             state.session.mark_modified();
             if current {
                 // 消したレイヤーを選んだままにしない（画面の取り消しと同じ後始末）

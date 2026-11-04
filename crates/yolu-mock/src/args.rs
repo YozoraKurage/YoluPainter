@@ -9,7 +9,7 @@ use crate::scene::Scene;
 use crate::sketches;
 
 pub const USAGE: &str = "usage: mock --list | --panel <name> | --sketch <name> | --gallery \
-[--png <out.png>] [--lang ja|en] [--size <width>x<height>] [--scale <factor>] [--scene empty|layers]";
+[--png <out.png>] [--lang ja|en] [--size <width>x<height>] [--scale <factor>] [--scene empty|layers|pointer|pointer-target|pointer-context|pointer-add]";
 
 /// 大きさ（論理の点）の上限と、拡大率の上限。
 pub const MAX_POINTS: f32 = 8192.0;
@@ -113,11 +113,8 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                     .ok_or_else(|| format!("bad scale: {text}"))?;
             }
             "--scene" => {
-                scene = match value("--scene")?.as_str() {
-                    "empty" => Scene::Empty,
-                    "layers" => Scene::Layers,
-                    other => return Err(format!("unknown scene: {other}")),
-                }
+                let name = value("--scene")?;
+                scene = Scene::parse(&name).ok_or_else(|| format!("unknown scene: {name}"))?;
             }
             other => return Err(format!("unknown argument: {other}")),
         }

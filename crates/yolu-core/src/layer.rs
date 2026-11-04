@@ -36,6 +36,18 @@ impl fmt::Display for LayerId {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct LayerSetId(pub u128);
 
+impl LayerSetId {
+    /// 文書の最初のレイヤーセットの ID（文書の ID から決まる。新しい文書と、レイヤーセットを保存していない形（.ylp の版 36 より前）から読んだ
+    /// 文書のレイヤーセットは、この ID になる。保存して開き直しても同じ ID なので、ほかのテクスチャセットのポインターレイヤーが指し続けられる）。
+    pub fn first_of(document: u128) -> LayerSetId {
+        // 文書の ID と重ならないように混ぜる（splitmix の掛け算と xor の 2 回）
+        let mut x = document ^ 0x4c53_4554_0000_0000_4649_5253_5400_0001;
+        x = (x ^ (x >> 61)).wrapping_mul(0x9e37_79b9_7f4a_7c15_bf58_476d_1ce4_e5b9);
+        x = (x ^ (x >> 59)).wrapping_mul(0x94d0_49bb_1331_11eb_c2b2_ae3d_27d4_eb4f);
+        LayerSetId((x ^ (x >> 63)) | 1)
+    }
+}
+
 impl fmt::Debug for LayerSetId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "LayerSetId({:032x})", self.0)

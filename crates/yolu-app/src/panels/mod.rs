@@ -24,6 +24,7 @@ pub mod layers;
 pub mod log;
 pub mod material;
 pub mod path_props;
+pub mod pointer_props;
 pub mod pose;
 pub mod properties;
 pub mod ramp_rows;

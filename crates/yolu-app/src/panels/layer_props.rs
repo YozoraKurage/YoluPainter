@@ -65,6 +65,7 @@ pub fn layer_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui:
             super::fill_props::sections(ui, app, rows, id, enabled, lang);
         }
         LayerKind::Adjustment => adjustment_section(ui, app, rows, id, enabled, lang),
+        LayerKind::Pointer => super::pointer_props::section_for(ui, app, rows, id, enabled),
         _ => {}
     }
     if kind != LayerKind::Group {
@@ -121,10 +122,10 @@ fn layer_section(
     }
     // このレイヤーまでの合成に名前を付ける（上のレイヤーの Generator が読む）
     super::effect_props::anchor_row(ui, app, rows, id, yolu_core::AnchorPlacement::Layer);
-    // 画素へのフィルター（調整・グループのレイヤーには画素が無い）
+    // 画素へのフィルター（調整・グループのレイヤーには画素が無い。ポインターレイヤーは指す先を読んだ値に掛かる）
     if matches!(
         app.session.doc.layer(id).map(|l| l.kind()),
-        Some(LayerKind::Raster | LayerKind::Fill)
+        Some(LayerKind::Raster | LayerKind::Fill | LayerKind::Pointer)
     ) {
         super::effect_props::add_effect_row(ui, app, rows, yolu_core::FilterTarget::Content);
     }

@@ -177,3 +177,5 @@ fx-inputs-are-missing = 效果的輸入不齊全（{ $text }）
 fx-baked-map = 已烘焙的貼圖（{ $c }）
 fx-pointer = 指向（{ $c }）
 fx-pointer-whole = 指向
+fx-pointer-layers-and-groups = 圖層與群組
+fx-pointer-layer-sets = 圖層集

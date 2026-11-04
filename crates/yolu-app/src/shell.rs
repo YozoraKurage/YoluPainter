@@ -459,7 +459,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     use crate::m2::{self, UiOp};
     let lang = app.lang;
     let free = !app.is_stroking();
-    let mut v = crate::layermenu::creation_entries(app);
+    let mut v = crate::layermenu::creation_entries(app, id);
     let new_group =
         Entry::item(lang.t("shell-new-group"), Action::M2(Edit::NewGroup)).enabled(free);
     let Some(id) = id.filter(|id| app.session.doc.layer(*id).is_some()) else {

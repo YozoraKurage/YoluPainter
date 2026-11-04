@@ -723,9 +723,10 @@ impl Document {
         if tile_size == 0 || tile_size > 1024 {
             return Err(CoreError::InvalidArgument(Reason::TileSize));
         }
-        let first = LayerSetId(random_id(u64::MAX) | 1);
+        let id = random_id(0) | 1;
+        let first = LayerSetId::first_of(id);
         Ok(Document {
-            id: random_id(0) | 1,
+            id,
             width,
             height,
             tile_size,
@@ -789,6 +790,20 @@ impl Document {
             || layer_ids.iter().any(|id| id.0 == 0 || !seen.insert(*id))
         {
             return Err(CoreError::InvalidArgument(Reason::PersistentIds));
+        }
+        // 最初のレイヤーセットの ID は文書の ID から決まる（`LayerSetId::first_of`）ので、文書の ID を替えたら同じように替える
+        let (old_first, new_first) = (
+            LayerSetId::first_of(self.id),
+            LayerSetId::first_of(document_id),
+        );
+        for info in self.layer_sets.iter_mut().filter(|i| i.id == old_first) {
+            info.id = new_first;
+        }
+        for r in self.route.iter_mut().filter(|r| **r == Some(old_first)) {
+            *r = Some(new_first);
+        }
+        for layer in self.layers.iter_mut().filter(|l| l.set == old_first) {
+            layer.set = new_first;
         }
         self.id = document_id;
         // グループの中のレイヤーの親も新しい ID へ（並びは同じなので、古い ID → 新しい ID の表で引く）

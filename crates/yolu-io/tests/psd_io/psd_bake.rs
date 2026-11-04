@@ -3416,7 +3416,7 @@ fn a_gradient_map_without_mixing_is_written_as_before() {
     assert!(out.notes.is_empty(), "{:?}", out.notes);
 }
 
-// ───────── 参照レイヤー ─────────
+// ───────── ポインターレイヤー ─────────
 
 #[test]
 fn a_pointer_layer_is_written_as_the_pixels_it_reads() {
@@ -3433,7 +3433,7 @@ fn a_pointer_layer_is_written_as_the_pixels_it_reads() {
     assert_eq!(state(&d), before, "書き出しは文書を変えない");
     let layer = find(&out.document.layers, "参照");
     assert!(matches!(layer.kind, LayerKind::Raster), "{:?}", layer.kind);
-    // 読み戻したレイヤーは画素のラスター（PSD の取り込みは参照レイヤーを作らない）
+    // 読み戻したレイヤーは画素のラスター（PSD の取り込みはポインターレイヤーを作らない）
     assert!(back.layers().iter().all(|l| l.kind() != CoreKind::Pointer));
     // 画素にしたこと（と焼いたフィルター）を、レイヤーの名前つきで注記する
     assert_eq!(
@@ -3468,11 +3468,11 @@ fn a_pointer_layer_notes_dropped_filters_and_counts_as_a_normal_overlap() {
             ("参照", &NoteAction::BakedPointer)
         ]
     );
-    // 厳密な書き出しは、書けない参照レイヤーとして断る
+    // 厳密な書き出しは、書けないポインターレイヤーとして断る
     assert!(yolu_io::psd::export_blockers(&d)
         .iter()
         .any(|b| b.layer == "参照" && b.refusal == yolu_io::psd::Refusal::Pointer));
-    // Normal で参照レイヤーが別のレイヤーと重なると、法線の重ねの注記も付く
+    // Normal でポインターレイヤーが別のレイヤーと重なると、法線の重ねの注記も付く
     let mut n = Document::with_tile_size(W, H, 8).unwrap();
     let under = n.add_layer("下").unwrap();
     n.set_channel_pixel(under, Channel::Normal, 3, 3, Rgba8::new(90, 120, 240, 255))

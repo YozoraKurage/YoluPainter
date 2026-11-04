@@ -177,3 +177,5 @@ fx-inputs-are-missing = Effect inputs are missing ({ $text })
 fx-baked-map = Baked map ({ $c })
 fx-pointer = Pointer ({ $c })
 fx-pointer-whole = Pointer
+fx-pointer-layers-and-groups = Layers and groups
+fx-pointer-layer-sets = Layer sets

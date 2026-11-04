@@ -444,11 +444,25 @@ impl CoreLoad {
         if parents.iter().any(Option::is_some) {
             doc.set_structure_for_load(&parents)?;
         }
+        let saved_sets = layer_sets.is_some();
         if let Some((sets, route)) = layer_sets {
             doc.set_layer_sets_for_load(sets, &route, &members)
                 .map_err(|e| Error::from(e).in_context("レイヤーセットをcoreにできません"))?;
         }
         let mut doc = doc.with_persistent_ids(core_id(head.guid("id")?), &ids)?;
+        if !saved_sets {
+            // レイヤーセットを保存していない形（版 36 より前・既定の 1 つだけの文書）は、最初のレイヤーセットの ID を文書の ID から決める
+            // （開き直しても同じ ID。ほかのテクスチャセットのポインターレイヤーが指すレイヤーセットを見失わない）
+            let first = LayerSetId::first_of(doc.id());
+            let members = vec![first; doc.layers().len()];
+            let info = LayerSetInfo {
+                id: first,
+                name: String::new(),
+                channels: doc.channel_bits(),
+            };
+            doc.set_layer_sets_for_load(vec![info], &[], &members)
+                .map_err(|e| Error::from(e).in_context("レイヤーセットをcoreにできません"))?;
+        }
         // 参照レイヤーの指す先は、レイヤーの ID が保存した物になってから置く（指す先が無いのは断らず「指す先が無い」で開く）。循環と、参照の
         // 連なりの上限を超えるものは断る
         for (i, settings) in pointers {
@@ -589,7 +603,7 @@ fn path_brush(path: &LayerPath) -> BrushSettings {
 
 /// 文書の正本のバージョン（使う機能で決まる）: ベイクしたマップの源を持つ塗りつぶしレイヤーがあれば 38（バージョン 27〜37 の中身も読み書きできる
 /// バージョン）、扱うチャンネルの組が文書の全部のチャンネルでないレイヤーセットがあれば 37（バージョン 27〜36 の中身も読み書きできるバージョン）、
-/// レイヤーセットが既定の形（名前の空の 1 つに全部のチャンネルを割り当てた形）でなければ 36（バージョン 27〜35 の中身も
+/// レイヤーセットが既定の形（ID が文書の ID から決まる値で名前の空の 1 つに全部のチャンネルを割り当てた形）でなければ 36（バージョン 27〜35 の中身も
 /// 読み書きできる版）、定規を持つレイヤー（グループ）か、線対称の 2D のパスがあれば 35（版 27〜34 の中身も読み書きできる版）、
 /// パスのブラシのアンチエイリアス（なし 以外）があれば 34（版 27〜33 の中身も読み書きできる版）、
 /// 重なった UV のベイクの優先を既定から変えていれば 33（版 27〜32 の中身も読み書きできる版）、

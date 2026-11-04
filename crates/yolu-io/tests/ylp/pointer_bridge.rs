@@ -1,4 +1,4 @@
-//! 参照レイヤー（正本のバージョン 39。レイヤーの種類 4、続きの属性の印のビット 4 と `pointer` の塊）。参照レイヤーのある文書だけが 39 になり、
+//! ポインターレイヤー（正本のバージョン 39。レイヤーの種類 4、続きの属性の印のビット 4 と `pointer` の塊）。ポインターレイヤーのある文書だけが 39 になり、
 //! ほかは前のバージョンのまま同じバイト列。3 種の指す先と読む元の往復、古いバージョンの数では読まない、知らない指す先の種類・循環・深さの超えを
 //! 断り、指す先が無いものは開く、.ylsmart を試す。
 use std::sync::Arc;
@@ -37,7 +37,7 @@ fn inputs() -> EffectInputs {
     )
 }
 
-/// ラスター 1 枚・2 つ目のレイヤーセット（レイヤー 1 枚）と、その 3 種の指す先の参照レイヤー（読む元を替えたチャンネル・無効のチャンネルつき）。
+/// ラスター 1 枚・2 つ目のレイヤーセット（レイヤー 1 枚）と、その 3 種の指す先のポインターレイヤー（読む元を替えたチャンネル・無効のチャンネルつき）。
 struct Fixture {
     doc: Document,
     base: LayerId,
@@ -310,4 +310,61 @@ fn a_smart_material_keeps_pointers_and_points_inside_at_the_placed_copy() {
         PointerTarget::Layer(copy_of_base)
     );
     assert_eq!(doc.pointer_issue(pointer).unwrap(), None);
+}
+
+/// レイヤーセットを保存しない形（既定の 1 つだけの文書は版 36 より前で書く）でも、最初のレイヤーセットの ID は文書の ID から決まり、開き直しても
+/// 同じ（ほかのテクスチャセットのポインターレイヤーが指すレイヤーセットを見失わない）。
+#[test]
+fn the_only_layer_set_keeps_its_id_without_saving_layer_sets() {
+    let mut doc = Document::with_tile_size(W, H, 8).unwrap();
+    doc.add_layer("元").unwrap();
+    assert!(doc.has_default_layer_sets());
+    assert_eq!(doc.layer_sets()[0].id, LayerSetId::first_of(doc.id()));
+    let native = NativeDocument::from_core(&doc).unwrap();
+    assert!(
+        native.version() < LAYER_SETS_VERSION,
+        "{}",
+        native.version()
+    );
+    let back = native.to_core().unwrap();
+    assert_eq!(back.id(), doc.id());
+    assert_eq!(back.layer_sets()[0].id, doc.layer_sets()[0].id);
+    assert!(back.has_default_layer_sets());
+    assert_eq!(
+        NativeDocument::from_core(&back).unwrap().to_bytes(),
+        native.to_bytes(),
+        "同じバイト列"
+    );
+}
+
+/// 最初のレイヤーセットを消し、名前の空いたレイヤーセット（ID は文書の ID から決まる物と違う）だけが残った文書は、見かけは既定の形でも
+/// レイヤーセットを書き、開き直しても ID が同じ（欄を書かないと、開き直しで最初のレイヤーセットの ID に替わって指せなくなる）。
+#[test]
+fn a_lone_layer_set_with_another_id_is_saved_with_its_id() {
+    let mut doc = Document::with_tile_size(W, H, 8).unwrap();
+    doc.add_layer("元").unwrap();
+    let other = doc.add_layer_set("").unwrap();
+    for c in doc.channels() {
+        doc.set_channel_output(c, Some(other)).unwrap();
+    }
+    let first = doc.layer_sets()[0].id;
+    doc.remove_layer_set(first).unwrap();
+    assert_eq!(doc.layer_sets().len(), 1);
+    assert_eq!(doc.layer_sets()[0].id, other);
+    assert_ne!(other, LayerSetId::first_of(doc.id()));
+    assert!(!doc.has_default_layer_sets());
+    let native = NativeDocument::from_core(&doc).unwrap();
+    assert!(
+        native.version() >= LAYER_SETS_VERSION,
+        "{}",
+        native.version()
+    );
+    let back = native.to_core().unwrap();
+    assert_eq!(back.layer_sets().len(), 1);
+    assert_eq!(back.layer_sets()[0].id, other);
+    assert_eq!(
+        NativeDocument::from_core(&back).unwrap().to_bytes(),
+        native.to_bytes(),
+        "同じバイト列"
+    );
 }

@@ -231,7 +231,7 @@ impl fmt::Display for PointerIssue {
             }
             Self::MissingChannel(c) => write!(f, "読む元のチャンネル {c:?} がありません"),
             Self::Cycle => f.write_str("指す先が循環しています"),
-            Self::TooDeep => write!(f, "参照の連なりが {MAX_POINTER_DEPTH} 段を超えます"),
+            Self::TooDeep => write!(f, "ポインターの連なりが {MAX_POINTER_DEPTH} 段を超えます"),
         }
     }
 }

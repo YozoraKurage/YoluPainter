@@ -1,6 +1,7 @@
 //! レイヤーを足すメニューの部品（メニューバーの「レイヤー」・レイヤーの右クリック・レイヤーの一覧の空白の右クリックが同じものを使う。
 //! レイヤーのパネルの下の帯のボタンは、新規レイヤー・塗りつぶし・調整だけ）: 「新規レイヤー」「新規塗りつぶしレイヤー ▸」「新規調整レイヤー ▸」
-//! 「新規パスレイヤー」。
+//! 「新規パスレイヤー」「新規ポインターレイヤー」と、レイヤー・グループを右クリックしたときの「ポインターレイヤーを作成」（そのレイヤー・
+//! グループを指す。作る操作は `fx::pointers`。どちらも 1 回の Undo）。
 //!
 //! 塗りつぶしの種類は単色・グラデーションデカール・画像・デカール。グラデーションは形（ボックス・球・平面）の一覧をもう 1 段の
 //! 入れ子に開き、選んだ形で新しい塗りつぶしレイヤーを作る（名前は塗りつぶしの欄の「形」と同じ）。画像とデカールは棚の画像の一覧（その下に
@@ -11,10 +12,11 @@ use std::path::PathBuf;
 
 use yolu_core::fill_image::ProjectionMode;
 use yolu_core::generator::Shape;
-use yolu_core::{Channel, ChannelKind, ImageId, LayerKind};
+use yolu_core::{Channel, ChannelKind, ImageId, LayerId, LayerKind};
 
 use crate::fillfx::{default_fallback, inputs, placement, FillOp};
 use crate::fx::names;
+use crate::fx::pointers::PointerOp;
 use crate::m2::{AdjustmentKind, Edit};
 use crate::notice::Source;
 use crate::state::{Action, AppState, DialogRequest};
@@ -38,10 +40,23 @@ pub enum Op {
     PathLayer,
 }
 
-/// 「新規レイヤー」「新規塗りつぶしレイヤー ▸」「新規調整レイヤー ▸」「新規パスレイヤー」。
-pub fn creation_entries(app: &AppState) -> Vec<Entry<Action>> {
-    let lang = app.lang;
+/// 「新規レイヤー」「新規塗りつぶしレイヤー ▸」「新規調整レイヤー ▸」「新規パスレイヤー」「新規ポインターレイヤー」と、`layer`（右クリックした
+/// レイヤー・グループ）があれば「ポインターレイヤーを作成」。
+pub fn creation_entries(app: &AppState, layer: Option<LayerId>) -> Vec<Entry<Action>> {
     let free = !app.is_stroking();
+    let mut v = new_layer_entries(app, free);
+    let new = |target| Action::Fx(crate::fx::FxOp::Pointer(PointerOp::New(target)));
+    v.push(Entry::item(app.lang.t("layermenu-new-pointer-layer"), new(None)).enabled(free));
+    if let Some(id) = layer.filter(|id| app.session.doc.layer(*id).is_some()) {
+        v.push(
+            Entry::item(app.lang.t("layermenu-create-pointer-layer"), new(Some(id))).enabled(free),
+        );
+    }
+    v
+}
+
+fn new_layer_entries(app: &AppState, free: bool) -> Vec<Entry<Action>> {
+    let lang = app.lang;
     vec![
         Entry::item(
             crate::commands::label_of("layer.new", lang),

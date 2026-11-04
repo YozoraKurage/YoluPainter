@@ -13,3 +13,5 @@ layermenu-decal-placed = デカールを置きました
 layermenu-decal-placed-is-not-shown = デカールを置きました。{ $name }はまだ出ません（{ $why }）。
 layermenu-image-fill-added = 画像の塗りつぶしを追加しました
 layermenu-gradient-decal-added = グラデーションデカールを追加しました
+layermenu-new-pointer-layer = 新規ポインターレイヤー
+layermenu-create-pointer-layer = ポインターレイヤーを作成

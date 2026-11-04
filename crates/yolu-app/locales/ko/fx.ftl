@@ -177,3 +177,5 @@ fx-inputs-are-missing = 효과의 입력이 없습니다({ $text })
 fx-baked-map = 베이크한 맵({ $c })
 fx-pointer = 포인터({ $c })
 fx-pointer-whole = 포인터
+fx-pointer-layers-and-groups = 레이어와 그룹
+fx-pointer-layer-sets = 레이어 세트

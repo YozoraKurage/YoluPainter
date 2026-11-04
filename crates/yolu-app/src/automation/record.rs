@@ -1168,8 +1168,9 @@ fn plan_fx(app: &AppState, rec: &Recorder, op: &FxOp) -> Plan {
                 None,
             )
         }
-        // 継ぎ目をまたぐ読みの入り切り・画像の段が読む画像の差し替えは、命令が無い（画像は文書のアセットの ID で、別の文書に無い）
-        FxOp::SetFilterSeams(_) | FxOp::SetImage { .. } => Plan::Skip,
+        // 継ぎ目をまたぐ読みの入り切り・画像の段が読む画像の差し替え・ポインターレイヤーの操作は、命令が無い（画像は文書のアセットの ID で、別の文書に無い。
+        // ポインターレイヤーは、ほかのテクスチャセットを指す命令を出していない）
+        FxOp::SetFilterSeams(_) | FxOp::SetImage { .. } | FxOp::Pointer(_) => Plan::Skip,
         // 行を選ぶ・Anchor を見る（文書を変えない）
         FxOp::SelectFilter { .. }
         | FxOp::SelectAnchor(_)

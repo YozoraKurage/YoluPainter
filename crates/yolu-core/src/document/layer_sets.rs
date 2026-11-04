@@ -155,13 +155,15 @@ impl Document {
         Ok(self.layers[self.index_of(id)?].set)
     }
 
-    /// レイヤーセットが 1 つで、名前が空で、組が文書の全部のチャンネルで、全部のチャンネルをそこへ割り当てた形か（新しい文書・前のバージョンの文書の形。
-    /// 保存はこの形ならレイヤーセットを書かない）。
+    /// レイヤーセットが 1 つで、ID が文書の最初のレイヤーセットの ID（[`LayerSetId::first_of`]）で、名前が空で、組が文書の全部のチャンネルで、全部の
+    /// チャンネルをそこへ割り当てた形か（新しい文書・前のバージョンの文書の形。保存はこの形ならレイヤーセットを書かず、開くと同じ ID に戻る。
+    /// 最初のレイヤーセットを消して別の ID が 1 つ残った形は、ID を書くためにこの形に入らない）。
     pub fn has_default_layer_sets(&self) -> bool {
         let [only] = self.layer_sets.as_slice() else {
             return false;
         };
-        only.name.is_empty()
+        only.id == LayerSetId::first_of(self.id())
+            && only.name.is_empty()
             && only.channels == self.channel_bits()
             && self
                 .channels()

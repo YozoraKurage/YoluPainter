@@ -32,6 +32,7 @@ mod menus;
 mod navigator;
 mod newproject;
 mod numfield;
+mod pointer_ui;
 mod prefs;
 mod psd_drop;
 mod recovery_ui;

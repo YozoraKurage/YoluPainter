@@ -27,6 +27,7 @@ pub fn build(
     let mut app = YoluApp::for_context(ctx, state, PenInput::detached());
     app.dock = egui_dock::DockState::new(vec![tab]);
     let mut app = app.with_render_state(render_state);
+    crate::scene::open_popup(options.scene, &mut app.state, ctx);
     // 撮るたびに同じ絵になるよう、キャンバスと焼く場所は CPU に固定する
     app.set_canvas_backend(yolu_app::canvas::gpu::CanvasBackend::Cpu);
     app.state.bake.backend = yolu_app::bake::BakeBackend::Cpu;

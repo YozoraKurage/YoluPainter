@@ -13,3 +13,5 @@ layermenu-decal-placed = 데칼을 배치했습니다
 layermenu-decal-placed-is-not-shown = 데칼을 배치했습니다. { $name }은(는) 아직 표시되지 않습니다({ $why }).
 layermenu-image-fill-added = 이미지 채우기를 추가했습니다
 layermenu-gradient-decal-added = 그레이디언트 데칼을 추가했습니다
+layermenu-new-pointer-layer = 새 포인터 레이어
+layermenu-create-pointer-layer = 포인터 레이어 만들기

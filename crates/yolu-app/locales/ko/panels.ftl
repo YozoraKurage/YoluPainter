@@ -858,3 +858,6 @@ panels-effects-on-the-mask = 마스크에 효과 { $count }개
 panels-auto-rotate-light-tip = 라이트 자동 회전
 panels-auto-rotate-light = 자동 회전
 panels-remove-the-baked-map = 베이크한 맵 제거
+panels-pointer = 포인터
+panels-pointer-target = 대상
+panels-pointer-sources = 읽을 채널

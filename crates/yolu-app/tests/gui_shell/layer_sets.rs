@@ -431,7 +431,8 @@ fn the_layers_panel_has_a_layer_set_dropdown_and_a_mark_when_the_paint_channel_i
 
 #[test]
 fn the_layer_menu_moves_layers_to_another_set_and_the_view_stays() {
-    let mut h = app(1280.0, 800.0, 128);
+    // レイヤーの右クリックの項目が増えて、高さ 800 には収まらない
+    let mut h = app(1280.0, 960.0, 128);
     let s = three_sets(&mut h);
     let layer = h.selected_layer().unwrap();
     let name = h.doc().layer(layer).unwrap().name().to_owned();

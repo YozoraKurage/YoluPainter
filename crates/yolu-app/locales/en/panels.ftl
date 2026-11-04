@@ -864,3 +864,6 @@ panels-effects-on-the-mask = { $count ->
 panels-auto-rotate-light-tip = Auto-rotate light
 panels-auto-rotate-light = Auto Rotate
 panels-remove-the-baked-map = Remove the Baked Map
+panels-pointer = Pointer
+panels-pointer-target = Target
+panels-pointer-sources = Read from

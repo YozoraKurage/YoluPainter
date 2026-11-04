@@ -66,6 +66,8 @@ struct Reads<'d> {
     by_set: HashMap<LayerSetId, Vec<usize>>,
     points: Vec<anchor::Point>,
     memo: Vec<Option<Arc<[usize]>>>,
+    /// 確かめるだけの差し替え: この番号の参照レイヤーは、指す先をこれにしたものとして辿る（[`Document::pointer_target_issue`]）。
+    swap: Option<(usize, PointerTarget)>,
 }
 
 impl<'d> Reads<'d> {
@@ -85,6 +87,22 @@ impl<'d> Reads<'d> {
             by_set,
             points: doc.anchor_points(),
             memo: vec![None; doc.layers.len()],
+            swap: None,
+        }
+    }
+
+    /// 参照レイヤー（番号 index）の指す先を target にしたものとして辿る形。
+    fn swapped(doc: &'d Document, index: usize, target: PointerTarget) -> Self {
+        let mut reads = Reads::new(doc);
+        reads.swap = Some((index, target));
+        reads
+    }
+
+    /// 参照レイヤー i の指す先（差し替えがあればそれ）。
+    fn target_of(&self, i: usize) -> Option<PointerTarget> {
+        match self.swap {
+            Some((k, t)) if k == i => Some(t),
+            _ => self.doc.layers[i].pointer.as_ref().map(|p| p.target),
         }
     }
 
@@ -121,8 +139,8 @@ impl<'d> Reads<'d> {
         }
         let l = &self.doc.layers[i];
         let mut out: Vec<usize> = Vec::new();
-        if let Some(p) = &l.pointer {
-            if let Some(m) = self.target_members(p.target) {
+        if let Some(t) = self.target_of(i) {
+            if let Some(m) = self.target_members(t) {
                 out.extend(m);
             }
         }
@@ -771,7 +789,52 @@ impl Document {
     /// レイヤーセット）へ戻る道で循環を見つける。この文書の中に循環があれば、輪の先は数えない（編集と読み込みが断るので、ふつうは無い）。
     pub fn pointer_reach(&self, set: LayerSetId) -> Result<PointerReach, CoreError> {
         self.require_layer_set(set)?;
-        let mut reads = Reads::new(self);
+        self.reach_with(Reads::new(self), set)
+    }
+
+    /// [`Document::pointer_reach`] の、参照レイヤー `id` の指す先を `target` に替えたものとした形（文書は変えない）。画面が、指す先の候補が
+    /// テクスチャセットをまたいで循環・深すぎるかを、替える前に確かめる。
+    pub fn pointer_reach_if(
+        &self,
+        set: LayerSetId,
+        id: LayerId,
+        target: PointerTarget,
+    ) -> Result<PointerReach, CoreError> {
+        self.require_layer_set(set)?;
+        let index = self.pointer_layer_index(id)?;
+        self.reach_with(Reads::swapped(self, index, target), set)
+    }
+
+    /// 参照レイヤー `id` の指す先を `target` に替えたら、この文書の中で前に無かった循環・深すぎる参照レイヤーができるか（できるなら理由。
+    /// 循環が先）。文書は変えない。画面が、押せない候補とその理由に使う（替える操作は同じ場合に断る）。ほかのテクスチャセットをまたぐ分は
+    /// 見ない（[`Document::pointer_reach_if`]）。
+    pub fn pointer_target_issue(
+        &self,
+        id: LayerId,
+        target: PointerTarget,
+    ) -> Result<Option<PointerIssue>, CoreError> {
+        let index = self.pointer_layer_index(id)?;
+        let before = self.pointer_violations();
+        let mut reads = Reads::swapped(self, index, target);
+        let pointers: Vec<usize> = (0..self.layers.len())
+            .filter(|&i| self.layers[i].kind == LayerKind::Pointer)
+            .collect();
+        let depths = self.depths_from(&mut reads, &pointers);
+        let mut deep = false;
+        for &p in &pointers {
+            if before.contains(&self.layers[p].id) {
+                continue;
+            }
+            match depths.depth[p] {
+                None => return Ok(Some(PointerIssue::Cycle)),
+                Some(d) if d > MAX_POINTER_DEPTH => deep = true,
+                _ => {}
+            }
+        }
+        Ok(deep.then_some(PointerIssue::TooDeep))
+    }
+
+    fn reach_with(&self, mut reads: Reads<'_>, set: LayerSetId) -> Result<PointerReach, CoreError> {
         let roots = reads
             .target_members(PointerTarget::LayerSet(set))
             .unwrap_or_default();
@@ -801,8 +864,7 @@ impl Document {
         }
         let mut external: Vec<ExternalReach> = Vec::new();
         for (i, l) in self.layers.iter().enumerate() {
-            let (Some(lv), Some(PointerTarget::External(key))) =
-                (levels[i], l.pointer.as_ref().map(|p| p.target))
+            let (Some(lv), Some(PointerTarget::External(key))) = (levels[i], reads.target_of(i))
             else {
                 continue;
             };

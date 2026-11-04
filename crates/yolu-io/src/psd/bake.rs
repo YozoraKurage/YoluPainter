@@ -185,7 +185,7 @@ pub enum NoteAction {
     BakedTranslucentFill,
     /// パスレイヤー。画素はパスから描いた結果のままで、パスの情報は PSD に残らない。
     BakedPath,
-    /// 参照レイヤー。指す先を読んだ結果（フィルターを通した値）を画素のレイヤーとして書き、指す先を読む設定は PSD に残らない。
+    /// ポインターレイヤー。指す先を読んだ結果（フィルターを通した値）を画素のレイヤーとして書き、指す先を読む設定は PSD に残らない。
     BakedPointer,
     /// マスクのフィルター・Generator の段を、マスクの画素へ焼いた。
     BakedMaskFilters(Vec<EffectSettings>),
@@ -269,7 +269,7 @@ impl ExportNote {
                 format!("レイヤー「{name}」のパスの情報は PSD に残りません。画素はそのままです")
             }
             NoteAction::BakedPointer => {
-                format!("参照レイヤー「{name}」は画素のレイヤーとして書きました。指す先を読む設定は PSD に残りません")
+                format!("ポインターレイヤー「{name}」は画素のレイヤーとして書きました。指す先を読む設定は PSD に残りません")
             }
             NoteAction::BakedMaskFilters(v) => format!(
                 "レイヤー「{name}」のマスクのフィルター（{}）をマスクの画素に焼きました",
@@ -348,7 +348,7 @@ pub(super) enum Need {
     Hard(Refusal),
     /// テキストレイヤー（Color のチャンネルの画素はテキストの値から描いた結果）。
     Text,
-    /// 参照レイヤー（画素は指す先を読んだ評価の結果）。
+    /// ポインターレイヤー（画素は指す先を読んだ評価の結果）。
     Pointer,
 }
 impl Need {
@@ -1249,7 +1249,7 @@ pub fn plan_export(
     Ok(plan)
 }
 
-/// レイヤーが書き出すチャンネルの合成に出るか（調整・塗りつぶし・ラスターは有効の印と中身、参照レイヤーは有効の印、表示。グループは表示）。
+/// レイヤーが書き出すチャンネルの合成に出るか（調整・塗りつぶし・ラスターは有効の印と中身、ポインターレイヤーは有効の印、表示。グループは表示）。
 fn shown_in(d: &CoreDocument, l: &CoreLayer, c: Channel) -> bool {
     if !l.visible() {
         return false;
@@ -1258,7 +1258,7 @@ fn shown_in(d: &CoreDocument, l: &CoreLayer, c: Channel) -> bool {
         CoreKind::Group => true,
         CoreKind::Raster => l.is_channel_enabled(c) && l.surface(c).is_some(),
         CoreKind::Fill => l.is_channel_enabled(c) && l.fill_value(c).is_some(),
-        // 参照レイヤーは、有効なチャンネルに指す先を読んだ結果（読めなければ既定値）を出す
+        // ポインターレイヤーは、有効なチャンネルに指す先を読んだ結果（読めなければ既定値）を出す
         CoreKind::Pointer => l.is_channel_enabled(c),
         CoreKind::Adjustment => {
             let kind = d.channel_info(c).map_or(ChannelKind::Color, |i| i.kind);
@@ -1677,7 +1677,7 @@ impl<'a> Builder<'a> {
                 );
             }
             CoreKind::Fill => self.fill(l, &mut layer, bake_content, slots),
-            // 参照レイヤーは PSD に形が無いので、書き出す時に評価した画素（指す先を読んだ結果にフィルターを通した値）で書く
+            // ポインターレイヤーは PSD に形が無いので、書き出す時に評価した画素（指す先を読んだ結果にフィルターを通した値）で書く
             CoreKind::Pointer => {
                 slots.content.insert(id, Source::Baked(l));
             }

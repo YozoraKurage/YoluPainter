@@ -858,3 +858,6 @@ panels-effects-on-the-mask = 遮罩上有 { $count } 個效果
 panels-auto-rotate-light-tip = 自動旋轉光源
 panels-auto-rotate-light = 自動旋轉
 panels-remove-the-baked-map = 移除已烘焙的貼圖
+panels-pointer = 指向
+panels-pointer-target = 指向目標
+panels-pointer-sources = 讀取來源

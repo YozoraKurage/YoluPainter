@@ -618,7 +618,7 @@ fn pointer_layer_add(
     }
     let target = args.target.as_deref().ok_or_else(|| {
         OpError::invalid_request(
-            "参照レイヤーには target（指すレイヤー）が要ります",
+            "ポインターレイヤーには target（指すレイヤー）が要ります",
             "A pointer layer needs `target` (the layer it shows)",
         )
     })?;

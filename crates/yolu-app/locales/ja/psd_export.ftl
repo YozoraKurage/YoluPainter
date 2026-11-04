@@ -93,5 +93,5 @@ psd_export-curve = カーブ
 psd_export-mixing = 混色
 psd_export-curve-mixing = カーブ・混色
 psd_export-stops-color-opacity = { $cause } → 停止点 色 { $colors }・不透明度 { $opacities }
-psd_export-pointer-layer = 参照レイヤー
-psd_export-is-a-pointer-layer = 「{ $name }」は参照レイヤーです
+psd_export-pointer-layer = ポインターレイヤー
+psd_export-is-a-pointer-layer = 「{ $name }」はポインターレイヤーです

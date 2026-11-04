@@ -858,3 +858,6 @@ panels-effects-on-the-mask = マスクに効果 { $count } 件
 panels-auto-rotate-light-tip = ライトを自動で回す
 panels-auto-rotate-light = 自動で回す
 panels-remove-the-baked-map = 焼いたマップを外す
+panels-pointer = ポインター
+panels-pointer-target = 指す先
+panels-pointer-sources = 読む元

@@ -18,7 +18,8 @@
 //! - **効果のメモリ**（評価した効果の出力のキャッシュ）もプロジェクト全体の上限で、今のセットに 3/4、しまってあるセットに残りを等しく配り、
 //!   セットを切り替えるときに配り直す（`effect_cache_shares`）。超えた分は捨てて、次に読むときに作り直す（断る操作は無い）。文書の中では評価したブロックと Anchor のタイルを合わせて数え
 //!   （Anchor のタイルは 1/4 まで）、合計が配られた量を超えない。画像のミップマップは含めず、別に文書ごとに 256 MiB。文書の写し（書き出し・PSD・
-//!   バケツなど）は、配られた量にかかわらず 256 MiB までで評価し直す。
+//!   バケツなど）は、配られた量にかかわらず 256 MiB までで評価し直す。ほかのテクスチャセットを読むポインターレイヤーへ渡す合成も
+//!   効果のメモリに数え（効果のメモリの 1/4 まで。`pointer_input_budget`）、持っている量を引いた残りをキャッシュに配る。
 //! - **CPU のスレッド**は rayon の全体のスレッドプールで、起動のときに決まる（`settings::apply_thread_setting`）。変えた値は次の起動から
 //!   効くので、行に「再起動で反映」と出す。
 //! - **ディスクキャッシュ**（既定は入。「メモリ」の区分）は、メモリの上限（レイヤーのメモリと取り消し履歴の予算の和）を超えた分のタイルの中身を、置き場所の
@@ -544,7 +545,9 @@ impl AppState {
         if doc.source_budget_bytes() != source {
             let _ = doc.set_source_budget_bytes(source);
         }
-        self.sync_effect_cache_budgets(wanted.effects);
+        // ほかのセットを読むポインターレイヤーへ渡す合成も効果のメモリに数え、持っている量を引いた残りをキャッシュに配る
+        let pointers = self.fx.inputs.pointers.held_bytes();
+        self.sync_effect_cache_budgets(wanted.effects.saturating_sub(pointers));
         if !over {
             self.prefs.over = None;
         } else if self.prefs.over != Some((id, source)) {

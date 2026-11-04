@@ -72,9 +72,11 @@ pub enum ThumbSource {
 }
 
 /// レイヤーのサムネイル（文書の版が変わったら作り直す。core はレイヤーごとの版を持たないので文書の版で見る。描いている間は毎フレーム）。
+/// ポインターレイヤーは評価した出力（指す先を読んでフィルターを通した値）で、効果の入力が替わっても作り直す（版は上がらず、変化の通し番号が
+/// 進む）。評価は重いので、描いている間は前の絵のまま。
 #[derive(Default)]
 pub struct Thumbnails {
-    map: HashMap<(LayerId, ThumbSource), (u64, TextureHandle)>,
+    map: HashMap<(LayerId, ThumbSource), ((u64, u64), TextureHandle)>,
     /// 作り直した回数（試験用）。
     pub rebuilt: usize,
 }
@@ -84,6 +86,11 @@ fn thumb_pixel(doc: &Document, id: LayerId, source: ThumbSource, x: u32, y: u32)
     let Some(layer) = doc.layer(id) else {
         return [0; 4];
     };
+    if let (LayerKind::Pointer, ThumbSource::Channel(c)) = (layer.kind(), source) {
+        return doc
+            .layer_output_pixel(id, c, x, y)
+            .map_or([0; 4], |p| p.to_array());
+    }
     match source {
         ThumbSource::Channel(c) => layer
             .surface(c)
@@ -106,6 +113,7 @@ fn thumb_has_pixels(doc: &Document, id: LayerId, source: ThumbSource) -> bool {
         return false;
     };
     match source {
+        ThumbSource::Channel(_) if layer.kind() == LayerKind::Pointer => true,
         ThumbSource::Channel(c) => layer.surface(c).is_some_and(|s| s.tile_count() > 0),
         ThumbSource::Mask => layer.mask().is_some(),
     }
@@ -120,13 +128,16 @@ impl Thumbnails {
         max_px: u32,
         source: ThumbSource,
     ) -> Option<&TextureHandle> {
-        doc.layer(id)?;
-        let revision = doc.revision();
+        let pointer = doc.layer(id)?.kind() == LayerKind::Pointer;
+        let revision = (
+            doc.revision(),
+            if pointer { doc.change_serial() } else { 0 },
+        );
         let key = (id, source);
-        let fresh = self
-            .map
-            .get(&key)
-            .is_some_and(|(r, h)| *r == revision && h.size()[0].max(h.size()[1]) as u32 == max_px);
+        let fresh = self.map.get(&key).is_some_and(|(r, h)| {
+            (*r == revision || pointer && doc.has_active_stroke())
+                && h.size()[0].max(h.size()[1]) as u32 == max_px
+        });
         if !fresh {
             let (dw, dh) = (doc.width(), doc.height());
             let (tw, th) = if dw >= dh {
@@ -678,28 +689,7 @@ fn kind_thumb(
     let painter = ui.painter_at(list);
     let channel = app.m2.display_channel;
     match layer.kind() {
-        LayerKind::Raster => {
-            w::checker(&painter, thumb, 3.0);
-            let max_px = (thumb.width() * ctx.pixels_per_point()).round().max(8.0) as u32;
-            if let Some(handle) = thumbs.get(
-                ctx,
-                &app.session.doc,
-                id,
-                max_px,
-                ThumbSource::Channel(channel),
-            ) {
-                let [tw, th] = handle.size();
-                let k = (thumb.width() / tw as f32).min(thumb.height() / th as f32);
-                let at = Rect::from_center_size(thumb.center(), vec2(tw as f32 * k, th as f32 * k));
-                painter.image(
-                    handle.id(),
-                    at,
-                    Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                    Color32::WHITE,
-                );
-            }
-            w::outline(&painter, thumb, t::BORDER, 1.0, 0.0);
-        }
+        LayerKind::Raster => pixels_thumb(&painter, app, thumbs, ctx, thumb, id, channel),
         LayerKind::Fill => {
             let value = layer
                 .fill_value(channel)
@@ -743,10 +733,46 @@ fn kind_thumb(
             );
         }
         LayerKind::Pointer => {
-            w::rounded(&painter, thumb, t::PANEL_HEADER, 3.0);
-            w::icon(&painter, thumb, "target", t::TEXT_DIM, 15.0);
+            pixels_thumb(&painter, app, thumbs, ctx, thumb, id, channel);
+            // 種類の印（ポインター）を左下の隅に小さく
+            let mark =
+                Rect::from_min_size(pos2(thumb.left(), thumb.bottom() - 11.0), vec2(11.0, 11.0));
+            w::rounded(&painter, mark, t::PANEL_HEADER, 2.0);
+            w::icon(&painter, mark, "target", t::TEXT_DIM, 10.0);
         }
     }
+}
+
+/// 画素のサムネイル（ラスターは描いた画素、ポインターレイヤーは評価した出力）。
+fn pixels_thumb(
+    painter: &egui::Painter,
+    app: &AppState,
+    thumbs: &mut Thumbnails,
+    ctx: &egui::Context,
+    thumb: Rect,
+    id: LayerId,
+    channel: Channel,
+) {
+    w::checker(painter, thumb, 3.0);
+    let max_px = (thumb.width() * ctx.pixels_per_point()).round().max(8.0) as u32;
+    if let Some(handle) = thumbs.get(
+        ctx,
+        &app.session.doc,
+        id,
+        max_px,
+        ThumbSource::Channel(channel),
+    ) {
+        let [tw, th] = handle.size();
+        let k = (thumb.width() / tw as f32).min(thumb.height() / th as f32);
+        let at = Rect::from_center_size(thumb.center(), vec2(tw as f32 * k, th as f32 * k));
+        painter.image(
+            handle.id(),
+            at,
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+    }
+    w::outline(painter, thumb, t::BORDER, 1.0, 0.0);
 }
 
 /// ドラッグで運ぶレイヤー: つかんだレイヤーが複数選択の中にあれば選んだレイヤーの全部、なければそれだけ。

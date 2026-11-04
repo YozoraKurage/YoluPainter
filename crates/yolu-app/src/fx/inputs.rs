@@ -93,6 +93,8 @@ struct SetKey {
     maps: Vec<(i32, usize, u8)>,
     /// 渡した画像（ID と中身の鍵）。
     images: Vec<(u128, String)>,
+    /// 渡したほかのテクスチャセットの合成（鍵・チャンネル・画素の実体）。
+    pointers: Vec<(yolu_core::ExternalSet, u8, usize)>,
 }
 
 /// 復号できなかった画像（失敗は、同じ中身・同じ上限で、持っている分が減らないあいだは試し直さない）。
@@ -133,6 +135,8 @@ pub struct InputsState {
     /// 持ち続ける: 番地や世代の数で比べると、解放されたモデルの番地に別のモデルが作られたときに、前のモデルの位相を使い続ける。持つのは
     /// 次の同期までの間（毎フレーム見る）。
     topologies: HashMap<u32, (Arc<ViewModel>, Arc<UvTopology>)>,
+    /// ポインターレイヤーが読む、ほかのテクスチャセットの合成（`pointer_layers`）。
+    pub pointers: super::pointers::PointerFeed,
 }
 
 impl InputsState {
@@ -140,6 +144,7 @@ impl InputsState {
     pub(crate) fn forget_set(&mut self, uid: u32) {
         self.keys.remove(&uid);
         self.attempts.remove(&uid);
+        self.pointers.forget_checks();
     }
 
     /// 復号できなかった画像の理由。
@@ -548,6 +553,7 @@ impl AppState {
                 topology,
                 maps: Vec::new(),
                 images: Vec::new(),
+                pointers: Vec::new(),
             };
         };
         let expected = (!needed.is_empty()).then(|| self.mesh_map_expectation(index, input));
@@ -576,11 +582,17 @@ impl AppState {
             .map(|(id, (content, _))| (id.0, content.clone()))
             .collect();
         images.sort();
+        let pointers = if set.read_only.is_some() {
+            Vec::new()
+        } else {
+            self.fx.inputs.pointers.key_for(self.set_doc(index))
+        };
         SetKey {
             frame,
             topology,
             maps,
             images,
+            pointers,
         }
     }
 
@@ -638,6 +650,16 @@ impl AppState {
         for (id, (_, image)) in &self.fx.inputs.images {
             inputs = inputs.with_image(*id, image.clone());
         }
+        if self
+            .session
+            .sets
+            .get(index)
+            .is_some_and(|s| s.read_only.is_none())
+        {
+            for (key, channel, input) in self.fx.inputs.pointers.inputs_for(self.set_doc(index)) {
+                inputs = inputs.with_pointer(key, channel, input.clone());
+            }
+        }
         inputs
     }
 
@@ -659,6 +681,30 @@ impl AppState {
         self.fx.inputs.keys.retain(|u, _| live.contains(u));
         self.fx.inputs.attempts.retain(|u, _| live.contains(u));
         self.fx.inputs.maps.retain(|(u, _), _| live.contains(u));
+        self.sync_pointer_budgets();
+        // ほかのテクスチャセットの合成は、渡した先の文書が変わると、それを指す文書の合成も変わる（連なりは 4 段まで）
+        for _ in 0..=yolu_core::MAX_POINTER_DEPTH {
+            let changed = self.refresh_pointer_inputs();
+            self.pass_effect_inputs(input.as_deref(), frame);
+            if !changed {
+                break;
+            }
+        }
+    }
+
+    /// ポインターレイヤーが読む合成の予算を、全部の文書へ（同じ値。各文書が持つのは共有の合成の一部）。
+    fn sync_pointer_budgets(&mut self) {
+        let budget = self.pointer_input_budget();
+        for index in 0..self.session.sets.len() {
+            if self.set_doc(index).pointer_input_budget_bytes() != budget {
+                self.set_doc_mut(index)
+                    .set_pointer_input_budget_bytes(budget);
+            }
+        }
+    }
+
+    /// 変わったセットの文書へ効果の入力を渡す（入力待ちの読むだけのセットは、そろえば編集できるようにする）。
+    fn pass_effect_inputs(&mut self, input: Option<&MeshBakeInput>, frame: bool) {
         for index in 0..self.session.sets.len() {
             let Some(set) = self.session.sets.get(index) else {
                 continue;
@@ -677,7 +723,7 @@ impl AppState {
             } else {
                 needed_maps(self.set_doc(index))
             };
-            let key = self.set_key(index, input.as_deref(), frame, &needed);
+            let key = self.set_key(index, input, frame, &needed);
             if waiting {
                 // 同じ入力・同じ予算では試し直さない（予算を設定で上げたら、入力が同じでも試す）
                 let budget = self.load_source_bytes();
@@ -686,7 +732,7 @@ impl AppState {
                     continue;
                 }
                 self.fx.inputs.attempts.insert(uid, attempt);
-                if self.unlock_set(index, input.as_deref(), frame, budget) {
+                if self.unlock_set(index, input, frame, budget) {
                     self.fx.inputs.keys.insert(uid, key);
                 }
                 continue;
@@ -699,10 +745,11 @@ impl AppState {
                         current.hash == image.hash && current.color_space == image.color_space
                     })
             });
-            if self.fx.inputs.keys.get(&uid) == Some(&key) && images_match {
+            let pointers_match = self.fx.inputs.pointers.delivered_to(self.set_doc(index));
+            if self.fx.inputs.keys.get(&uid) == Some(&key) && images_match && pointers_match {
                 continue;
             }
-            let inputs = self.build_effect_inputs(index, input.as_deref(), frame, &needed);
+            let inputs = self.build_effect_inputs(index, input, frame, &needed);
             // 効果の入力が替わると、文書の版は上がらないまま見える値が変わる（スポイトの印の見本を読み直させる）
             self.eyedrop.sample_cache = None;
             match self.set_doc_mut(index).set_effect_inputs(inputs) {

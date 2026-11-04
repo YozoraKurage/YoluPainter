@@ -13,6 +13,7 @@
 pub mod inputs;
 pub mod menu;
 pub mod names;
+pub mod pointers;
 
 use std::collections::HashSet;
 
@@ -138,6 +139,8 @@ pub enum FxOp {
         id: FilterId,
         image: Option<ImageId>,
     },
+    /// ポインターレイヤーを作る・指す先と読む元を替える（`fx::pointers`）。
+    Pointer(pointers::PointerOp),
 }
 
 impl FxOp {
@@ -478,12 +481,8 @@ impl AppState {
                 ))
             }
             FxOp::SelectFilter { layer, id } => {
-                if self
-                    .session
-                    .doc
-                    .find_filter(id)
-                    .is_some_and(|(l, _, _)| l == layer)
-                {
+                let found = self.session.doc.find_filter(id).map(|(l, _, _)| l);
+                if found == Some(layer) {
                     self.select_effect(layer, id);
                 }
                 Ok(None)
@@ -518,10 +517,8 @@ impl AppState {
                 }
                 Ok(None)
             }
-            FxOp::SetFilterSeams(on) => {
-                self.session.doc.set_filter_seams(on)?;
-                Ok(None)
-            }
+            FxOp::SetFilterSeams(on) => self.session.doc.set_filter_seams(on).map(|_| None),
+            FxOp::Pointer(op) => self.pointer_run(op),
         }
     }
 

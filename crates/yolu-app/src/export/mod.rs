@@ -477,7 +477,7 @@ impl AppState {
                 )
             })?;
             // 効かない効果は黙って入力のまま書かず、書き出した画像に入っていないことを言う
-            let inactive = self.set_doc(index).inactive_effect_list();
+            let inactive = self.inactive_effects_of(index);
             if !inactive.is_empty() {
                 notes.push(Note::InactiveEffects(name.clone(), inactive));
             }
