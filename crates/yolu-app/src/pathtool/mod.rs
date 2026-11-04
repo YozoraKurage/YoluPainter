@@ -548,7 +548,7 @@ impl AppState {
                 let r = yolu_core::geometry::world_radius(
                     &ctx.render,
                     self.brush.radius as f64,
-                    self.session.doc.width(),
+                    self.session.doc.uv_cell().0,
                 );
                 (r as f64).max(0.000001)
             }
@@ -1464,7 +1464,7 @@ impl AppState {
                             let unit = yolu_core::geometry::world_radius(
                                 &ctx.render,
                                 1.0,
-                                self.session.doc.width(),
+                                self.session.doc.uv_cell().0,
                             );
                             d / 2.0 * unit as f64
                         }

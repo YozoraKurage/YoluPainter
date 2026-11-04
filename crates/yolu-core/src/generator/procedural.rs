@@ -461,6 +461,7 @@ impl Plan {
         g: &super::Settings,
         maps: &[Option<&Map<'_>>; 10],
         dimensions: (u32, u32),
+        uv_period: (u32, u32),
     ) -> Result<Self, Error> {
         let p = g.procedural;
         let wanted = p.effective_space(g.kind);
@@ -508,7 +509,8 @@ impl Plan {
             }
         }
         // UV の周期: 長い辺を 1/scale 個（四捨五入）に、短い辺を同じ大きさのセルになる個数に
-        let (w, h) = (dimensions.0 as f64, dimensions.1 as f64);
+        // （UDIM のセットではセルの大きさ。マップの大きさの確かめは文書のシートの大きさのまま）
+        let (w, h) = (uv_period.0 as f64, uv_period.1 as f64);
         let n = (1. / p.scale).round().max(1.);
         let short = |s: f64, l: f64| (n * s / l).round().max(1.);
         let counts = if w >= h {
@@ -706,8 +708,8 @@ impl Plan {
         let v = match self.mode {
             Mode::Uv => self.recipe(
                 [
-                    (x as f64 + 0.5) / size.0 as f64 * self.counts[0] as f64,
-                    (y as f64 + 0.5) / size.1 as f64 * self.counts[1] as f64,
+                    ((x % size.0) as f64 + 0.5) / size.0 as f64 * self.counts[0] as f64,
+                    ((y % size.1) as f64 + 0.5) / size.1 as f64 * self.counts[1] as f64,
                     0.,
                 ],
                 &mut scratch.sets[0],
@@ -765,8 +767,9 @@ impl Plan {
         let v = match self.mode {
             Mode::Uv => {
                 let (w, c) = (size.0 as f64, self.counts[0] as f64);
-                let bx = V::from_fn(|k| ((x + k as u32) as f64 + 0.5) / w * c);
-                let by = V::splat((y as f64 + 0.5) / size.1 as f64 * self.counts[1] as f64);
+                let bx = V::from_fn(|k| (((x + k as u32) % size.0) as f64 + 0.5) / w * c);
+                let by =
+                    V::splat(((y % size.1) as f64 + 0.5) / size.1 as f64 * self.counts[1] as f64);
                 V::recipe(self, [bx, by, V::splat(0.)], &mut scratch.sets[0])
             }
             Mode::Space3 => V::recipe(
@@ -1237,7 +1240,7 @@ mod tests {
     fn uv_plan(s: &Settings, dimensions: (u32, u32)) -> Plan {
         let mut s = s.clone();
         s.procedural.space = ProceduralSpace::Uv;
-        let plan = Plan::new(&s, &[None; 10], dimensions).unwrap();
+        let plan = Plan::new(&s, &[None; 10], dimensions, dimensions).unwrap();
         assert!(plan.is_uv() && plan.fallback.is_none());
         plan
     }
@@ -1327,7 +1330,7 @@ mod tests {
                     s.procedural.bleed = bleed;
                     s.procedural.rotation = [13., -27., 41.];
                     s.procedural.scale = 0.03;
-                    let plan = Plan::new(&s, &maps, (16, 16)).unwrap();
+                    let plan = Plan::new(&s, &maps, (16, 16), (16, 16)).unwrap();
                     let mut shared = plan.scratch();
                     for i in 0..400u32 {
                         let t = i as f64;
@@ -1414,7 +1417,7 @@ mod tests {
                         s.procedural.bleed = bleed;
                         s.procedural.rotation = [13., -27., 41.];
                         s.procedural.scale = 0.03;
-                        let plan = Plan::new(&s, &maps, (16, 16)).unwrap();
+                        let plan = Plan::new(&s, &maps, (16, 16), (16, 16)).unwrap();
                         let mut shared = plan.scratch();
                         for i in 0..150u32 {
                             let mut pos = [[0.; 4]; 3];

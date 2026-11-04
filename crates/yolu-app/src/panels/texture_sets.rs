@@ -378,12 +378,7 @@ fn set_row(
     let (uid, name, visible) = (set.uid, set.name.clone(), set.visible);
     let material_refs = set.materials.clone();
     let material_names = app.bound_material_names(index);
-    let doc = app.set_doc(index);
-    let resolution = if doc.width() == doc.height() {
-        doc.width().to_string()
-    } else {
-        format!("{}×{}", doc.width(), doc.height())
-    };
+    let resolution = size_label(app.set_doc(index));
     let state = set_state(app, index);
     let hit = row.intersect(list);
     let response = ui.interact(
@@ -760,4 +755,18 @@ fn layer_set_name(ui: &mut Ui, app: &mut AppState, list: Rect, name_rect: Rect, 
         t::LABEL.with_color(color),
         Align::Left,
     );
+}
+
+/// テクスチャセットの一覧の大きさの欄（UDIM のセットは「タイルの大きさ ×タイルの数」）。
+pub fn size_label(doc: &yolu_core::Document) -> String {
+    let (w, h) = doc.uv_cell();
+    let size = if w == h {
+        w.to_string()
+    } else {
+        format!("{w}×{h}")
+    };
+    match doc.udim() {
+        Some(l) => format!("{size} ×{}", l.tiles().len()),
+        None => size,
+    }
 }

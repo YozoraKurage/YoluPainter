@@ -300,7 +300,7 @@ fn a_reader_that_stops_at_34_refuses_a_rulers_file() {
         assert!(NativeDocument::read(&bytes).is_err(), "{older}");
     }
     // 読み手の一番新しい版の上の版は断る
-    for newer in [MAX_NATIVE_VERSION + 1, 40] {
+    for newer in [MAX_NATIVE_VERSION + 1, 41] {
         let mut b = native.to_bytes();
         b[8..12].copy_from_slice(&newer.to_le_bytes());
         let e = NativeDocument::read(&b).unwrap_err().to_string();

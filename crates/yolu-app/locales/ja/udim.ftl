@@ -1,0 +1,12 @@
+udim-needs-a-model = モデルが必要です
+udim-one-tile = UV が 1 つのタイルの中だけです
+udim-turned-on = UDIM にしました。
+udim-turned-off = UDIM をやめました。
+udim-synced = UDIM のタイルを今のモデルに合わせました。
+udim-already-synced = UDIM のタイルは今のモデルと合っています。
+udim-could-not-change = UDIM を変えられません
+udim-outside-triangles = UDIM のタイルの表に無いタイルの三角形が { $count } 個あり、描けません。
+udim-straddling-triangles = UDIM のタイルをまたぐ三角形が { $count } 個あり、重心のタイルに入れました。
+udim-not-sent-to-unity = UDIM のテクスチャセット { $names } の画像は Unity へ送りません
+udim-unity-cannot-read-tiles = Unity の標準のマテリアルは UDIM のタイルを読めない
+udim-cannot-map-model = UDIM のシートへモデルの UV を写せないので、このセットには描けません

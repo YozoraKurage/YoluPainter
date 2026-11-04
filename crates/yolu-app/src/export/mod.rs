@@ -36,8 +36,8 @@ use yolu_core::glam::DVec2;
 use yolu_core::padding::{self, Reach};
 use yolu_core::{Channel, ChannelKind, ColorSpace, Document};
 use yolu_io::export::{
-    clashes, existing_files, file_name, plan_template, sanitize, write_images, ExportError,
-    ExportFile, Overwrite, PlanSet, WriteOptions, WrittenImage,
+    clashes, crop_cell, existing_files, file_name, plan_template, sanitize, tile_names,
+    write_images, ExportError, ExportFile, Overwrite, PlanSet, WriteOptions, WrittenImage,
 };
 
 use crate::bake::Occlusion;
@@ -302,6 +302,8 @@ struct PlannedImage {
     channel: Option<Channel>,
     /// lilToon の詰め方のスロットの画像（`look::export::slot_image`）か。
     look_slot: Option<&'static str>,
+    /// UDIM のセットのタイルの画像なら、シートのセルの番号（シートの画像から切り出す）。None はシート（文書）の 1 枚。
+    cell: Option<usize>,
 }
 
 struct Plan {
@@ -320,6 +322,8 @@ struct TemplateNames {
     planned: Vec<yolu_io::export::PlannedFile>,
     /// 書く画像ごとの lilToon の詰め方のスロット（テンプレートの画像なら None）。
     look_slots: Vec<Option<&'static str>>,
+    /// 書く画像ごとの UDIM のセルの番号（`tile_names`。UDIM でないセットは None）。
+    cells: Vec<Option<usize>>,
 }
 
 /// チャンネルの書き出しの、書く前に決まること（文書は写さない）。
@@ -329,6 +333,8 @@ struct ChannelNames {
     /// 画像の取り決め。`image_of[i]` が `wanted[i]` の画像の番号。
     images: Vec<ExportImage>,
     image_of: Vec<usize>,
+    /// 書く画像ごとの UDIM のセルの番号（`tile_names`。UDIM でないセットは None）。
+    cells: Vec<Option<usize>>,
 }
 
 /// 書き出すテクスチャセットが 1 つも無い（ウィンドウのチェックが全部外れている・直接の操作の選びが空か、無い uid だけ・全部読むだけ）ときの断り。
@@ -566,6 +572,22 @@ impl AppState {
                 &[("name", &template.name)],
             ));
         }
+        // UDIM のセットは、タイルごとの画像に分ける
+        let mut tiled = Vec::with_capacity(planned.len());
+        let mut tiled_slots = Vec::with_capacity(planned.len());
+        let mut cells = Vec::with_capacity(planned.len());
+        for (p, slot) in planned.into_iter().zip(look_slots) {
+            for (file_name, cell) in tile_names(self.set_doc(indices[p.set]), &p.file_name) {
+                tiled.push(yolu_io::export::PlannedFile {
+                    set: p.set,
+                    image: p.image,
+                    file_name,
+                });
+                tiled_slots.push(slot);
+                cells.push(cell);
+            }
+        }
+        let (planned, look_slots) = (tiled, tiled_slots);
         let names: Vec<&str> = planned.iter().map(|p| p.file_name.as_str()).collect();
         let clash = clashes(names.iter().copied());
         if !clash.is_empty() {
@@ -575,6 +597,7 @@ impl AppState {
             template,
             planned,
             look_slots,
+            cells,
         })
     }
 
@@ -611,6 +634,7 @@ impl AppState {
             template,
             planned,
             look_slots,
+            cells,
         } = self.template_names(template, stem, &indices, &has_occlusion)?;
         let template = &template;
         // 写す（planned に出たセットだけ）
@@ -623,7 +647,7 @@ impl AppState {
         let (sets, position) = self.copy_sets(&indices, &used, &occlusions, &mut notes)?;
         let mut files = Vec::with_capacity(planned.len());
         let mut white = false;
-        for (p, look_slot) in planned.iter().zip(&look_slots) {
+        for ((p, look_slot), cell) in planned.iter().zip(&look_slots).zip(&cells) {
             let slot = position[p.set].expect("使うセットは写した");
             let wants_occlusion = template.images[p.image]
                 .scalars()
@@ -637,6 +661,7 @@ impl AppState {
                 name: p.file_name.clone(),
                 channel: None,
                 look_slot: *look_slot,
+                cell: *cell,
             });
         }
         if white {
@@ -668,6 +693,7 @@ impl AppState {
         let mut wanted: Vec<(usize, Channel, String)> = Vec::new();
         let mut images: Vec<ExportImage> = Vec::new();
         let mut image_of: Vec<usize> = Vec::new();
+        let mut cells: Vec<Option<usize>> = Vec::new();
         for (position, &index) in indices.iter().enumerate() {
             let doc = self.set_doc(index);
             let channels: Vec<Channel> = match which {
@@ -690,8 +716,12 @@ impl AppState {
                     .map_err(|e| e.to_string())?,
                     Which::One { file_name, .. } => file_name.clone(),
                 };
-                wanted.push((position, channel, name));
-                image_of.push(images.len());
+                // UDIM のセットは、タイルごとの画像（同じ取り決め）
+                for (name, cell) in tile_names(doc, &name) {
+                    wanted.push((position, channel, name));
+                    image_of.push(images.len());
+                    cells.push(cell);
+                }
                 images.push(image);
             }
         }
@@ -706,6 +736,7 @@ impl AppState {
             wanted,
             images,
             image_of,
+            cells,
         })
     }
 
@@ -738,6 +769,7 @@ impl AppState {
             wanted,
             images,
             image_of,
+            cells,
         } = self.channel_names(&which, &indices)?;
         let mut used: Vec<usize> = Vec::new();
         for (position, _, _) in &wanted {
@@ -750,12 +782,14 @@ impl AppState {
         let files = wanted
             .into_iter()
             .zip(image_of)
-            .map(|((set, channel, name), image)| PlannedImage {
+            .zip(cells)
+            .map(|(((set, channel, name), image), cell)| PlannedImage {
                 set: position[set].expect("使うセットは写した"),
                 image,
                 name,
                 channel: Some(channel),
                 look_slot: None,
+                cell,
             })
             .collect();
         Ok(Plan {
@@ -1166,15 +1200,25 @@ fn run(input: WorkerInput, cancel: &Cancel) -> Result<Vec<WrittenImage>, ExportE
             None => None,
         });
     }
+    // UDIM のタイルの画像はセルの大きさ（シートから切り出す）
     let export_files: Vec<ExportFile<'_>> = files
         .iter()
-        .map(|f| ExportFile {
-            name: f.name.clone(),
-            image: &template.images[f.image],
-            width: docs[f.set].width(),
-            height: docs[f.set].height(),
+        .map(|f| {
+            let doc = docs[f.set];
+            let (width, height) = match f.cell {
+                Some(_) => doc.uv_cell(),
+                None => (doc.width(), doc.height()),
+            };
+            ExportFile {
+                name: f.name.clone(),
+                image: &template.images[f.image],
+                width,
+                height,
+            }
         })
         .collect();
+    // 同じシートの画像のタイルは続いて並ぶ: 最後に作ったシートの画像を覚えて、次のタイルはそこから切り出す
+    let mut sheet: Option<(SheetKey, Vec<u8>)> = None;
     let options = WriteOptions {
         overwrite,
         cancel: Some(cancel),
@@ -1183,6 +1227,12 @@ fn run(input: WorkerInput, cancel: &Cancel) -> Result<Vec<WrittenImage>, ExportE
         done.store(i, Ordering::Relaxed);
         let file = &files[i];
         let doc = &docs[file.set];
+        let key = (file.set, file.image, file.channel, file.look_slot);
+        if let (Some(cell), Some((k, pixels))) = (file.cell, &sheet) {
+            if *k == key {
+                return Ok(crop_cell(pixels, doc, cell));
+            }
+        }
         let pixels = match (file.channel, file.look_slot) {
             (_, Some(slot)) => crate::look::export::slot_image(doc, slot, working_bytes),
             (Some(channel), None) => channel_image(doc, channel, working_bytes),
@@ -1194,8 +1244,9 @@ fn run(input: WorkerInput, cancel: &Cancel) -> Result<Vec<WrittenImage>, ExportE
             ),
         }
         .map_err(|e: CalcError| ExportError::from(e))?;
-        match &coverage[file.set] {
-            Some(keep) => Ok(padding::dilate_cancellable(
+        // UDIM のシートは、塗り広げをセルの外へ出さない（隣のタイルの色をにじませない）
+        let pixels = match &coverage[file.set] {
+            Some(keep) => padding::dilate_in_cells(
                 &pixels,
                 doc.width(),
                 doc.height(),
@@ -1203,11 +1254,23 @@ fn run(input: WorkerInput, cancel: &Cancel) -> Result<Vec<WrittenImage>, ExportE
                 reach,
                 working_bytes,
                 Some(cancel),
-            )?),
+                doc.udim_cells(),
+            )?,
+            None => pixels,
+        };
+        match file.cell {
             None => Ok(pixels),
+            Some(cell) => {
+                let out = crop_cell(&pixels, doc, cell);
+                sheet = Some((key, pixels));
+                Ok(out)
+            }
         }
     })
 }
+
+/// 同じシートの画像の鍵（セット・画像の取り決め・チャンネル・lilToon のスロット）。
+type SheetKey = (usize, usize, Option<Channel>, Option<&'static str>);
 
 /// 機能の表の行（毎フレーム、書き出しの仕事の終わりを受ける）。
 pub(crate) const FEATURE: Feature = Feature {

@@ -164,7 +164,7 @@ pub(super) fn gaussian_q(
         }
         check()?;
         remaining -= r;
-        let target = grow(next, remaining, w, h);
+        let target = grow(next, remaining, Rect::new(0, 0, w, h));
         q = box_blur(&q, bounds, target, r, w, h, check)?;
         bounds = target;
     }

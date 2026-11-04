@@ -445,6 +445,7 @@ pub fn cover_screen(
         settings.projection,
     )
     .map_err(SurfaceStrokeError::Dab)?
+    .with_cells(doc.udim_cells())
     .with_texel_columns(edged);
     // 集める箱の余白: テクセルの中の点が中心から離れる長さの 2 倍。4 × 4 の点のいちばん外は中心から各軸 0.375 テクセルで、各軸の
     // 写しの長さはいちばん長く写る向きの長さ以下なので、0.75 × その長さで押さえる。形の中心（無ければ箱の辺の中点）の下のテクセルで
@@ -504,7 +505,6 @@ pub fn cover_screen(
             gather.bytes
         })
         .map_err(SurfaceStrokeError::Dab)?;
-    let buckets = projector.stats().buckets_built;
     let mut amounts = Vec::with_capacity(gather.tiles.len());
     let mut positions = FastMap::default();
     for (key, t) in gather.tiles {
@@ -519,7 +519,7 @@ pub fn cover_screen(
         tile,
         columns,
         positions,
-        buckets,
+        buckets: projector.stats().buckets_built,
         table_bytes,
     })
 }

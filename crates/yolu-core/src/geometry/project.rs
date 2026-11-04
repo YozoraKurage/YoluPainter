@@ -677,6 +677,20 @@ pub(super) struct UvFace {
 }
 
 impl UvFace {
+    /// 三角形の UV の重心の画素を含む UDIM のセルの矩形（セルの格子が無い・重心が画像の外なら None）。
+    pub(super) fn cell_rect(
+        &self,
+        cells: Option<crate::udim::CellGrid>,
+        width: i32,
+        height: i32,
+    ) -> Option<crate::Rect> {
+        let g = cells?;
+        let c = (self.p0 + self.p1 + self.p2) / 3.0;
+        if !(c.x >= 0.0 && c.y >= 0.0 && c.x < width as f64 && c.y < height as f64) {
+            return None;
+        }
+        Some(g.cell_containing(c.x as u32, c.y as u32, (width as u32, height as u32)))
+    }
     pub(super) fn new(t: &super::SurfaceTriangle, width: i32, height: i32) -> Option<UvFace> {
         let scale = DVec2::new(width as f64, height as f64);
         let p0 = t.uv_a.as_dvec2() * scale;
@@ -1147,6 +1161,8 @@ pub struct SurfaceProjector {
     /// 最後に区画に時刻を付けたダブの時刻と、そのダブの区画のバイト。
     stamp: (u64, u64),
     stats: ProjectionStats,
+    /// UDIM のセルの格子（Some なら継ぎ目のにじみを三角形のセルの外へ出さない。[`Self::with_cells`]）。
+    cells: Option<crate::udim::CellGrid>,
 }
 
 impl SurfaceProjector {
@@ -1219,6 +1235,7 @@ impl SurfaceProjector {
         )
         .with_texel_metrics(self.metrics)
         .with_texel_columns(self.columns)
+        .with_cells(self.cells)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1258,7 +1275,15 @@ impl SurfaceProjector {
             clock: 0,
             stamp: (0, 0),
             stats: ProjectionStats::default(),
+            cells: None,
         }
+    }
+
+    /// 継ぎ目のにじみを、三角形の UV の重心のセル（UDIM のタイル）の中に止める。区画を作る前に決める。写しの投影の塗りは、この設定を受け継ぐ。
+    pub fn with_cells(mut self, cells: Option<crate::udim::CellGrid>) -> SurfaceProjector {
+        debug_assert!(self.cache.is_empty());
+        self.cells = cells;
+        self
     }
 
     pub fn settings(&self) -> ProjectionSettings {
@@ -1793,10 +1818,17 @@ impl SurfaceProjector {
         let pb = ua + e * u1;
         let box_lo = pa.min(pb) - DVec2::splat(n + 1.0);
         let box_hi = pa.max(pb) + DVec2::splat(n + 1.0);
-        let x0 = (box_lo.x - 0.5).floor().max(0.0) as i64;
-        let x1 = (box_hi.x - 0.5).ceil().min(self.width as f64 - 1.0) as i64;
-        let y0 = (box_lo.y - 0.5).floor().max(0.0) as i64;
-        let y1 = (box_hi.y - 0.5).ceil().min(self.height as f64 - 1.0) as i64;
+        let mut x0 = (box_lo.x - 0.5).floor().max(0.0) as i64;
+        let mut x1 = (box_hi.x - 0.5).ceil().min(self.width as f64 - 1.0) as i64;
+        let mut y0 = (box_lo.y - 0.5).floor().max(0.0) as i64;
+        let mut y1 = (box_hi.y - 0.5).ceil().min(self.height as f64 - 1.0) as i64;
+        // UDIM: にじみは三角形のセル（タイル）の外へ出さない
+        if let Some(r) = uv.cell_rect(self.cells, self.width, self.height) {
+            x0 = x0.max(r.x as i64);
+            y0 = y0.max(r.y as i64);
+            x1 = x1.min((r.x + r.width) as i64 - 1);
+            y1 = y1.min((r.y + r.height) as i64 - 1);
+        }
         for y in y0..=y1 {
             for x in x0..=x1 {
                 if mask.get(x as i32, y as i32) {

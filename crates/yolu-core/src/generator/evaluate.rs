@@ -68,7 +68,18 @@ pub struct BoundGenerator<'a> {
     islands: Option<Arc<crate::geometry::IslandMap>>,
     /// アイランドごとのばらつきの乱数の種（[`IslandVariation::stream`]。ほかの種類は 0）。
     island_stream: u32,
+    /// UV を読む値（UV の空間のノイズ・模様）がタイルの中の UV を作るセルの大きさ（[`Self::with_uv_cell`]。既定は大きさそのもの）。
+    uv_cell: (u32, u32),
 }
+/// アイランドごとのばらつきの乱数の種（ほかの種類は 0）。
+fn island_stream(g: &Settings) -> u32 {
+    if g.kind == Kind::UvIslandVariation {
+        g.island.stream()
+    } else {
+        0
+    }
+}
+
 impl<'a> BoundGenerator<'a> {
     pub fn bind(
         g: &'a Settings,
@@ -96,7 +107,7 @@ impl<'a> BoundGenerator<'a> {
         let plan = g
             .kind
             .is_procedural()
-            .then(|| procedural::Plan::new(g, &table, (width, height)))
+            .then(|| procedural::Plan::new(g, &table, (width, height), (width, height)))
             .transpose()?;
         let wanted = if plan.is_some() {
             vec![]
@@ -170,11 +181,8 @@ impl<'a> BoundGenerator<'a> {
             plan,
             image: None,
             islands: None,
-            island_stream: if g.kind == Kind::UvIslandVariation {
-                g.island.stream()
-            } else {
-                0
-            },
+            island_stream: island_stream(g),
+            uv_cell: (width, height),
         };
         if b.inactive.is_some() {
             return Ok(b);
@@ -259,6 +267,32 @@ impl<'a> BoundGenerator<'a> {
             Some(R::UnknownModelFrame) => Some(Inactive::MissingFrame),
         };
         self
+    }
+    /// UV を読む値（UV の空間のノイズ・グランジ・模様・重ねるノイズ）を、セル（UDIM のタイル。大きさの約数）ごとの 0〜1 の UV で作る
+    /// （各タイルに同じ大きさで出る）。セルが大きさそのものなら今までと同じバイト。0 の辺・大きさを割り切らないセルは受けない（何もしない）。
+    pub fn with_uv_cell(mut self, cell: (u32, u32)) -> Self {
+        if cell == self.uv_cell
+            || cell.0 == 0
+            || cell.1 == 0
+            || !self.width.is_multiple_of(cell.0)
+            || !self.height.is_multiple_of(cell.1)
+        {
+            return self;
+        }
+        // ノイズ・グランジの UV の周期（縦横の格子の数）は UV の 0〜1 の縦横の比から決まるので、セルの大きさで作り直す
+        if self.plan.is_some() {
+            match procedural::Plan::new(self.g, &self.maps, (self.width, self.height), cell) {
+                Ok(plan) => self.plan = Some(plan),
+                Err(_) => return self,
+            }
+        }
+        self.uv_cell = cell;
+        self
+    }
+    /// 画素 (x, y) のセルの中の位置と、セルの大きさ（UV を読む値の元）。
+    #[inline]
+    pub(crate) fn uv_local(&self, x: u32, y: u32) -> (u32, u32, (u32, u32)) {
+        (x % self.uv_cell.0, y % self.uv_cell.1, self.uv_cell)
     }
     /// アイランドごとのばらつきが読むアイランドの図を渡す（モデルのこのテクスチャセットの `UvTopology::island_map_within` の、ジェネレーターと
     /// 同じ大きさの図）。アイランドの図を待っている アイランドごとのばらつきの段にだけ効く（ほかは何もしない）。大きさの違う図は使わず、アイランドの図を
@@ -425,9 +459,10 @@ impl<'a> BoundGenerator<'a> {
         }
         if g.noise_amount > 0. {
             let p = if g.noise_space == NoiseSpace::Uv {
+                let (lx, ly, (cw, ch)) = self.uv_local(x, y);
                 [
-                    (x as f64 + 0.5) * (1. / self.width as f64 / g.noise_scale),
-                    (y as f64 + 0.5) * (1. / self.height as f64 / g.noise_scale),
+                    (lx as f64 + 0.5) * (1. / cw as f64 / g.noise_scale),
+                    (ly as f64 + 0.5) * (1. / ch as f64 / g.noise_scale),
                     0.,
                 ]
             } else {
@@ -443,10 +478,13 @@ impl<'a> BoundGenerator<'a> {
     fn base_050(&self, x: u32, y: u32, i: usize) -> Option<f64> {
         let g = self.g;
         match g.kind {
-            Kind::Pattern => Some(g.pattern.value(
-                (f64::from(x) + 0.5) / f64::from(self.width),
-                (f64::from(y) + 0.5) / f64::from(self.height),
-            )),
+            Kind::Pattern => {
+                let (lx, ly, (cw, ch)) = self.uv_local(x, y);
+                Some(g.pattern.value(
+                    (f64::from(lx) + 0.5) / f64::from(cw),
+                    (f64::from(ly) + 0.5) / f64::from(ch),
+                ))
+            }
             Kind::Light => g
                 .light
                 .value(self.vector_at(MapKind::WorldNormal, i)?, self.direction),
@@ -492,7 +530,7 @@ impl<'a> BoundGenerator<'a> {
         } else {
             None
         };
-        plan.value(x, y, (self.width, self.height), position, normal, scratch)
+        plan.value(x, y, self.uv_cell, position, normal, scratch)
     }
     /// 1 画素の出力。画像の段は、色の対象（`scalar` が偽）では画素の色（`Mapped`）、マスク・スカラーでは選んだ成分の値。
     pub fn sample(&self, x: u32, y: u32, scalar: bool) -> Option<Generated> {

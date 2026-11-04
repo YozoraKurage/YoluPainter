@@ -502,6 +502,9 @@ pub struct Options<'a> {
     /// UV の継ぎ目をまたいで読む帯の写し（大きさは読み元と同じこと）。Some なら、近傍の段（`halo` > 0）は、段の入力のアイランドの外の帯を
     /// 継ぎ目の相手のアイランドの画素で埋めてからかけ、アイランドの外は段の入力のまま戻す（`seams.rs`）。None は今までと同じバイト。
     pub seams: Option<&'a crate::geometry::SeamBand>,
+    /// UDIM のセルの格子。Some なら、近くの画素を読む段はセルの外を読まない（セルの端を画像の端と同じく繰り返す）。継ぎ目をまたぐ読み
+    /// （`seams`）は帯の写しの指す所をそのまま読む。None は今までと同じバイト。
+    pub cells: Option<crate::udim::CellGrid>,
 }
 impl Default for Options<'_> {
     fn default() -> Self {
@@ -512,6 +515,7 @@ impl Default for Options<'_> {
             generators: None,
             statistics: None,
             seams: None,
+            cells: None,
         }
     }
 }
@@ -533,14 +537,15 @@ fn zeros<T: Default + Clone>(n: usize) -> Result<Vec<T>, Error> {
 fn area(r: Rect) -> usize {
     r.width as usize * r.height as usize
 }
-fn grow(r: Rect, m: u32, w: u32, h: u32) -> Rect {
-    let x = r.x.saturating_sub(m);
-    let y = r.y.saturating_sub(m);
+/// r を m 画素広げ、範囲 b（画像全体か UDIM のセル）の中へ切る。
+fn grow(r: Rect, m: u32, b: Rect) -> Rect {
+    let x = r.x.saturating_sub(m).max(b.x);
+    let y = r.y.saturating_sub(m).max(b.y);
     Rect::new(
         x,
         y,
-        (r.x + r.width).saturating_add(m).min(w) - x,
-        (r.y + r.height).saturating_add(m).min(h) - y,
+        (r.x + r.width).saturating_add(m).min(b.x + b.width) - x,
+        (r.y + r.height).saturating_add(m).min(b.y + b.height) - y,
     )
 }
 /// C# WorkingBytes の画素バッファ上限に縦パスの行累積を加える。
@@ -770,7 +775,7 @@ pub fn evaluate(
                         options.block_size.min(region.width - dx),
                         bh,
                     );
-                    let data = engine.rect(chain.len(), r)?;
+                    let data = engine.rect_split(chain.len(), r)?;
                     for row in 0..bh as usize {
                         let start = row * stride + dx as usize * 4;
                         dst[start..start + r.width as usize * 4].copy_from_slice(
@@ -868,7 +873,7 @@ impl<'a> Engine<'a> {
                     let x = (i % across) as u32 * block;
                     let y = (i / across) as u32 * block;
                     let r = Rect::new(x, y, block.min(self.width - x), block.min(self.height - y));
-                    Ok(min_max(&self.rect(k, r)?))
+                    Ok(min_max(&self.rect_split(k, r)?))
                 })
                 .collect::<Result<Vec<_>, Error>>()?;
             for (lo, hi) in parts {
@@ -883,10 +888,42 @@ impl<'a> Engine<'a> {
             Statistics { min, max }
         })
     }
+    /// 近くの画素を読む範囲（UDIM のセルの格子があれば、r の左下の画素のセル。無ければ画像全体）。
+    fn bounds_of(&self, r: Rect) -> Rect {
+        match self.options.cells {
+            None => Rect::new(0, 0, self.width, self.height),
+            Some(g) => g.cell_containing(r.x, r.y, (self.width, self.height)),
+        }
+    }
+    /// `rect` を、UDIM のセルの境で分けて評価してつなぐ（セルの格子が無ければ `rect` そのもの）。
+    pub(super) fn rect_split(&self, count: usize, target: Rect) -> Result<Vec<u8>, Error> {
+        let Some(g) = self.options.cells else {
+            return self.rect(count, target);
+        };
+        let parts = g.split(target);
+        if parts.len() == 1 {
+            return self.rect(count, target);
+        }
+        let mut out = zeros::<u8>(area(target) * 4)?;
+        let stride = target.width as usize * 4;
+        for p in parts {
+            let data = self.rect(count, p)?;
+            let w = p.width as usize * 4;
+            for row in 0..p.height as usize {
+                let o = (p.y - target.y) as usize * stride
+                    + row * stride
+                    + (p.x - target.x) as usize * 4;
+                out[o..o + w].copy_from_slice(&data[row * w..(row + 1) * w]);
+            }
+        }
+        Ok(out)
+    }
+    /// 矩形 target（UDIM のセルの格子があれば、1 つのセルの中）の、段 0..count の結果。
     fn rect(&self, count: usize, target: Rect) -> Result<Vec<u8>, Error> {
         self.options.check()?;
+        let bounds = self.bounds_of(target);
         let mut after = self.chain[..count].iter().map(|s| s.settings.halo()).sum();
-        let mut cur = grow(target, after, self.width, self.height);
+        let mut cur = grow(target, after, bounds);
         let mut buf = zeros::<u8>(area(cur) * 4)?;
         let row_bytes = cur.width as usize * 4;
         for y in 0..cur.height {
@@ -902,9 +939,9 @@ impl<'a> Engine<'a> {
         for (k, s) in self.chain[..count].iter().enumerate() {
             self.options.check()?;
             after -= s.settings.halo();
-            let next = grow(target, after, self.width, self.height);
+            let next = grow(target, after, bounds);
             if s.settings.halo() > 0 {
-                buf = self.neighborhood_stage(k, s, buf, cur, next)?;
+                buf = self.neighborhood_stage(k, s, buf, cur, next, bounds)?;
             } else {
                 self.point(&mut buf, cur, k, s)?;
             }

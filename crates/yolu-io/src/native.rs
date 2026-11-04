@@ -74,11 +74,16 @@ pub const LAYER_FILL_MAPS_VERSION: i32 = 38;
 /// 0.7.x までのスタンドアロンはバージョンの範囲の外として断る（形式は docs/YLP_FORMAT.md、理由は docs/YLP_DECISIONS.md）。このバージョンの文書は
 /// バージョン 27〜38 の中身も読み書きできる。
 pub const POINTER_LAYER_VERSION: i32 = 39;
+/// UDIM のシートの並び（頭の、レイヤーセットの後の `udim`: 入・切と、入なら列の数・タイルの数・タイルの番号）を足したバージョン。UDIM の
+/// テクスチャセットの文書だけがこのバージョンになり、0.7.x までのスタンドアロンはバージョンの範囲の外として断る（形式は docs/YLP_FORMAT.md）。
+/// このバージョンの文書はバージョン 27〜39 の中身も読み書きできる（ポインターレイヤーも書ける）。
+pub const UDIM_VERSION: i32 = 40;
 /// この読み手が読める一番新しい版。読める版の集合は 1〜`MIXING_VERSION`・`SPLIT_VERSION`（26。分けた正本の識別）・`PATHS_VERSION`（27）・
 /// `EFFECTS_VERSION`（28）・`POINT_GRADIENT_VERSION`（29）・`TEXT_VERSION`（30）・`SEAMS_VERSION`（32）・`BAKE_PRIORITY_VERSION`（33）・
 /// `ANTI_ALIAS_VERSION`（34）・`RULERS_VERSION`（35）・`LAYER_SETS_VERSION`（36）・`LAYER_SET_CHANNELS_VERSION`（37）・
-/// `LAYER_FILL_MAPS_VERSION`（38）・`POINTER_LAYER_VERSION`（39）で、間の 31 は意味を決めておらず断る（バージョンを割り振ったら `is_known_version` へ足す）。
-pub const MAX_NATIVE_VERSION: i32 = POINTER_LAYER_VERSION;
+/// `LAYER_FILL_MAPS_VERSION`（38）・`POINTER_LAYER_VERSION`（39）・`UDIM_VERSION`（40）で、間の 31 は意味を決めておらず断る（バージョンを
+/// 割り振ったら `is_known_version` へ足す）。
+pub const MAX_NATIVE_VERSION: i32 = UDIM_VERSION;
 /// レイヤーの後に手動の ID の色の塊（`YLID`）を置ける版。書き手の版（21 以上）はどれもこれ以上なので、色のために版を上げることは無い。
 pub(crate) const MANUAL_ID_COLORS_VERSION: i32 = 19;
 /// 標準のチャンネルの数（番号 0〜5。Unity 版の PaintChannel）。
@@ -470,6 +475,7 @@ fn is_known_version(version: i32) -> bool {
         || version == LAYER_SET_CHANNELS_VERSION
         || version == LAYER_FILL_MAPS_VERSION
         || version == POINTER_LAYER_VERSION
+        || version == UDIM_VERSION
 }
 
 /// 正本をレイヤーごとに読む（頭 → レイヤー 0, 1, … → 終わり）。レイヤーごとに項目を取り出せる（流して core へ入れる読みが、レイヤー 1 枚ぶんだけ持つため）。
@@ -533,7 +539,7 @@ impl<'a> Parse<'a> {
             check(
                 is_known_version(stored),
                 format!(
-                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{PATHS_VERSION}・{EFFECTS_VERSION}・{POINT_GRADIENT_VERSION}・{TEXT_VERSION}・{SEAMS_VERSION}・{BAKE_PRIORITY_VERSION}・{ANTI_ALIAS_VERSION}・{RULERS_VERSION}・{LAYER_SETS_VERSION}・{LAYER_SET_CHANNELS_VERSION}・{LAYER_FILL_MAPS_VERSION}・{POINTER_LAYER_VERSION})"
+                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{PATHS_VERSION}・{EFFECTS_VERSION}・{POINT_GRADIENT_VERSION}・{TEXT_VERSION}・{SEAMS_VERSION}・{BAKE_PRIORITY_VERSION}・{ANTI_ALIAS_VERSION}・{RULERS_VERSION}・{LAYER_SETS_VERSION}・{LAYER_SET_CHANNELS_VERSION}・{LAYER_FILL_MAPS_VERSION}・{POINTER_LAYER_VERSION}・{UDIM_VERSION})"
                 ),
             )?;
             check(parts.is_none(), "分けていない正本に部分があります")?;
@@ -572,6 +578,9 @@ impl<'a> Parse<'a> {
         } else {
             Vec::new()
         };
+        if version >= UDIM_VERSION {
+            r.block("udim", |r| udim(r, width, height))?;
+        }
         let count = r.int("layer_count", 0, crate::MAX_DOCUMENT_LAYERS as i32)?;
         let layer_start = r.fields.len();
         Ok(Self {
@@ -946,6 +955,32 @@ fn layer_sets(r: &mut Reader<'_>, user: &UserChannels, version: i32) -> Result<V
         })?;
     }
     Ok(ids)
+}
+/// バージョン 40 の頭の `udim`: 入・切（`on`）と、入なら列の数（1〜タイルの数）・タイルの数（1〜100）・タイルの番号（1001〜2000 の狭義の
+/// 昇順）。シート（列 × 行のセル）はキャンバスを割り切ること（行の数 = タイルの数 ÷ 列の切り上げ）。
+fn udim(r: &mut Reader<'_>, width: i32, height: i32) -> Result<()> {
+    if !r.boolean("on")? {
+        return Ok(());
+    }
+    let max = yolu_core::udim::MAX_TILES as i32;
+    let columns = r.int("columns", 1, max)?;
+    let count = r.int("tile_count", 1, max)?;
+    check(columns <= count, "UDIM の列の数がタイルの数を超えています")?;
+    let mut last = 0;
+    for i in 0..count {
+        let t = r.int(
+            &format!("tiles[{i}]"),
+            i32::from(yolu_core::udim::FIRST_TILE),
+            i32::from(yolu_core::udim::LAST_TILE),
+        )?;
+        check(t > last, "UDIM のタイルの番号が昇順ではありません")?;
+        last = t;
+    }
+    let rows = (count + columns - 1) / columns;
+    check(
+        width % columns == 0 && height % rows == 0,
+        "UDIM のシートがキャンバスを割り切りません",
+    )
 }
 /// 版 22 のユーザーチャンネルの一覧: 数（版 22 は 1〜58で 0 の一覧は書かない。版 23 は 0〜58）、番号の昇順に番号（6〜63）・名前
 /// （1〜128 文字、制御文字なし、標準の名前とも重ならない）・種類・色空間・既定の RGBA。

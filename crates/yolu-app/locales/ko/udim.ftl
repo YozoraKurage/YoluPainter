@@ -1,0 +1,12 @@
+udim-needs-a-model = 모델이 필요합니다
+udim-one-tile = UV가 하나의 타일 안에만 있습니다
+udim-turned-on = UDIM으로 바꿨습니다.
+udim-turned-off = UDIM을 해제했습니다.
+udim-synced = UDIM 타일을 현재 모델에 맞췄습니다.
+udim-already-synced = UDIM 타일이 이미 현재 모델과 맞습니다.
+udim-could-not-change = UDIM을 바꿀 수 없습니다
+udim-outside-triangles = UDIM 타일 목록에 없는 타일의 삼각형이 { $count }개 있어 그릴 수 없습니다.
+udim-straddling-triangles = UDIM 타일을 걸치는 삼각형이 { $count }개 있어 무게중심의 타일에 넣었습니다.
+udim-not-sent-to-unity = UDIM 텍스처 세트 { $names }의 이미지는 Unity로 보내지 않습니다
+udim-unity-cannot-read-tiles = Unity의 표준 머티리얼은 UDIM 타일을 읽을 수 없음
+udim-cannot-map-model = 모델의 UV를 UDIM 시트에 배치할 수 없어 이 세트에는 그릴 수 없습니다

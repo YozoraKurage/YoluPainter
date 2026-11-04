@@ -1307,7 +1307,7 @@ fn remove_confirm(ctx: &egui::Context, app: &mut AppState) {
             let doc = app.set_doc(i);
             Some(crate::windows::Row {
                 left: set.name.clone(),
-                middle: size_text((doc.width(), doc.height())),
+                middle: size_text(doc.uv_cell()),
                 right: String::new(),
                 warning: false,
             })

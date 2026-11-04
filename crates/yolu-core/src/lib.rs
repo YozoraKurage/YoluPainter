@@ -77,6 +77,7 @@ mod symmetry;
 pub mod text;
 pub mod tile_cache;
 mod types;
+pub mod udim;
 pub mod uv_layout;
 
 pub use adjust::{

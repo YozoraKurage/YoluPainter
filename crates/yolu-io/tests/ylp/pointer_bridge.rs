@@ -119,7 +119,7 @@ fn guid_of(native: &NativeDocument, field: &str) -> NativeValue {
 #[test]
 fn pointers_round_trip_in_version_39_with_the_same_composite() {
     assert_eq!(POINTER_LAYER_VERSION, 39);
-    assert_eq!(MAX_NATIVE_VERSION, POINTER_LAYER_VERSION);
+    const { assert!(MAX_NATIVE_VERSION >= POINTER_LAYER_VERSION) };
     let f = fixture();
     let native = NativeDocument::from_core(&f.doc).unwrap();
     assert_eq!(native.version(), POINTER_LAYER_VERSION);

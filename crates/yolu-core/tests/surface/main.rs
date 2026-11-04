@@ -34,5 +34,6 @@ mod surface_tip;
 mod taper_start;
 mod taper_targets;
 mod tip_rules;
+mod udim_cells;
 mod uv_topology;
 mod water_edge;

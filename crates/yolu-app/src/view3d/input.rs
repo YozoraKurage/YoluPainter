@@ -466,7 +466,7 @@ fn points_per_pixel_at(
     view: &CameraView,
     position: Vec3,
 ) -> f64 {
-    let one = world_radius(&model.geometry, 1.0, app.session.doc.width());
+    let one = world_radius(&model.geometry, 1.0, app.session.doc.uv_cell().0);
     let points = f64::from(view.world_radius_to_screen(position, one));
     if points.is_finite() && points > 0.0 {
         points
@@ -1894,7 +1894,7 @@ pub fn draw_cursor(ui: &Ui, app: &AppState, rect: Rect, pointer: Pos2) -> bool {
     } else {
         app.brush.radius as f64
     };
-    let radius = world_radius(&model.geometry, radius_px, app.session.doc.width());
+    let radius = world_radius(&model.geometry, radius_px, app.session.doc.uv_cell().0);
     let screen_radius = view.world_radius_to_screen(hit.position, radius);
     if !(screen_radius > 0.0 && screen_radius.is_finite()) {
         return false;

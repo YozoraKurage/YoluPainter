@@ -60,6 +60,10 @@ What is exported is the final result of each channel (the composite of the layer
 
 "Current Channel" writes the painting channel to one PNG, and "Per Channel" writes every channel in use, for the checked texture sets, into a folder. Values are the channel's composite as it is (not packed and not multiplied by color), and Normal alone follows the file Y direction in the Normal settings. Names are `<name>[_<set name>]_<channel>.png`.
 
+### Export a UDIM set
+
+A UDIM texture set ("UDIM" in [GUIDE_3D.md](GUIDE_3D.md)) is written one file per tile, with templates and per channel alike, with the tile number before `.png` (`<name>[_<set name>]_<image>.1001.png`, `….1002.png` …). No file is written for an unused cell. Padding also dilates inside each tile and does not reach the next tile. A PSD export writes the whole sheet as one PSD.
+
 ## Import a PSD
 
 "Import" in the File menu, then "PSD as a New Texture Set…" or "PSD into the Current Texture Set…", imports a PSD (RGB 8 bit). When you drop a .psd onto the window, you choose where it goes in the "Import Files" window (below).
@@ -166,3 +170,5 @@ A document that uses none of them keeps the earlier version. To go back to the U
 A `.ylp` that uses any of these cannot be opened by the standalone app up to 0.5.x either: paths whose brush anti-aliasing is not "None" (a new path takes the anti-aliasing of the current brush, which is Medium by default; see [BRUSH.md](../BRUSH.md), in Japanese), rulers (on layers or groups, symmetry rulers too), or paths with a diagonal line symmetry or a line symmetry of 6 or more lines ([GUIDE_PAINT.md](GUIDE_PAINT.md)). It is refused by the version number alone, without touching the file. Set the anti-aliasing of each path to "None" and save again, and the paths keep the earlier version. Turn the path symmetry off, or set it again from a symmetry ruler with 2 or 4 lines in the vertical or horizontal direction, then delete all rulers and save again, and it opens. Which version reads how much is in [UNITY.md](UNITY.md) and [YLP_FORMAT.md](../YLP_FORMAT.md) (in Japanese).
 
 A document with two or more layer sets or with a channel whose output is None ("Layer sets" in [GUIDE_LAYERS.md](GUIDE_LAYERS.md)), and a project with a texture set assigned to two or more materials (content format 9 of the `.ylp`), cannot be opened by the standalone app up to 0.6.x (it refuses with a reason). With one layer set and one material per set, the file is written in the same form as before.
+
+A `.ylp` with a UDIM texture set cannot be opened by the standalone app up to 0.7.x (it refuses with a reason). Turn UDIM off and save again, and it is written in the earlier form. A UDIM set is not sent to Unity by Live Link, and you are told once that it was not sent.

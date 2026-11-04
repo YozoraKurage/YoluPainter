@@ -61,3 +61,5 @@ shell-paste-to-mask = Paste to Mask
 shell-ui-hidden = The UI is hidden. { $key } brings it back.
 shell-ui-hidden-no-key = The UI is hidden.
 shell-import-images = Images…
+shell-udim = UDIM
+shell-udim-sync = Match UDIM Tiles to Current Model

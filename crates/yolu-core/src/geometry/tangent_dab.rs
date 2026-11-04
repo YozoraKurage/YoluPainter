@@ -249,6 +249,8 @@ pub(crate) struct TangentPainter {
     material: Option<MaterialSet>,
     width: i32,
     height: i32,
+    /// UDIM のセル（Some なら継ぎ目のにじみを三角形のセルの外へ出さない）。
+    cells: Option<crate::udim::CellGrid>,
 }
 
 impl TangentPainter {
@@ -268,7 +270,14 @@ impl TangentPainter {
             material: material.cloned(),
             width,
             height,
+            cells: None,
         })
+    }
+
+    /// 継ぎ目のにじみを、三角形の UV の重心のセル（UDIM のタイル）の中に止める。
+    pub(crate) fn with_cells(mut self, cells: Option<crate::udim::CellGrid>) -> TangentPainter {
+        self.cells = cells;
+        self
     }
 
     /// ストロークの間ずっと持つ一覧（UV の覆い・アイランドの縁）のバイト。
@@ -493,12 +502,13 @@ impl TangentPainter {
                 continue;
             };
             let flat = flat.map(|p| p.as_dvec2());
+            let cell = uv.cell_rect(self.cells, self.width, self.height);
             let mut f = Face::new(face, uv, flat, radius, self.width, self.height);
             if bleed > 0 {
                 let seams = self.shared.seams(face as usize);
                 for edge in 0..3 {
                     if seams & (SEAM0 << edge) != 0 {
-                        f.bleed_box(edge, bleed as f64, radius, self.width, self.height);
+                        f.bleed_box(edge, bleed as f64, radius, self.width, self.height, cell);
                     }
                 }
             }
@@ -691,7 +701,15 @@ impl Face {
     }
 
     /// 辺 edge のにじみの箱（辺のうち中心の正方形に入る部分から n テクセルの外まで）。
-    fn bleed_box(&mut self, edge: usize, n: f64, radius: f64, width: i32, height: i32) {
+    fn bleed_box(
+        &mut self,
+        edge: usize,
+        n: f64,
+        radius: f64,
+        width: i32,
+        height: i32,
+        cell: Option<crate::Rect>,
+    ) {
         let (i, j) = (edge, (edge + 1) % 3);
         let Some((t0, t1)) = segment_in_square(self.flat[i], self.flat[j], radius) else {
             return;
@@ -705,7 +723,17 @@ impl Face {
         let (pa, pb) = (ua + e * t0, ua + e * t1);
         let lo = pa.min(pb) - DVec2::splat(n + 1.0);
         let hi = pa.max(pb) + DVec2::splat(n + 1.0);
-        if let Some(b) = texel_box(lo, hi, width, height) {
+        if let Some(mut b) = texel_box(lo, hi, width, height) {
+            // UDIM: にじみは三角形のセル（タイル）の外へ出さない
+            if let Some(r) = cell {
+                b.0 = b.0.max(r.x as i64);
+                b.1 = b.1.min((r.x + r.width) as i64 - 1);
+                b.2 = b.2.max(r.y as i64);
+                b.3 = b.3.min((r.y + r.height) as i64 - 1);
+                if b.0 > b.1 || b.2 > b.3 {
+                    return;
+                }
+            }
             self.bleeds.push((edge, b));
         }
     }

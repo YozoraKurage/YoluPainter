@@ -1330,7 +1330,7 @@ fn brush_view(app: &AppState) -> BrushView {
             let diameter = match path {
                 LayerPath::Canvas(_) => Some((b.radius * 2.0) as f32),
                 LayerPath::Surface(_) => app.view3d.full_model().map(|m| {
-                    let unit = world_radius(m.rest_geometry(), 1.0, app.session.doc.width())
+                    let unit = world_radius(m.rest_geometry(), 1.0, app.session.doc.uv_cell().0)
                         .max(f32::MIN_POSITIVE);
                     (b.radius as f32 / unit) * 2.0
                 }),

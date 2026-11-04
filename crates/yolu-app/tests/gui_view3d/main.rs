@@ -70,6 +70,7 @@ mod ref_fill_measure;
 mod replay_input;
 mod sets;
 mod tool_keys_3d;
+mod udim;
 mod view3d;
 mod view3d_alignment;
 mod view3d_aniso;

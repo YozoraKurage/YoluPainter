@@ -8,6 +8,7 @@ pub mod cpu;
 pub mod display;
 pub mod gpu;
 pub mod nav;
+mod udim_cells;
 pub mod view;
 
 use egui::{Color32, CursorIcon, Event, Key, Pos2, Rect, Sense, Stroke, Ui};
@@ -82,6 +83,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
     // 焼いたメッシュマップを見ているとき（読むだけの重ね表示）
     crate::bake::overlay::paint(&painter, app, &view);
     crate::uv_wireframe::show(ui, app, &view);
+    // UDIM のシート: セルの境の線とタイルの番号、空のセルは暗く
+    udim_cells::paint(&painter, &view, &app.session.doc);
     // 右上: UV の線と描くチャンネルのボタン・開いた欄（描く物の上。ブラシのカーソルより前に重ねる）。右上の隅のアイコンと同じ「描いていない」を渡す
     let free = !app.is_stroking();
     bar::show(ui, app, rect, free);

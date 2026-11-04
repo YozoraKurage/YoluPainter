@@ -8,7 +8,7 @@ use crate::native::{
     LAYER_FILL_MAPS_VERSION, LAYER_SETS_VERSION, LAYER_SET_CHANNELS_VERSION,
     MANUAL_ID_COLORS_VERSION, MIXING_VERSION, PATHS_VERSION, POINTER_LAYER_VERSION,
     POINT_GRADIENT_VERSION, PROCEDURAL_VERSION, RULERS_VERSION, SEAMS_VERSION, TEXT_VERSION,
-    UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
+    UDIM_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
 use crate::{
     check, check_budget, Error, NativeDocument, NativeValue as V, Result, Unwritable,
@@ -156,6 +156,7 @@ fn unsupported(path: &str, fields: &HashMap<&str, &V>) -> Option<(String, &'stat
             | "manual_id_colors" => None,
             "bake_priority" => None,
             "layer_set_count" | "layer_sets" | "route_count" | "route" => None,
+            "udim" => None,
             _ => Some((path.into(), "core に無い項目")),
         };
     };
@@ -371,6 +372,23 @@ impl CoreLoad {
         } else {
             None
         };
+        if version >= UDIM_VERSION && f.boolean("udim.on")? {
+            let count = f.int("udim.tile_count")?;
+            let tiles = (0..count)
+                .map(|i| f.int(&format!("udim.tiles[{i}]")).map(|t| t as u16))
+                .collect::<Result<Vec<u16>>>()?;
+            let columns = f.int("udim.columns")? as u32;
+            let rows = (count as u32).div_ceil(columns);
+            let layout = yolu_core::udim::UdimLayout::new(
+                tiles,
+                columns,
+                doc.width() / columns,
+                doc.height() / rows,
+            )
+            .and_then(|l| doc.set_udim_for_load(Some(l)))
+            .map_err(|e| Error::from(e).in_context("UDIM の並びをcoreにできません"));
+            layout?;
+        }
         Ok(Self {
             doc,
             version,
@@ -601,7 +619,9 @@ fn path_brush(path: &LayerPath) -> BrushSettings {
     }
 }
 
-/// 文書の正本のバージョン（使う機能で決まる）: ベイクしたマップの源を持つ塗りつぶしレイヤーがあれば 38（バージョン 27〜37 の中身も読み書きできる
+/// 文書の正本のバージョン（使う機能で決まる）: UDIM のテクスチャセットなら 40（バージョン 27〜39 の中身も読み書きできるバージョン）、
+/// ポインターレイヤーがあれば 39（バージョン 27〜38 の中身も読み書きできるバージョン）、
+/// ベイクしたマップの源を持つ塗りつぶしレイヤーがあれば 38（バージョン 27〜37 の中身も読み書きできる
 /// バージョン）、扱うチャンネルの組が文書の全部のチャンネルでないレイヤーセットがあれば 37（バージョン 27〜36 の中身も読み書きできるバージョン）、
 /// レイヤーセットが既定の形（ID が文書の ID から決まる値で名前の空の 1 つに全部のチャンネルを割り当てた形）でなければ 36（バージョン 27〜35 の中身も
 /// 読み書きできる版）、定規を持つレイヤー（グループ）か、線対称の 2D のパスがあれば 35（版 27〜34 の中身も読み書きできる版）、
@@ -617,7 +637,9 @@ fn path_brush(path: &LayerPath) -> BrushSettings {
 pub(crate) fn version_of(doc: &Document) -> i32 {
     let user = doc.channels().into_iter().any(|c| !c.is_standard());
     let all = doc.channel_bits();
-    if doc.layers().iter().any(|l| l.kind() == LayerKind::Pointer) {
+    if doc.udim().is_some() {
+        UDIM_VERSION
+    } else if doc.layers().iter().any(|l| l.kind() == LayerKind::Pointer) {
         POINTER_LAYER_VERSION
     } else if doc.layers().iter().any(|l| l.fill_maps().next().is_some()) {
         LAYER_FILL_MAPS_VERSION
@@ -814,6 +836,20 @@ fn write_head_after_version(w: &mut Out<'_>, doc: &Document, version: i32) -> Re
             w.int(c.index() as i32)?;
             let set = doc.channel_output(c)?;
             w.raw(&set.map_or([0; 16], |s| native_id(s.0)))?;
+        }
+    }
+    // バージョン 40: UDIM のシートの並び（入・切と、入なら列の数・タイルの数・タイルの番号）
+    if version >= UDIM_VERSION {
+        match doc.udim() {
+            None => w.boolean(false)?,
+            Some(l) => {
+                w.boolean(true)?;
+                w.int(l.columns() as i32)?;
+                w.int(l.tiles().len() as i32)?;
+                for t in l.tiles() {
+                    w.int(i32::from(*t))?;
+                }
+            }
         }
     }
     w.int(doc.layers().len() as i32)

@@ -173,7 +173,27 @@ pub struct View3dState {
     /// 3D ビューのタブのどれかが見えているか（`YoluApp::frame` が描いた後に毎フレーム入れる。次のフレームのキー入力が読む。全部の
     /// ビューが別のタブの裏にあるあいだは、ポーズのモードでも取り消し・やり直しを画素へ回す）。
     pub visible: bool,
+    /// UDIM のテクスチャセットのマテリアル → シートの並び（`AppState::sync_view3d` が今のセットの並びから決める）。モデルはこの写しを当てた
+    /// 形で持つ（`ViewModel::udim_mapped`）。
+    udim: yolu_core::udim::UdimMapping,
+    /// 最後に写したときの、タイルをまたぐ・表に無いタイルの三角形の数（アプリが知らせて空にする）。
+    pub udim_counts: Option<yolu_core::udim::MapCounts>,
+    /// 最後に `udim_counts` を残した形（並び・数え・三角形の数・Live Link の世代・名前）。ポーズが替わるたびに写し直しても、同じ形の同じ数えは
+    /// 知らせ直さない（UV はポーズで変わらない）。数えに知らせることが無い写しは None に戻す。
+    udim_told: Option<UdimTold>,
+    /// UDIM の写しに失敗した理由（失敗したままのあいだ、そのセットの 3D の描きを断る。`AppState::region_missing_reason`）。
+    pub udim_failure: Option<ViewError>,
+    /// `udim_failure` を知らせ済みか（1 回だけ知らせる）。
+    pub udim_failure_told: bool,
 }
+
+type UdimTold = (
+    yolu_core::udim::UdimMapping,
+    yolu_core::udim::MapCounts,
+    usize,
+    Option<u32>,
+    String,
+);
 
 impl ViewState {
     /// カメラを、この境界が全部入る既定の向きの位置へ置き直す。手で選んだ正投影は保ち、軸の向きで自動で替えた正投影は透視へ戻す
@@ -265,7 +285,79 @@ impl View3dState {
         self.apply_model(model);
     }
 
+    /// UDIM の写しを当てた形（写すマテリアルが無ければ写す前の形。写せないときは写す前の形のまま）。またぐ・表に無い三角形があれば数を残す。
+    fn udim_mapped(&mut self, model: Arc<ViewModel>) -> Arc<ViewModel> {
+        if self.udim.is_empty() && model.unmapped_is_none() {
+            return model;
+        }
+        // 写した形の世代は、写す前の形の世代と重ならない番号にする（描画はメッシュを世代で覚えるので、同じ番号だと写す前の UV のまま描く）
+        let mut revision = self.next_revision();
+        while revision <= model.unmapped().revision() {
+            revision = self.next_revision();
+        }
+        match ViewModel::udim_mapped(&model, &self.udim, revision) {
+            Ok((mapped, counts)) => {
+                if counts.straddling > 0 || counts.outside > 0 {
+                    let told = (
+                        self.udim.clone(),
+                        counts,
+                        mapped.triangle_count(),
+                        mapped.link_generation,
+                        mapped.name.clone(),
+                    );
+                    if self.udim_told.as_ref() != Some(&told) {
+                        self.udim_counts = Some(counts);
+                        self.udim_told = Some(told);
+                    }
+                } else {
+                    self.udim_told = None;
+                }
+                mapped
+            }
+            // 写せない形は写す前のまま持つが、黙って描かせない（そのセットの 3D の描きは断り、理由を 1 度知らせる）
+            Err(e) => {
+                self.udim_failure = Some(e);
+                self.udim_failure_told = false;
+                model.unmapped()
+            }
+        }
+    }
+
+    /// UDIM の並びを替える（同じなら何もしない）。受けたままの形とビューのポーズの形を、写す前の形から写し直す（三角形の並びは同じなので、
+    /// 隠した面・カメラはそのまま。3D のパスの付け直しもしない: 画素は文書の UDIM の操作がセルごとに動かしてある）。描いている最中は、
+    /// 終わってから（`AppState::sync_view3d` はストロークの間は呼ばない）。
+    pub fn set_udim(&mut self, mapping: yolu_core::udim::UdimMapping) {
+        if mapping == self.udim {
+            return;
+        }
+        self.udim = mapping;
+        self.udim_failure = None;
+        if let Some(m) = self.pending.take() {
+            self.pending = Some(self.udim_mapped(m));
+        }
+        if let Some(m) = self.full.take() {
+            self.full = Some(self.udim_mapped(m));
+        }
+        for i in 0..self.view_count() {
+            if let Some(m) = self.view_at_mut(i).pose_model.take() {
+                let mapped = self.udim_mapped(m);
+                self.view_at_mut(i).pose_model = Some(mapped);
+            }
+        }
+        if self.view.input.stroke.is_none() {
+            self.unpainted.clear();
+            self.rebuild_shown();
+        }
+    }
+
+    /// 今の UDIM の並び。
+    pub fn udim(&self) -> &yolu_core::udim::UdimMapping {
+        &self.udim
+    }
+
     fn apply_model(&mut self, model: Arc<ViewModel>) {
+        self.udim_failure = None;
+        let model = self.udim_mapped(model);
         if let Some(old) = &self.full {
             if !same_structure(&old.geometry, &model.geometry) {
                 self.replaced.get_or_insert_with(|| old.clone());
@@ -536,6 +628,10 @@ impl View3dState {
         if same {
             return;
         }
+        let model = model.map(|m| self.udim_mapped(m));
+        let Some(view) = self.view_of_mut(id) else {
+            return;
+        };
         view.pose_model = model;
         if self.view.input.stroke.is_none() && self.pending.is_none() {
             self.rebuild_shown();
@@ -625,7 +721,8 @@ impl View3dState {
             .cloned()
             .ok_or(ViewError::NoPoseBase)?;
         let revision = self.next_revision();
-        let posed = base.with_pose(pose, revision)?;
+        // ポーズは UDIM の写しの前の形（頂点の並びが Live Link の物と同じ）に当て、入れ替えで写し直す
+        let posed = base.unmapped().with_pose(pose, revision)?;
         self.set_model(posed);
         Ok(())
     }

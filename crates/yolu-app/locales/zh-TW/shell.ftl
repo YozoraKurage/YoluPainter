@@ -61,3 +61,5 @@ shell-paste-to-mask = 貼上至遮罩
 shell-ui-hidden = 介面已隱藏。按 { $key } 即可重新顯示。
 shell-ui-hidden-no-key = 介面已隱藏。
 shell-import-images = 圖片…
+shell-udim = UDIM
+shell-udim-sync = 將 UDIM 圖塊配合目前的模型

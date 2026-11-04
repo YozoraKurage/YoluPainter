@@ -653,6 +653,8 @@ pub enum Action {
     Draft(crate::drafting::DraftOp),
     /// ファイルの取り込みのウィンドウ（落とした PSD・画像の入れ先を選んで取り込む）。
     DropIn(crate::dropin::DropOp),
+    /// テクスチャセットを UDIM にする・やめる・タイルを合わせる（1 回の Undo）。
+    Udim(crate::udim::UdimAction),
 }
 
 impl Action {
@@ -751,6 +753,7 @@ impl Action {
             Self::Warp(..) => "Warp",
             Self::Draft(..) => "Draft",
             Self::DropIn(..) => "DropIn",
+            Self::Udim(..) => "Udim",
         }
     }
 
@@ -1875,6 +1878,7 @@ impl AppState {
             Action::Warp(commit) => self.warp_apply(commit),
             Action::Draft(op) => self.draft_apply(op),
             Action::DropIn(op) => self.dropin_apply(op),
+            Action::Udim(op) => self.udim_apply(op),
         }
     }
 }

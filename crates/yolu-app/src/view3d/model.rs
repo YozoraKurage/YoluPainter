@@ -134,6 +134,8 @@ pub struct ViewModel {
     tangents: OnceLock<Arc<Vec<Tangent>>>,
     /// ポーズを付けた形のときの休みの形（三角形・UV・スロットの並びは同じで、位置だけが違う）。None はこの形が休みの形。
     rest: Option<Arc<SurfaceGeometry>>,
+    /// UDIM のシートへ UV を写した形のときの、写す前の形（[`ViewModel::udim_mapped`]。写していない形は None）。並びを替えるときは、ここから写し直す。
+    unmapped: Option<Arc<ViewModel>>,
 }
 
 impl ViewModel {
@@ -158,6 +160,7 @@ impl ViewModel {
             demo: false,
             tangents: OnceLock::new(),
             rest: None,
+            unmapped: None,
         })
     }
 
@@ -177,6 +180,7 @@ impl ViewModel {
             demo: false,
             tangents: OnceLock::new(),
             rest: None,
+            unmapped: None,
         }
     }
 
@@ -293,6 +297,58 @@ impl ViewModel {
 
     pub fn triangle_count(&self) -> usize {
         self.geometry.triangle_count()
+    }
+
+    /// UDIM のシートへ写した形でないか。
+    pub fn unmapped_is_none(&self) -> bool {
+        self.unmapped.is_none()
+    }
+
+    /// UDIM のシートへ写す前の形（写していない形は自分）。ポーズを当てる・並びを替えて写し直すときは、ここから。
+    pub fn unmapped(self: &Arc<Self>) -> Arc<ViewModel> {
+        self.unmapped.clone().unwrap_or_else(|| self.clone())
+    }
+
+    /// UDIM のテクスチャセットのマテリアルの三角形の UV を、そのシートへ写した形（core の `udim::remap_meshes`。違うタイルの三角形が共有する
+    /// 頂点は複製し、三角形の並び・数・位置は同じ）。`source` が写した形なら、その写す前の形から写し直す。写すマテリアルが無ければ写す前の
+    /// 形そのもの（数えは 0）。当たりの幾何は位置の隣り合わせを使い回して UV だけを替え、ポーズを付けた形の休みの形も同じく写す。
+    pub fn udim_mapped(
+        source: &Arc<ViewModel>,
+        mapping: &yolu_core::udim::UdimMapping,
+        revision: u32,
+    ) -> Result<(Arc<ViewModel>, yolu_core::udim::MapCounts), ViewError> {
+        let base = source.unmapped();
+        let uses = |m: &ModelMesh| {
+            m.submeshes
+                .iter()
+                .any(|s| mapping.layout(s.material).is_some())
+        };
+        if mapping.is_empty() || !base.meshes.iter().any(uses) {
+            return Ok((base, Default::default()));
+        }
+        let (meshes, counts) = yolu_core::udim::remap_meshes(&base.meshes, mapping);
+        let triangles = model_triangles(&meshes).ok_or(ViewError::BadMeshIndex)?;
+        let geometry = base.geometry.with_uvs(triangles, revision)?;
+        let rest = match &base.rest {
+            None => None,
+            Some(rest) => {
+                let mut t = rest.triangles().to_vec();
+                yolu_core::udim::remap_triangles(&mut t, mapping);
+                Some(Arc::new(rest.with_uvs(t, revision)?))
+            }
+        };
+        let mapped = ViewModel {
+            name: base.name.clone(),
+            meshes,
+            geometry: Arc::new(geometry),
+            materials: base.materials.clone(),
+            link_generation: base.link_generation,
+            demo: base.demo,
+            tangents: OnceLock::new(),
+            rest,
+            unmapped: Some(base),
+        };
+        Ok((Arc::new(mapped), counts))
     }
 
     /// 角ごとの接線（MikkTSpace。`render` が上げる頂点の並び）。最初に呼んだスレッドが作り、ほかは待つ（数万三角形で数百ミリ秒）。

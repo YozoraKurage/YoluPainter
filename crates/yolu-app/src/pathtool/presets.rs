@@ -430,7 +430,7 @@ impl AppState {
     fn path_world_unit(&self) -> Option<f64> {
         let m = self.view3d.full_model()?;
         Some(
-            yolu_core::geometry::world_radius(m.rest_geometry(), 1.0, self.session.doc.width())
+            yolu_core::geometry::world_radius(m.rest_geometry(), 1.0, self.session.doc.uv_cell().0)
                 .max(1e-12) as f64,
         )
     }

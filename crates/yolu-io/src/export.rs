@@ -209,6 +209,42 @@ pub fn file_name(
     Ok(name)
 }
 
+/// UDIM のタイルの画像の名前: 拡張子の前に `.<番号>` を足す（`Foo_Color.png` → `Foo_Color.1001.png`）。
+pub fn tile_file_name(name: &str, tile: u16) -> String {
+    match name.rfind('.') {
+        Some(dot) if dot > 0 => format!("{}.{tile}{}", &name[..dot], &name[dot..]),
+        _ => format!("{name}.{tile}"),
+    }
+}
+
+/// 書く画像 1 枚（シートの名前 `name`）を、UDIM のセットならタイルごとの画像に分ける（並びのタイルだけ。タイルの無い空のセルは書かない）。
+/// 返すのは（名前, セルの番号）の並びで、UDIM でなければ（`name`, None）の 1 つ。
+pub fn tile_names(doc: &Document, name: &str) -> Vec<(String, Option<usize>)> {
+    match doc.udim() {
+        None => vec![(name.to_owned(), None)],
+        Some(l) => l
+            .tiles()
+            .iter()
+            .enumerate()
+            .map(|(cell, tile)| (tile_file_name(name, *tile), Some(cell)))
+            .collect(),
+    }
+}
+
+/// シートの画像（文書の大きさの straight RGBA8、行は下から上）から、UDIM のセル `cell` の画素を切り出す。UDIM の文書だけに使う。
+pub fn crop_cell(sheet: &[u8], doc: &Document, cell: usize) -> Vec<u8> {
+    let layout = doc.udim().expect("タイルの画像は UDIM のセット");
+    let r = layout.cell_rect(cell);
+    let stride = doc.width() as usize * 4;
+    let row = r.width as usize * 4;
+    let mut out = Vec::with_capacity(row * r.height as usize);
+    for y in r.y as usize..(r.y + r.height) as usize {
+        let at = y * stride + r.x as usize * 4;
+        out.extend_from_slice(&sheet[at..at + row]);
+    }
+    out
+}
+
 /// 計画した 1 画像。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlannedFile {
@@ -604,17 +640,25 @@ fn write_template_inner(
     let doc = set.document;
     let has_occlusion = set.occlusion.is_some();
     let mut files = Vec::new();
-    let mut images = Vec::new();
+    // 書く画像ごとの（テンプレートの画像、UDIM のセルの番号）。UDIM のセットはタイルごとの画像に分け、セルの大きさで書く
+    let mut jobs: Vec<(&yolu_core::export::ExportImage, Option<usize>)> = Vec::new();
     let mut skipped = Vec::new();
     for image in &template.images {
         if should_write(doc, image, has_occlusion) {
-            files.push(ExportFile {
-                name: file_name(set.stem, set.set_name, image)?,
-                image,
-                width: doc.width(),
-                height: doc.height(),
-            });
-            images.push(image);
+            let name = file_name(set.stem, set.set_name, image)?;
+            for (name, cell) in tile_names(doc, &name) {
+                let (width, height) = match cell {
+                    Some(_) => doc.uv_cell(),
+                    None => (doc.width(), doc.height()),
+                };
+                files.push(ExportFile {
+                    name,
+                    image,
+                    width,
+                    height,
+                });
+                jobs.push((image, cell));
+            }
         } else {
             skipped.push(image.suffix().to_string());
         }
@@ -631,11 +675,26 @@ fn write_template_inner(
             )));
         }
     }
+    // 同じ画像のタイルは続いて並ぶ: 最後に作ったシートの画像を覚えて、次のタイルはそこから切り出す（塗り広げもシートごとに 1 回）
+    let mut sheet: Option<(usize, Vec<u8>)> = None;
+    let mut built = 0;
     let written = write_images(dir, &files, options, |i| {
-        let pixels = build(doc, images[i], set.occlusion, set.max_working_bytes)?;
-        after_build(i);
-        match set.padding {
-            Some(p) if padding == PaddingOutcome::Applied => Ok(padding::dilate_cancellable(
+        let (image, cell) = jobs[i];
+        let key = template
+            .images
+            .iter()
+            .position(|t| std::ptr::eq(t, image))
+            .unwrap_or(usize::MAX);
+        if let (Some(cell), Some((k, pixels))) = (cell, &sheet) {
+            if *k == key {
+                return Ok(crop_cell(pixels, doc, cell));
+            }
+        }
+        let pixels = build(doc, image, set.occlusion, set.max_working_bytes)?;
+        after_build(built);
+        built += 1;
+        let pixels = match set.padding {
+            Some(p) if padding == PaddingOutcome::Applied => padding::dilate_in_cells(
                 &pixels,
                 doc.width(),
                 doc.height(),
@@ -643,8 +702,17 @@ fn write_template_inner(
                 p.reach,
                 set.max_working_bytes,
                 options.cancel,
-            )?),
-            _ => Ok(pixels),
+                doc.udim_cells(),
+            )?,
+            _ => pixels,
+        };
+        match cell {
+            None => Ok(pixels),
+            Some(cell) => {
+                let out = crop_cell(&pixels, doc, cell);
+                sheet = Some((key, pixels));
+                Ok(out)
+            }
         }
     })?;
     Ok(TemplateReport {

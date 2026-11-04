@@ -134,6 +134,41 @@ impl SurfaceGeometry {
         })
     }
 
+    /// 同じ三角形（並び・位置・レンダラー・スロット・マテリアル）の UV だけを替えた、新しい世代のスナップショット（UDIM のシートへ写した形）。
+    /// 隣り合わせは位置から作ったこの形のものを使い、BVH は作り直す。ブラシの大きさの基準も引き継ぐ。三角形の数・位置・スロットが違えば
+    /// `Mismatch`。
+    pub fn with_uvs(
+        &self,
+        triangles: Vec<SurfaceTriangle>,
+        revision: u32,
+    ) -> Result<SurfaceGeometry, GeometryError> {
+        if triangles.len() != self.triangles.len()
+            || triangles.iter().zip(&self.triangles).any(|(a, b)| {
+                a.renderer != b.renderer
+                    || a.material_slot != b.material_slot
+                    || a.material != b.material
+                    || a.a != b.a
+                    || a.b != b.b
+                    || a.c != b.c
+            })
+        {
+            return Err(GeometryError::Mismatch);
+        }
+        let mut g = super::build::build(
+            triangles,
+            revision,
+            self.seam_tolerance,
+            super::build::Cancel(None),
+            Some((
+                self.adjacency_offsets.clone(),
+                self.adjacency.clone(),
+                self.non_manifold_edge_count,
+            )),
+        )?;
+        g.brush_scale = self.brush_scale;
+        Ok(g)
+    }
+
     /// BVH の箱の表面積の和（葉と内側。refit で木の形が合わなくなった度合いを見る目安。計測用）。
     pub fn bvh_surface_area(&self) -> f64 {
         self.nodes

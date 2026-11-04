@@ -842,6 +842,8 @@ impl AppState {
         settings.overlap = doc.bake_priority().clone();
         settings.width = doc.width() as i32;
         settings.height = doc.height() as i32;
+        // UDIM: 余白は同じタイルのセルの中だけへ広げる
+        settings.padding_cells = doc.udim().map(|l| l.cell_size());
         settings.target_slot = slots[0];
         settings.target_slots = if slots.len() > 1 {
             slots.clone()

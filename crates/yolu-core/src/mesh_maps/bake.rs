@@ -744,7 +744,7 @@ pub(crate) fn finish(
                                     continue;
                                 }
                                 let j = ny as usize * width + nx as usize;
-                                if pass[j].load(Ordering::Acquire) >= p as u8 {
+                                if skipped(&pass[j], p, s.padding_cells, width, i, j) {
                                     continue;
                                 }
                                 let from = source[j].load(Ordering::Relaxed);
@@ -935,4 +935,25 @@ fn quantize(v: f64) -> u16 {
     } else {
         (v * 65535. + 0.5) as u16
     }
+}
+
+/// パディングの段 `p` で、テクセル i が隣のテクセル j（パス `pass` の印）から色をもらわないか: j がこの段か後の段で埋まる、または
+/// UDIM のセルの格子 `cells` で別のセル（隣のタイルの色を広げない）。
+fn skipped(
+    pass: &AtomicU8,
+    p: i32,
+    cells: Option<(u32, u32)>,
+    width: usize,
+    i: usize,
+    j: usize,
+) -> bool {
+    pass.load(Ordering::Acquire) >= p as u8 || !same_cell(cells, width, i, j)
+}
+
+/// テクセル i と j（行優先の添え字。幅 `width`）が、UDIM のセルの格子 `cells`（セルの大きさ）の同じセルか（格子が無ければいつも同じ）。
+fn same_cell(cells: Option<(u32, u32)>, width: usize, i: usize, j: usize) -> bool {
+    cells.is_none_or(|(cw, ch)| {
+        let (cw, ch) = (cw.max(1) as usize, ch.max(1) as usize);
+        (i % width) / cw == (j % width) / cw && (i / width) / ch == (j / width) / ch
+    })
 }

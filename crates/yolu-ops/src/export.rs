@@ -13,8 +13,8 @@ use serde_json::json;
 use yolu_core::export::{ExportImage, ExportImageKind, ExportTemplate};
 use yolu_core::{Channel, ChannelKind, Document};
 use yolu_io::export::{
-    existing_files, file_name, plan_template, sanitize, write_images, write_template, ExportFile,
-    Overwrite, PlanSet, SetExport, WriteOptions,
+    crop_cell, existing_files, file_name, plan_template, sanitize, tile_names, write_images,
+    write_template, ExportFile, Overwrite, PlanSet, SetExport, WriteOptions,
 };
 use yolu_io::psd::{self, ExportControl, ExportOptions, NoteAction};
 
@@ -127,18 +127,31 @@ fn channels(
             ExportImage::of(suffix, kind)
         })
         .collect();
+    // UDIM のセットは、タイルごとの画像に分ける（セルの大きさ。空のセルは書かない）
     let mut files = Vec::new();
-    for image in &images {
-        files.push(ExportFile {
-            name: file_name(&stem, set_label(view), image).map_err(|e| OpError::from_export(&e))?,
-            image,
-            width: doc.width(),
-            height: doc.height(),
-        });
+    let mut tiles: Vec<(usize, Option<usize>)> = Vec::new();
+    for (i, image) in images.iter().enumerate() {
+        let name =
+            file_name(&stem, set_label(view), image).map_err(|e| OpError::from_export(&e))?;
+        for (name, cell) in tile_names(doc, &name) {
+            let (width, height) = match cell {
+                Some(_) => doc.uv_cell(),
+                None => (doc.width(), doc.height()),
+            };
+            files.push(ExportFile {
+                name,
+                image,
+                width,
+                height,
+            });
+            tiles.push((i, cell));
+        }
     }
     let existing = existing_files(&dir, files.iter().map(|f| f.name.as_str()));
     let overwrite = overwrite_for(&existing, args.confirm)?;
     let budget = doc.stroke_budget_bytes();
+    // 同じチャンネルのタイルは続いて並ぶ: 最後に作ったシートの画像を覚えて、次のタイルはそこから切り出す
+    let mut sheet: Option<(usize, Vec<u8>)> = None;
     let written = write_images(
         &dir,
         &files,
@@ -146,7 +159,23 @@ fn channels(
             overwrite,
             cancel: None,
         },
-        |i| yolu_core::export::channel_image(doc, list[i], budget).map_err(Into::into),
+        |i| {
+            let (channel, cell) = tiles[i];
+            if let (Some(cell), Some((k, pixels))) = (cell, &sheet) {
+                if *k == channel {
+                    return Ok(crop_cell(pixels, doc, cell));
+                }
+            }
+            let pixels = yolu_core::export::channel_image(doc, list[channel], budget)?;
+            match cell {
+                None => Ok(pixels),
+                Some(cell) => {
+                    let out = crop_cell(&pixels, doc, cell);
+                    sheet = Some((channel, pixels));
+                    Ok(out)
+                }
+            }
+        },
     )
     .map_err(|e| OpError::from_export(&e))?;
     Ok(exported(written, Vec::new(), doc))
@@ -174,7 +203,12 @@ fn textures(
         has_occlusion: false,
     };
     let planned = plan_template(&stem, &[set], &template).map_err(|e| OpError::from_export(&e))?;
-    let existing = existing_files(&dir, planned.iter().map(|p| p.file_name.as_str()));
+    // UDIM のセットは、タイルごとのファイル（`write_template` が書く名前）
+    let names: Vec<String> = planned
+        .iter()
+        .flat_map(|p| tile_names(doc, &p.file_name).into_iter().map(|(n, _)| n))
+        .collect();
+    let existing = existing_files(&dir, names.iter().map(String::as_str));
     let overwrite = overwrite_for(&existing, args.confirm)?;
     let report = write_template(
         &dir,

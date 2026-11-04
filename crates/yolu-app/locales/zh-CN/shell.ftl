@@ -61,3 +61,5 @@ shell-paste-to-mask = 粘贴至蒙版
 shell-ui-hidden = 界面已隐藏。按 { $key } 即可重新显示。
 shell-ui-hidden-no-key = 界面已隐藏。
 shell-import-images = 图像…
+shell-udim = UDIM
+shell-udim-sync = 将 UDIM 图块匹配当前的模型

@@ -55,6 +55,7 @@ mod smart;
 mod smart_resample;
 mod snapshot;
 mod structure;
+mod udim;
 mod uv_seams;
 
 use std::collections::hash_map::RandomState;
@@ -685,6 +686,8 @@ pub struct Document {
     batching: bool,
     /// レイヤーのフィルターの近傍の段が UV の継ぎ目をまたいで読むか（文書の設定。既定は入。`uv_seams`）。
     filter_seams: bool,
+    /// UDIM のシートの並び（None は UDIM でない文書。`udim`）。文書の大きさはシートの大きさ。
+    udim: Option<std::sync::Arc<crate::udim::UdimLayout>>,
 }
 
 /// 128 bit の新しい ID（std の RandomState の鍵と通し番号から）。
@@ -772,6 +775,7 @@ impl Document {
             effects: eval::EffectState::default(),
             batching: false,
             filter_seams: true,
+            udim: None,
         })
     }
 

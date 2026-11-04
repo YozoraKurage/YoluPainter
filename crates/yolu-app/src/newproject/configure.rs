@@ -724,9 +724,17 @@ fn resample(app: &mut AppState, plan: &Plan) -> Result<Vec<Resized>, String> {
             continue;
         };
         app.set_doc_mut(index).end_coalescing();
+        // UDIM のセットの大きさはタイル（セル）の大きさ: シートはセルごとに拡大・縮小する（境をまたいで混ぜない）
+        let target = match app.set_doc(index).udim() {
+            Some(l) => (
+                size.0.saturating_mul(l.columns()),
+                size.1.saturating_mul(l.rows()),
+            ),
+            None => *size,
+        };
         match app
             .set_doc(index)
-            .prepare_resize_image(size.0, size.1, *method, &mut || false)
+            .prepare_resize_image(target.0, target.1, *method, &mut || false)
         {
             Ok(Some(one)) => prepared.push((*uid, index, one)),
             Ok(None) => {}

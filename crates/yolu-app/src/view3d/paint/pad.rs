@@ -61,7 +61,10 @@ impl Paint {
             let rings = padding::coverage(size.0, size.1, triangles)
                 .ok()
                 .filter(|keep| keep.contains(&true))
-                .and_then(|keep| Rings::new(size.0, size.1, &keep, reach).ok())
+                // UDIM のシートは、塗り広げをセルの外へ出さない
+                .and_then(|keep| {
+                    Rings::new_in_cells(size.0, size.1, &keep, reach, doc.udim_cells()).ok()
+                })
                 .map(Arc::new);
             self.pad_rings = Some(PadRings {
                 shape,

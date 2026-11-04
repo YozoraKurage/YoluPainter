@@ -1,0 +1,12 @@
+udim-needs-a-model = Needs a model
+udim-one-tile = The UVs are inside one tile only
+udim-turned-on = Turned on UDIM.
+udim-turned-off = Turned off UDIM.
+udim-synced = Matched the UDIM tiles to the current model.
+udim-already-synced = The UDIM tiles already match the current model.
+udim-could-not-change = Could not change UDIM
+udim-outside-triangles = { $count } triangles are in tiles missing from the UDIM tiles and cannot be painted.
+udim-straddling-triangles = { $count } triangles cross UDIM tiles and were placed in the tile of their center.
+udim-not-sent-to-unity = The images of the UDIM texture set { $names } are not sent to Unity
+udim-unity-cannot-read-tiles = Unity's standard materials cannot read UDIM tiles
+udim-cannot-map-model = The model UVs could not be placed on the UDIM sheet, so this set cannot be painted

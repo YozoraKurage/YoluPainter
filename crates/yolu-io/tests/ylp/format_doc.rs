@@ -8,7 +8,7 @@ use yolu_io::{
     MAX_FORMAT, MAX_NATIVE_VERSION, MIXING_VERSION, MULTI_MATERIAL_FORMAT, PATHS_VERSION,
     POINTER_LAYER_VERSION, POINT_GRADIENT_VERSION, PROCEDURAL_VERSION, RESOURCE_ENTRIES,
     ROOT_ENTRIES, RULERS_VERSION, SAVED_SELECTIONS_FORMAT, SEAMS_VERSION, SET_ENTRIES,
-    SPLIT_VERSION, TEXT_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
+    SPLIT_VERSION, TEXT_VERSION, UDIM_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
 
 const SPEC: &str = include_str!("../../../../docs/YLP_FORMAT.md");
@@ -194,6 +194,7 @@ fn every_version_is_in_the_spec() {
         ("LAYER_SET_CHANNELS_VERSION", LAYER_SET_CHANNELS_VERSION),
         ("LAYER_FILL_MAPS_VERSION", LAYER_FILL_MAPS_VERSION),
         ("POINTER_LAYER_VERSION", POINTER_LAYER_VERSION),
+        ("UDIM_VERSION", UDIM_VERSION),
     ] {
         assert!(
             constants.contains(&format!("::{name}` | {value} |")),
@@ -294,6 +295,7 @@ fn every_version_is_in_the_spec() {
         LAYER_SET_CHANNELS_VERSION,
         LAYER_FILL_MAPS_VERSION,
         POINTER_LAYER_VERSION,
+        UDIM_VERSION,
     ]) {
         assert!(
             natives.contains(&format!("\n| {v} |")),

@@ -22,6 +22,17 @@ While there is no model, the 3D view shows "New Project…" (the same as New Pro
 
 Each material of the model gets a texture set, and you switch between them in the Texture Sets panel. You can paint only on the faces of the current set's materials (on any of them, when the set has several).
 
+### UDIM
+
+For a model whose UVs reach tiles outside 0–1 (1002, 1011 and so on), right-click a texture set and turn on "UDIM" to make that set UDIM. The tiles in use are laid out as equal-size cells on one sheet (in tile number order, with the square root of the tile count rounded up as the number of columns, filled from the bottom row), and you can paint each tile. Layers, fills and generators are shared by the tiles; the pixels are separate for each tile. Turning it on puts the current pixels in the 1001 cell (the cell with the lowest number when 1001 is not used), and turning "UDIM" off keeps only that cell. Either is one undo step.
+
+- When the item cannot be pressed: there is no model, or the set's materials use only one tile. When a side of the sheet would exceed 8192, or the sheet does not fit the large document budget, it refuses with a reason (lowering the tile size in Project Configuration makes it fit).
+- When the model uses more tiles later: the right-click menu shows "Match UDIM Tiles to Current Model". It keeps the current tiles and their contents and adds cells for the new tiles. When the new layout moves a tile to another cell, 2D paths, text and 2D rulers move with the tile their center is in (paths are redrawn; anything whose center is outside the cells stays where it is).
+- Display: the 2D canvas shows the cell borders and tile numbers, and darkens unused cells. The size in the Texture Sets panel reads like "2048 ×6", the tile size and the tile count. The size in Project Configuration is also the tile size.
+- Cell borders: filters that read nearby pixels such as blur, bleeding past the UVs, and bake padding stop at the cell border. Generators and fills that read UVs use the UV inside the tile (0–1 in each tile).
+- Triangles that cannot be painted: a triangle goes to the cell of the tile that holds its UV centroid. Triangles that straddle two tiles, and triangles in tiles that are not on the sheet, show a notice (triangles in tiles not on the sheet cannot be painted).
+- A UDIM set is not sent to Unity by Live Link (export it as PNGs per tile instead; see [GUIDE_FILES.md](GUIDE_FILES.md)). Turning UDIM on or off, or matching the tiles, makes baked maps out of date.
+
 ## Change how the model looks
 
 The dropdown in the top left of the 3D view ("3D shading") chooses what to show. When you add more 3D views, each view has its own choice ("Add more 3D views" below).

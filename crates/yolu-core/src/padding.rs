@@ -17,6 +17,7 @@ use rayon::prelude::*;
 
 use crate::export::ExportError;
 use crate::glam::DVec2;
+use crate::udim::CellGrid;
 use crate::Rect;
 
 /// 塗り広げの届く範囲。
@@ -307,6 +308,32 @@ pub fn dilate_cancellable(
     )
 }
 
+/// [`dilate_cancellable`] の、UDIM のセル（`cells`）の外へ広げないもの: 近傍はテクセルと同じセルの中だけを読む（隣のセルの色をにじませない）。
+/// `cells` が None なら [`dilate_cancellable`] と同じ。
+#[allow(clippy::too_many_arguments)]
+pub fn dilate_in_cells(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    keep: &[bool],
+    reach: Reach,
+    max_working_bytes: u64,
+    cancel: Option<&AtomicBool>,
+    cells: Option<CellGrid>,
+) -> Result<Vec<u8>, ExportError> {
+    dilate_with(
+        rgba,
+        width,
+        height,
+        keep,
+        reach,
+        max_working_bytes,
+        cancel,
+        Tuning::DEFAULT,
+        cells,
+    )
+}
+
 /// [`dilate_cancellable`] の並列の分け方を選ぶもの（試験用。結果は同じ）。
 #[doc(hidden)]
 #[allow(clippy::too_many_arguments)]
@@ -319,6 +346,31 @@ pub fn dilate_tuned(
     max_working_bytes: u64,
     cancel: Option<&AtomicBool>,
     tuning: Tuning,
+) -> Result<Vec<u8>, ExportError> {
+    dilate_with(
+        rgba,
+        width,
+        height,
+        keep,
+        reach,
+        max_working_bytes,
+        cancel,
+        tuning,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn dilate_with(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    keep: &[bool],
+    reach: Reach,
+    max_working_bytes: u64,
+    cancel: Option<&AtomicBool>,
+    tuning: Tuning,
+    cells: Option<CellGrid>,
 ) -> Result<Vec<u8>, ExportError> {
     if width == 0 || height == 0 {
         return Err(ExportError::InvalidArgument("大きさ"));
@@ -356,7 +408,7 @@ pub fn dilate_tuned(
         .into_par_iter()
         .filter(|&i| {
             keep[i] && {
-                let (around, count) = neighbors(i, w, h);
+                let (around, count) = neighbors_in(i, w, h, cells);
                 around[..count].iter().any(|&j| step[j] == 0)
             }
         })
@@ -372,7 +424,7 @@ pub fn dilate_tuned(
         let mark = -(ring + 1);
         candidates.clear();
         for &f in &frontier {
-            let (around, count) = neighbors(f as usize, w, h);
+            let (around, count) = neighbors_in(f as usize, w, h, cells);
             for &j in &around[..count] {
                 if step[j] == 0 {
                     step[j] = mark;
@@ -389,12 +441,12 @@ pub fn dilate_tuned(
                 chunk
                     .par_iter()
                     .with_min_len(4096)
-                    .map(|&c| average(c as usize, w, h, &step, &output))
+                    .map(|&c| average(c as usize, w, h, &step, &output, cells))
                     .collect()
             } else {
                 chunk
                     .iter()
-                    .map(|&c| average(c as usize, w, h, &step, &output))
+                    .map(|&c| average(c as usize, w, h, &step, &output, cells))
                     .collect()
             };
             for (&c, v) in chunk.iter().zip(colors) {
@@ -423,12 +475,25 @@ pub struct Rings {
     reach: u32,
     /// 0: 届かない（元のまま）、1: 残すテクセル、k + 1: 段 k で埋める。
     step: Vec<u8>,
+    /// UDIM のセル（Some なら近傍は同じセルの中だけ。[`Rings::new_in_cells`]）。
+    cells: Option<CellGrid>,
 }
 
 impl Rings {
     /// 覆い（`keep`、`[y * width + x]`）から `reach` 段までの地図を作る（[`dilate`] の段と同じ数え方。`keep` が 1 つも無ければ全部 0）。
     /// `reach` は 0〜[`MAX_RING_REACH`]。
     pub fn new(width: u32, height: u32, keep: &[bool], reach: u32) -> Result<Rings, ExportError> {
+        Self::new_in_cells(width, height, keep, reach, None)
+    }
+
+    /// [`Rings::new`] の、UDIM のセル（`cells`）の外へ広げないもの（近傍はテクセルと同じセルの中だけ。[`dilate_in_cells`] と同じ段）。
+    pub fn new_in_cells(
+        width: u32,
+        height: u32,
+        keep: &[bool],
+        reach: u32,
+        cells: Option<CellGrid>,
+    ) -> Result<Rings, ExportError> {
         if width == 0 || height == 0 {
             return Err(ExportError::InvalidArgument("大きさ"));
         }
@@ -448,7 +513,7 @@ impl Rings {
             .into_par_iter()
             .filter(|&i| {
                 keep[i] && {
-                    let (around, count) = neighbors(i, w, h);
+                    let (around, count) = neighbors_in(i, w, h, cells);
                     around[..count].iter().any(|&j| step[j] == 0)
                 }
             })
@@ -461,7 +526,7 @@ impl Rings {
             }
             next.clear();
             for &f in &frontier {
-                let (around, count) = neighbors(f as usize, w, h);
+                let (around, count) = neighbors_in(f as usize, w, h, cells);
                 for &j in &around[..count] {
                     if step[j] == 0 {
                         step[j] = (ring + 1) as u8;
@@ -476,6 +541,7 @@ impl Rings {
             height,
             reach,
             step,
+            cells,
         })
     }
 
@@ -606,7 +672,13 @@ impl Rings {
                         continue;
                     }
                     let t = step_at(nx, ny);
-                    if t > 0 && t < s {
+                    let same = self.cells.is_none_or(|g| {
+                        g.same_cell(
+                            (outer.x + lx as u32, outer.y + ly as u32),
+                            (outer.x + nx as u32, outer.y + ny as u32),
+                        )
+                    });
+                    if t > 0 && t < s && same {
                         around[count] = ny * ow + nx;
                         count += 1;
                     }
@@ -671,10 +743,36 @@ fn neighbors(i: usize, w: usize, h: usize) -> ([usize; 8], usize) {
     (out, count)
 }
 
+/// 8 近傍のうち、テクセル i と同じ UDIM のセルのもの（`cells` が None なら [`neighbors`] そのもの）。
+#[inline(always)]
+fn neighbors_in(i: usize, w: usize, h: usize, cells: Option<CellGrid>) -> ([usize; 8], usize) {
+    let (around, count) = neighbors(i, w, h);
+    let Some(g) = cells else {
+        return (around, count);
+    };
+    let at = |j: usize| ((j % w) as u32, (j / w) as u32);
+    let mut out = [0usize; 8];
+    let mut n = 0;
+    for &j in &around[..count] {
+        if g.same_cell(at(i), at(j)) {
+            out[n] = j;
+            n += 1;
+        }
+    }
+    (out, n)
+}
+
 /// 埋まった（正の段の）8 近傍の色の平均。色はアルファで重みを付ける（透明な近傍の色に引っ張られない）。全部が透明なら色の平均。
 /// R | G << 8 | B << 16 | A << 24。
-fn average(c: usize, w: usize, h: usize, step: &[i32], image: &[u8]) -> u32 {
-    let (around, around_count) = neighbors(c, w, h);
+fn average(
+    c: usize,
+    w: usize,
+    h: usize,
+    step: &[i32],
+    image: &[u8],
+    cells: Option<CellGrid>,
+) -> u32 {
+    let (around, around_count) = neighbors_in(c, w, h, cells);
     mix(around[..around_count]
         .iter()
         .filter(|&&j| step[j] > 0)

@@ -623,7 +623,7 @@ fn edge_detect(
 ) -> Result<Vec<u8>, Error> {
     let (w, h) = (image.w, image.h);
     // width でぼかし、そのまわり 1 画素で Sobel
-    let mid = grow(next, 1, w, h);
+    let mid = grow(next, 1, Rect::new(0, 0, w, h));
     let q = gaussian_q(image.premultiplied()?, image.r, mid, width, w, h, check)?;
     let mut blurred = zeros::<u8>(area(mid) * 4)?;
     for (i, b) in blurred.chunks_exact_mut(4).enumerate() {

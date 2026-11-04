@@ -802,7 +802,7 @@ impl AppState {
         let mut win = NpWindow::blank(true);
         win.normal = self.session.doc.normal_settings().file_direction();
         win.normal_opened = win.normal;
-        win.resolution = nearest_resolution(self.session.doc.width());
+        win.resolution = nearest_resolution(self.session.doc.uv_cell().0);
         win.sets_seen = self.session.sets.iter().map(|s| s.uid).collect();
         for i in 0..self.session.sets.len() {
             let set = self.session.sets.get(i).expect("範囲内");
@@ -811,8 +811,9 @@ impl AppState {
                 uid: Some(set.uid),
                 name: set.name.clone(),
                 keys: set.materials.iter().map(|k| (k.clone(), None)).collect(),
-                size: (doc.width(), doc.height()),
-                current: (doc.width(), doc.height()),
+                // UDIM のセットは、タイル（セル）の大きさを大きさとして扱う
+                size: doc.uv_cell(),
+                current: doc.uv_cell(),
                 read_only: set.read_only.is_some(),
             });
         }

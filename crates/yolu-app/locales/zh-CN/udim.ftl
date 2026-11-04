@@ -1,0 +1,12 @@
+udim-needs-a-model = 需要模型
+udim-one-tile = UV 只在一个图块内
+udim-turned-on = 已改为 UDIM。
+udim-turned-off = 已取消 UDIM。
+udim-synced = 已将 UDIM 图块匹配当前的模型。
+udim-already-synced = UDIM 图块已与当前的模型一致。
+udim-could-not-change = 无法更改 UDIM
+udim-outside-triangles = 有 { $count } 个三角形位于 UDIM 图块表中没有的图块，无法绘制。
+udim-straddling-triangles = 有 { $count } 个三角形跨越 UDIM 图块，已放入重心所在的图块。
+udim-not-sent-to-unity = UDIM 纹理集 { $names } 的图像不会发送到 Unity
+udim-unity-cannot-read-tiles = Unity 的标准材质无法读取 UDIM 图块
+udim-cannot-map-model = 无法将模型的 UV 放到 UDIM 图块表上，因此无法在此纹理集上绘制

@@ -388,14 +388,19 @@ impl BoundGenerator<'_> {
             *t *= 1. - amount * (m * m * (3. - 2. * m));
         };
         if g.noise_space == NoiseSpace::Uv {
-            let kx = 1. / self.width as f64 / g.noise_scale;
-            let ky = 1. / self.height as f64 / g.noise_scale;
-            let py = (y as f64 + 0.5) * ky;
+            let (cw, ch) = self.uv_cell;
+            let kx = 1. / cw as f64 / g.noise_scale;
+            let ky = 1. / ch as f64 / g.noise_scale;
+            let py = ((y % ch) as f64 + 0.5) * ky;
             for (k, t) in out.iter_mut().enumerate() {
                 if is_none(*t) {
                     continue;
                 }
-                gain(t, [((x0 + k as u32) as f64 + 0.5) * kx, py, 0.], cache);
+                gain(
+                    t,
+                    [(((x0 + k as u32) % cw) as f64 + 0.5) * kx, py, 0.],
+                    cache,
+                );
             }
         } else {
             let m = self.map(MapKind::Position);
@@ -777,10 +782,10 @@ unsafe fn noise_row_lanes<V: Lanes>(
     let s = g.g;
     let uv = s.noise_space == NoiseSpace::Uv;
     let (kx, ky) = (
-        1. / g.width as f64 / s.noise_scale,
-        1. / g.height as f64 / s.noise_scale,
+        1. / g.uv_cell.0 as f64 / s.noise_scale,
+        1. / g.uv_cell.1 as f64 / s.noise_scale,
     );
-    let py = V::splat((y as f64 + 0.5) * ky);
+    let py = V::splat(((y % g.uv_cell.1) as f64 + 0.5) * ky);
     let (zero, one, two, three) = (V::splat(0.), V::splat(1.), V::splat(2.), V::splat(3.));
     let (amount, offset, span) = (V::splat(s.noise_amount), V::splat(0.3), V::splat(0.4));
     let position = if uv {
@@ -803,7 +808,12 @@ unsafe fn noise_row_lanes<V: Lanes>(
         let p = match position {
             None => {
                 let x = x0 + k as u32;
-                [V::from_fn(|j| ((x + j as u32) as f64 + 0.5) * kx), py, zero]
+                let cw = g.uv_cell.0;
+                [
+                    V::from_fn(|j| (((x + j as u32) % cw) as f64 + 0.5) * kx),
+                    py,
+                    zero,
+                ]
             }
             Some(m) => {
                 let d = &m.data[i0 * 3..(i0 + V::N) * 3];
@@ -852,7 +862,7 @@ unsafe fn procedural_row_lanes<V: procedural::GenLanes>(
     scratch: &mut procedural::PlanScratch,
 ) {
     let plan = g.plan.as_ref().expect("束縛済み");
-    let size = (g.width, g.height);
+    let size = g.uv_cell;
     let position = plan.needs_position().then(|| g.map(MapKind::Position));
     let normal = (plan.mode == procedural::Mode::Triplanar).then(|| g.map(MapKind::WorldNormal));
     let zero = [V::splat(0.); 3];

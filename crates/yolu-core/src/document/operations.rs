@@ -28,6 +28,8 @@ pub(crate) struct State {
     selection: Option<crate::SelectionMask>,
     /// 名前を付けて残した選択範囲（キャンバスの大きさを変える操作が作り直す。ほかの操作は文書のものをそのまま写している）。
     saved_selections: super::saved_selections::SavedList,
+    /// UDIM のシートの並び（UDIM にする・やめる・合わせる・大きさの変更が、画素と一緒に変える）。
+    udim: Option<std::sync::Arc<crate::udim::UdimLayout>>,
     dirty: Dirty,
 }
 impl State {
@@ -40,6 +42,7 @@ impl State {
             normal_settings,
             selection,
             saved_selections,
+            udim,
             // 交換しない: レイヤーセットの一覧と出力の割り当ては専用の段で変える（準備の操作は変えない。レイヤーの所属は `layers` が持つ）
             layer_sets: _,
             route: _,
@@ -96,6 +99,7 @@ impl State {
             normal: *normal_settings,
             selection: selection.take(),
             saved_selections: std::mem::take(saved_selections),
+            udim: udim.take(),
             dirty,
         }
     }
@@ -123,6 +127,8 @@ impl Document {
             id_counter,
             // 写す: 準備の中で合成して前後を比べるので、本物と同じく継ぎ目をまたいで評価する
             filter_seams,
+            // 写す: 準備の中の評価がセルの境をまたがないよう本物と同じ並びで評価する（大きさの変更・UDIM の操作は写しの並びを変える）
+            udim,
             // 効果は入力と予算・ブロックの大きさだけ写す（下で）。写さない: 評価のキャッシュ・元画素の時計・Anchor の解決の署名。準備用の
             // 文書は使い捨てで、時計は 0 から数え直す。本物のキャッシュや時計を共有すると、準備の中で進んだ時計の値が本物の別の編集と
             // 重なったとき、別の内容に同じ鍵が付いて古い出力を新しいものと取り違える
@@ -173,6 +179,7 @@ impl Document {
         d.undo_budget = u64::MAX;
         d.id_counter = *id_counter;
         d.filter_seams = *filter_seams;
+        d.udim = udim.clone();
         // 準備の中で段を足す・合成して前後を比べる（結合・変形・大きさの変更）ので、画像・メッシュマップ・モデルのルートが無いと、
         // 本物では効く Generator や画像が入力のまま通り、本物と違う見た目で比べてしまう。予算は、準備の中の段の検査（到達半径・
         // 作業メモリ）を本物と同じ決まりにする
@@ -221,7 +228,8 @@ impl Document {
         // 交換の前は文書にある側と段が持つ側（これから文書へ入るレイヤー）、後は入れ替わった側に印を付ける。どちらかの時点で
         // 文書の中にあるレイヤーは、グループの中身も含めて印が付く。
         self.mark_dirty(&state.dirty, &state.layers);
-        let resized = self.width != state.width || self.height != state.height;
+        let resized =
+            self.width != state.width || self.height != state.height || self.udim != state.udim;
         std::mem::swap(&mut self.layers, &mut state.layers);
         std::mem::swap(&mut self.width, &mut state.width);
         std::mem::swap(&mut self.height, &mut state.height);
@@ -234,6 +242,7 @@ impl Document {
         std::mem::swap(&mut self.normal_settings, &mut state.normal);
         std::mem::swap(&mut self.selection, &mut state.selection);
         std::mem::swap(&mut self.saved_selections, &mut state.saved_selections);
+        std::mem::swap(&mut self.udim, &mut state.udim);
         self.mark_dirty(&state.dirty, &state.layers);
         self.note_swapped_sources(&state.dirty, &state.layers);
         if matches!(&state.dirty, Dirty::Layers(ids) if !ids.is_empty()) {

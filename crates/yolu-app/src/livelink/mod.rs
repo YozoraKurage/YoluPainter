@@ -1254,11 +1254,24 @@ impl LiveLink {
             return;
         };
         let mut reply = Reply::new(&target.request.id, ReplyKind::Exported, VERSION);
+        // UDIM のセットのタイルの画像は送らない（Unity の標準のマテリアルは UDIM のタイルを読めない）。送らなかったセットの名前
+        let mut udim: Vec<String> = Vec::new();
         for (image, uid, property) in files {
             let Some(property) = property else { continue };
             let Some(set) = state.session.sets.by_uid(*uid) else {
                 continue;
             };
+            let is_udim = state
+                .session
+                .sets
+                .index_of(*uid)
+                .is_some_and(|i| state.set_doc(i).udim().is_some());
+            if is_udim {
+                if !udim.contains(&set.name) {
+                    udim.push(set.name.clone());
+                }
+                continue;
+            }
             for m in &set.bound {
                 let Some(material) = target
                     .request
@@ -1276,6 +1289,21 @@ impl LiveLink {
                     normal_map: image.normal_map,
                 });
             }
+        }
+        if !udim.is_empty() {
+            let lang = state.lang;
+            let names = udim
+                .iter()
+                .map(|n| lang.quote(n))
+                .collect::<Vec<_>>()
+                .join(lang.t("newproject-name-separator"));
+            state.warn(
+                crate::notice::Source::LiveLink,
+                lang.with_reason(
+                    lang.f("udim-not-sent-to-unity", &[("names", &names)]),
+                    lang.t("udim-unity-cannot-read-tiles"),
+                ),
+            );
         }
         if reply.files.is_empty() {
             return;

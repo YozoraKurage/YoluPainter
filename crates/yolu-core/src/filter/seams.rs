@@ -90,15 +90,18 @@ impl Engine<'_> {
         mut buf: Vec<u8>,
         cur: Rect,
         next: Rect,
+        bounds: Rect,
     ) -> Result<Vec<u8>, Error> {
         let check = || self.options.check();
+        // 近くの画素は範囲 bounds（画像全体か UDIM のセル）の中だけを読む: 範囲の左下を原点へずらして、範囲の端を画像の端として扱う
+        let shift = |r: Rect| Rect::new(r.x - bounds.x, r.y - bounds.y, r.width, r.height);
         let Some(band) = self.options.seams else {
             return pixels::neighborhood(
                 &buf,
-                cur,
-                next,
-                self.width,
-                self.height,
+                shift(cur),
+                shift(next),
+                bounds.width,
+                bounds.height,
                 s,
                 self.value_type,
                 &check,
@@ -107,10 +110,10 @@ impl Engine<'_> {
         let saved = self.fill_band(band, k, &mut buf, cur)?;
         let mut out = pixels::neighborhood(
             &buf,
-            cur,
-            next,
-            self.width,
-            self.height,
+            shift(cur),
+            shift(next),
+            bounds.width,
+            bounds.height,
             s,
             self.value_type,
             &check,
@@ -224,7 +227,7 @@ impl Engine<'_> {
                 y1 = y1.max(y);
             }
             let r = Rect::new(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
-            let data = self.rect(k, r)?;
+            let data = self.rect_split(k, r)?;
             for &(_, i) in group {
                 let (x, y) = split(keys[i as usize]);
                 let o = ((y - y0) as usize * r.width as usize + (x - x0) as usize) * 4;

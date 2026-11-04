@@ -117,6 +117,15 @@ fn with_islands<'a>(
     }
 }
 
+/// 評価に使う束縛: アイランドの図（`with_islands`）と、UV を読む値のセル（UDIM のタイル。`BoundGenerator::with_uv_cell`）を渡したもの。
+fn prepared<'a>(
+    b: BoundGenerator<'a>,
+    islands: Option<&Result<Arc<crate::geometry::IslandMap>, generator::Inactive>>,
+    cell: (u32, u32),
+) -> BoundGenerator<'a> {
+    with_islands(b, islands).with_uv_cell(cell)
+}
+
 /// 粗い評価の段: ぼかし・シャープの半径を歩幅で割る（丸めて 0 になる段は外す。半径が歩幅の半分に満たないぼかしは、粗い絵では見えない）。
 /// ほかの段は点ごとの処理かノイズ・正規化なので、そのまま。
 fn coarse_stages(stages: &[filter::Stage], stride: u32) -> Vec<filter::Stage> {
@@ -1439,6 +1448,7 @@ impl Document {
                 generators: Some(&generators),
                 statistics: None,
                 seams,
+                cells: self.udim_cells().map(|g| g.coarse(stride)),
             };
             filter::statistics(&strided, env.value_type, &stages, &options)
                 .map_err(map_filter_error)
@@ -1521,6 +1531,7 @@ impl Document {
                 generators: Some(&generators),
                 statistics: statistics.map(Vec::as_slice),
                 seams,
+                cells: self.udim_cells().map(|g| g.coarse(stride)),
             };
             filter::evaluate(&strided, env.value_type, &stages, region, &options)
                 .map_err(map_filter_error)
@@ -2003,6 +2014,7 @@ impl Document {
                 generators: Some(env.generators),
                 statistics: statistics.as_deref().map(Vec::as_slice),
                 seams: seams.as_deref(),
+                cells: self.udim_cells(),
             };
             filter::evaluate(env.source, env.value_type, env.stages, region, &options)
                 .map_err(map_filter_error)
@@ -2063,6 +2075,7 @@ impl Document {
                 generators: Some(env.generators),
                 statistics: None,
                 seams: seams.as_deref(),
+                cells: self.udim_cells(),
             };
             filter::statistics(env.source, env.value_type, env.stages, &options)
                 .map_err(map_filter_error)
@@ -2206,7 +2219,7 @@ impl Document {
                         (Some(b), Some(sampler)) => Some(b.with_image(sampler)),
                         (b, _) => b,
                     };
-                    bound.push(b.map(|b| with_islands(b, islands.as_ref())));
+                    bound.push(b.map(|b| prepared(b, islands.as_ref(), self.uv_cell())));
                 }
             }
         }
@@ -2316,7 +2329,9 @@ impl Document {
         let inputs = &self.effects.inputs;
         let dims = (self.width, self.height);
         let gradient = f.gradient.as_ref().and_then(|g| {
-            BoundGenerator::bind(g, maps, frame, dims, Err(anchor::Issue::NotChosen)).ok()
+            BoundGenerator::bind(g, maps, frame, dims, Err(anchor::Issue::NotChosen))
+                .ok()
+                .map(|b| b.with_uv_cell(self.uv_cell()))
         });
         let projected = f.image.is_some() || f.decal || own.is_some();
         let baked = match f.map {
@@ -2346,7 +2361,13 @@ impl Document {
                 anisotropic: f.anisotropic,
                 shape_anisotropic: f.shape_anisotropic,
             };
-            Some(FillSampler::bind(input).map_err(map_fill_error)?)
+            let sampler = FillSampler::bind(input).map_err(map_fill_error)?;
+            // 画像は各タイルに同じ大きさで出す（タイルの中の UV）。ベイクしたマップの源はシートの UV の画素なので、シートの UV のまま引く
+            Some(if f.map.is_some() {
+                sampler
+            } else {
+                sampler.with_uv_cell(self.uv_cell())
+            })
         } else {
             None
         };
@@ -3129,6 +3150,7 @@ impl Document {
             stale_position: position.is_some_and(|m| m.state != MapState::Current),
             stale_normal: normal.is_some_and(|m| m.state != MapState::Current),
         })
+        .map(|s| s.with_uv_cell(self.uv_cell()))
     }
 
     /// デカールが今は出ていない理由（位置・法線のマップが使えない・モデルのルートが分からない）。

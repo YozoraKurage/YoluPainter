@@ -348,7 +348,29 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
             let visible = set.is_some_and(|s| s.visible);
             let writable = set.is_some_and(|s| s.read_only.is_none());
             let l = app.lang;
-            vec![
+            let index = app.session.sets.index_of(uid);
+            let udim = index.is_some_and(|i| app.set_doc(i).udim().is_some());
+            let blocked = index.and_then(|i| app.udim_blocked(i));
+            let mut udim_item = Entry::item(
+                l.t("shell-udim"),
+                Action::Udim(crate::udim::UdimAction::Toggle(uid)),
+            )
+            .checked(udim)
+            .enabled(free && writable && blocked.is_none());
+            if let Some(why) = blocked {
+                udim_item = udim_item.tooltip(why);
+            }
+            let mut udim_entries = vec![Entry::Separator, udim_item];
+            if index.is_some_and(|i| app.udim_needs_sync(i)) {
+                udim_entries.push(
+                    Entry::item(
+                        l.t("shell-udim-sync"),
+                        Action::Udim(crate::udim::UdimAction::Sync(uid)),
+                    )
+                    .enabled(free && writable),
+                );
+            }
+            let mut entries = vec![
                 Entry::item(l.t("shell-rename"), Action::StartRenameSet(uid))
                     .enabled(free && writable),
                 Entry::item(
@@ -372,7 +394,11 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
                     Action::Project(crate::newproject::NpAction::RemoveSets(vec![uid])),
                 )
                 .enabled(free && app.session.sets.len() > 1),
-            ]
+            ];
+            // ベイクの後ろに、UDIM の入・切（とタイルを合わせる）
+            let at = entries.len() - 2;
+            entries.splice(at..at, udim_entries);
+            entries
         }
         PopupKind::LayerContext(id) => layer_context(app, id),
         PopupKind::RulerLayer(id) => crate::rulers::layer_icon::menu_entries(app, id),

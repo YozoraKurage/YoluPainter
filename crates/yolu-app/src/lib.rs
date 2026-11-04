@@ -96,6 +96,7 @@ pub mod toolkeys;
 pub mod tools;
 pub mod toolset;
 pub mod transform;
+pub mod udim;
 pub mod ui;
 pub mod update;
 pub mod usage;

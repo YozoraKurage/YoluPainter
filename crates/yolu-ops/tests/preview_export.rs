@@ -590,3 +590,112 @@ fn a_file_name_stem_cannot_carry_a_path_out_of_the_export_folder() {
     assert_eq!(e.code, ErrorCode::InvalidValue);
     assert!(!fx.path("out2").exists());
 }
+
+/// 3 つのタイル（1001・1002・1011。2 × 2 の格子の右下は空のセル）の UDIM のセット。1 つのタイルは 16 × 16 で、各タイルに別の色の画素。
+fn udim_set_project(fx: &Fixture) {
+    let mut doc = Document::new(16, 16).unwrap();
+    let layer = doc.add_layer("Base").unwrap();
+    for y in 0..16 {
+        for x in 0..16 {
+            doc.set_pixel(layer, x, y, Rgba8::new(200, (x * 8) as u8, 30, 255))
+                .unwrap();
+        }
+    }
+    doc.enable_udim(vec![1001, 1002, 1011]).unwrap();
+    // 1002 のセル（右下）と 1011 のセル（左上）にも別の色
+    let paint = |doc: &mut Document, cell: usize, color: Rgba8| {
+        let r = doc.udim().unwrap().cell_rect(cell);
+        for y in r.y..r.y + r.height {
+            for x in r.x..r.x + r.width {
+                doc.set_pixel(layer, x, y, color).unwrap();
+            }
+        }
+    };
+    paint(&mut doc, 1, Rgba8::new(10, 20, 230, 255));
+    paint(&mut doc, 2, Rgba8::new(10, 220, 20, 255));
+    doc.clear_history().unwrap();
+    fx.project_with(
+        "u.ylp",
+        vec![Set::doc(
+            "11111111-1111-4111-8111-111111111111",
+            "Body",
+            doc,
+        )],
+    );
+}
+
+#[test]
+fn exporting_a_udim_set_writes_one_file_per_tile_and_no_file_for_the_empty_cell() {
+    let fx = Fixture::new("export-udim");
+    udim_set_project(&fx);
+    let mut host = fx.host("u.ylp");
+    let sheet = composite(&mut host);
+    let cell = |n: usize| -> Vec<u8> {
+        // 2 × 2 のセルの格子（シートは 32 × 32、行は下から上）から、セル n（下の行から左から右）を切り出す
+        let (cx, cy) = (n % 2 * 16, n / 2 * 16);
+        let mut out = Vec::new();
+        for y in cy..cy + 16 {
+            out.extend_from_slice(&sheet[(y * 32 + cx) * 4..(y * 32 + cx + 16) * 4]);
+        }
+        out
+    };
+    // チャンネル
+    let e = exported(ok(
+        &mut host,
+        json!({"command": "export.channels", "args": {"dir": "out"}}),
+    ));
+    assert_eq!(
+        file_names(&fx.path("out")),
+        ["u_Color.1001.png", "u_Color.1002.png", "u_Color.1011.png"],
+        "シート 1 枚の PNG は書かない。空のセルのファイルも無い"
+    );
+    assert_eq!(e.files.len(), 3);
+    for f in &e.files {
+        assert_eq!((f.width, f.height), (16, 16), "{}", f.path);
+    }
+    for (name, n) in [
+        ("u_Color.1001.png", 0),
+        ("u_Color.1002.png", 1),
+        ("u_Color.1011.png", 2),
+    ] {
+        let (w, h, px) = decode_png(&read(&fx.path(&format!("out/{name}")))).unwrap();
+        assert_eq!((w, h), (16, 16));
+        assert_eq!(px, cell(n), "{name} はシートのセル {n}");
+    }
+    // 置き換えの確認は、タイルごとのファイルの名前で
+    let e = err(
+        &mut host,
+        json!({"command": "export.channels", "args": {"dir": "out"}}),
+    );
+    assert_eq!(e.code, ErrorCode::ConfirmRequired);
+    assert!(e.data.unwrap()["files"][0]
+        .as_str()
+        .unwrap()
+        .ends_with("u_Color.1001.png"));
+    // テンプレート
+    let e = exported(ok(
+        &mut host,
+        json!({"command": "export.textures", "args": {"dir": "tex"}}),
+    ));
+    let names = file_names(&fx.path("tex"));
+    assert!(!names.is_empty());
+    assert_eq!(names.len(), e.files.len());
+    assert_eq!(names.len() % 3, 0, "どの画像も 3 つのタイル: {names:?}");
+    for name in &names {
+        assert!(
+            ["1001", "1002", "1011"]
+                .iter()
+                .any(|t| name.ends_with(&format!(".{t}.png"))),
+            "{name}"
+        );
+    }
+    for f in &e.files {
+        assert_eq!((f.width, f.height), (16, 16), "{}", f.path);
+    }
+    assert!(names.contains(&"u_Albedo.1001.png".to_owned()), "{names:?}");
+    let err = err(
+        &mut host,
+        json!({"command": "export.textures", "args": {"dir": "tex"}}),
+    );
+    assert_eq!(err.code, ErrorCode::ConfirmRequired);
+}

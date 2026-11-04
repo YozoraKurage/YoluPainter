@@ -57,12 +57,13 @@ pub struct SurfaceCoverStroke {
     screen_scale: Option<f32>,
     width: i32,
     height: i32,
+    /// UDIM のセルの格子（Some なら継ぎ目のにじみを三角形のセルの外へ出さない）。
+    cells: Option<crate::udim::CellGrid>,
     dabs: u64,
 }
 
 impl SurfaceCoverStroke {
     /// ストロークを始め、押した点のダブの量を返す。material は描くテクスチャセット、width・height は文書の大きさ、room は投影の塗りに
-    /// 使ってよいバイト。
     #[allow(clippy::too_many_arguments)]
     pub fn begin(
         geometry: Arc<SurfaceGeometry>,
@@ -72,6 +73,7 @@ impl SurfaceCoverStroke {
         projection: ProjectionSettings,
         width: u32,
         height: u32,
+        cells: Option<crate::udim::CellGrid>,
         at: Vec2,
         pressure: f32,
         room: u64,
@@ -89,6 +91,7 @@ impl SurfaceCoverStroke {
             screen_scale: None,
             width: width as i32,
             height: height as i32,
+            cells,
             dabs: 0,
         };
         let mut out = Vec::new();
@@ -181,7 +184,8 @@ impl SurfaceCoverStroke {
                 scale * self.world_radius,
                 self.projection,
             )
-            .map_err(SurfaceStrokeError::Dab)?;
+            .map_err(SurfaceStrokeError::Dab)?
+            .with_cells(self.cells);
             self.projector = Some(projector);
         }
         let projector = self.projector.as_mut().expect("作った");

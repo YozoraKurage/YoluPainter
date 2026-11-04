@@ -577,6 +577,13 @@ pub enum Reason {
     NotPointerLayer,
     PointerCycle,
     PointerTooDeep,
+    UdimTiles,
+    UdimLayout,
+    UdimSheetMismatch,
+    UdimSheetTooLarge,
+    UdimOverBudget,
+    NotUdim,
+    AlreadyUdim,
 }
 
 impl Reason {
@@ -1152,6 +1159,13 @@ impl Reason {
             Reason::NotPointerLayer => "ポインターレイヤーではない",
             Reason::PointerCycle => "指す先が循環する（指す先の中に、自分か自分を読むレイヤーがある）",
             Reason::PointerTooDeep => "ポインターの連なりが 4 段を超える",
+            Reason::UdimTiles => "UDIM のタイルの番号は 1001〜2000 の昇順で 1〜100 個",
+            Reason::UdimLayout => "UDIM の並びの列の数・セルの大きさ",
+            Reason::UdimSheetMismatch => "UDIM の並びの大きさがキャンバスと違う",
+            Reason::UdimSheetTooLarge => "UDIM のタイルを並べると辺が 8192 を超える。タイルの大きさを下げれば入る",
+            Reason::UdimOverBudget => "UDIM のシートが画素の予算を超える。タイルの大きさを下げれば入る",
+            Reason::NotUdim => "UDIM のテクスチャセットではない",
+            Reason::AlreadyUdim => "すでに UDIM のテクスチャセット",
         }
     }
 }

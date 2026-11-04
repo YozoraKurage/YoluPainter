@@ -80,6 +80,19 @@ pub struct FillSampler<'a> {
     k: [f64; 3],
     nm: [f64; 9],
     inv: [f64; 3],
+    /// UV の投影がタイルの中の UV を作るセルの大きさ（[`Self::with_uv_cell`]。既定は大きさそのもの）。
+    uv_cell: (u32, u32),
+}
+/// UV の投影の画素 → 画像のテクセルの係数（画像の大きさ w・h、置き方の a・b、UV の 0〜1 の大きさ size）。
+fn uv_coefficients(w: f64, h: f64, a: [f64; 4], b: [f64; 2], size: (u32, u32)) -> [f64; 6] {
+    [
+        w * a[0] / size.0 as f64,
+        w * a[1] / size.1 as f64,
+        w * b[0] - 0.5,
+        h * a[2] / size.0 as f64,
+        h * a[3] / size.1 as f64,
+        h * b[1] - 0.5,
+    ]
 }
 impl<'a> FillSampler<'a> {
     pub fn bind(input: FillInput<'a>) -> Result<Self, FillError> {
@@ -158,14 +171,7 @@ impl<'a> FillSampler<'a> {
             p.tiles[0] * (0.5 - 0.5 * c + 0.5 * sn) + p.offset[0],
             p.tiles[1] * (0.5 - 0.5 * sn - 0.5 * c) + p.offset[1],
         ];
-        let uv = [
-            w * a[0] / input.width as f64,
-            w * a[1] / input.height as f64,
-            w * b[0] - 0.5,
-            h * a[2] / input.width as f64,
-            h * a[3] / input.height as f64,
-            h * b[1] - 0.5,
-        ];
+        let uv = uv_coefficients(w, h, a, b, (input.width, input.height));
         let (mut m, mut k, mut nm) = ([0.; 9], [0.; 3], [0.; 9]);
         if p.mode != Mode::Uv && placed {
             let rs = p.placement.matrix();
@@ -193,6 +199,7 @@ impl<'a> FillSampler<'a> {
                 return Err(FillError::Invalid("位置変換の桁あふれ"));
             }
         }
+        let uv_cell = (input.width, input.height);
         let sampler = Self {
             input,
             reason,
@@ -204,9 +211,29 @@ impl<'a> FillSampler<'a> {
             k,
             nm,
             inv: p.placement.size.map(|v| 1. / v),
+            uv_cell,
         };
         sampler.validate_coordinate_range()?;
         Ok(sampler)
+    }
+    /// UV の投影を、セル（UDIM のタイル。大きさの約数）ごとの 0〜1 の UV で引く（各タイルに同じ大きさで出る）。セルが大きさそのものなら
+    /// 今までと同じ。0 の辺・大きさを割り切らないセル・UV でない投影は何もしない。
+    pub fn with_uv_cell(mut self, cell: (u32, u32)) -> Self {
+        let (width, height) = (self.input.width, self.input.height);
+        if self.input.projection.mode != Mode::Uv
+            || cell == (width, height)
+            || cell.0 == 0
+            || cell.1 == 0
+            || !width.is_multiple_of(cell.0)
+            || !height.is_multiple_of(cell.1)
+        {
+            return self;
+        }
+        let reference = self.input.image.or(self.input.shape);
+        let (w, h) = reference.map(|c| c.wh(0)).unwrap_or((1, 1));
+        self.uv = uv_coefficients(w as f64, h as f64, self.a, self.b, cell);
+        self.uv_cell = cell;
+        self
     }
     // C# の double → int が範囲外になる入力は実行環境依存なので、評価の前に明示して断る。
     fn validate_coordinate_range(&self) -> Result<(), FillError> {
@@ -495,7 +522,8 @@ impl<'a> FillSampler<'a> {
         let chain = input.image.unwrap();
         let mut acc = Acc::default();
         if mode == Mode::Uv {
-            let (px, py) = (x as f64 + 0.5, y as f64 + 0.5);
+            let (cw, ch) = (self.uv_cell.0 as usize, self.uv_cell.1 as usize);
+            let (px, py) = ((x % cw) as f64 + 0.5, (y % ch) as f64 + 0.5);
             let u = self.uv;
             self.sample_footprint(
                 chain,

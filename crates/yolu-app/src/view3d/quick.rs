@@ -46,6 +46,7 @@ pub(super) fn begin(
         app.view3d.projection,
         app.session.doc.width(),
         app.session.doc.height(),
+        app.session.doc.udim_cells(),
         local(rect, at),
         pressure.clamp(0.0, 1.0),
         room(app),

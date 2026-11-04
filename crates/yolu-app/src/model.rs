@@ -378,6 +378,7 @@ impl AppState {
         if self.view3d.view.input.stroke.is_some() {
             return;
         }
+        self.sync_udim_mapping();
         // 今のセットのマテリアルを描き、目を閉じたセットのマテリアルを隠す（付いていなければどこにも描かない）
         let bound = |app: &AppState| {
             (
@@ -412,6 +413,12 @@ impl AppState {
             }
             Some(_) => (MaterialSet::default(), Vec::new()),
         };
+        // UDIM の写しに失敗しているあいだは、どこにも描かない（写す前の UV のまま、シートへ描かせない）
+        let material = if self.view3d.udim_failure.is_some() && self.session.doc.udim().is_some() {
+            MaterialSet::default()
+        } else {
+            material
+        };
         if self.view3d.material != material {
             // 今のセットが替わると、ほかのセットの顔ぶれが替わる（3D が描かれるまで、前の印を残さない）
             self.view3d.unpainted.clear();
@@ -421,6 +428,61 @@ impl AppState {
         // モデルの三角形・UV が替わったなら、前のモデルに結び付いた 3D のパスを新しいモデルへ付け直す（描くマテリアルが決まったあと）
         if let Some(old) = self.view3d.take_replaced() {
             self.path_rebind_after_model(&old);
+        }
+    }
+}
+
+impl AppState {
+    /// UDIM のテクスチャセットの描くマテリアル → そのシートの並び（UDIM でないセット・どのマテリアルにも付いていないセットは入れない）。
+    pub fn udim_mapping(&self) -> yolu_core::udim::UdimMapping {
+        let mut mapping = yolu_core::udim::UdimMapping::new();
+        for i in 0..self.session.sets.len() {
+            let Some(layout) = self.set_doc(i).udim() else {
+                continue;
+            };
+            let Some(material) = self.set_material(i) else {
+                continue;
+            };
+            for m in material.as_slice() {
+                mapping.insert(*m, layout.clone());
+            }
+        }
+        mapping
+    }
+
+    /// UDIM のシートへモデルの UV を写せなかった理由の文（知らせ・3D の描きの断りで同じ文）。
+    pub(crate) fn udim_failure_text(&self, e: &ViewError) -> String {
+        self.lang.with_reason(
+            self.lang.t("udim-cannot-map-model"),
+            self.lang.view_error(e),
+        )
+    }
+
+    /// 3D ビューのモデルの UDIM の写しを、今のセットの並びに合わせる（UDIM にする・やめる・合わせる・Undo・結び付けの変化のどれでも）。
+    /// 写したときにタイルをまたぐ・表に無いタイルの三角形があれば、知らせを 1 つ出す。
+    fn sync_udim_mapping(&mut self) {
+        let mapping = self.udim_mapping();
+        self.view3d.set_udim(mapping);
+        if let Some(e) = self.view3d.udim_failure.clone() {
+            if !std::mem::replace(&mut self.view3d.udim_failure_told, true) {
+                let text = self.udim_failure_text(&e);
+                self.fail(crate::notice::Source::TextureSet, text);
+            }
+        }
+        if let Some(c) = self.view3d.udim_counts.take() {
+            let lang = self.lang;
+            if c.outside > 0 {
+                self.warn(
+                    crate::notice::Source::TextureSet,
+                    lang.f("udim-outside-triangles", &[("count", &c.outside)]),
+                );
+            }
+            if c.straddling > 0 {
+                self.warn(
+                    crate::notice::Source::TextureSet,
+                    lang.f("udim-straddling-triangles", &[("count", &c.straddling)]),
+                );
+            }
         }
     }
 }

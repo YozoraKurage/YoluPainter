@@ -227,6 +227,12 @@ impl AppState {
         if self.view3d.model.is_none() {
             return lang.t("region-no-model").into();
         }
+        // UDIM のシートへモデルの UV を写せないセットは、その理由
+        if let Some(e) = &self.view3d.udim_failure {
+            if self.session.doc.udim().is_some() {
+                return self.udim_failure_text(e);
+            }
+        }
         let name = &self.session.sets.current().name;
         lang.f("region-texture-set-is-not-in", &[("name", &name)])
     }

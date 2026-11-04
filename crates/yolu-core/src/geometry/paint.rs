@@ -500,6 +500,8 @@ pub struct SurfaceStroke {
     blur_turn: usize,
     width: i32,
     height: i32,
+    /// 文書の UDIM のセル（継ぎ目のにじみを三角形のセルの外へ出さない）。
+    cells: Option<crate::udim::CellGrid>,
     /// ステンシルを通して塗るなら、その置き場（ストロークの `Brush` のステンシルと対。無ければ画素ごとの点は渡さない）。
     stencil: Option<SurfaceStencil>,
     symmetry: Option<SurfaceSymmetrySetup>,
@@ -694,7 +696,7 @@ impl SurfaceStroke {
             return Err(SurfaceStrokeError::EffectWithSymmetry);
         }
         let clone_destination = clone_destination_of(&options, &geometry, material)?;
-        let world_radius = world_radius(&geometry, brush.radius, doc.width());
+        let world_radius = world_radius(&geometry, brush.radius, doc.uv_cell().0);
         // 影響元は、文書のストロークのブラシ（始めたときに固定したもの）から取る
         let stroke_brush = stroke.brush(doc)?;
         let size_pressure = &stroke_brush.influences.size.pressure;
@@ -718,7 +720,7 @@ impl SurfaceStroke {
             rotation: input.rotation,
             speed: 0.0,
         };
-        let dual = DualState::start(&stroke_brush, &geometry, doc.width());
+        let dual = DualState::start(&stroke_brush, &geometry, doc.uv_cell().0);
         let mut s = SurfaceStroke {
             geometry,
             view,
@@ -753,6 +755,7 @@ impl SurfaceStroke {
             blur_turn: 0,
             width: doc.width() as i32,
             height: doc.height() as i32,
+            cells: doc.udim_cells(),
             stencil: options.stencil,
             symmetry,
             canvas,
@@ -2052,13 +2055,16 @@ impl SurfaceStroke {
     /// Tangent | Wrap の塗りを（まだなければ）作る。
     fn ensure_tangent(&mut self) -> Result<(), DabRefusal> {
         if self.tangent.is_none() {
-            self.tangent = Some(TangentPainter::new(
-                &self.geometry,
-                self.material.as_ref(),
-                self.width,
-                self.height,
-                self.projection,
-            )?);
+            self.tangent = Some(
+                TangentPainter::new(
+                    &self.geometry,
+                    self.material.as_ref(),
+                    self.width,
+                    self.height,
+                    self.projection,
+                )?
+                .with_cells(self.cells),
+            );
         }
         Ok(())
     }
@@ -2077,7 +2083,7 @@ impl SurfaceStroke {
             )?;
             // テクセルの画面の大きさは、アンチエイリアスの段か水彩境界があるストロークだけが持つ（どちらも無ければ今と同じ大きさ・予算）
             let metrics = self.anti_alias != AntiAlias::None || self.water_edge.on;
-            self.projector = Some(p.with_texel_metrics(metrics));
+            self.projector = Some(p.with_texel_metrics(metrics).with_cells(self.cells));
         }
         Ok(())
     }

@@ -46,6 +46,9 @@ pub struct MeshBakeSettings {
     pub manual_id_colors: super::IdColorAssignments,
     /// 重なった UV のテクセルの持ち主の決め方（既定は番号の小さい三角形）。
     pub overlap: super::MeshOverlapPriority,
+    /// UDIM のシートのセルの大きさ（テクセル）。Some なら余白（padding）は同じセルの中だけへ広げる（隣のタイルへにじませない）。UV に
+    /// 写した並びはメッシュの UV に入っているので、焼いた条件の鍵には入れない。
+    pub padding_cells: Option<(u32, u32)>,
 }
 impl Default for MeshBakeSettings {
     fn default() -> Self {
@@ -74,6 +77,7 @@ impl Default for MeshBakeSettings {
             reference_match_by_name: false,
             manual_id_colors: super::IdColorAssignments::default(),
             overlap: super::MeshOverlapPriority::default(),
+            padding_cells: None,
         }
     }
 }

@@ -50,9 +50,9 @@ impl PreparedResize {
         &self.report
     }
 }
-struct Axis(Vec<Vec<(u32, f64)>>);
+pub(super) struct Axis(Vec<Vec<(u32, f64)>>);
 impl Axis {
-    fn new(source: u32, target: u32, method: CanvasResampling) -> Self {
+    pub(super) fn new(source: u32, target: u32, method: CanvasResampling) -> Self {
         let (s, t) = (source as i64, target as i64);
         Self(
             (0..t)
@@ -90,6 +90,19 @@ impl Axis {
     }
 }
 impl Axis {
+    /// `count` 個のセル（元の辺 `source`・行き先の辺 `target`）を並べた軸。セルごとに拡大・縮小し、隣のセルの画素を混ぜない（UDIM のシート）。
+    pub(super) fn cells(source: u32, target: u32, count: u32, method: CanvasResampling) -> Self {
+        let one = Axis::new(source, target, method);
+        let mut out = Vec::with_capacity((target * count) as usize);
+        for c in 0..count {
+            out.extend(
+                one.0
+                    .iter()
+                    .map(|w| w.iter().map(|&(i, k)| (i + c * source, k)).collect()),
+            );
+        }
+        Self(out)
+    }
     /// 行き先の [lo, hi]（両端を含む）が読む元の [最初, 最後]（両端を含む）。元の並びは行き先の並びと同じ向きに進む。
     fn span(&self, lo: u32, hi: u32) -> Span {
         Span {
@@ -101,24 +114,28 @@ impl Axis {
 }
 
 /// 行き先のある範囲が読む元の範囲（両端を含む。元のキャンバスの中だけ）。
-struct Span {
-    lo: u32,
-    hi: u32,
+pub(super) struct Span {
+    pub(super) lo: u32,
+    pub(super) hi: u32,
     /// 範囲のどの画素も元のキャンバスの中を読む（外を読む画素があると、一様な元でも外は透明なので埋められない）。
-    inside: bool,
+    pub(super) inside: bool,
 }
 
 /// 行き先の画素が元のどこから来るか。
-trait Mapping: Sync {
+pub(super) trait Mapping: Sync {
     /// 行き先の [lo, hi]（両端を含む）が読む元の範囲。全部が元の外なら None。
     fn span_x(&self, lo: u32, hi: u32) -> Option<Span>;
     fn span_y(&self, lo: u32, hi: u32) -> Option<Span>;
+    /// 行き先の矩形 [x0, x1] × [y0, y1]（両端を含む）が読む元の範囲。既定は縦横で別々に決まる写し。
+    fn span(&self, x0: u32, x1: u32, y0: u32, y1: u32) -> Option<(Span, Span)> {
+        Some((self.span_x(x0, x1)?, self.span_y(y0, y1)?))
+    }
     fn pixel(&self, source: &mut PixelReader<'_>, normal: bool, x: u32, y: u32) -> Rgba8;
 }
 /// 整数比の重みで拡大・縮小する（resize_image）。
-struct Resampled {
-    xs: Axis,
-    ys: Axis,
+pub(super) struct Resampled {
+    pub(super) xs: Axis,
+    pub(super) ys: Axis,
 }
 impl Mapping for Resampled {
     fn span_x(&self, lo: u32, hi: u32) -> Option<Span> {
@@ -137,9 +154,9 @@ impl Mapping for Resampled {
     }
 }
 /// 補間せずに整数の位置へずらす（resize_canvas）。offset は元の左下を置く先。
-struct Shifted {
-    offset: (i32, i32),
-    source: (u32, u32),
+pub(super) struct Shifted {
+    pub(super) offset: (i32, i32),
+    pub(super) source: (u32, u32),
 }
 impl Shifted {
     fn span(lo: u32, hi: u32, offset: i32, size: u32) -> Option<Span> {
@@ -296,7 +313,7 @@ fn resample_surface(
         for tx in 0..width.div_ceil(ts) {
             let (x0, y0) = (tx * ts, ty * ts);
             let (x1, y1) = (width.min(x0 + ts) - 1, height.min(y0 + ts) - 1);
-            let (Some(sx), Some(sy)) = (map.span_x(x0, x1), map.span_y(y0, y1)) else {
+            let Some((sx, sy)) = map.span(x0, x1, y0, y1) else {
                 continue;
             };
             let (mut any, mut all_uniform, mut color) = (false, sx.inside && sy.inside, None);
@@ -397,13 +414,38 @@ impl Document {
         cancelled: &mut dyn FnMut() -> bool,
     ) -> Result<Option<PreparedResize>, CoreError> {
         self.ensure_no_stroke()?;
+        if self.udim.is_some() && (width > Self::MAX_NATIVE_SIDE || height > Self::MAX_NATIVE_SIDE)
+        {
+            return Err(CoreError::InvalidArgument(Reason::UdimSheetTooLarge));
+        }
         Self::check_resize(width, height)?;
         if width == self.width && height == self.height {
             return Ok(None);
         }
-        let map = Resampled {
-            xs: Axis::new(self.width, width, method),
-            ys: Axis::new(self.height, height, method),
+        // UDIM のシートはセルごとに拡大・縮小する（境をまたいで混ぜない）。大きさはセルの整数倍
+        let cells = match &self.udim {
+            None => None,
+            Some(l) => {
+                if !width.is_multiple_of(l.columns()) || !height.is_multiple_of(l.rows()) {
+                    return Err(CoreError::InvalidArgument(Reason::UdimLayout));
+                }
+                Some(std::sync::Arc::new(
+                    l.with_cell_size(width / l.columns(), height / l.rows())?,
+                ))
+            }
+        };
+        let map = match &self.udim {
+            None => Resampled {
+                xs: Axis::new(self.width, width, method),
+                ys: Axis::new(self.height, height, method),
+            },
+            Some(l) => {
+                let (cw, ch) = l.cell_size();
+                Resampled {
+                    xs: Axis::cells(cw, width / l.columns(), l.columns(), method),
+                    ys: Axis::cells(ch, height / l.rows(), l.rows(), method),
+                }
+            }
         };
         let (sx, sy) = (
             width as f64 / self.width as f64,
@@ -412,6 +454,7 @@ impl Document {
         let scale = (sx * sy).sqrt();
         let (mut copy, mut report) =
             self.resize_surfaces(width, height, &map, Fit::Scale { sx, sy, scale }, cancelled)?;
+        copy.udim = cells;
         let wanted = self.normal_settings.strength() * scale;
         let strength = wanted.clamp(-NormalSettings::MAX_STRENGTH, NormalSettings::MAX_STRENGTH);
         copy.normal_settings = self.normal_settings.with_strength(strength)?;
@@ -461,6 +504,10 @@ impl Document {
     ) -> Result<ResizeReport, CoreError> {
         self.ensure_no_stroke()?;
         Self::check_resize(width, height)?;
+        // UDIM のシートはセルの並びと大きさが結び付いているので、キャンバスだけを動かさない（UDIM の操作・セルごとの拡大縮小で変える）
+        if self.udim.is_some() {
+            return Err(CoreError::InvalidArgument(Reason::UdimLayout));
+        }
         if width == self.width && height == self.height && offset == (0, 0) {
             return Ok(ResizeReport::default());
         }
@@ -474,7 +521,7 @@ impl Document {
         Ok(report)
     }
     /// 前後の格納量を履歴の費用にして 1 段で交換する。予算を超えても残し、そうなったことを報告に書く。
-    fn commit_resized(
+    pub(super) fn commit_resized(
         &mut self,
         copy: Document,
         report: &mut ResizeReport,
@@ -535,12 +582,12 @@ impl Document {
         }
         Ok(())
     }
-    fn resize_surfaces(
+    pub(super) fn resize_surfaces(
         &self,
         width: u32,
         height: u32,
         map: &dyn Mapping,
-        fit: Fit,
+        fit: Fit<'_>,
         cancelled: &mut dyn FnMut() -> bool,
     ) -> Result<(Document, ResizeReport), CoreError> {
         let mut copy = self.edit_copy()?;
@@ -664,7 +711,7 @@ impl Document {
             }
             // テキストレイヤー: 画素は上で写した（ずらし・補間）。値を同じだけ動かし、次に文を直したときに同じ所・大きさで描き直す
             if let Some(text) = &self.layers[i].text {
-                copy.layers[i].text = Some(fit.text(text, &self.layers[i].name, &mut report.notes));
+                copy.layers[i].text = Some(fit.text(text, &self.layers[i], &mut report.notes));
             }
             // 定規: 2D の定規の点は画素と同じ空間なので同じだけ動かす（3D の定規はモデルの空間なので動かさない）
             if self.layers[i]
@@ -734,24 +781,101 @@ fn fit_canvas_points(ma: DVec2, mb: DVec2) -> (DVec2, DVec2, bool) {
 
 /// 大きさの変更が、画素の外の設定（効果の半径・2D のパス）をどう動かすか。
 #[derive(Clone, Copy)]
-enum Fit {
+pub(super) enum Fit<'a> {
     /// 拡大・縮小（resize_image）: 半径・パスの点と太さを倍率に合わせる。`scale` は縦横の倍率の幾何平均（C# の Resampled）。
     Scale { sx: f64, sy: f64, scale: f64 },
     /// キャンバスだけを動かす（resize_canvas）: 倍率は 1。パスの点を画素と同じだけずらす。C# に対応する操作が無い、Rust 独自の決め
     /// （C# と照らしていない。試験は seam_ops の resizing_the_canvas_moves_2d_path_points_and_redraws）。
     Shift((i32, i32)),
+    /// UDIM のシートの並べ替え（sync_udim）: 物ごとに、元の並びでその物の中心の入るセルのタイルが、新しい並びで置かれたセルへ動く差だけずらす
+    /// （並べ替えで別のセルへ移るタイルの画素と一緒に、パス・テキスト・2D の定規も同じタイルの上にいる）。中心がセルの外・空のセルなら動かさない。
+    Cells {
+        from: &'a crate::udim::UdimLayout,
+        to: &'a crate::udim::UdimLayout,
+    },
 }
-impl Fit {
+/// 1 つの物（パス・テキスト・定規）に使う動かし方（[`Fit::resolved`]）。
+#[derive(Clone, Copy)]
+enum Placed {
+    Scale { sx: f64, sy: f64, scale: f64 },
+    Shift((i32, i32)),
+}
+
+impl Fit<'_> {
+    /// 中心 `at` の物に使う動かし方（`Cells` は元のセルのタイルの動き。ほかは自分）。
+    fn resolved(self, at: DVec2) -> Placed {
+        match self {
+            Fit::Scale { sx, sy, scale } => Placed::Scale { sx, sy, scale },
+            Fit::Shift(s) => Placed::Shift(s),
+            Fit::Cells { from, to } => Placed::Shift(cell_shift(from, to, at)),
+        }
+    }
+}
+
+/// テキストレイヤーの Color の画素のあるタイルの箱の中心（画素が無ければ None）。
+fn text_pixels_center(layer: &crate::layer::Layer) -> Option<DVec2> {
+    let surface = layer.surface(Channel::Color)?;
+    let size = f64::from(surface.tile_size());
+    let coords = surface.tile_coords();
+    let (lo, hi) = coords.iter().fold(
+        (DVec2::splat(f64::INFINITY), DVec2::splat(f64::NEG_INFINITY)),
+        |(lo, hi), c| {
+            let v = DVec2::new(f64::from(c.x), f64::from(c.y));
+            (lo.min(v), hi.max(v))
+        },
+    );
+    (!coords.is_empty()).then(|| (lo + hi + DVec2::ONE) * 0.5 * size)
+}
+
+/// 2D のパスの中心（点の箱の中心。点が無ければ 0）。
+fn canvas_path_center(path: &CanvasPath) -> DVec2 {
+    let (mut lo, mut hi) = (DVec2::splat(f64::INFINITY), DVec2::splat(f64::NEG_INFINITY));
+    for p in &path.points {
+        let v = DVec2::new(p.x, p.y);
+        (lo, hi) = (lo.min(v), hi.max(v));
+    }
+    if path.points.is_empty() {
+        DVec2::ZERO
+    } else {
+        (lo + hi) * 0.5
+    }
+}
+
+/// 元の並び `from` で点 `at` の入るセルのタイルが、新しい並び `to` で置かれたセルとの、画素の差（セルの外・空のセルは動かさない）。
+fn cell_shift(
+    from: &crate::udim::UdimLayout,
+    to: &crate::udim::UdimLayout,
+    at: DVec2,
+) -> (i32, i32) {
+    let (x, y) = (at.x.floor(), at.y.floor());
+    if !(x >= 0.0 && y >= 0.0 && x < f64::from(u32::MAX) && y < f64::from(u32::MAX)) {
+        return (0, 0);
+    }
+    let moved = from
+        .cell_at(x as u32, y as u32)
+        .and_then(|cell| Some((cell, from.tile_of_cell(cell)?)))
+        .and_then(|(cell, tile)| Some((cell, to.cell_of_tile(tile)?)));
+    match moved {
+        Some((old, new)) => {
+            let (a, b) = (from.cell_rect(old), to.cell_rect(new));
+            (b.x as i32 - a.x as i32, b.y as i32 - a.y as i32)
+        }
+        None => (0, 0),
+    }
+}
+impl<'a> Fit<'a> {
     /// 大きさに合わせた 2D のパス（ID・チャンネル・組はそのまま）。点とキャンバスの対称の中心は縦横の倍率かずらしで、ブラシの半径は縦横の
     /// 倍率の幾何平均で動かす（最大 4096 画素）。範囲（±1000000 画素）を出る点は中へ寄せ、変えたことを `notes` に書く。
     fn canvas_path(self, path: &CanvasPath, owner: &str, notes: &mut Vec<String>) -> CanvasPath {
         const LIMIT: f64 = 1e6;
+        // 点の箱の中心の入るセル（点が無ければ対称の中心）のタイルの動きで、パス全体を動かす
+        let fit = self.resolved(canvas_path_center(path));
         let mut next = path.clone();
         let mut clamped = false;
         // 取っ手は点からの向きなので、拡大・縮小では縦横の倍率を掛け、ずらしでは変えない
-        let (hx, hy) = match self {
-            Fit::Scale { sx, sy, .. } => (sx, sy),
-            Fit::Shift(_) => (1.0, 1.0),
+        let (hx, hy) = match fit {
+            Placed::Scale { sx, sy, .. } => (sx, sy),
+            Placed::Shift(_) => (1.0, 1.0),
         };
         let mut place = |p: &CanvasPoint, x: f64, y: f64| {
             let (cx, cy) = (x.clamp(-LIMIT, LIMIT), y.clamp(-LIMIT, LIMIT));
@@ -777,8 +901,8 @@ impl Fit {
                 },
             }
         };
-        match self {
-            Fit::Scale { sx, sy, scale } => {
+        match fit {
+            Placed::Scale { sx, sy, scale } => {
                 let wanted = path.brush.0.radius * scale;
                 next.brush.0.radius = wanted.min(4096.0);
                 if next.brush.0.radius != wanted {
@@ -793,7 +917,7 @@ impl Fit {
                     .map(|p| place(p, p.x * sx, p.y * sy))
                     .collect();
             }
-            Fit::Shift((dx, dy)) => {
+            Placed::Shift((dx, dy)) => {
                 next.points = path
                     .points
                     .iter()
@@ -803,9 +927,9 @@ impl Fit {
         }
         // キャンバスの対称の中心はキャンバスの画素の座標なので、点と同じに動かす（動かさないと、映した側が古い中心で映されて違う所に描かれる）
         if let PathSymmetry::Canvas(symmetry) = &mut next.style.symmetry {
-            let (x, y) = match self {
-                Fit::Scale { sx, sy, .. } => (symmetry.center.x * sx, symmetry.center.y * sy),
-                Fit::Shift((dx, dy)) => {
+            let (x, y) = match fit {
+                Placed::Scale { sx, sy, .. } => (symmetry.center.x * sx, symmetry.center.y * sy),
+                Placed::Shift((dx, dy)) => {
                     (symmetry.center.x + dx as f64, symmetry.center.y + dy as f64)
                 }
             };
@@ -813,7 +937,7 @@ impl Fit {
             clamped |= cx != x || cy != y;
             symmetry.center = glam::DVec2::new(cx, cy);
             // 線対称の最初の軸の向きは、縦横の倍率が違えば変わる（向きのベクトルを倍率で写す）
-            if let (SymmetryMode::Lines, Fit::Scale { sx, sy, .. }) = (symmetry.mode, self) {
+            if let (SymmetryMode::Lines, Placed::Scale { sx, sy, .. }) = (symmetry.mode, fit) {
                 if sx != sy {
                     let t = symmetry.angle.to_radians();
                     symmetry.angle = crate::rulers::direction_degrees(glam::DVec2::new(
@@ -834,9 +958,10 @@ impl Fit {
     /// 大きさに合わせた定規（2D の定規だけ。3D の定規は変えない）。点を縦横の倍率かずらしで動かす。範囲（±1e7）の外へ出た点や、近づきすぎた
     /// 2 点は、確かめに通る位置へ直し（[`fit_canvas_points`]）、直した定規の数をレイヤーごとに 1 つの知らせにまとめる。確かめに通らない値は残さない。
     fn rulers(self, list: &[Ruler], owner: &str, notes: &mut Vec<String>) -> Vec<Ruler> {
-        let map = |p: DVec2| match self {
-            Fit::Scale { sx, sy, .. } => DVec2::new(p.x * sx, p.y * sy),
-            Fit::Shift((dx, dy)) => DVec2::new(p.x + dx as f64, p.y + dy as f64),
+        // 2 点の真ん中の入るセルのタイルの動きで、定規ごとに動かす
+        let map = |fit: Placed, p: DVec2| match fit {
+            Placed::Scale { sx, sy, .. } => DVec2::new(p.x * sx, p.y * sy),
+            Placed::Shift((dx, dy)) => DVec2::new(p.x + dx as f64, p.y + dy as f64),
         };
         let mut adjusted = 0usize;
         let out = list
@@ -845,7 +970,8 @@ impl Fit {
                 let RulerPlace::Canvas { a, b } = r.place else {
                     return r.clone();
                 };
-                let (na, nb, changed) = fit_canvas_points(map(a), map(b));
+                let fit = self.resolved((a + b) * 0.5);
+                let (na, nb, changed) = fit_canvas_points(map(fit, a), map(fit, b));
                 let fitted = Ruler {
                     place: RulerPlace::Canvas { a: na, b: nb },
                     ..r.clone()
@@ -870,11 +996,18 @@ impl Fit {
     /// 大きさに合わせたテキストの値。ずらしは基準の点だけを動かす（画素も同じだけずれるので、描き直しても同じ所）。拡大・縮小は
     /// 基準の点を縦横の倍率で、大きさを幾何平均で、折り返しの幅を横の倍率で動かす。このとき画素は補間で写しただけなので、
     /// `notes` に書く（文を直すと新しい大きさで描き直す。縦横の倍率が違えば、描き直した形は写した画素と同じにならない）。
-    fn text(self, text: &TextSettings, owner: &str, notes: &mut Vec<String>) -> TextSettings {
-        let limit = crate::text::MAX_COORDINATE;
+    fn text(
+        self,
+        text: &TextSettings,
+        layer: &crate::layer::Layer,
+        notes: &mut Vec<String>,
+    ) -> TextSettings {
+        let (limit, owner) = (crate::text::MAX_COORDINATE, &layer.name);
         let mut next = text.clone();
-        match self {
-            Fit::Scale { sx, sy, scale } => {
+        // 動かすセルは、文字の画素の中心の入るセルで決める（基準の点は 1 行目の上端で、セルの縁にあることがある）
+        let at = text_pixels_center(layer).unwrap_or(DVec2::new(text.x, text.y));
+        match self.resolved(at) {
+            Placed::Scale { sx, sy, scale } => {
                 next.x = (text.x * sx).clamp(-limit, limit);
                 next.y = (text.y * sy).clamp(-limit, limit);
                 next.size = (text.size * scale).clamp(crate::text::MIN_SIZE, crate::text::MAX_SIZE);
@@ -883,7 +1016,7 @@ impl Fit {
                     "「{owner}」のテキストは画素を拡大・縮小しました（文を直すと新しいサイズで描き直す）"
                 ));
             }
-            Fit::Shift((dx, dy)) => {
+            Placed::Shift((dx, dy)) => {
                 next.x = (text.x + dx as f64).clamp(-limit, limit);
                 next.y = (text.y + dy as f64).clamp(-limit, limit);
             }

@@ -90,7 +90,7 @@ pub struct PoseSession {
     pub tree_scroll: f32,
     /// 次のフレームで木をこの骨まで送る（3D ビューで選んだとき）。
     pub reveal: Option<usize>,
-    /// このセッションが最後に入れたモデルの世代（ほかのモデルに替わったら、このセッションは終わる）。
+    /// このセッションが最後に入れたモデルの、UDIM の写す前の形の世代（ほかのモデルに替わったら、このセッションは終わる）。
     model_revision: u32,
     pub timings: PoseTimings,
     /// 読み込みの知らせ（近似・飛ばしたもの）。
@@ -676,8 +676,9 @@ pub fn poll_in(view3d: &mut View3dState, lang: Lang) -> (Option<(Kind, String)>,
             }
         }
     }
-    // ほかのモデル（試しの立方体・Live Link）に替わったら、このセッションは終わる
-    let latest = view3d.latest_model().map(|m| m.revision());
+    // ほかのモデル（試しの立方体・Live Link）に替わったら、このセッションは終わる。比べるのは写す前の形の世代（UDIM の写しを当てた形の世代は、
+    // セッションが控えた世代とは別の番号）
+    let latest = view3d.latest_model().map(|m| m.unmapped().revision());
     if let Some(s) = &view3d.pose.session {
         if latest != Some(s.model_revision) {
             view3d.pose.session = None;
