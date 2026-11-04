@@ -393,17 +393,20 @@ mod tests {
 
     #[test]
     fn the_slots_added_for_the_new_features_are_packed_too() {
-        // 描く口が作るチャンネル（リムシェードのマスク・メインカラー 2nd の色のレイヤー）も、書き出しの lilToon の詰め方に入る
+        // 描く口が作るチャンネル（リムシェードのマスク・メインカラー 2nd の色のレイヤー）も、描いてあれば書き出しの lilToon の詰め方に入る
         let mut doc = Document::new(4, 2).unwrap();
         crate::look::apply_new_set_look(&mut doc);
-        crate::look::paint_slot(&mut doc, "_RimShadeMask", crate::lang::Lang::Ja).unwrap();
+        let rim =
+            crate::look::paint_slot(&mut doc, "_RimShadeMask", crate::lang::Lang::Ja).unwrap();
         let decal =
             crate::look::paint_slot(&mut doc, "_Main2ndTex", crate::lang::Lang::Ja).unwrap();
         // 描く口が作るチャンネルは、そのチャンネルだけを扱う同じ名前のレイヤーセット（チャンネルを有効にした空のレイヤーつき）から出す
-        let set = doc.channel_output(decal).unwrap().unwrap();
-        let layer = crate::m2::layersets::top_layer_of(&doc, set).unwrap();
-        doc.set_channel_pixel(layer, decal, 0, 0, Rgba8::new(255, 0, 0, 255))
-            .unwrap();
+        for channel in [rim, decal] {
+            let set = doc.channel_output(channel).unwrap().unwrap();
+            let layer = crate::m2::layersets::top_layer_of(&doc, set).unwrap();
+            doc.set_channel_pixel(layer, channel, 0, 0, Rgba8::new(255, 0, 0, 255))
+                .unwrap();
+        }
         let extra = extra_images(&doc);
         let names: Vec<(&str, &str)> = extra.iter().map(|(s, i)| (*s, i.suffix())).collect();
         assert_eq!(
