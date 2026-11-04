@@ -421,6 +421,26 @@ mod tests {
     }
 
     #[test]
+    fn the_wand_tolerance_contiguity_and_reference_are_saved_and_read_back() {
+        let keys: Vec<&str> = fields(Tool::Wand).iter().map(|f| f.key).collect();
+        assert_eq!(keys, ["tolerance", "contiguous", "all_layers"]);
+        let presets = vec![UserPreset {
+            id: 2,
+            name: "広い".into(),
+            values: vec![Value::Int(200), Value::Bool(false), Value::Bool(true)],
+        }];
+        let text = encode(Tool::Wand, &presets);
+        assert!(text.contains("tool=magic-wand"), "{text}");
+        assert!(text.contains("preset.2.tolerance=200"), "{text}");
+        assert!(text.contains("preset.2.contiguous=false"), "{text}");
+        assert!(text.contains("preset.2.all_layers=true"), "{text}");
+        assert_eq!(decode(Tool::Wand, &text).unwrap(), presets);
+        // 範囲の外の許容値は断る
+        let bad = text.replace("tolerance=200", "tolerance=256");
+        assert!(decode(Tool::Wand, &bad).is_err());
+    }
+
+    #[test]
     fn missing_fields_read_as_defaults() {
         let text = "yolupainter-subtools 1\ntool=fill\npreset.3.name=x\npreset.3.tolerance=9\n";
         let got = decode(Tool::Fill, text).unwrap();

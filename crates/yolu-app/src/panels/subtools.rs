@@ -1,7 +1,7 @@
 //! 左のドックの「サブツール」のパネル（クリスタのサブツールに当たる）: 今のツールのサブツールの一覧がパネルの高さいっぱいに出る
 //! （ブラシは取り込みも含むブラシの一覧とグループのタブ、消しゴムは消しゴムの一覧、バケツ・グラデーションなどはそのツールの設定の組のプリセット、
-//! 選択のツールは選択のツールの一覧、パスは 1 つ）。ツールプロパティとブラシサイズは別のパネル（`tool_props`）。右の「プロパティ」にはツールの設定を出さない。
-//! 一覧の操作は、ブラシ・消しゴムが `Action::Brush`、そのほかのプリセットが `Action::SubTool`、選択のツールが `Action::SelectTool`。
+//! 選択のツールは選択のツールの一覧（自動選択を選んでいる間は、その行の下に自動選択のプリセットと下の帯）、パスは 1 つ）。ツールプロパティとブラシサイズは別のパネル（`tool_props`）。右の「プロパティ」にはツールの設定を出さない。
+//! 一覧の操作は、ブラシ・消しゴムが `Action::Brush`、そのほかのプリセット（自動選択のプリセットも）が `Action::SubTool`、選択のツールの行が `Action::SelectTool`。
 //! 画面には名前と値だけを出し、説明はツールチップ。ツールの欄はツールの表（`tools`）が持つ。
 
 use egui::{pos2, vec2, Color32, Rect, Sense, Ui, WidgetInfo, WidgetType};
@@ -55,7 +55,17 @@ fn list_shape(ui: &Ui, app: &AppState, tool: Tool, width: f32) -> ListShape {
             footer: FOOTER_HEIGHT,
             tabs_width,
         },
-        SubTools::Tools(_) | SubTools::Single => ListShape {
+        // 選択のツールの並び: 今のツールがプリセットを持つ（自動選択）ときは、その行の下にプリセットを出し、下の帯もつける
+        SubTools::Tools(_) => ListShape {
+            strip: 0.0,
+            footer: if app.subtool_list(tool).is_some() {
+                FOOTER_HEIGHT
+            } else {
+                0.0
+            },
+            tabs_width,
+        },
+        SubTools::Single => ListShape {
             strip: 0.0,
             footer: 0.0,
             tabs_width,
@@ -92,6 +102,8 @@ struct RowView<'a> {
     name: &'a str,
     modified: bool,
     selected: bool,
+    /// 左の字下げ（ツールの行の下に並べるプリセットは、ツールの行より右から）。
+    indent: f32,
 }
 
 fn preset_row(ui: &mut Ui, app: &mut AppState, tool: Tool, row: Rect, view: RowView) {
@@ -100,6 +112,7 @@ fn preset_row(ui: &mut Ui, app: &mut AppState, tool: Tool, row: Rect, view: RowV
         name,
         modified,
         selected,
+        indent,
     } = view;
     let clip = ui.clip_rect();
     let response = ui.interact(
@@ -110,7 +123,7 @@ fn preset_row(ui: &mut Ui, app: &mut AppState, tool: Tool, row: Rect, view: RowV
     row_background(ui, row, selected, response.hovered());
     let painter = ui.painter_at(clip);
     let name_rect = Rect::from_min_max(
-        pos2(row.left() + 10.0, row.top() + 2.0),
+        pos2(row.left() + 10.0 + indent, row.top() + 2.0),
         pos2(row.right() - 8.0, row.bottom() - 2.0),
     );
     if app.subtools.ui.renaming == Some((tool, key)) {
@@ -405,6 +418,12 @@ fn list_body_rect(area: Rect, shape: &ListShape) -> Rect {
     )
 }
 
+/// 選択のツールの並びの 1 行（ツールそのもの、または今のツールのプリセット）。
+enum ToolsItem {
+    Tool(Tool),
+    Preset(Key, String),
+}
+
 /// サブツールの一覧の全体（上の帯・行・下の帯）。`area` は一覧の矩形。
 fn list_section(ui: &mut Ui, app: &mut AppState, tool: Tool, area: Rect, shape: &ListShape) {
     let strip = Rect::from_min_size(area.min, vec2(area.width(), shape.strip));
@@ -462,23 +481,78 @@ fn list_section(ui: &mut Ui, app: &mut AppState, tool: Tool, area: Rect, shape: 
                         name,
                         modified,
                         selected: *key == current,
+                        indent: 0.0,
                     },
                 );
             });
             preset_footer(ui, app, tool, footer);
         }
-        SubTools::Tools(tools) => {
-            let at = tools.iter().position(|t| *t == app.tool);
-            rows_body(ui, app, body, tools.len(), at, |ui, app, row, i| {
-                let selected = app.tool == tools[i];
-                tool_row(ui, app, row, tools[i], selected, true);
-            });
-        }
+        SubTools::Tools(tools) => tools_rows(ui, app, body, footer, tools),
         SubTools::Single => {
             rows_body(ui, app, body, 1, Some(0), |ui, app, row, _| {
                 tool_row(ui, app, row, tool, true, false)
             });
         }
+    }
+}
+
+/// 選択のツールの並びの行（`list_section` の `SubTools::Tools`）。今のツールがプリセットを持つ（自動選択）なら、その行の下にプリセットと下の帯。
+fn tools_rows(ui: &mut Ui, app: &mut AppState, body: Rect, footer: Rect, tools: &[Tool]) {
+    // 今のツールがプリセットを持つなら、そのツールの行のすぐ下にプリセットを並べる（ほかのツールの行は動かさない）
+    let lang = app.lang;
+    let mut items: Vec<ToolsItem> = Vec::new();
+    let mut at = None;
+    for t in tools {
+        if *t == app.tool {
+            at = Some(items.len());
+        }
+        items.push(ToolsItem::Tool(*t));
+        if *t != app.tool {
+            continue;
+        }
+        if let Some(list) = app.subtool_list(*t) {
+            let current = list.current();
+            for e in list.entries() {
+                if e.key == current {
+                    at = Some(items.len());
+                }
+                items.push(ToolsItem::Preset(e.key, list.name_in(e.key, lang)));
+            }
+        }
+    }
+    rows_body(
+        ui,
+        app,
+        body,
+        items.len(),
+        at,
+        |ui, app, row, i| match &items[i] {
+            ToolsItem::Tool(t) => {
+                let selected = app.tool == *t;
+                tool_row(ui, app, row, *t, selected, true);
+            }
+            ToolsItem::Preset(key, name) => {
+                let tool = app.tool;
+                let current = app.subtool_list(tool).map(|l| l.current());
+                let modified = app.subtool_is_modified(tool, *key);
+                preset_row(
+                    ui,
+                    app,
+                    tool,
+                    row,
+                    RowView {
+                        key: *key,
+                        name,
+                        modified,
+                        selected: current == Some(*key),
+                        indent: 18.0,
+                    },
+                );
+            }
+        },
+    );
+    if app.subtool_list(app.tool).is_some() {
+        preset_footer(ui, app, app.tool, footer);
     }
 }
 

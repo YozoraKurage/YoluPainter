@@ -332,6 +332,30 @@ static RULER: [Field; 7] = [
     },
 ];
 
+static WAND: [Field; 3] = [
+    Field {
+        key: "tolerance",
+        kind: Kind::Int(0, 255),
+        default: Value::Int(32),
+        get: |a| Value::Int(a.sel.tolerance as i32),
+        set: |a, v| a.sel.tolerance = int(v).clamp(0, 255) as u8,
+    },
+    Field {
+        key: "contiguous",
+        kind: Kind::Bool,
+        default: Value::Bool(true),
+        get: |a| Value::Bool(a.sel.contiguous),
+        set: |a, v| a.sel.contiguous = flag(v),
+    },
+    Field {
+        key: "all_layers",
+        kind: Kind::Bool,
+        default: Value::Bool(false),
+        get: |a| Value::Bool(a.sel.all_layers),
+        set: |a, v| a.sel.all_layers = flag(v),
+    },
+];
+
 static EYEDROPPER: [Field; 1] = [Field {
     key: "all_layers",
     kind: Kind::Bool,
@@ -438,12 +462,13 @@ pub fn fields(tool: Tool) -> &'static [Field] {
         Tool::Eyedropper => &EYEDROPPER,
         Tool::Move => &MOVE,
         Tool::Liquify => &LIQUIFY,
+        Tool::Wand => &WAND,
         _ => &[],
     }
 }
 
 /// プリセットの欄を持つツール（この並びで状態に 1 つずつ一覧を持つ）。
-pub const TOOLS: [Tool; 8] = [
+pub const TOOLS: [Tool; 9] = [
     Tool::Fill,
     Tool::PolygonFill,
     Tool::Gradient,
@@ -452,6 +477,7 @@ pub const TOOLS: [Tool; 8] = [
     Tool::Eyedropper,
     Tool::Move,
     Tool::Liquify,
+    Tool::Wand,
 ];
 
 const fn builtin(
@@ -610,6 +636,15 @@ static MOVE_BUILTINS: [Builtin; 4] = [
     ),
 ];
 
+static WAND_BUILTINS: [Builtin; 2] = [
+    builtin("editing-layer", |l| l.t("subtool-refer-editing-layer"), &[]),
+    builtin(
+        "other-layers",
+        |l| l.t("subtool-refer-other-layers"),
+        &[("all_layers", Value::Bool(true))],
+    ),
+];
+
 static LIQUIFY_BUILTINS: [Builtin; 6] = [
     builtin("push", |l| l.t("subtool-push"), &[]),
     builtin(
@@ -650,6 +685,7 @@ pub fn builtins(tool: Tool) -> &'static [Builtin] {
         Tool::Eyedropper => &EYEDROPPER_BUILTINS,
         Tool::Move => &MOVE_BUILTINS,
         Tool::Liquify => &LIQUIFY_BUILTINS,
+        Tool::Wand => &WAND_BUILTINS,
         _ => &[],
     }
 }

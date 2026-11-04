@@ -1720,6 +1720,45 @@ fn headless_wand_reads_the_selected_layer_or_the_composite() {
 }
 
 #[test]
+fn headless_the_wand_sub_tools_switch_the_reference_and_change_the_result() {
+    use yolu_app::subtool::{Key as PresetKey, SubToolAction};
+    let mut s = doc_state(256);
+    paint_rect(&mut s, 0, 0, 128, 128, [255, 0, 0, 255]);
+    s.act(Action::NewLayer);
+    paint_rect(&mut s, 128, 0, 256, 128, [0, 0, 255, 255]);
+    s.act(Action::SelectTool(Tool::Wand));
+    let wand = |x| SelEdit::Wand {
+        seeds: vec![(x, 10)],
+        mode: SelectionCombine::Replace,
+    };
+    // 組み込みを選ぶと、そのプリセットの値（許容値・隣接も）になるので、選んだあとに許容値を 0 にして試す
+    let pick = |s: &mut AppState, id| {
+        s.act(Action::SubTool(SubToolAction::Select(
+            Tool::Wand,
+            PresetKey::Builtin(id),
+        )));
+        s.sel_mut().tolerance = 0;
+    };
+    // 編集レイヤーのみ参照: 選んでいる上のレイヤー（右上だけ青）。左上は透明で、下まで続く
+    pick(&mut s, "editing-layer");
+    assert!(!s.sel().all_layers);
+    run(&mut s, wand(10));
+    let amount = |s: &AppState, x, y| s.doc().selection().unwrap().amount(x, y);
+    assert_eq!(amount(&s, 10, 10), 255);
+    assert_eq!(amount(&s, 10, 200), 255, "透明は下まで続く");
+    // 他レイヤーを参照: 合成の赤だけ（隣接は既定のまま）
+    pick(&mut s, "other-layers");
+    assert!(s.sel().all_layers);
+    assert!(s.sel().contiguous);
+    run(&mut s, wand(10));
+    assert_eq!(amount(&s, 10, 10), 255);
+    assert_eq!(amount(&s, 10, 200), 0, "透明は赤と違う");
+    // 戻すと、また編集レイヤーだけ
+    pick(&mut s, "editing-layer");
+    assert!(!s.sel().all_layers);
+}
+
+#[test]
 fn headless_fill_stays_inside_the_selection() {
     let mut s = doc_state(64);
     let id = s.selected_layer().unwrap();

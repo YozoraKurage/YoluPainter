@@ -138,7 +138,7 @@ fn every_tool_lists_its_sub_tools_with_the_current_one_marked_in_both_languages(
     for lang in Lang::JA_EN {
         for tool in Tool::ALL {
             // （一覧の行が全部入る高さで）
-            let mut h = app(1280.0, 1400.0, 128);
+            let mut h = app(1280.0, 1800.0, 128);
             language(&mut h, lang);
             pick(&mut h, tool);
             match tool.def().subtools {
@@ -204,7 +204,7 @@ fn every_tool_lists_its_sub_tools_with_the_current_one_marked_in_both_languages(
 #[test]
 fn the_selection_tool_rows_switch_the_tool_and_keep_the_same_list() {
     // （一覧の行が全部入る高さで）
-    let mut h = app(1280.0, 1400.0, 128);
+    let mut h = app(1280.0, 1800.0, 128);
     pick(&mut h, Tool::SelectRect);
     for tool in SELECTION_TOOLS {
         click_row(&mut h, tool.name_in(Lang::Ja));
@@ -217,6 +217,49 @@ fn the_selection_tool_rows_switch_the_tool_and_keep_the_same_list() {
             );
         }
     }
+}
+
+#[test]
+fn the_wand_presets_are_listed_under_the_wand_row_and_the_other_selection_rows_stay() {
+    let mut h = app(1280.0, 1400.0, 128);
+    let (editing, other) = ("編集レイヤーのみ参照", "他レイヤーを参照");
+    pick(&mut h, Tool::SelectRect);
+    assert!(in_panel(&h, editing).is_empty(), "自動選択でなければ出ない");
+    pick(&mut h, Tool::Wand);
+    // 選択のツールの並びはそのまま、自動選択の行のすぐ下に 2 つ
+    let wand = row(&h, Tool::Wand.name_in(Lang::Ja));
+    let (first, second) = (row(&h, editing), row(&h, other));
+    assert!(wand.bottom() <= first.top() + 1.0 && first.bottom() <= second.top() + 1.0);
+    assert!(
+        row(&h, Tool::IdSelect.name_in(Lang::Ja)).top() >= second.bottom() - 1.0,
+        "下のツールは、プリセットの分だけ下がる"
+    );
+    assert!(row_selected(&h, Tool::Wand.name_in(Lang::Ja)));
+    assert!(row_selected(&h, editing));
+    assert!(!row_selected(&h, other));
+    // プリセットの行を押すと設定が替わる（ツールは自動選択のまま）
+    click_row(&mut h, other);
+    assert_eq!(st(&h).tool(), Tool::Wand);
+    assert!(st(&h).sel().all_layers);
+    assert!(row_selected(&h, other));
+    assert!(!row_selected(&h, editing));
+    // 許容値を変えると変更ありの印がつき、下の帯の追加で利用者のプリセットが足される
+    h.sel_mut().tolerance = 99;
+    h.run();
+    h.act(Action::SubTool(yolu_app::subtool::SubToolAction::Add(
+        Tool::Wand,
+    )));
+    h.run();
+    assert!(!in_panel(&h, "プリセット").is_empty());
+    // ほかの選択のツールの行を押すとツールが替わり、プリセットは隠れる
+    click_row(&mut h, Tool::Lasso.name_in(Lang::Ja));
+    assert_eq!(st(&h).tool(), Tool::Lasso);
+    assert!(in_panel(&h, other).is_empty());
+    // 自動選択に戻ると、覚えていたプリセットと値になる
+    click_row(&mut h, Tool::Wand.name_in(Lang::Ja));
+    assert_eq!(st(&h).sel().tolerance, 99);
+    assert!(st(&h).sel().all_layers);
+    assert!(!in_panel(&h, "プリセット").is_empty());
 }
 
 #[test]
@@ -983,6 +1026,7 @@ fn snapshots_of_the_sub_tool_panel_for_the_bucket_the_selection_and_the_liquify_
         for (tool, label) in [
             (Tool::Fill, "fill"),
             (Tool::SelectRect, "select"),
+            (Tool::Wand, "wand"),
             (Tool::Gradient, "gradient"),
             (Tool::Liquify, "liquify"),
             (Tool::Eraser, "eraser"),

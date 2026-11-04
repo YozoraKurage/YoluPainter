@@ -1,6 +1,6 @@
 //! サブツール: ツールごとの設定の組のプリセットの一覧（クリスタのサブツールに当たる）。ブラシと消しゴムの一覧は `brushes`（.ylbrush）、
-//! 選択のツールは同じ並びのツールそのもの（`tools::SubTools::Tools`）で、ここはバケツ・ポリゴン塗りつぶし・グラデーション・図形・定規・スポイト・
-//! 移動・ゆがみの設定の組を扱う。
+//! 選択のツールは同じ並びのツールそのもの（`tools::SubTools::Tools`。自動選択を選んでいる間は、その行の下に自動選択のプリセットも並ぶ）で、
+//! ここはバケツ・ポリゴン塗りつぶし・グラデーション・図形・定規・スポイト・移動・ゆがみ・自動選択の設定の組を扱う。
 //!
 //! 設定の欄は宣言の表（`fields`: 名前・種類・既定・読む関数・書く関数）で、プリセットの値はその欄の並びの `Vec<Value>`。組み込みは
 //! 「既定から変える欄」だけを持ち、利用者のプリセットは設定のフォルダにツールごと 1 ファイル（`store`）。一覧の 1 つ（`Entry`）は
@@ -1022,6 +1022,69 @@ mod tests {
             "利用者のプリセットが無くなればファイルも消える"
         );
         assert_eq!(app.subtool_list(Tool::Fill).unwrap().user_count(), 0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_wand_settings_are_kept_per_sub_tool_saved_and_restored_after_a_restart() {
+        let dir = std::env::temp_dir().join(format!("yolu-subtool-wand-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = AppState::new(32, 32);
+        app.attach_subtool_store(dir.clone());
+        app.apply(crate::state::Action::SelectTool(Tool::Wand));
+        // 組み込みの 2 つ。初めは「編集レイヤーのみ参照」
+        let list = app.subtool_list(Tool::Wand).unwrap();
+        assert_eq!(list.current(), Key::Builtin("editing-layer"));
+        assert_eq!(
+            list.name_in(Key::Builtin("editing-layer"), Lang::Ja),
+            "編集レイヤーのみ参照"
+        );
+        assert_eq!(
+            list.name_in(Key::Builtin("other-layers"), Lang::Ja),
+            "他レイヤーを参照"
+        );
+        // 許容値・隣接・参照を変えて、利用者のプリセットとして足す → 保存される
+        app.sel.tolerance = 90;
+        app.sel.contiguous = false;
+        app.sel.all_layers = true;
+        app.apply(crate::state::Action::SubTool(SubToolAction::Add(
+            Tool::Wand,
+        )));
+        let user = app.subtool_list(Tool::Wand).unwrap().current();
+        assert!(user.is_user());
+        assert!(dir.join("magic-wand.ylsubtool").exists());
+        // 別の組み込みへ替えると、そのプリセットの値になる
+        app.apply(crate::state::Action::SubTool(SubToolAction::Select(
+            Tool::Wand,
+            Key::Builtin("other-layers"),
+        )));
+        assert_eq!(
+            (app.sel.tolerance, app.sel.contiguous, app.sel.all_layers),
+            (32, true, true)
+        );
+        // 変えた値は、ツールを離れても覚えている
+        app.sel.tolerance = 7;
+        app.apply(crate::state::Action::SelectTool(Tool::Fill));
+        app.sel.tolerance = 200;
+        app.apply(crate::state::Action::SelectTool(Tool::Wand));
+        assert_eq!(app.sel.tolerance, 7);
+        assert!(app.subtool_is_modified(Tool::Wand, Key::Builtin("other-layers")));
+        // 起動し直すと、利用者のプリセットが残り、その値で選べる
+        let mut again = AppState::new(32, 32);
+        again.attach_subtool_store(dir.clone());
+        again.apply(crate::state::Action::SelectTool(Tool::Wand));
+        again.apply(crate::state::Action::SubTool(SubToolAction::Select(
+            Tool::Wand,
+            user,
+        )));
+        assert_eq!(
+            (
+                again.sel.tolerance,
+                again.sel.contiguous,
+                again.sel.all_layers
+            ),
+            (90, false, true)
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
