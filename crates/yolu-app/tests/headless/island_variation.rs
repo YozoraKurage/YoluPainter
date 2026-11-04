@@ -70,7 +70,7 @@ fn at(pixels: &[u8], x: u32, y: u32) -> [u8; 4] {
 fn the_generator_menu_lists_it_in_both_languages() {
     use yolu_app::ui::menu::Entry;
     let (mut s, _) = painted();
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         s.set_lang(lang);
         let entries = yolu_app::fx::menu::add_generator_entries(&s, FilterTarget::Content);
         let name = yolu_app::fx::names::generator_name(lang, Kind::UvIslandVariation);

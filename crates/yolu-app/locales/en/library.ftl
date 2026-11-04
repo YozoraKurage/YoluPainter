@@ -26,3 +26,6 @@ library-were-already-in-the-library = { $existing } { $existing ->
         [one] was
        *[other] were
     } already in the library.
+library-is-already-in-the-library = { $name } is already in the library.
+library-files-count = { $count } files
+library-added-file-to-the-library = Added { $name } to the library.

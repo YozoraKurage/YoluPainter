@@ -71,7 +71,7 @@ mod tests {
 
     #[test]
     fn refusals_read_in_both_languages() {
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             assert!(!during_stroke(lang).is_empty());
         }
         assert_eq!(during_stroke(Lang::Ja), "描いている間はできません。");

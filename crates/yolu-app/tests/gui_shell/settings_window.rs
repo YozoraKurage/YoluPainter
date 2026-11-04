@@ -41,7 +41,7 @@ fn headless_the_menus_have_the_items_in_the_new_places_in_both_languages() {
     use yolu_app::pen::window::PressureAction;
     use yolu_app::update::UpdateAction;
     use yolu_app::view3d::pose::PoseAction;
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut app = AppState::new(64, 64);
         app.set_lang(lang);
         let file = shell::menu_entries(&app, 0);
@@ -253,7 +253,7 @@ fn headless_bake_can_be_opened_by_a_command_without_a_default_key_and_from_the_s
     use yolu_app::keymap::Scope;
     use yolu_app::pie::PieItem;
     use yolu_app::state::PopupKind;
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut app = AppState::new(64, 64);
         app.set_lang(lang);
         // 操作: 名前・実行する Action・既定のキーが無い・キーの設定の表に載る（キーを割り当てられる）
@@ -525,7 +525,7 @@ fn headless_every_item_belongs_to_one_category_with_a_name_in_both_languages() {
     // ペンの行は OS ごと。ここでは全部出す
     app.prefs_mut().tablet_row = true;
     app.prefs_mut().pen_input_row = true;
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         app.set_lang(lang);
         let mut seen: Vec<Item> = Vec::new();
         for category in Category::ALL {
@@ -1142,7 +1142,7 @@ fn every_category_runs_to_the_right_edge_of_the_search_field_in_both_languages()
     let mut h = app_with_settings(&dir, vec2(1280.0, 800.0));
     let _rig = crate::update::rig(h.app_mut(), "0.1.0", yolu_app::update::Mode::Installer);
     open(&mut h);
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         h.set_lang(lang);
         h.run();
         let available: Vec<Category> = Category::ALL

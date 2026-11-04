@@ -175,7 +175,7 @@ fn texts(shape: &egui::epaint::Shape, out: &mut Vec<(egui::Pos2, String)>) {
 
 #[test]
 fn the_panel_draws_in_both_languages_with_names_only() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = harness(lang);
         h.state_mut()
             .apply(Action::Look(yolu_app::look::LookOp::Template));
@@ -429,7 +429,7 @@ fn received_from_unity() -> yolu_core::look::ReceivedLook {
 
 #[test]
 fn values_from_unity_show_their_row_and_the_changed_items_are_marked() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = harness(lang);
         h.doc_mut()
             .set_received_look(Some(received_from_unity()))
@@ -557,7 +557,7 @@ fn a_unity_texture_past_sixteen_says_it_is_not_drawn() {
 
 #[test]
 fn an_emission_texture_unity_left_empty_shows_the_default_texture_like_the_view_draws() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = harness_sized(lang, 2400.0);
         // 新しいセットの既定の割り当て（発光 → Emission）は、どのレイヤーも使っていない。Unity の値では発光が入で、発光のテクスチャは空
         let mut r = received_from_unity();
@@ -609,7 +609,7 @@ fn an_emission_texture_unity_left_empty_shows_the_default_texture_like_the_view_
 
 #[test]
 fn the_rendering_mode_and_outline_changed_here_are_marked_and_the_section_resets_follow_unity() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = harness_sized(lang, 3200.0);
         // Unity の値: 不透明・輪郭線あり（Hidden/lilToonOutline）
         h.doc_mut()
@@ -706,7 +706,7 @@ fn headers_in_order(h: &Harness<'_, YoluApp>, names: &[&str]) -> Vec<f32> {
 
 #[test]
 fn the_sections_follow_the_liltoon_inspector_and_the_outline_has_its_own_section() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = harness_sized(lang, 3200.0);
         let names: Vec<&str> = [
             ("描画モード: 不透明", "Rendering Mode: Opaque"),
@@ -1105,7 +1105,7 @@ fn a_new_channel_is_not_offered_for_a_slot_that_reads_an_image_and_past_sixteen_
 
 #[test]
 fn every_section_with_every_feature_on_shows_names_only_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = harness_sized(lang, 2400.0);
         for toggle in [
             "_UseMain2ndTex",

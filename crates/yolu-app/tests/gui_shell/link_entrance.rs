@@ -142,7 +142,7 @@ fn the_mark_changes_color_with_the_state_and_sits_left_of_the_project_name() {
 
 #[test]
 fn pressing_the_mark_opens_a_small_window_that_accepts_and_stops() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 800.0, 256);
         h.set_lang(lang);
         let ex = Exchange::new("window");
@@ -191,7 +191,7 @@ fn pressing_the_mark_opens_a_small_window_that_accepts_and_stops() {
 
 #[test]
 fn the_window_names_the_target_and_the_3d_view_comes_forward_once() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 800.0, 256);
         h.set_lang(lang);
         let ex = Exchange::new("target");
@@ -240,7 +240,7 @@ fn the_window_names_the_target_and_the_3d_view_comes_forward_once() {
 #[test]
 fn a_long_project_name_is_cut_short_and_the_mark_stays_clear_of_the_menu_titles() {
     let long = "とても長いプロジェクトの名前をつけたときの見え方を確かめるための名前その二十三十四十五十六十七十八十九百";
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let last_title = *shell::menu_titles(lang).last().unwrap();
         for width in [960.0, 700.0] {
             let mut h = app(width, 800.0, 256);

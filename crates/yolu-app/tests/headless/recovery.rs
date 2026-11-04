@@ -1544,7 +1544,7 @@ fn listed_generations(root: &Path) -> usize {
 #[test]
 fn headless_unreadable_settings_start_with_the_defaults_without_trimming_generations_or_overwriting_the_file(
 ) {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let dir = TempDir::new("unreadable");
         let root = dir.root();
         seed_closed_generations(&root, 5);
@@ -1943,7 +1943,7 @@ fn rows_of(root: &Path) -> Vec<yolu_app::recovery::Row> {
 #[test]
 fn headless_a_nearly_full_disk_skips_the_checkpoint_with_a_short_reason_and_it_resumes_when_space_returns(
 ) {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let dir = TempDir::new("lowdisk");
         let mut s = session_with(&dir.root(), settings(15, 3, 0), lang);
         let free = Arc::new(AtomicU64::new(10 * GIB - 1));

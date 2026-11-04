@@ -31,7 +31,7 @@ fn mouse_rows(lang: Lang) -> Vec<(String, String)> {
 
 #[test]
 fn modified_mouse_gestures_are_listed_in_every_view() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let rows = mouse_rows(lang);
         let left = lang.pick("左ボタン", "Left Button");
         let middle = lang.pick("中ボタン", "Middle Button");
@@ -223,7 +223,7 @@ fn assert_color_text(h: &Harness<'_, AppState>, lang: Lang) {
 
 #[test]
 fn opened_uv_color_window_has_no_internal_notation_and_is_localized() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = settings(lang);
         let before = h.prefs().settings.uv_wireframe_color;
         assert_color_text(&h, lang);
@@ -252,7 +252,7 @@ fn opened_uv_color_window_has_no_internal_notation_and_is_localized() {
 
 #[test]
 fn the_uv_color_window_changes_the_color_and_the_opacity_separately_in_the_right_language() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = settings(lang);
         h.ctx
             .all_styles_mut(|style| style.interaction.tooltip_delay = 0.0);

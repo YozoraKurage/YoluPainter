@@ -14,7 +14,7 @@ use crate::{Channel, CoreError, Document, EffectSettings, FilterSpec, FilterTarg
 /// 素材の文書の 1 辺（画素）。レイヤーに画素が無い（値とマスクの Generator だけ）ので、置く先の大きさに依らない。
 pub const SIZE: u32 = 128;
 
-/// 同梱の素材 1 つ。
+/// 同梱の素材 1 つ。名前は日本語と英語を持ち、ほかの言語（言語のタグ `zh-TW` など）では英語。
 #[derive(Clone, Copy)]
 pub struct Entry {
     /// 変わらない識別子（棚の項目の ID の後ろ）。
@@ -24,15 +24,17 @@ pub struct Entry {
     parts: fn() -> Vec<Part>,
 }
 impl Entry {
-    pub fn name(&self, japanese: bool) -> &'static str {
-        if japanese {
+    /// 言語のタグ（`ja`・`en`・`zh-TW` など）の名前。日本語のほかは英語。
+    pub fn name(&self, tag: &str) -> &'static str {
+        if tag == "ja" {
             self.ja
         } else {
             self.en
         }
     }
-    /// 素材を組む。`name` は置いたときのグループの名前、`japanese` はレイヤーの名前の言語。
-    pub fn build(&self, name: &str, japanese: bool) -> Result<SmartMaterial, CoreError> {
+    /// 素材を組む。`name` は置いたときのグループの名前、`tag` はレイヤーの名前の言語のタグ（日本語のほかは英語）。
+    pub fn build(&self, name: &str, tag: &str) -> Result<SmartMaterial, CoreError> {
+        let japanese = tag == "ja";
         let mut doc = Document::with_tile_size(SIZE, SIZE, 64)?;
         let mut ids = Vec::new();
         for part in (self.parts)() {
@@ -421,7 +423,7 @@ mod tests {
         let mut ids = std::collections::HashSet::new();
         for e in entries() {
             assert!(ids.insert(e.id), "{}", e.id);
-            for ja in [true, false] {
+            for ja in ["ja", "en", "zh-TW"] {
                 let m = e.build(e.name(ja), ja).unwrap();
                 assert_eq!(m.name(), e.name(ja));
                 assert!(m.layers().len() >= 2, "{}", e.id);

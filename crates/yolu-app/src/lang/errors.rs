@@ -69,11 +69,10 @@ impl Lang {
                 lock,
             } => {
                 let locks = self.quote(&lock_list(self, *lock));
-                match (self, layer == holder) {
-                    (Lang::Ja, true) => format!("レイヤーの{locks}がロックされています"),
-                    (Lang::Ja, false) => format!("親グループの{locks}がロックされています"),
-                    (Lang::En, true) => format!("The layer has {locks} locked"),
-                    (Lang::En, false) => format!("A parent group has {locks} locked"),
+                if layer == holder {
+                    self.f("lang-the-layer-has-locked", &[("locks", &locks)])
+                } else {
+                    self.f("lang-a-parent-group-has-locked", &[("locks", &locks)])
                 }
             }
             CoreError::Cancelled => self.t("lang-cancelled").into(),
@@ -358,24 +357,27 @@ impl Lang {
 
     /// 効かない効果 1 件の 1 文（レイヤーの名前・種類が効いていないことと、その理由）。
     pub fn inactive_effect(self, effect: &InactiveEffect) -> String {
-        let name = self.quote(&effect.layer_name);
-        let what = match (self, effect.target) {
-            (Lang::Ja, InactiveTarget::Generator { mask, kind }) => format!(
+        // 日本語のほかは英語の文（種類の名前と理由が英語の表にだけあるため）。書式（引用符・括弧）も英語に揃える
+        let japanese = self == Lang::Ja;
+        let fmt = if japanese { self } else { Lang::En };
+        let name = fmt.quote(&effect.layer_name);
+        let what = match (japanese, effect.target) {
+            (true, InactiveTarget::Generator { mask, kind }) => format!(
                 "{name}{}の {} は効いていません",
                 if mask { "（マスク）" } else { "" },
                 yolu_core::effects::generator_kind_name(kind)
             ),
-            (Lang::Ja, InactiveTarget::FillGradient(c)) => {
+            (true, InactiveTarget::FillGradient(c)) => {
                 format!("{name}（{c:?}）のグラデーションは値を見せています")
             }
-            (Lang::Ja, InactiveTarget::Decal) => format!("{name}のデカールは出ていません"),
-            (Lang::Ja, InactiveTarget::FillImage(c)) => {
+            (true, InactiveTarget::Decal) => format!("{name}のデカールは出ていません"),
+            (true, InactiveTarget::FillImage(c)) => {
                 format!("{name}（{c:?}）は画像を投影していません")
             }
-            (Lang::Ja, InactiveTarget::FillPoints(c)) => {
+            (true, InactiveTarget::FillPoints(c)) => {
                 format!("{name}（{c:?}）の点のグラデーションは値を見せています")
             }
-            (Lang::En, target) => {
+            (false, target) => {
                 let what = match target {
                     InactiveTarget::Generator { mask, kind } => format!(
                         "{}{}",
@@ -390,7 +392,7 @@ impl Lang {
                 format!("{name} {what} has no effect")
             }
         };
-        self.with_reason(what, self.inactive_reason(&effect.reason))
+        fmt.with_reason(what, fmt.inactive_reason(&effect.reason))
     }
 
     /// 位置のマップが使えなくて UV の空間で評価しているノイズ・グランジの段 1 件の 1 行（日本語は core の文、英語はレイヤーの名前・種類・理由）。
@@ -417,16 +419,10 @@ impl Lang {
             .first()
             .map(|e| self.inactive_effect(e))
             .unwrap_or_default();
-        let what = match self {
-            Self::Ja => format!(
-                "「{set}」の効いていない効果 {} 件は合成の PNG に入っていません",
-                effects.len()
-            ),
-            Self::En => format!(
-                "{} inactive effect(s) in \"{set}\" are not in the composite PNG",
-                effects.len()
-            ),
-        };
+        let what = self.f(
+            "lang-inactive-effects-are-not-in",
+            &[("set", &self.quote(set)), ("count", &effects.len())],
+        );
         format!(" {}", self.with_reason(what, first))
     }
 
@@ -435,25 +431,20 @@ impl Lang {
         let shown = issues
             .iter()
             .take(3)
-            .map(|i| self.pick(i.as_str(), issue_key(i)))
+            .map(|i| {
+                if self == Lang::Ja {
+                    i.as_str()
+                } else {
+                    issue_key(i)
+                }
+            })
             .collect::<Vec<_>>();
         let more = issues.len().saturating_sub(3);
-        match self {
-            Self::Ja => {
-                let mut text = shown.join("、");
-                if more > 0 {
-                    text += &format!(" ほか {more} 件");
-                }
-                format!("編集に対応していない中身（{text}）")
-            }
-            Self::En => {
-                let mut text = shown.join(", ");
-                if more > 0 {
-                    text += &format!(" and {more} more");
-                }
-                format!("Unsupported project features ({text})")
-            }
+        let mut text = shown.join(self.t("lang-features-separator"));
+        if more > 0 {
+            text += &self.f("fx-inputs-and-more", &[("more", &more)]);
         }
+        self.f("lang-unsupported-project-features", &[("text", &text)])
     }
 }
 
@@ -802,7 +793,7 @@ pub fn library_io_error(lang: Lang, e: &yolu_io::Error) -> String {
 pub fn brush_import_error(lang: Lang, error: &BrushImportError) -> String {
     match error {
         BrushImportError::Io(e) => lang.file_error(e),
-        other => lang.pick(other.to_string(), other.english()),
+        other => lang.core_text(other.to_string(), other.english()),
     }
 }
 
@@ -1176,6 +1167,12 @@ mod tests {
                 && lines[3].contains("decal")
                 && lines[4].contains("image (Roughness)")
         );
+        // 日本語のほかの言語は、引用符・括弧も英語の書式だけ（zh-TW の「」・（）が混ざらない）
+        for lang in Lang::EVERY.into_iter().filter(|l| *l != Lang::Ja) {
+            for (effect, line) in effects.iter().zip(&lines) {
+                assert_eq!(&lang.inactive_effect(effect), line, "{lang:?}");
+            }
+        }
         // 保存の知らせは、書き直したセットの名前と件数と初めの理由
         let ja = Lang::Ja.inactive_effects_not_in_composite("Skin", &effects);
         assert!(
@@ -1269,7 +1266,7 @@ mod tests {
             Lang::En.core_error(&CoreError::LayerNotFound),
             "Layer not found"
         );
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             assert_eq!(
                 lang.core_error(&CoreError::StrokeActive),
                 super::super::refusals::during_stroke(lang)
@@ -1589,7 +1586,7 @@ mod tests {
             Error::SaveConflict("ロックのファイルがシンボリックリンクです".into()),
             Error::SaveConflict("保存先が外部で消されています。上書きしません".into()),
         ];
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             let texts: Vec<String> = errors.iter().map(|e| lang.io_error(e)).collect();
             for (i, a) in texts.iter().enumerate() {
                 assert!(!a.is_empty());
@@ -1719,7 +1716,7 @@ mod tests {
             ErrorKind::FileTooLarge,
             ErrorKind::Other,
         ];
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             let texts: Vec<String> = kinds
                 .iter()
                 .map(|k| lang.file_error(&Error::from(*k)))

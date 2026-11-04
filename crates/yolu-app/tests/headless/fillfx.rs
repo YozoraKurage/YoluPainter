@@ -2397,7 +2397,7 @@ fn headless_every_new_name_and_notice_is_short_in_both_languages_with_no_how_to_
     std::fs::write(&wide, png_header_only(9000, 9000)).unwrap();
     let junk = dir.join("junk.png");
     std::fs::write(&junk, b"not a png").unwrap();
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut texts: Vec<(String, String)> = Vec::new();
         // 欄の行の名前
         for mode in [
@@ -2891,7 +2891,7 @@ fn headless_an_images_reading_follows_its_color_space_and_is_not_an_undo_step() 
     );
     let _ = std::fs::remove_dir_all(dir);
     // 名前は両方の言語で
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for space in [
             yolu_core::ImageColorSpace::Srgb,
             yolu_core::ImageColorSpace::Linear,

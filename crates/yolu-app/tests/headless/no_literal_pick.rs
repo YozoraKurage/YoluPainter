@@ -1,5 +1,5 @@
 //! 画面の文を `lang.pick("日本語", "English")` のように日英の対としてコードに書かない（画面の文は `locales/<言語>/*.ftl` に置き、
-//! `lang.t("キー")`・`lang.f("キー", …)` で引く）。本番のソース（テストを除く）の `.pick(` で、引数が 2 つあり、どちらかが
+//! `lang.t("キー")`・`lang.f("キー", …)` で引く）。本番のソース（テストを除く）の `.pick(`（と `.core_text(`）で、引数が 2 つあり、どちらかが
 //! 文字列の直書き（`"…"`・`"…".into()`・`"…".to_owned()`・`String::from("…")`・`format!(…)`、前に `&` があってもよい）の呼び出しを落とす。
 //! 変数・表の欄・関数の結果を渡す `pick`（数・配列・定数の型・保存したデータの対）は見ない。
 //!
@@ -13,7 +13,7 @@ const ALLOWED: &[(&str, &str)] = &[
     // 日本語が core の `FillError` の文そのもので、英語だけを直書きしている（core の文を .ftl に写し、食い違いを見張る仕組みがまだ無い）
     (
         "fillfx/mod.rs",
-        r##"pick(other.to_string(),"Theprojectioncannotbeused".into())"##,
+        r##"core_text(other.to_string(),"Theprojectioncannotbeused".into())"##,
     ),
 ];
 
@@ -205,7 +205,7 @@ fn found_in(text: &str) -> Vec<String> {
     let chars: Vec<char> = text.chars().collect();
     let mut out = Vec::new();
     for k in 1..toks.len().saturating_sub(2) {
-        let is_pick = matches!(&toks[k].0, Tok::Ident(n) if n == "pick")
+        let is_pick = matches!(&toks[k].0, Tok::Ident(n) if n == "pick" || n == "core_text")
             && toks[k - 1].0 == Tok::Punct('.')
             && toks[k + 1].0 == Tok::Punct('(');
         if !is_pick {
@@ -270,6 +270,7 @@ fn screen_texts_are_not_written_as_pairs_in_the_source() {
 fn the_reader_finds_literal_pairs_and_passes_the_rest() {
     let found = |src: &str| found_in(src).len();
     assert_eq!(found(r#"let a = lang.pick("あ", "a");"#), 1);
+    assert_eq!(found(r#"lang.core_text(x, "a".into())"#), 1);
     assert_eq!(
         found("lang.pick(\n    format!(\"{n} 件\"),\n    format!(\"{n} items\"),\n)"),
         1

@@ -12,7 +12,7 @@ use yolu_app::{
 
 #[test]
 fn uv_corner_toggles_without_starting_a_stroke_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut app = AppState::new(64, 64);
         app.set_lang(lang);
         app.act(Action::LoadDemoModel);
@@ -49,7 +49,7 @@ fn uv_corner_toggles_without_starting_a_stroke_in_both_languages() {
 
 #[test]
 fn shortcut_category_is_localized_and_closes_without_document_changes() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut app = AppState::new(32, 32);
         app.set_lang(lang);
         app.act(Action::ShowShortcuts);

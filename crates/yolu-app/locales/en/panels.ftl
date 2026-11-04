@@ -852,3 +852,13 @@ panels-black-mask = Black Mask
 panels-add-white-layer-mask-tip = Add White Layer Mask
 panels-add-black-layer-mask-tip = Add Black Layer Mask
 panels-alignment = Alignment
+panels-first-entries-only = First { $count } only
+panels-skipped-entries = Skipped { $count }
+panels-remove-from-the-library-folder = Remove { $name } from the library folder? (Copies inside projects and placed layers stay.)
+panels-remove-from-the-assets = Remove { $name } from the project's assets?
+panels-point-number = Point { $number }
+panels-point-number-color = Point { $number } Color
+panels-effects-on-the-mask = { $count ->
+        [one] 1 effect on the mask
+       *[other] { $count } effects on the mask
+    }

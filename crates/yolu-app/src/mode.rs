@@ -516,7 +516,7 @@ mod tests {
         assert_eq!(app.mode, EditorMode::Paint);
         assert_eq!(app.edit_tool, EditTool::Select);
         for mode in EditorMode::ALL {
-            for lang in Lang::ALL {
+            for lang in Lang::JA_EN {
                 assert!(!mode.name(lang).is_empty());
             }
             assert!(crate::commands::find(mode.command()).is_some(), "{mode:?}");
@@ -643,7 +643,7 @@ mod tests {
     #[test]
     fn the_mode_entries_mark_the_current_mode_and_explain_a_missing_rig() {
         let mut app = AppState::new(32, 32);
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             app.lang = lang;
             let entries = entries(&app);
             assert_eq!(entries.len(), 4);

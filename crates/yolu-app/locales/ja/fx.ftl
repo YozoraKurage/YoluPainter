@@ -171,3 +171,6 @@ fx-1-inside-the-box-fading-tip = 箱の中は 1、面へ向かって 0 に消え
 fx-1-inside-the-sphere-fading-tip = 球の中は 1、表面へ向かって 0 に消える
 fx-0-behind-the-plane-to-tip = 平面の後ろが 0、前が 1（1 方向のグラデーション）
 fx-coverage = 覆い
+fx-inputs-separator = 、
+fx-inputs-and-more = { " " }ほか { $more } 件
+fx-inputs-are-missing = 効果の入力がそろっていない（{ $text }）

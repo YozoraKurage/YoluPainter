@@ -23,3 +23,6 @@ library-image-sides-must-be-1 = 画像の 1 辺は 1〜8192 です
 library-wrong-format = 形式が合いません
 library-too-large = 大きすぎます
 library-were-already-in-the-library = { $existing } 件はすでにライブラリにありました。
+library-is-already-in-the-library = { $name }はすでにライブラリにあります。
+library-files-count = { $count } 件
+library-added-file-to-the-library = { $name }をライブラリに入れました。

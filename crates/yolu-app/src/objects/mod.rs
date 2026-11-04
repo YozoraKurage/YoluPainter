@@ -561,10 +561,7 @@ fn object_name(lang: Lang, o: Object) -> &'static str {
 
 /// 英語の文の中では名前を小文字にする（日本語の名前は変えない）。
 pub(super) fn english_lowercase(lang: Lang, name: &str) -> String {
-    match lang {
-        Lang::Ja => name.to_owned(),
-        Lang::En => name.to_lowercase(),
-    }
+    lang.name_in_sentence(name)
 }
 
 /// 選んでいる物が無いときの断り。

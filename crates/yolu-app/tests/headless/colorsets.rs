@@ -323,7 +323,7 @@ fn folder_scan_limit_blocks_writes_and_preserves_existing_files() {
 #[test]
 fn startup_preserves_settings_and_brush_errors_when_color_set_loading_also_fails() {
     use yolu_app::{pen::PenInput, settings::Problem, YoluApp};
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let dir = directory(lang.pick("startup-errors-ja", "startup-errors-en"));
         let settings = dir.join("settings.conf");
         std::fs::write(

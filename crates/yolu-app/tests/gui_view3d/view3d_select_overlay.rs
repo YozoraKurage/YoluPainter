@@ -471,7 +471,7 @@ fn the_overlay_counts_in_the_bytes_the_view_held_at_its_peak() {
 
 #[test]
 fn the_skipped_selection_is_told_by_a_corner_icon_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let (mut h, rect) = still_view();
         h.set_lang(lang);
         ellipse_on_front(&mut h, rect);
@@ -671,7 +671,7 @@ fn the_edge_stays_white_through_tone_mapping() {
 
 #[test]
 fn snapshot_selection_in_3d_only_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let (mut h, rect) = still_view();
         h.set_lang(lang);
         h.run();
@@ -967,7 +967,7 @@ fn a_document_wider_than_the_gpu_texture_limit_shows_no_selection_overlay_and_sa
             .view3d_texture_limit()
             .expect("GPU の道がある（3D のレンダラー）")
     };
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let what = lang.pick(
             "選択範囲を 3D に出していません",
             "Selection not shown in 3D",

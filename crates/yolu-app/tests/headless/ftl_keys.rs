@@ -2,6 +2,9 @@
 //! `no_developer_words`・`notice_rules`）は、ソースの直書きの文に加えて、ここで読んだ .ftl の文も見る。
 //! 見張り: 日英の .ftl がどれも読めて誤りが無い／日英でキーの組と引数の名前の組が同じ／コードが引くキーが日英の両方にあり、
 //! 渡す引数の名前が文の引数と同じ／どこからも引かれないキーが無い／`reason-*` の日本語が core の `Reason::ja` と同じ。
+//! 日英のほかの言語（`locales/<タグ>/`）: 読めて誤りが無い／キーが英語にある（英語に無いキーは落とす）／引数が英語の文の引数の中にある／
+//! 英語にあって訳に無いキーは数を出す（落とさない。画面では英語の文になる）。
+//! 文の決まりを見るテスト（`no_instruction_text` など）が見るのは日英の文（`LANGS`）。
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -20,9 +23,23 @@ pub(crate) struct Message {
     pub(crate) texts: Vec<String>,
     /// 値が使う引数の名前
     pub(crate) vars: BTreeSet<String>,
+    /// 値が指す別のメッセージの名前（`{ other-key }`）
+    pub(crate) refs: BTreeSet<String>,
 }
 
 pub(crate) const LANGS: [&str; 2] = ["ja", "en"];
+
+/// `locales/` の下の全部の言語のタグ（フォルダの名前の順）。
+fn all_tags() -> Vec<String> {
+    let mut tags: Vec<String> = std::fs::read_dir(locales())
+        .unwrap()
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    tags.sort();
+    tags
+}
 
 fn locales() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("locales")
@@ -96,6 +113,35 @@ fn pattern_texts(pattern: &ast::Pattern<&str>, vars: &mut BTreeSet<String>) -> V
     texts
 }
 
+/// 値の文が指す別のメッセージの名前（`{ other-key }`。選びの候補の中も）。
+fn message_refs(pattern: &ast::Pattern<&str>, refs: &mut BTreeSet<String>) {
+    fn inline(expression: &ast::InlineExpression<&str>, refs: &mut BTreeSet<String>) {
+        match expression {
+            ast::InlineExpression::MessageReference { id, .. } => {
+                refs.insert(id.name.to_owned());
+            }
+            ast::InlineExpression::Placeable { expression } => expr(expression, refs),
+            _ => {}
+        }
+    }
+    fn expr(expression: &ast::Expression<&str>, refs: &mut BTreeSet<String>) {
+        match expression {
+            ast::Expression::Inline(i) => inline(i, refs),
+            ast::Expression::Select { selector, variants } => {
+                inline(selector, refs);
+                for variant in variants {
+                    message_refs(&variant.value, refs);
+                }
+            }
+        }
+    }
+    for element in &pattern.elements {
+        if let ast::PatternElement::Placeable { expression } = element {
+            expr(expression, refs);
+        }
+    }
+}
+
 /// 1 つの .ftl を読む（読めない所は誤りの文）。
 pub(crate) fn parse(lang: &str, path: &Path) -> (Vec<Message>, Vec<String>) {
     let source = std::fs::read_to_string(path).unwrap();
@@ -118,8 +164,12 @@ pub(crate) fn parse(lang: &str, path: &Path) -> (Vec<Message>, Vec<String>) {
         match entry {
             ast::Entry::Message(message) => {
                 let mut vars = BTreeSet::new();
+                let mut refs = BTreeSet::new();
                 let texts = match &message.value {
-                    Some(pattern) => pattern_texts(pattern, &mut vars),
+                    Some(pattern) => {
+                        message_refs(pattern, &mut refs);
+                        pattern_texts(pattern, &mut vars)
+                    }
                     None => {
                         errors.push(format!("{file}: {} に値が無い", message.id.name));
                         Vec::new()
@@ -134,6 +184,7 @@ pub(crate) fn parse(lang: &str, path: &Path) -> (Vec<Message>, Vec<String>) {
                     key: message.id.name.to_owned(),
                     texts,
                     vars,
+                    refs,
                 });
             }
             ast::Entry::Junk { content } => errors.push(format!("{file}: 読めない所: {content}")),
@@ -261,6 +312,61 @@ fn japanese_and_english_have_the_same_keys_and_arguments() {
         if j.vars != e.vars {
             found.push(format!("{key}: 引数が違う（{:?} と {:?}）", j.vars, e.vars));
         }
+    }
+    assert!(found.is_empty(), "{}", found.join("\n"));
+}
+
+/// 文が指す別のメッセージ（`{ other-key }`）は、同じ言語の中にある（その言語の束の中で引くため。無いと文が壊れる）。今の .ftl に参照は無く、
+/// 足したときの見張り。
+#[test]
+fn message_references_point_at_keys_of_the_same_language() {
+    let mut found = Vec::new();
+    for tag in all_tags() {
+        let (table, errors) = language(&tag);
+        found.extend(errors);
+        for message in table.values() {
+            for target in &message.refs {
+                if !table.contains_key(target) {
+                    found.push(format!(
+                        "{}: {} が指す {target} が {tag} に無い",
+                        message.file, message.key
+                    ));
+                }
+            }
+        }
+    }
+    assert!(found.is_empty(), "{}", found.join("\n"));
+}
+
+#[test]
+fn every_translation_reads_and_its_keys_and_arguments_are_in_english() {
+    let (en, _) = language("en");
+    let tags = all_tags();
+    assert!(tags.iter().any(|t| t == "zh-TW"), "{tags:?}");
+    let mut found = Vec::new();
+    for tag in tags.iter().filter(|t| !LANGS.contains(&t.as_str())) {
+        let (table, errors) = language(tag);
+        found.extend(errors);
+        for (key, message) in &table {
+            match en.get(key) {
+                None => found.push(format!("{}: {key} は英語に無いキー", message.file)),
+                Some(e) if !message.vars.is_subset(&e.vars) => found.push(format!(
+                    "{}: {key} の引数 {:?} が英語の文の引数 {:?} に無い",
+                    message.file, message.vars, e.vars
+                )),
+                Some(_) => {}
+            }
+        }
+        let missing = en.keys().filter(|k| !table.contains_key(*k)).count();
+        eprintln!(
+            "{tag}: 訳 {} 件、英語にあって訳に無いキー {missing} 件（英語の文で出る）",
+            table.len()
+        );
+        // 選べる言語の表に行がある
+        assert!(
+            yolu_app::lang::Lang::from_tag(tag).is_some(),
+            "locales/{tag} の言語が選べない"
+        );
     }
     assert!(found.is_empty(), "{}", found.join("\n"));
 }
@@ -429,8 +535,9 @@ fn the_japanese_reasons_are_the_core_texts() {
 #[test]
 fn the_embedded_texts_are_the_files() {
     use yolu_app::lang::{Arg, Lang};
-    for (lang, name) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
-        let (table, _) = language(name);
+    for name in all_tags() {
+        let lang = Lang::from_tag(&name).expect("選べる言語");
+        let (table, _) = language(&name);
         for (key, message) in table {
             let key: &'static str = Box::leak(key.into_boxed_str());
             if message.vars.is_empty() {
@@ -452,8 +559,9 @@ fn the_embedded_texts_are_the_files() {
             }
         }
     }
-    // 無いキーは、落ちずにキーの文字
+    // 英語にも無いキーは、落ちずにキーの文字
     assert_eq!(Lang::Ja.t("no-such-key"), "no-such-key");
+    assert_eq!(Lang::ZhTw.t("no-such-key"), "no-such-key");
     assert_eq!(Lang::En.f("no-such-key", &[]), "no-such-key");
 }
 

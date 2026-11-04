@@ -297,7 +297,7 @@ fn headless_material_actions_set_the_values_and_refuse_while_drawing() {
 #[test]
 fn headless_refusals_are_short_reasons_in_both_languages() {
     use yolu_app::engine::CoreError;
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for e in [
             CoreError::StrokeActive,
             CoreError::LayerNotFound,

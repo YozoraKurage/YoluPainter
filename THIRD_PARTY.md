@@ -149,6 +149,26 @@ Phosphor はブラシ・グラデーション・長方形選択・楕円選択�
 フォント・アイコン・筆先の各ファイルと表記の SHA-256、許諾の種類は `tools/licenses-reviewed.json` の `bundled` に固定し、`tools/third-party.py` が app の照合のたびに確かめる
 （確認済みファイルの変更・欠落、対象フォルダーへの未登録ファイルの追加では全文束を作らない）。フォントを加工して配る場合は、予約されたフォント名などの条件を再確認する。
 
+### 中国語・韓国語の画面のフォント（Noto Sans CJK）
+
+`yolu-app` は、繁體中文・简体中文・한국어 の画面で、その言語のフォント **Noto Sans CJK**（Noto Sans TC・SC・KR の Regular と Bold）を
+同梱の BIZ UDPGothic より先に使う。許諾は **SIL Open Font License 1.1**（Copyright © 2014-2021 Adobe）。実行ファイルには埋めず、
+配布物の `fonts/`（Mac は `YoluPainter.app/Contents/Resources/fonts/`）に別のファイルとして入れ、その言語を選んだときだけ読む。
+配布元は [notofonts/noto-cjk](https://github.com/notofonts/noto-cjk) のタグ `Sans2.004`（コミット `523d033d6cb47f4a80c58a35753646f5c3608a78`）の
+`Sans/SubsetOTF/` の OTF で、加工しない。リポジトリには入れず、配布物を作るときに `cargo xtask fetch-fonts` が取り、下の大きさと SHA-256 に合う物だけを置く
+（`crates/xtask/src/fonts.rs`）。許諾の全文は `crates/yolu-app/assets/fonts/OFL-Noto.txt`（配布元の同じタグの `LICENSE` に著作権の行を添えた物）で、
+配布物の `fonts/OFL-Noto.txt` と app の全文束に入れる。
+
+| 配布物のファイル | 大きさ（バイト） | SHA-256 |
+|---|---:|---|
+| `NotoSansTC-Regular.otf` | 5,683,368 | `5bab0cb3c1cf89dde07c4a95a4054b195afbcfe784d69d75c340780712237537` |
+| `NotoSansTC-Bold.otf` | 5,839,972 | `55420b259eb119bf5f2a0aadba10cf9d736c12d64ab93e78546d69ef5f43558b` |
+| `NotoSansSC-Regular.otf` | 8,331,336 | `faa6c9df652116dde789d351359f3d7e5d2285a2b2a1f04a2d7244df706d5ea9` |
+| `NotoSansSC-Bold.otf` | 8,543,168 | `c6cb5a93abaa9edc8ee7463b7ebb7f42d618d40e6ed2f7a5371c97b0b64767c0` |
+| `NotoSansKR-Regular.otf` | 4,644,748 | `69975a0ac8472717870aefeab0a4d52739308d90856b9955313b2ad5e0148d68` |
+| `NotoSansKR-Bold.otf` | 4,816,044 | `5a6ceb287ed2fc6cfc6213144ebea68cbd94b20fc9eb873d8486493bf02d9bda` |
+| `OFL-Noto.txt` | | `2256296aa0bede74252eb8b4febd1e6c5123816a50c03e62895cb3adef332327` |
+
 `libz-sys` の Rust 側は MIT を選び、同梱 zlib の Zlib 許諾も含める。
 `unicode-ident` の Unicode-3.0、
 `tracing-core` 内の spin の MIT 原文も収集する。未使用の zlib contrib・zlib-ng は対象外。

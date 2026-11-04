@@ -588,7 +588,7 @@ fn the_canvas_bar_opens_three_columns_and_picks_set_layer_set_channel_and_displa
 
 #[test]
 fn the_canvas_bar_uv_button_toggles_the_wireframe_and_opens_the_color_menu_without_painting() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 800.0, 64);
         h.set_lang(lang);
         h.act(Action::LoadDemoModel);
@@ -727,7 +727,7 @@ fn shot_state(lang: Lang) -> (Harness<'static, YoluApp>, Sets) {
 
 #[test]
 fn the_layer_set_panels_look_the_same() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let (mut h, _) = shot_state(lang);
         let n = lang_name(lang);
         let group = common::shot::group(&h, Tab::TextureSets);
@@ -748,7 +748,7 @@ fn the_layer_set_panels_look_the_same() {
 
 #[test]
 fn the_canvas_bar_looks_the_same() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let (mut h, _) = shot_state(lang);
         let n = lang_name(lang);
         let canvas = canvas_rect(&h);

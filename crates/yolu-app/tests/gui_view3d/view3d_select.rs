@@ -1408,7 +1408,7 @@ fn a_read_only_set_refuses_at_the_press_and_a_small_budget_leaves_the_selection_
 
 #[test]
 fn the_tools_that_work_in_3d_no_longer_say_they_are_2d_only_and_the_others_still_do() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for (t, works) in [
             (Tool::SelectRect, true),
             (Tool::SelectEllipse, true),
@@ -1637,7 +1637,7 @@ fn the_wand_region_follows_the_texture_not_the_surface_so_it_takes_hidden_faces_
 #[test]
 fn snapshot_selection_in_3d_in_both_languages() {
     use egui_dock::{DockState, NodeIndex};
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let (mut h, rect) = cube_view();
         h.set_lang(lang);
         // キャンバスと 3D ビューを並べる（選択範囲の縁はキャンバスに出る）

@@ -71,10 +71,7 @@ impl Automation {
 
 /// 画面の言語を、命令の文の言語へ。
 pub fn ops_lang(lang: Lang) -> yolu_ops::Lang {
-    match lang {
-        Lang::Ja => yolu_ops::Lang::Ja,
-        Lang::En => yolu_ops::Lang::En,
-    }
+    lang.ops()
 }
 
 /// 設定のフォルダの `actions/` を読む。読めなかったファイルがあれば、知らせの文（「 / 」でつなぐ）。

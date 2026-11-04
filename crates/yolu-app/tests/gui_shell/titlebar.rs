@@ -239,7 +239,7 @@ fn the_windows_bar_looks_right() {
 #[test]
 fn without_the_custom_frame_the_bar_has_no_buttons_and_the_edges_do_nothing() {
     let mut h = app(WIDTH, HEIGHT, 64);
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         h.set_lang(lang);
         h.run();
         for button in Button::ALL {
@@ -301,7 +301,7 @@ fn a_pen_drag_on_the_empty_bar_is_moved_by_the_app_but_a_mouse_drag_still_starts
 /// ボタンは帯の右端に 3 つ並び、帯の下の線の上までの高さで、名前・印は左に収まる（細いウィンドウでも）。
 #[test]
 fn the_buttons_sit_at_the_right_end_and_the_name_and_marks_stay_left_of_them() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for width in [960.0, 1280.0] {
             let mut h = windows_app(width, HEIGHT);
             h.set_lang(lang);
@@ -351,7 +351,7 @@ fn the_buttons_sit_at_the_right_end_and_the_name_and_marks_stay_left_of_them() {
 /// 最大化中は最大化のボタンが「元に戻す」になる（名前・アイコン）。ボタンの名前は日英で出る。
 #[test]
 fn the_maximize_button_becomes_restore_while_maximized() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = windows_app(WIDTH, HEIGHT);
         h.set_lang(lang);
         h.run();
@@ -501,7 +501,7 @@ fn dragging_over_the_project_name_also_moves_the_window() {
 /// メニューの見出し・Live Link の印を押したときは、動かさず最大化もしない（メニュー・ウィンドウはいつもどおり開く）。
 #[test]
 fn pressing_the_menus_and_the_link_mark_never_moves_the_window() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = windows_app(WIDTH, HEIGHT);
         h.set_lang(lang);
         h.run();

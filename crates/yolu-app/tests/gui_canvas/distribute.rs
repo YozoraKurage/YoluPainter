@@ -1705,7 +1705,7 @@ fn headless_the_remembered_selections_are_a_kind_and_the_copy_without_them_is_fo
     // 開いているプロジェクトの残した選択範囲は、どちらでも変わらない
     assert_eq!(s.saved_selections().len(), 1);
     // ウィンドウの種類の名前は日英で出る
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         assert!(!yolu_app::distribute::window::label(lang, Removal::SavedSelections).is_empty());
         assert!(!yolu_app::distribute::window::tooltip(lang, Removal::SavedSelections).is_empty());
     }

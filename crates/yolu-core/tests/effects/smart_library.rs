@@ -8,7 +8,7 @@ use yolu_core::{
 
 fn placed(doc: &mut Document, index: usize) -> yolu_core::LayerId {
     let e = smart_library::entries()[index];
-    let m = e.build(e.name(false), false).unwrap();
+    let m = e.build(e.name("en"), "en").unwrap();
     doc.place_smart_material(&m, &SmartPlacement::default())
         .unwrap()
         .layer_id
@@ -37,7 +37,7 @@ fn every_material_places_as_a_named_group_in_one_undo_step() {
         assert_eq!(doc.undo_count(), count + 1, "{}", e.id);
         assert!(doc.layer(id).unwrap().is_group(), "{}", e.id);
         assert_eq!(doc.layer(id).unwrap().name(), e.en);
-        let material_layers = e.build(e.en, false).unwrap().layers().len();
+        let material_layers = e.build(e.en, "en").unwrap().layers().len();
         assert_eq!(doc.layers().len(), layers + material_layers + 1, "{}", e.id);
         assert_ne!(whole(&doc, Channel::Color), before, "{}", e.id);
         assert!(doc.undo().unwrap());
@@ -113,7 +113,7 @@ fn placing_beyond_the_layer_limit_is_refused_and_changes_nothing() {
             .unwrap();
     }
     let e = smart_library::entries()[0];
-    let m = e.build(e.en, false).unwrap();
+    let m = e.build(e.en, "en").unwrap();
     let (layers, undo) = (doc.layers().len(), doc.undo_count());
     let before = whole(&doc, Channel::Color);
     let err = doc
@@ -140,7 +140,7 @@ fn placed_materials_never_wait_for_inputs() {
 #[test]
 fn materials_are_not_pixel_data_and_survive_resizing_the_canvas() {
     for (i, e) in smart_library::entries().iter().enumerate() {
-        let m = e.build(e.en, false).unwrap();
+        let m = e.build(e.en, "en").unwrap();
         assert_eq!((m.width(), m.height()), (SIZE, SIZE));
         assert_eq!(m.pixel_bytes(), 0, "{}", e.id);
         let mut doc = Document::with_tile_size(48, 40, 16).unwrap();

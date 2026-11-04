@@ -512,7 +512,7 @@ fn the_names_in_the_bands_are_drawn_only_when_every_button_has_room_for_them() {
         }
     }
     // 狭い幅（約 150 点）: 作成方法は日本語も英語もアイコンだけ、選択ペンの英語は名前が入る
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = narrow_props_app(lang);
         let names = lang.pick(["新規", "追加", "削除"], ["New", "Add", "Subtract"]);
         for name in names {
@@ -530,7 +530,7 @@ fn the_names_in_the_bands_are_drawn_only_when_every_button_has_room_for_them() {
 
 #[test]
 fn the_creation_row_stays_one_full_width_row_and_drops_the_names_when_narrow() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = narrow_props_app(lang);
         let names = lang.pick(["新規", "追加", "削除"], ["New", "Add", "Subtract"]);
         let more = lang.pick("すべての作成方法", "All modes");
@@ -804,7 +804,7 @@ fn a_rounded_rectangle_cuts_the_corners_and_undo_removes_it_in_one_step() {
 
 #[test]
 fn the_selection_properties_show_the_tool_settings_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 800.0, 256);
         h.set_lang(lang);
         pick_tool(&mut h, Tool::SelectRect);
@@ -1684,7 +1684,7 @@ fn the_saved_selections_window_saves_lists_recalls_and_removes() {
 
 #[test]
 fn the_saved_selections_window_draws_in_both_languages_and_keeps_names_short() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 800.0, 256);
         h.set_lang(lang);
         h.sel_mut().animate = false;
@@ -1902,7 +1902,7 @@ fn quick_mask_is_off_when_the_document_changes_and_refused_while_drawing() {
     s.act(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(None))));
     assert!(!s.sel().quick, "切り替え");
     // どちらの言語でも名前が出る
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         s.set_lang(lang);
         s.act(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
         assert!(

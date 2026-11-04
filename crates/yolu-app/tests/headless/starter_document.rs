@@ -16,7 +16,7 @@ const WHITE: Rgba8 = Rgba8::new(255, 255, 255, 255);
 fn assert_starter(doc: &Document, lang: Lang, why: &str) {
     let (fill_name, layer_name) = match lang {
         Lang::Ja => ("塗りつぶし 1", "レイヤー 1"),
-        Lang::En => ("Fill 1", "Layer 1"),
+        _ => ("Fill 1", "Layer 1"),
     };
     assert_eq!(doc.layers().len(), 2, "{why}");
     let fill = &doc.layers()[0];

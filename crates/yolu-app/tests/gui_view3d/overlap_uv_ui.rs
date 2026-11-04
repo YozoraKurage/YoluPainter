@@ -101,7 +101,7 @@ fn shot(h: &mut Harness<'_, YoluApp>, window: &str, name: &str) {
 
 #[test]
 fn the_overlap_page_of_the_bake_window_sets_the_current_sets_priority() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = shown_model(lang);
         apply(&mut h, Action::Bake(BakeAction::OpenWindow));
         h.bake_mut().window.as_mut().unwrap().page = Page::Overlap;
@@ -181,7 +181,7 @@ fn the_overlap_page_of_the_bake_window_sets_the_current_sets_priority() {
 
 #[test]
 fn the_canvas_shows_overlapped_texels_and_the_view_menu_turns_them_off() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = with_model(lang);
         counted(&mut h);
         assert!(!h.prefs().settings.uv_overlap, "既定は切");
@@ -235,7 +235,7 @@ fn painting_overlapped_texels_in_the_canvas_tells_once() {
 
 #[test]
 fn the_settings_row_has_the_overlap_color_after_the_wireframe_color() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 860.0, 64);
         h.app_mut().set_language(lang);
         apply(
@@ -365,7 +365,7 @@ fn map_point(h: &Harness<'_, YoluApp>, u: f32, v: f32) -> egui::Pos2 {
 
 #[test]
 fn the_uv_map_of_the_overlap_page_opens_the_island_menu_and_cycles_the_overlapped_islands() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = overlap_page(lang);
         let r = h.bake().window.as_ref().unwrap().map.rect;
         assert!(
@@ -445,7 +445,7 @@ fn the_uv_map_of_the_overlap_page_opens_the_island_menu_and_cycles_the_overlappe
 
 #[test]
 fn the_uv_map_shows_the_preferred_and_skipped_islands() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = overlap_page(lang);
         {
             let s = h.app_mut();
@@ -478,7 +478,7 @@ fn the_uv_map_shows_the_preferred_and_skipped_islands() {
 
 #[test]
 fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = shown_model(lang);
         counted(&mut h);
         h.set_tool(Tool::PolygonFill);

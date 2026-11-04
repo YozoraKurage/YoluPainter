@@ -58,18 +58,18 @@ fn every_built_in_group_has_valid_distinct_named_ramps_in_both_languages() {
     let mut names = std::collections::BTreeSet::new();
     for g in &groups {
         assert!(!g.items.is_empty());
-        assert_ne!(g.ja, g.en);
+        assert_ne!((g.name)(Lang::Ja), (g.name)(Lang::En));
         for item in &g.items {
-            assert!(names.insert(item.ja), "{} が重なる", item.ja);
-            assert!(!item.ja.is_empty() && !item.en.is_empty());
-            assert!(item.ja.chars().count() <= 12, "{}", item.ja);
+            let (ja, en) = ((item.name)(Lang::Ja), (item.name)(Lang::En));
+            assert!(names.insert(ja), "{ja} が重なる");
+            assert!(!ja.is_empty() && !en.is_empty());
+            assert!(ja.chars().count() <= 12, "{ja}");
             // 組み込みは混色なし・PSD に書ける（位置と中点が刻みに乗る）
             assert!(!item.ramp.uses_mixing());
             for c in item.ramp.colors() {
                 assert!(
                     (c.position * 4096.0).fract().abs() < 1e-9 || c.position == 0.0,
-                    "{}",
-                    item.ja
+                    "{ja}"
                 );
                 assert_eq!(c.midpoint, 0.5);
             }
@@ -77,7 +77,11 @@ fn every_built_in_group_has_valid_distinct_named_ramps_in_both_languages() {
     }
     // 「基本」のメイン→サブは描画色から作る
     let basic = &groups[0];
-    let from = basic.items.iter().find(|i| i.en == "Main to Sub").unwrap();
+    let from = basic
+        .items
+        .iter()
+        .find(|i| (i.name)(Lang::En) == "Main to Sub")
+        .unwrap();
     assert_eq!(from.ramp.colors()[0].color, Rgba8::new(51, 102, 153, 255));
     assert_eq!(from.ramp.colors()[1].color, Rgba8::new(230, 204, 26, 255));
 }
@@ -329,7 +333,7 @@ fn the_limit_stops_adding_and_a_failed_save_leaves_the_list_as_it_was() {
     assert_eq!(kept.user()[0].name, "g");
     assert!(kept.remove(0).is_err());
     assert_eq!(kept.user().len(), MAX_USER);
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         assert!(!SetsError::TooMany.describe(lang).is_empty());
         assert!(!SetsError::Name.describe(lang).is_empty());
         assert!(!SetsError::Index.describe(lang).is_empty());

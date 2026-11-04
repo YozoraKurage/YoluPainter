@@ -493,7 +493,7 @@ pub fn row_tooltip(lang: Lang, name: &str, modified: bool, import: Option<&Impor
     if !meta.mapped.is_empty() {
         let names = meta.mapped.iter().map(|m| {
             let (ja, en) = m.texts();
-            lang.pick(ja, en)
+            lang.core_text(ja, en)
         });
         push(&format!(
             "{}{}",
@@ -534,7 +534,7 @@ mod tests {
         assert_eq!(sorted, Gap::ALL, "ALL は並びの順");
         for gap in Gap::ALL {
             assert_eq!(Gap::from_id(gap.id()), Some(gap));
-            for lang in Lang::ALL {
+            for lang in Lang::JA_EN {
                 let name = gap.name(lang);
                 assert!(
                     !name.is_empty() && !name.ends_with('。') && !name.ends_with('.'),

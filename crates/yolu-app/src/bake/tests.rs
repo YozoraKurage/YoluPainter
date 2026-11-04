@@ -553,7 +553,7 @@ fn viewing_a_map_the_set_does_not_have_falls_back_to_none() {
 #[test]
 fn names_cover_every_kind_in_both_languages() {
     for kind in MeshMapKind::ALL {
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             assert!(!kind_label(lang, kind).is_empty());
             assert!(!kind_short(lang, kind).is_empty());
             assert!(!window::kind_help(lang, kind).is_empty());
@@ -1641,7 +1641,7 @@ fn where_it_baked_reads_in_both_languages_without_mixing_them() {
     // 選びを変えた直後（違う条件の結果しかない）は確認中
     let waiting = probe_line(Lang::Ja, BakeBackend::Gpu, &done(false, none)).unwrap();
     assert_eq!(waiting.text, "GPU を確認中");
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for backend in [BakeBackend::Auto, BakeBackend::Gpu, BakeBackend::Cpu] {
             assert!(
                 !backend_label(lang, backend).is_empty() && !backend_help(lang, backend).is_empty()
@@ -1655,7 +1655,7 @@ fn where_it_baked_reads_in_both_languages_without_mixing_them() {
 fn the_uv_warning_has_no_numbers_and_is_absent_for_a_clean_bake() {
     use yolu_core::mesh_maps::MeshBakeReport;
     let clean = MeshBakeReport::default();
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         assert_eq!(super::uv_warning(lang, &clean), None);
         let report = MeshBakeReport {
             zero_uv_area_triangles: 12,

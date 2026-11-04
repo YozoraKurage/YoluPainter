@@ -44,5 +44,4 @@ settings-disk-cache = Disk cache
 settings-cache-folder = Cache folder
 settings-cache-limit = Cache limit
 settings-setting = Setting
-settings-en = en
 settings-alignment = Alignment

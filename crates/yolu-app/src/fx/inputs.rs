@@ -311,22 +311,11 @@ pub fn missing_text(
         })
         .collect();
     let more = effects.len().saturating_sub(3);
-    match lang {
-        Lang::Ja => {
-            let mut text = shown.join("、");
-            if more > 0 {
-                text += &format!(" ほか {more} 件");
-            }
-            format!("効果の入力がそろっていない（{text}）")
-        }
-        Lang::En => {
-            let mut text = shown.join("; ");
-            if more > 0 {
-                text += &format!(" and {more} more");
-            }
-            format!("Effect inputs are missing ({text})")
-        }
+    let mut text = shown.join(lang.t("fx-inputs-separator"));
+    if more > 0 {
+        text += &lang.f("fx-inputs-and-more", &[("more", &more)]);
     }
+    lang.f("fx-inputs-are-missing", &[("text", &text)])
 }
 
 impl AppState {

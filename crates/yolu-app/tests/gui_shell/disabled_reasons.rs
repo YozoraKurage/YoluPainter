@@ -101,7 +101,7 @@ fn assert_ruler_fields(h: &H, lang: Lang, disabled: bool, what: &str) {
 /// 対称定規は文書の値なので、欄はブラシの効果（指先・クローン）にも、描ける先（2D・3D）にも左右されず、読むだけのセットのあいだだけ無効になる。
 #[test]
 fn the_ruler_fields_are_disabled_only_while_the_set_is_read_only() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = ruler_app(lang);
         assert_ruler_fields(&h, lang, false, "ふつう");
         // 指先・クローンでも欄は有効（効かないのはストロークを始めるとき）
@@ -135,7 +135,7 @@ fn the_ruler_fields_are_disabled_only_while_the_set_is_read_only() {
 /// ドックを分けてキャンバスと 3D ビューを並べても、重ねて 3D だけにしても、対称定規の欄は有効のまま（どちらのビューにも効く文書の値）。
 #[test]
 fn the_ruler_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_side_or_stacked() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = ruler_app(lang);
         h.view3d_mut().load_demo();
         let mut dock = DockState::new(vec![Tab::Canvas]);
@@ -280,7 +280,7 @@ fn assert_brush_fields_enabled(h: &mut H, lang: Lang) {
 /// ドックを分けてキャンバスと 3D ビューが同時に出ているあいだも、手ぶれ補正などの欄は有効（理由のツールチップも出ない）。
 #[test]
 fn the_brush_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_side() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = brush_app(lang, true);
         assert!(h.state().view3d_rect().is_some(), "{lang:?}: 3D も出ている");
         assert!(
@@ -296,7 +296,7 @@ fn the_brush_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_sid
 /// 2D と同じ式で使う）。
 #[test]
 fn the_brush_fields_stay_enabled_while_only_the_3d_view_can_be_painted() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = brush_app(lang, false);
         assert!(h.app().paints_only_in_3d(), "{lang:?}");
         assert_brush_fields_enabled(&mut h, lang);
@@ -309,7 +309,7 @@ fn the_brush_fields_stay_enabled_while_only_the_3d_view_can_be_painted() {
 /// キャンバスが出ているあいだ（並べていても）は有効で、押すと入り切りできる。
 #[test]
 fn the_snap_to_symmetry_ruler_toggle_is_unavailable_only_while_just_the_3d_view_can_be_painted() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let label = lang.pick("対称定規にスナップ", "Snap to Symmetry Ruler");
         let reason = lang.pick("2D だけ", "2D only");
         for tool in [Tool::Fill, Tool::Wand] {
@@ -345,7 +345,7 @@ fn the_snap_to_symmetry_ruler_toggle_is_unavailable_only_while_just_the_3d_view_
 /// バケツの切り替えは、塗り残し（なぞり塗り）が入のときは効かないので押せず、短い理由を出す。切ると押せる。
 #[test]
 fn the_bucket_snap_to_symmetry_ruler_is_unavailable_while_paint_unfilled_areas_is_on() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let label = lang.pick("対称定規にスナップ", "Snap to Symmetry Ruler");
         let reason = lang.pick("塗り残しでは効きません", "Not used with leftover fill");
         let mut h = brush_app(lang, true);
@@ -408,7 +408,7 @@ fn menu_items_disabled(h: &mut H, lang: Lang) -> Vec<bool> {
 
 #[test]
 fn the_selection_modify_menu_items_are_disabled_without_a_selection_and_come_back() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 800.0, 256);
         h.set_lang(lang);
         apply(&mut h, Action::SelectTool(Tool::SelectRect));
@@ -464,7 +464,7 @@ fn adjustment_labels(lang: Lang) -> [&'static str; 3] {
 
 #[test]
 fn the_hue_saturation_fields_say_why_they_do_not_reach_the_paint_channel_but_stay_editable() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = adjustment_app(lang, Channel::Roughness);
         let name = yolu_app::m2::channel_name(lang, h.doc(), Channel::Roughness);
         let reason = lang.pick(
@@ -519,7 +519,7 @@ fn image_tip() -> std::sync::Arc<yolu_core::BrushTip> {
 #[test]
 fn hardness_says_it_has_no_effect_with_an_image_tip() {
     use yolu_app::brushes::Category;
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let reason = lang.pick("画像の筆先では効きません", "No effect on an image tip");
         let hardness = lang.pick("硬さ", "Hardness");
         let minimum = lang.pick("最小値", "Minimum");
@@ -556,7 +556,7 @@ fn hardness_says_it_has_no_effect_with_an_image_tip() {
 #[test]
 fn the_clone_toggles_say_the_eraser_is_the_reason() {
     use yolu_app::brushes::Category;
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let reason = lang.pick("消しゴムでは使えません", "Not available with the eraser");
         let mut h = brush_app(lang, true);
         apply(&mut h, Action::SelectTool(Tool::Eraser));
@@ -578,7 +578,7 @@ fn the_clone_toggles_say_the_eraser_is_the_reason() {
 #[test]
 fn the_aligned_reason_names_the_key_that_sets_the_clone_source() {
     use yolu_app::brushes::Category;
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let reason = lang.pick(
             "元を決めると使える（Alt+クリック）",
             "Available once a source is set (Alt+Click)",
@@ -597,7 +597,7 @@ fn the_aligned_reason_names_the_key_that_sets_the_clone_source() {
 /// 値の欄のツールチップは名前とキーだけ（動きの説明は出ない）。選択の形のツールの縦横比・中心からには、修飾キーが付く。
 #[test]
 fn value_tooltips_are_the_name_and_the_key_only() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = brush_app(lang, true);
         // ブラシ: 流量・不透明度に説明は出ない
         for (label, old) in [

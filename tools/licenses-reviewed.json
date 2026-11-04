@@ -5560,6 +5560,55 @@
         ]
       },
       {
+        "name": "Noto Sans CJK (TC・SC・KR)",
+        "version": "2.004",
+        "declared": "OFL-1.1",
+        "selected": [
+          "OFL-1.1"
+        ],
+        "repository": "https://github.com/notofonts/noto-cjk",
+        "commit": "523d033d6cb47f4a80c58a35753646f5c3608a78",
+        "files": [
+          {
+            "path": "crates/yolu-app/assets/fonts/OFL-Noto.txt",
+            "sha256": "2256296aa0bede74252eb8b4febd1e6c5123816a50c03e62895cb3adef332327"
+          }
+        ],
+        "license_file": {
+          "path": "crates/yolu-app/assets/fonts/OFL-Noto.txt",
+          "sha256": "2256296aa0bede74252eb8b4febd1e6c5123816a50c03e62895cb3adef332327"
+        },
+        "fetched": [
+          {
+            "path": "crates/yolu-app/assets/fonts-cjk/NotoSansTC-Regular.otf",
+            "sha256": "5bab0cb3c1cf89dde07c4a95a4054b195afbcfe784d69d75c340780712237537"
+          },
+          {
+            "path": "crates/yolu-app/assets/fonts-cjk/NotoSansTC-Bold.otf",
+            "sha256": "55420b259eb119bf5f2a0aadba10cf9d736c12d64ab93e78546d69ef5f43558b"
+          },
+          {
+            "path": "crates/yolu-app/assets/fonts-cjk/NotoSansSC-Regular.otf",
+            "sha256": "faa6c9df652116dde789d351359f3d7e5d2285a2b2a1f04a2d7244df706d5ea9"
+          },
+          {
+            "path": "crates/yolu-app/assets/fonts-cjk/NotoSansSC-Bold.otf",
+            "sha256": "c6cb5a93abaa9edc8ee7463b7ebb7f42d618d40e6ed2f7a5371c97b0b64767c0"
+          },
+          {
+            "path": "crates/yolu-app/assets/fonts-cjk/NotoSansKR-Regular.otf",
+            "sha256": "69975a0ac8472717870aefeab0a4d52739308d90856b9955313b2ad5e0148d68"
+          },
+          {
+            "path": "crates/yolu-app/assets/fonts-cjk/NotoSansKR-Bold.otf",
+            "sha256": "5a6ceb287ed2fc6cfc6213144ebea68cbd94b20fc9eb873d8486493bf02d9bda"
+          }
+        ],
+        "file_globs": [
+          "crates/yolu-app/assets/fonts-cjk/*.otf"
+        ]
+      },
+      {
         "name": "Fluent UI System Icons・Phosphor Icons",
         "version": "同梱 PNG",
         "declared": "MIT",

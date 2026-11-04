@@ -171,3 +171,6 @@ fx-1-inside-the-box-fading-tip = 1 inside the box, fading to 0 at its faces
 fx-1-inside-the-sphere-fading-tip = 1 inside the sphere, fading to 0 at its surface
 fx-0-behind-the-plane-to-tip = 0 behind the plane to 1 in front of it (a one-direction gradient)
 fx-coverage = Coverage
+fx-inputs-separator = { "; " }
+fx-inputs-and-more = { " " }and { $more } more
+fx-inputs-are-missing = Effect inputs are missing ({ $text })

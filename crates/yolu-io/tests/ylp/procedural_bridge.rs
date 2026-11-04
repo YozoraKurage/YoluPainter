@@ -429,7 +429,7 @@ fn bundled_materials_survive_save_and_reopen() {
     let all = yolu_core::Rect::new(0, 0, 96, 64);
     for e in smart_library::entries() {
         let mut doc = Document::with_tile_size(96, 64, 32).unwrap();
-        let m = e.build(e.en, false).unwrap();
+        let m = e.build(e.en, "en").unwrap();
         doc.place_smart_material(&m, &SmartPlacement::default())
             .unwrap();
         let native = NativeDocument::from_core(&doc).unwrap();
@@ -465,7 +465,7 @@ fn dump_bundled_thumbnails() {
     std::fs::create_dir_all(&dir).unwrap();
     for e in smart_library::entries() {
         let mut doc = Document::with_tile_size(256, 256, 64).unwrap();
-        let m = e.build(e.en, false).unwrap();
+        let m = e.build(e.en, "en").unwrap();
         doc.place_smart_material(&m, &SmartPlacement::default())
             .unwrap();
         let png = yolu_io::composite_png(&doc).unwrap();

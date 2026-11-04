@@ -527,7 +527,7 @@ fn only_too_deep_groups_fall_back_with_a_reason_and_come_back() {
         h.state().display().fallback(),
         Some(&Fallback::Unsupported(Unsupported::GroupDepth))
     );
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let text = h.state().display().fallback().unwrap().describe(lang);
         assert_eq!(has_japanese(&text), lang == Lang::Ja, "{text}");
     }

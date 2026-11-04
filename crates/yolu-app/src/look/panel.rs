@@ -970,11 +970,7 @@ fn default_name(lang: Lang, d: SlotDefault) -> &'static str {
 
 /// 「〜で描く」に入れる既定の名前（英語は文の中なので小文字）。
 fn drawn_name(lang: Lang, d: SlotDefault) -> String {
-    let name = default_name(lang, d);
-    match lang {
-        Lang::Ja => name.to_owned(),
-        Lang::En => name.to_lowercase(),
-    }
+    lang.name_in_sentence(default_name(lang, d))
 }
 
 fn source_name(app: &AppState, slot: &liltoon::Slot, source: Option<&TextureSource>) -> String {

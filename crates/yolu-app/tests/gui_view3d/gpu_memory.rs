@@ -508,7 +508,7 @@ fn the_window_row_names_the_level_without_numbers_and_the_details_show_the_total
         .query_by_role_and_label(egui::accesskit::Role::Slider, "Total")
         .is_none());
     // どの段・指定の名前にも数が無い
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for choice in GpuMemory::LEVELS.into_iter().chain([GpuMemory::Mib(1234)]) {
             assert!(
                 !choice.name(lang).chars().any(|c| c.is_ascii_digit()),

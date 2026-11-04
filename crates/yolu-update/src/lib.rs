@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
 
+pub mod fonts;
+
 pub const RELEASE_BASE: &str = "https://github.com/YozoraKurage/YoluPainter/releases/download";
 /// アプリが更新情報を取る場所。GitHub の「最新の Release」（下書き・プレリリースを除く最新）の資産へ飛ぶ。
 /// ファイル名に schema の番号（`UPDATER_SCHEMA`）を含める。schema を上げた更新情報は別の名前に置き、

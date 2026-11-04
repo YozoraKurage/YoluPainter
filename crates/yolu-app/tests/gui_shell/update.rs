@@ -944,7 +944,7 @@ fn headless_the_failure_reason_comes_from_stable_not_from_the_beta_place() {
 fn the_updates_category_has_the_startup_and_beta_rows_and_the_help_menu_does_not() {
     use egui_kittest::kittest::Queryable;
     use yolu_app::prefs::{Category, PrefsAction};
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let dir = TempDir::new("updates-category");
         let mut h = app(1280.0, 800.0, 64);
         let _rig = rig(h.app_mut(), "0.2.0", Mode::Installer);

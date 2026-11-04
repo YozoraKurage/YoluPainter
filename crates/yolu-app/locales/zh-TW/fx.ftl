@@ -171,3 +171,6 @@ fx-1-inside-the-box-fading-tip = 方塊內為 1，往表面漸變為 0
 fx-1-inside-the-sphere-fading-tip = 球體內為 1，往表面漸變為 0
 fx-0-behind-the-plane-to-tip = 平面後方為 0，前方為 1（單向漸層）
 fx-coverage = 覆蓋率
+fx-inputs-separator = 、
+fx-inputs-and-more = { " " }等 { $more } 項
+fx-inputs-are-missing = 效果的輸入不齊全（{ $text }）

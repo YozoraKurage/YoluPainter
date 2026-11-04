@@ -190,7 +190,7 @@ fn headless_the_default_dock_keeps_the_sub_tools_alone_on_the_left_and_the_asset
 /// - チャンネルは 6 つとも見え、アセットは品が見える（最小のウィンドウは上の一部だけ）。レイヤーの組が狭くなりすぎない。
 #[test]
 fn the_default_window_gives_every_panel_the_room_it_needs_at_the_three_sizes_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for (width, height) in [(960.0, 640.0), (1280.0, 800.0), (1600.0, 900.0)] {
             let what = format!("{lang:?} {width}x{height}");
             let mut h = app_default(width, height, 128);
@@ -276,7 +276,7 @@ fn the_default_window_gives_every_panel_the_room_it_needs_at_the_three_sizes_in_
             h.run();
             let first = yolu_core::smart_library::entries()
                 .first()
-                .map(|e| e.name(lang == Lang::Ja).to_owned())
+                .map(|e| e.name(lang.tag()).to_owned())
                 .expect("同梱の素材");
             let body = top_right_body(&h);
             let card = rect_of(&h, &first, |r| {
@@ -300,7 +300,7 @@ fn the_default_window_gives_every_panel_the_room_it_needs_at_the_three_sizes_in_
 /// 左の列: 1280×800 でブラシサイズの 1 段目（7 つ）の数字が見え、「塗るチャンネル」の見出しが切れない。1280×1600 ではブラシサイズの丸が 4 段とも見える。
 #[test]
 fn the_default_left_column_shows_the_size_numbers_and_the_paint_channels_header() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 800.0, 128);
         language(&mut h, lang);
         // 1 段目の丸を見る（選んでいる大きさの段へ送るので、1 段目の大きさ 1 px を選ぶ）
@@ -356,7 +356,7 @@ fn the_default_left_column_shows_the_size_numbers_and_the_paint_channels_header(
 #[test]
 fn the_color_wheel_fills_the_panel_without_the_marker_leaving_it_and_nothing_is_left_empty_below() {
     use yolu_app::panels::color::marker_overhang;
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for (width, height, least) in [
             (960.0, 640.0, 107.0),
             (1280.0, 800.0, 158.0),
@@ -474,7 +474,7 @@ fn the_color_wheel_fills_the_panel_without_the_marker_leaving_it_and_nothing_is_
 #[test]
 fn the_window_menu_lists_the_new_panels_and_opens_one_that_is_nowhere() {
     let mut h = app(1600.0, 900.0, 128);
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         language(&mut h, lang);
         let entries = yolu_app::shell::menu_entries(st(&h), yolu_app::shell::WINDOW_MENU);
         let labels: Vec<&str> = entries.iter().filter_map(|e| e.label()).collect();
@@ -781,7 +781,7 @@ fn auto_fit_is_written_when_closed_untouched_and_read_back() {
 fn the_navigator_is_closed_in_the_default_dock_and_opens_into_the_texture_sets_group_from_the_window_menu(
 ) {
     let mut h = app_default(1280.0, 800.0, 128);
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         language(&mut h, lang);
         let entries = yolu_app::shell::menu_entries(st(&h), yolu_app::shell::WINDOW_MENU);
         assert!(
@@ -1388,7 +1388,7 @@ fn an_app_started_with_an_old_layout_file_shows_the_new_panels_and_writes_them_b
 
 #[test]
 fn the_properties_have_two_tabs_and_no_material_tab_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1600.0, 900.0, 128);
         language(&mut h, lang);
         let props = tab_rect(&h, Tab::Properties);
@@ -1419,7 +1419,7 @@ fn the_properties_have_two_tabs_and_no_material_tab_in_both_languages() {
 /// 「塗るチャンネル」が効くツール（ツールの表の印）と、効かないツール。
 #[test]
 fn the_paint_channels_section_is_only_for_the_tools_that_paint_with_channels() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let name = lang.pick("塗るチャンネル", "Paint Channels");
         for tool in Tool::ALL {
             // （ツールプロパティの終わりまで入る高さで）

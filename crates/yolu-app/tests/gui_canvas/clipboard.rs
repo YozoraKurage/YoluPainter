@@ -912,7 +912,7 @@ fn headless_clipboard_notices_do_not_end_in_a_full_stop_and_use_the_language_s_b
         for notice in &notices[pastes..] {
             match lang {
                 Lang::Ja => assert!(!notice.contains(['(', ')', '.']), "{notice}"),
-                Lang::En => assert!(notice.is_ascii() && !notice.contains('。'), "{notice}"),
+                _ => assert!(notice.is_ascii() && !notice.contains('。'), "{notice}"),
             }
         }
         // 補足は 1 つの括弧に並べる

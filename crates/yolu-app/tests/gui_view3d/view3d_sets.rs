@@ -1428,7 +1428,7 @@ fn a_mesh_map_keeps_its_full_size_once_its_set_becomes_the_current_one() {
 
 #[test]
 fn snapshot_sets_in_3d_with_the_farthest_set_left_out_of_the_budget() {
-    for lang in yolu_app::lang::Lang::ALL {
+    for lang in yolu_app::lang::Lang::JA_EN {
         let mut h = scene(3, 256);
         h.set_lang(lang);
         for (i, c) in COLORS.iter().take(3).enumerate() {

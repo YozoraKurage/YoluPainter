@@ -100,11 +100,8 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
             "--gallery" => pick(Target::Gallery)?,
             "--png" => png = Some(PathBuf::from(value("--png")?)),
             "--lang" => {
-                lang = match value("--lang")?.as_str() {
-                    "ja" => Lang::Ja,
-                    "en" => Lang::En,
-                    other => return Err(format!("unknown language: {other}")),
-                }
+                let tag = value("--lang")?;
+                lang = Lang::from_tag(&tag).ok_or(format!("unknown language: {tag}"))?;
             }
             "--size" => size = Some(parse_size(&value("--size")?)?),
             "--scale" => {

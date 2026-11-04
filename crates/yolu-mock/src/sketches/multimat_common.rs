@@ -79,7 +79,7 @@ pub fn material_label(
     let n = names.len() - 1;
     match lang {
         yolu_app::lang::Lang::Ja => format!("{} ほか {n}", names[0]),
-        yolu_app::lang::Lang::En => format!("{} and {n} more", names[0]),
+        _ => format!("{} and {n} more", names[0]),
     }
 }
 

@@ -60,7 +60,7 @@ fn swatch_at(h: &Harness<'_, AppState>, i: usize) -> Pos2 {
 }
 #[test]
 fn left_alt_and_context_menu_choose_foreground_or_background() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = panel(300.0, lang);
         let color = h.state().colorsets().palette().colors[0].rgba;
         let at = swatch_at(&h, 0);
@@ -132,7 +132,7 @@ fn add_replace_remove_reorder_and_escape_use_real_widgets() {
 }
 #[test]
 fn set_menu_new_duplicate_delete_and_switch() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = panel(300.0, lang);
         h.get_by_label(lang.pick("編集", "Edit")).click();
         h.run();
@@ -186,7 +186,7 @@ fn grid_reflows_after_resize_and_intermediate_corner_captures_main() {
 }
 #[test]
 fn history_has_64_clickable_colors_and_both_languages_have_no_instructions() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = panel(320.0, lang);
         for i in 0..64 {
             h.state_mut()

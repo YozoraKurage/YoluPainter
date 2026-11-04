@@ -752,7 +752,7 @@ fn a_read_only_set_refuses_to_move_or_delete_a_ruler() {
 
 #[test]
 fn snapshots_of_a_selected_ruler_with_its_gizmo_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let (mut h, rect, _) = edit_view();
         h.set_lang(lang);
         select(&mut h);

@@ -231,3 +231,10 @@ lang-size-count-or-memory-limit = { $text ->
 lang-unsupported-value-or-operation = { $text ->
        *[other] Unsupported value or operation
     }
+
+lang-in-texture-set = In texture set { $set }, { $sentence }
+lang-the-layer-has-locked = The layer has { $locks } locked
+lang-a-parent-group-has-locked = A parent group has { $locks } locked
+lang-inactive-effects-are-not-in = { $count } inactive effect(s) in { $set } are not in the composite PNG
+lang-features-separator = { ", " }
+lang-unsupported-project-features = Unsupported project features ({ $text })

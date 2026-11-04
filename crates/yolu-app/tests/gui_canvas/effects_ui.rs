@@ -72,7 +72,7 @@ fn selected(h: &Harness<'_, YoluApp>) -> Option<Selected> {
 
 #[test]
 fn snapshot_effect_rows_and_the_generator_that_has_no_maps() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 1400.0, 128);
         h.app_mut().set_language(lang);
         effect_document(&mut h);
@@ -535,7 +535,7 @@ fn a_mark_on_the_mask_thumbnail_tells_that_the_mask_effects_are_hidden() {
     apply(&mut h, Action::NewLayer);
     let empty = h.selected_layer().unwrap();
     apply(&mut h, Action::M2(Edit::AddMask(empty)));
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         h.app_mut().set_language(lang);
         h.run();
         let tip = |n: usize| yolu_app::panels::layers::mask_effects_tip(lang, n);
@@ -732,7 +732,7 @@ fn a_right_click_on_the_layer_thumbnail_opens_the_layer_menu_like_the_row() {
 
 #[test]
 fn snapshot_the_layer_and_mask_targets_and_the_add_entrances_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let suffix = lang.pick("ja", "en");
         let mut h = app(1280.0, 1400.0, 128);
         h.app_mut().set_language(lang);
@@ -1041,7 +1041,7 @@ fn selected_settings(h: &Harness<'_, YoluApp>) -> yolu_core::EffectSettings {
 
 #[test]
 fn the_new_filters_show_every_value_by_name_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for kind in NEW_FILTERS {
             let h = with_new_filter(lang, kind);
             assert!(selected(&h).is_some(), "{kind:?}: 足したものを選ぶ");
@@ -1116,7 +1116,7 @@ fn a_choice_button_and_a_slider_of_a_new_filter_are_one_undo_step_each() {
 
 #[test]
 fn snapshot_three_new_filter_panels() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for (kind, name) in [
             (FilterKind::SlopeBlur, "slope_blur"),
             (FilterKind::Morphology, "morphology"),
@@ -1149,7 +1149,7 @@ fn with_new_generator(lang: Lang, kind: Kind, height: f32) -> Harness<'static, Y
 
 #[test]
 fn the_new_generators_show_their_own_values_and_the_common_rows_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for (kind, id) in [
             (Kind::Pattern, "pattern"),
             (Kind::Light, "light"),
@@ -1222,7 +1222,7 @@ fn a_pattern_shape_button_changes_the_generator_in_one_undo_step() {
 
 #[test]
 fn snapshot_the_pattern_and_mask_builder_panels() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for (kind, name) in [
             (Kind::Pattern, "pattern"),
             (Kind::MaskBuilder, "mask_builder"),
@@ -1276,7 +1276,7 @@ fn four_plates() -> yolu_app::view3d::model::ViewModel {
 /// アイランドごとのばらつきの欄と、アイランドごとに違う値の 2D の絵（4 つのアイランドのモデルを読み、塗ったレイヤーに置き換えで足す）。
 #[test]
 fn snapshot_the_uv_island_variation_panel_and_canvas() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 1400.0, 128);
         h.app_mut().set_language(lang);
         {
@@ -1352,7 +1352,7 @@ fn shown_texts(h: &Harness<'_, YoluApp>) -> Vec<(String, Rect)> {
 
 #[test]
 fn the_effect_screens_have_no_instruction_text_and_the_english_one_no_japanese() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for select in 0..3 {
             let mut h = app(1280.0, 1400.0, 128);
             h.app_mut().set_language(lang);
@@ -1393,7 +1393,7 @@ fn the_effect_screens_have_no_instruction_text_and_the_english_one_no_japanese()
 
 #[test]
 fn the_add_menu_in_english_has_no_japanese_and_in_japanese_every_name_is_localised() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 1400.0, 128);
         h.app_mut().set_language(lang);
         h.ui_mut().property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1;
@@ -1426,7 +1426,7 @@ fn the_add_menu_in_english_has_no_japanese_and_in_japanese_every_name_is_localis
 
 #[test]
 fn a_generator_row_without_maps_has_a_mark_whose_tooltip_gives_the_reason() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 1400.0, 128);
         h.app_mut().set_language(lang);
         effect_document(&mut h);
@@ -1465,7 +1465,7 @@ fn reason_tooltips(h: &Harness<'_, YoluApp>, row: Rect, reason: &str) -> Vec<Str
 
 #[test]
 fn over_the_warning_mark_only_the_mark_tooltip_shows_and_elsewhere_on_the_row_the_row_tooltip() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 1000.0, 128);
         h.app_mut().set_language(lang);
         effect_document(&mut h);
@@ -1508,7 +1508,7 @@ fn procedural(h: &Harness<'_, YoluApp>) -> yolu_core::generator::Settings {
 #[test]
 fn procedural_controls_and_presets_are_one_undo_and_bilingual() {
     use yolu_core::generator::{CellOutput, GrungePreset, NoiseBasis};
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 1800.0, 32);
         h.app_mut().set_language(lang);
         fx(
@@ -1746,7 +1746,7 @@ fn selected_strength(h: &Harness<'_, YoluApp>) -> f64 {
 
 #[test]
 fn procedural_panels_have_no_breakup_rows_and_every_visible_control_is_accepted() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for kind in [Kind::Noise, Kind::Grunge] {
             let mut h = app(1280.0, 3200.0, 32);
             h.app_mut().set_language(lang);
@@ -1832,7 +1832,7 @@ fn shape_generator_edit_button_toggles_the_3d_target() {
 #[test]
 fn the_shape_row_of_a_generator_tells_each_shape_with_the_same_sentences_as_the_menus() {
     use yolu_app::fx::names;
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 1800.0, 32);
         h.app_mut().set_language(lang);
         apply(&mut h, Action::LoadDemoModel);
@@ -1878,7 +1878,7 @@ fn the_shape_row_of_a_generator_tells_each_shape_with_the_same_sentences_as_the_
 
 #[test]
 fn snapshot_procedural_panels() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for (kind, name) in [(Kind::Noise, "noise"), (Kind::Grunge, "grunge")] {
             let mut h = app(1280.0, 1800.0, 32);
             h.app_mut().set_language(lang);
@@ -1905,7 +1905,7 @@ fn snapshot_procedural_panels() {
 
 #[test]
 fn procedural_fallback_mark_explains_uv_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for target in [FilterTarget::Content, FilterTarget::Mask] {
             let mut h = app(1280.0, 1800.0, 32);
             h.app_mut().set_language(lang);

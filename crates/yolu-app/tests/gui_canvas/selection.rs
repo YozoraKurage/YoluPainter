@@ -1555,7 +1555,7 @@ fn headless_refusals_are_told_in_the_language_and_change_nothing() {
             assert_eq!(s.doc().selection(), selection.as_ref(), "{lang:?} {m}");
             assert_eq!(s.doc().undo_count(), steps, "{lang:?} {m}");
             match lang {
-                Lang::En => {
+                Lang::En | Lang::ZhTw | Lang::ZhCn | Lang::Ko => {
                     assert!(m.is_ascii(), "英語の画面に日本語が混じる: {m:?}");
                     assert!(m.contains(en), "{m:?}");
                 }
@@ -1625,7 +1625,7 @@ fn headless_selection_file_failures_are_told_in_the_language_and_touch_nothing()
         let err = restore_into(&mut doc, Some(&stored), lang).unwrap_err();
         assert!(doc.selection().is_none() && !doc.can_undo(), "{lang:?}");
         match lang {
-            Lang::En => {
+            Lang::En | Lang::ZhTw | Lang::ZhCn | Lang::Ko => {
                 assert!(err.is_ascii(), "英語の画面に日本語が混じる: {err:?}");
                 assert!(err.contains(en.0) && err.contains(en.1), "{err:?}");
             }
@@ -1644,7 +1644,7 @@ fn headless_selection_file_failures_are_told_in_the_language_and_touch_nothing()
             .map(|_| ())
             .unwrap_err();
         match lang {
-            Lang::En => {
+            Lang::En | Lang::ZhTw | Lang::ZhCn | Lang::Ko => {
                 assert!(err.is_ascii(), "英語の画面に日本語が混じる: {err:?}");
                 assert!(err.starts_with("Cannot write the selection"), "{err:?}");
             }
@@ -2186,7 +2186,9 @@ fn headless_every_edits_status_message_follows_the_language() {
             let m = s.message().to_string();
             assert!(!m.is_empty(), "{lang:?} {e:?}");
             match lang {
-                Lang::En => assert!(m.is_ascii(), "英語の画面に日本語が混じる: {m:?} ({e:?})"),
+                Lang::En | Lang::ZhTw | Lang::ZhCn | Lang::Ko => {
+                    assert!(m.is_ascii(), "英語の画面に日本語が混じる: {m:?} ({e:?})")
+                }
                 Lang::Ja => assert!(!m.is_ascii(), "日本語の画面の文: {m:?} ({e:?})"),
             }
             if matches!(

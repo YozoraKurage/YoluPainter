@@ -225,3 +225,10 @@ lang-size-count-or-memory-limit = { $text ->
 lang-unsupported-value-or-operation = { $text ->
        *[other] 不支援的值或操作
     }
+
+lang-in-texture-set = 在紋理集{ $set }中，{ $sentence }
+lang-the-layer-has-locked = 圖層的{ $locks }已鎖定
+lang-a-parent-group-has-locked = 上層群組的{ $locks }已鎖定
+lang-inactive-effects-are-not-in = { $set }中有 { $count } 個未生效的效果未包含在合成的 PNG 中
+lang-features-separator = 、
+lang-unsupported-project-features = 不支援編輯的專案內容（{ $text }）

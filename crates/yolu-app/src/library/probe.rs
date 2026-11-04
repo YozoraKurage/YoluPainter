@@ -10,7 +10,6 @@ use super::image as png;
 use super::service::Cancel;
 use super::LibInfo;
 use crate::lang::library_io_error as reason;
-use crate::lang::Lang;
 use crate::shelf::{
     from_cached, image_picture, inspect_smart_kind, remembered, to_cached, Block, Inspected,
     ItemKind, Unreadable,
@@ -37,7 +36,7 @@ pub struct Target {
 }
 
 fn unreadable(e: &yolu_io::Error) -> Unreadable {
-    Unreadable::pair(&reason(Lang::Ja, e), &reason(Lang::En, e))
+    Unreadable::by_lang(|l| reason(l, e))
 }
 
 fn broken(kind: ItemKind, why: Unreadable) -> LibInfo {

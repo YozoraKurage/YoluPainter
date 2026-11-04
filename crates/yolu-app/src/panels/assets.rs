@@ -15,7 +15,6 @@ use egui::{
 use crate::brushes::{sample::SampleSpec, BrushAction, BrushKey};
 use crate::dialog::places::Place;
 use crate::engine::Document;
-use crate::lang::Lang;
 use crate::library::{self, Source};
 use crate::m2::{DropTarget, Row};
 use crate::notice::Source as NoticeSource;
@@ -1138,10 +1137,10 @@ fn list_status(app: &AppState) -> (Option<String>, Option<String>) {
     let library = &app.library;
     if library.truncated() {
         return (
-            Some(match lang {
-                Lang::Ja => format!("先頭の {} 件だけ", yolu_io::library::MAX_ENTRIES),
-                Lang::En => format!("First {} only", yolu_io::library::MAX_ENTRIES),
-            }),
+            Some(lang.f(
+                "panels-first-entries-only",
+                &[("count", &yolu_io::library::MAX_ENTRIES)],
+            )),
             None,
         );
     }
@@ -1149,10 +1148,7 @@ fn list_status(app: &AppState) -> (Option<String>, Option<String>) {
     if skipped.is_empty() {
         return (None, None);
     }
-    let text = match lang {
-        Lang::Ja => format!("{} 件を読み飛ばしました", skipped.len()),
-        Lang::En => format!("Skipped {}", skipped.len()),
-    };
+    let text = lang.f("panels-skipped-entries", &[("count", &skipped.len())]);
     let mut tip = text.clone();
     for s in skipped.iter().take(8) {
         let why = match &s.reason {
@@ -1578,14 +1574,10 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
             let name = rel.rsplit('/').next().unwrap_or(&rel).to_owned();
             let yes = crate::dialog::message()
                 .set_title("YoluPainter")
-                .set_description(match lang {
-                    Lang::Ja => format!(
-                        "「{name}」をライブラリのフォルダから消しますか？（プロジェクトの中の写しと置いたレイヤーは残ります）"
-                    ),
-                    Lang::En => format!(
-                        "Remove \"{name}\" from the library folder? (Copies inside projects and placed layers stay.)"
-                    ),
-                })
+                .set_description(lang.f(
+                    "panels-remove-from-the-library-folder",
+                    &[("name", &lang.quote(&name))],
+                ))
                 .set_buttons(rfd::MessageButtons::YesNo)
                 .set_level(rfd::MessageLevel::Warning)
                 .show()
@@ -1616,10 +1608,10 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
             };
             let yes = crate::dialog::message()
                 .set_title("YoluPainter")
-                .set_description(match lang {
-                    Lang::Ja => format!("「{name}」をアセットから消しますか？"),
-                    Lang::En => format!("Remove \"{name}\" from the project's assets?"),
-                })
+                .set_description(lang.f(
+                    "panels-remove-from-the-assets",
+                    &[("name", &lang.quote(&name))],
+                ))
                 .set_buttons(rfd::MessageButtons::YesNo)
                 .set_level(rfd::MessageLevel::Warning)
                 .show()

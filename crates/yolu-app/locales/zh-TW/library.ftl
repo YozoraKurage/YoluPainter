@@ -23,3 +23,6 @@ library-image-sides-must-be-1 = 圖片邊長必須為 1～8192
 library-wrong-format = 格式不符
 library-too-large = 過大
 library-were-already-in-the-library = { $existing } 項已在資源庫中。
+library-is-already-in-the-library = { $name }已在資源庫中。
+library-files-count = { $count } 個檔案
+library-added-file-to-the-library = 已將{ $name }加入資源庫。

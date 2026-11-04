@@ -159,17 +159,14 @@ enum Failure {
     Overrun(Overrun),
     /// 置き換えの途中で失敗した。先の `done` 個は置き換わっている。
     PartlyReplaced { done: usize, cause: std::io::Error },
-    /// 上のどれでもない理由（日本語・英語）。
-    Message { ja: String, en: String },
+    /// 上のどれでもない理由（言語ごとの文）。
+    Message(crate::lang::Texts),
 }
 
 impl Failure {
     /// 言語ごとの文（呼ぶ側が言語ごとに .ftl の文から作る）。
     fn keyed(text: impl Fn(Lang) -> String) -> Self {
-        Self::Message {
-            ja: text(Lang::Ja),
-            en: text(Lang::En),
-        }
+        Self::Message(crate::lang::Texts::by_lang(text))
     }
 
     /// ウィンドウと状態の帯に出す理由。`importing` は取消のとき「何も書いていません」を付けるかの違いだけ。
@@ -191,7 +188,7 @@ impl Failure {
                     &[("cause", &cause), ("done", &done)],
                 )
             }
-            Self::Message { ja, en } => lang.pick(ja.clone(), en.clone()),
+            Self::Message(texts) => texts.get(lang).to_owned(),
         }
     }
 
@@ -2575,7 +2572,7 @@ mod tests {
             .map(|_| ())
             .unwrap_err();
             assert!(
-                matches!(err, Failure::Canceled | Failure::Message { .. }),
+                matches!(err, Failure::Canceled | Failure::Message(_)),
                 "{err:?}"
             );
             assert_eq!(dir.files(), ["keep.psd"]);
@@ -2749,7 +2746,7 @@ mod tests {
             }),
         ] {
             let err = verify_written(&path, wrong, &calm).unwrap_err();
-            assert!(matches!(err, Failure::Message { .. }), "{err:?}");
+            assert!(matches!(err, Failure::Message(_)), "{err:?}");
         }
         let bytes = std::fs::read(&path).unwrap();
         // 構造を壊さない画素のビット化け（最後の 1 バイトは統合画像の最後の行の画素）は、復号は通るが、書いたバイト列とは違うので置き換えない
@@ -2765,7 +2762,7 @@ mod tests {
         )
         .expect("構造は壊れていないので、復号だけでは見つからない");
         let err = verify_written(&p, Some(written), &calm).unwrap_err();
-        assert!(matches!(err, Failure::Message { .. }), "{err:?}");
+        assert!(matches!(err, Failure::Message(_)), "{err:?}");
         assert!(err.text(Lang::Ja, false).contains("読み戻しが一致しません"));
         // 大きなドキュメント形式（PSB）・途中で切れた PSD・PSD でないものは読み戻せない
         let mut psb = bytes.clone();

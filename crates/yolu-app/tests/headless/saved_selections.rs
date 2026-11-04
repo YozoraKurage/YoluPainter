@@ -487,7 +487,7 @@ fn headless_a_broken_index_opens_the_document_with_a_reason_in_both_languages() 
             Blob::from(b"{ broken".to_vec()),
         );
     });
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = AppState::new_in(64, 64, lang);
         s.act(Action::OpenProject(path.clone()));
         assert!(s.saved_selections().is_empty(), "{}", s.message());

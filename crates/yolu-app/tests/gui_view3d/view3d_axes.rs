@@ -177,7 +177,7 @@ fn shot(h: &mut H, name: &str) {
 
 #[test]
 fn snapshot_the_axis_widget_in_both_languages_and_both_projections() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = view(lang);
         assert_eq!(camera(&h).yaw, DEFAULT_YAW);
         // 英語の絵は撮らない（軸の印に文字は無い）

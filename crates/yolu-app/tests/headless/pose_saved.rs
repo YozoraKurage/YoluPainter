@@ -371,7 +371,7 @@ fn headless_an_unreadable_pose_is_told_kept_in_the_file_and_replaced_only_by_a_n
     pose_it(&mut s);
     save_as(&mut s, &path);
     tamper_pose(&path, b"{ not json");
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut open = AppState::new_in(64, 64, lang);
         open.act(Action::OpenProject(path.clone()));
         open.act(Action::Pose(PoseAction::LoadFigure));

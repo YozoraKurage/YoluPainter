@@ -412,12 +412,8 @@ impl LibraryState {
         let spawned = std::thread::Builder::new()
             .name("yolu-library-list".into())
             .spawn(move || {
-                let result = files::list(&root, Some(&flag)).map_err(|e| {
-                    Unreadable::pair(
-                        &crate::lang::library_io_error(Lang::Ja, &e),
-                        &crate::lang::library_io_error(Lang::En, &e),
-                    )
-                });
+                let result = files::list(&root, Some(&flag))
+                    .map_err(|e| Unreadable::by_lang(|l| crate::lang::library_io_error(l, &e)));
                 let _ = tx.send(result);
                 if let Some(waker) = repaint {
                     waker.wake();

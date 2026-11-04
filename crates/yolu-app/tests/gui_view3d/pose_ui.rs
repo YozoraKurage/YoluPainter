@@ -1547,7 +1547,7 @@ fn pose_states(h: &mut H, visit: &mut dyn FnMut(&mut H, &str)) {
 fn the_pose_tab_fits_at_ordinary_window_sizes_in_both_languages_and_english_has_no_japanese() {
     widgets::record_truncations(true);
     for (width, height) in [(1600.0, 960.0), (1280.0, 800.0)] {
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             let mut h = app_in(width, height, lang);
             let mut data: Vec<String> = Vec::new();
             pose_states(&mut h, &mut |h, what| {
@@ -1605,7 +1605,7 @@ fn the_pose_tab_fits_at_ordinary_window_sizes_in_both_languages_and_english_has_
 #[test]
 fn the_floating_pose_window_fits_too() {
     widgets::record_truncations(true);
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app_in(1280.0, 860.0, lang);
         h.state_mut().apply(Action::Pose(PoseAction::LoadFigure));
         h.run();
@@ -1719,7 +1719,7 @@ fn a_pose_edit_through_the_inspector_survives_the_undo_redo_buttons() {
 /// 取り消すと読み込み中でなくなる（ポーズのタブは残る）。説明の文は置かない（ボタンの説明はツールチップ）。
 #[test]
 fn the_panel_shows_a_loading_row_with_progress_and_a_cancel_button() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = figure(64);
         h.set_lang(lang);
         click_tab(&mut h, Tab::Pose);
@@ -1733,7 +1733,7 @@ fn the_panel_shows_a_loading_row_with_progress_and_a_cancel_button() {
                 "読み込みを取り消す",
                 "新.fbxの読み込みを取り消しました。",
             ),
-            Lang::En => (
+            _ => (
                 "Loading: 新.fbx",
                 "Cancel loading",
                 "Cancelled loading 新.fbx.",

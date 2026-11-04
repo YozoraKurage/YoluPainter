@@ -216,7 +216,7 @@ fn headless_two_materials_of_one_set_on_the_same_uvs_overlap_and_separate_sets_d
 
 #[test]
 fn headless_painting_overlapped_texels_tells_once_per_set_as_info() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let (mut s, _) = with_model(mirrored());
         s.set_lang(lang);
         wait_overlap(&mut s);

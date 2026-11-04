@@ -263,7 +263,7 @@ mod tests {
             build: Some(build.into()),
             ..Usage::default()
         };
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             let mark = lang.pick("ベータ版", "Beta");
             // 試験版: 版とビルドの左に印が付く（右端が版とビルド）
             let items = usage("0.4.0-rc.1 · a1b2c3d").items(lang);
@@ -295,7 +295,7 @@ mod tests {
             about_text(Lang::En, "0.4.0-rc.1"),
             "YoluPainter 0.4.0-rc.1 (beta)"
         );
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             assert_eq!(about_text(lang, "0.4.0"), "YoluPainter 0.4.0");
         }
     }

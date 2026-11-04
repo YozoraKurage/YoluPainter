@@ -195,7 +195,7 @@ fn headless_merge_down_makes_one_layer_with_the_same_look_and_one_undo() {
 
 #[test]
 fn headless_merge_refusals_say_why_in_both_languages_and_change_nothing() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = AppState::new_in(32, 32, lang);
         let [a, b, _c] = three(&mut s);
         // 一番下には、下のレイヤーが無い
@@ -308,7 +308,7 @@ fn headless_merging_a_selection_of_layers_or_a_group_or_the_visible_layers_is_on
 /// 見た目が丸めの許容差を超えて変わる結合は、何も変えずに確かめを出す。「結合する」でそのまま結合し（1 回の Undo）、「やめる」で何も変えない。
 #[test]
 fn headless_a_merge_that_changes_the_look_asks_first() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = AppState::new_in(32, 32, lang);
         let a = s.selected_layer().unwrap();
         fill_rect(s.doc_mut(), a, 0, 0, 32, 32, GREEN);
@@ -563,7 +563,7 @@ fn headless_locks_toggle_on_every_selected_layer_in_one_undo_and_a_group_lock_re
 
 #[test]
 fn headless_a_locked_layer_refuses_with_the_existing_short_reason_and_nothing_changes() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = AppState::new_in(32, 32, lang);
         let [a, b, c] = three(&mut s);
         s.doc_mut()
@@ -616,7 +616,7 @@ fn headless_a_locked_layer_refuses_with_the_existing_short_reason_and_nothing_ch
 /// グループのロックが効いているレイヤーは、親のグループのロックだと言い（持ち主はグループ）、レイヤーの自分のロックならそのレイヤーだと言う。
 #[test]
 fn headless_a_group_lock_is_named_as_the_parents_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = AppState::new_in(32, 32, lang);
         let [a, b, _c] = three(&mut s);
         s.select_layers([a, b], b);
@@ -660,7 +660,7 @@ fn headless_every_kind_of_lock_is_named_the_same_way_in_a_refusal_and_in_the_loc
         (LayerLocks::POSITION, "位置", "Position"),
         (LayerLocks::ALL, "すべて", "All"),
     ];
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for (flag, ja, en) in cases {
             let name = lang.pick(ja, en);
             assert_eq!(lock_name(lang, flag), name);
@@ -841,7 +841,7 @@ fn headless_a_transform_moves_a_selection_with_its_pixels_and_every_selected_lay
 #[test]
 fn headless_transform_messages_for_nothing_to_move_a_numeric_transform_and_the_budget_are_in_both_languages(
 ) {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = AppState::new_in(32, 32, lang);
         // 画素の無いレイヤー
         let revision = s.doc().revision();
@@ -1728,7 +1728,7 @@ fn ctrl_e_and_ctrl_shift_e_and_ctrl_j_and_ctrl_g_run_the_layer_operations() {
 
 #[test]
 fn the_layer_menu_offers_merge_and_lock_and_no_transform_and_the_merge_confirmation_window_works() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = AppState::new_in(64, 64, lang);
         let [_a, _b, c] = three(&mut s);
         let items = yolu_app::shell::menu_entries(&s, 2);
@@ -1872,7 +1872,7 @@ fn headless_a_project_with_layer_locks_saves_and_opens_with_the_same_locks() {
         .join("../../target/layerops-project-tests")
         .join(std::process::id().to_string());
     std::fs::create_dir_all(&root).unwrap();
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let path = root.join(lang.pick("ja.ylp", "en.ylp"));
         let mut s = AppState::new_in(32, 32, lang);
         let [a, b, c] = three(&mut s);
@@ -2029,7 +2029,7 @@ fn japanese_drawn(h: &Harness<'_, YoluApp>) -> Vec<String> {
 
 #[test]
 fn snapshot_multi_selection_and_lock_marks_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = showcase(lang);
         // 英語の絵は撮らない（レイヤーの行の並びは文字の長さで変わらない）。英語の画面に日本語が残らないことは下で確かめる
         if lang == Lang::Ja {
@@ -2048,7 +2048,7 @@ fn snapshot_multi_selection_and_lock_marks_in_both_languages() {
 
 #[test]
 fn snapshot_the_move_tool_with_its_handles_and_properties_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = showcase(lang);
         h.act(Action::SelectTool(Tool::Move));
         h.run();

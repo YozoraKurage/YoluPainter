@@ -135,7 +135,7 @@ fn the_sub_tool_panel_is_the_first_tab_of_the_left_dock_in_both_languages() {
 
 #[test]
 fn every_tool_lists_its_sub_tools_with_the_current_one_marked_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for tool in Tool::ALL {
             // （一覧の行が全部入る高さで）
             let mut h = app(1280.0, 1400.0, 128);
@@ -318,7 +318,7 @@ fn changing_a_setting_in_the_bar_moves_the_mark_to_the_matching_sub_tool() {
 
 #[test]
 fn the_brush_and_eraser_bars_show_the_two_ruler_snaps_and_the_buttons_toggle_them() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for tool in [Tool::Brush, Tool::Eraser] {
             let mut h = app(1280.0, 800.0, 128);
             language(&mut h, lang);
@@ -877,7 +877,7 @@ fn assert_no_how_to(what: &str, text: &str) {
 #[test]
 fn the_panel_and_the_bar_of_every_tool_fit_the_smallest_window_in_both_languages_without_instruction_text(
 ) {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for tool in Tool::ALL {
             let mut h = app(960.0, 640.0, 128);
             language(&mut h, lang);
@@ -917,7 +917,7 @@ fn the_panel_and_the_bar_of_every_tool_fit_the_smallest_window_in_both_languages
 
 #[test]
 fn nothing_in_the_selection_panel_is_clipped_at_the_smallest_window() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(960.0, 640.0, 128);
         language(&mut h, lang);
         pick(&mut h, Tool::SelectRect);

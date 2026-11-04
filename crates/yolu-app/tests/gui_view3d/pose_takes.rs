@@ -134,7 +134,7 @@ fn clipped_texts(h: &H) -> Vec<String> {
 /// テイクの節の見え方（ボーンの節を閉じ、テイクの節の下にプリセットの節が続く。Raise のフレーム 40 を当てた 3D ビュー）。日英。
 #[test]
 fn pose_takes_snapshots() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app_in(1280.0, 860.0, lang);
         load(&mut h, &fbx_ascii::arm_takes_scene(), "腕.fbx");
         float_pose_tab(&mut h);
@@ -164,10 +164,10 @@ fn pose_takes_snapshots() {
 /// テイクの無いモデル（試しの人形・テイクの無い FBX）では、節ごと出さない。
 #[test]
 fn the_takes_section_is_shown_only_for_a_model_with_takes() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let title = match lang {
             Lang::Ja => "テイク",
-            Lang::En => "Takes",
+            _ => "Takes",
         };
         let mut h = app_in(1280.0, 860.0, lang);
         h.state_mut().apply(Action::Pose(PoseAction::LoadFigure));
@@ -235,7 +235,7 @@ fn a_take_is_chosen_from_the_box_and_applied_with_the_button() {
 fn the_takes_section_fits_in_both_languages_and_english_has_no_japanese() {
     widgets::record_truncations(true);
     for (width, height) in [(1600.0, 960.0), (1280.0, 800.0)] {
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             let mut h = app_in(width, height, lang);
             load(&mut h, &fbx_ascii::arm_takes_scene(), "腕.fbx");
             click_tab(&mut h, Tab::Pose);

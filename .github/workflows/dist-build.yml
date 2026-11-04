@@ -105,6 +105,9 @@ jobs:
           # 行番号つきの PDB を、実行ファイルとは別のファイルに作る（命令は変えない）。PDB を確実に作るため、debug と strip を既定任せにしない
           echo "CARGO_PROFILE_RELEASE_DEBUG=line-tables-only" >> "$GITHUB_ENV"
           echo "CARGO_PROFILE_RELEASE_STRIP=none" >> "$GITHUB_ENV"
+      # 中国語・韓国語の画面のフォント（配布物の fonts/。表の大きさと SHA-256 に合う物だけを置き、bundle・installer が確かめ直す）
+      - name: 言語のフォントを取る
+        run: cargo xtask fetch-fonts
       - name: ビルドと配布物の作成
         env:
           REQUIRE_KEY: ${{ inputs.require-update-key && '--require-update-key' || '' }}

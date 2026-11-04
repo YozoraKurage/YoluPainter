@@ -50,11 +50,10 @@ fn mark_inset(slot: usize) -> f32 {
 
 /// マスクのサムネイルの印のツールチップの 1 行（マスクの効果の数。レイヤーが対象のあいだ、それらの行は一覧に出ない）。
 pub fn mask_effects_tip(lang: crate::lang::Lang, count: usize) -> String {
-    match (count, lang) {
-        (1, crate::lang::Lang::En) => "1 effect on the mask".to_owned(),
-        (n, crate::lang::Lang::En) => format!("{n} effects on the mask"),
-        (n, crate::lang::Lang::Ja) => format!("マスクに効果 {n} 件"),
-    }
+    lang.f(
+        "panels-effects-on-the-mask",
+        &[("count", &crate::lang::Count(count))],
+    )
 }
 
 /// 名前欄の右端が、行の右端から内へどれだけか（印が `marks` 個）。印が無いときと 1 つのときは同じ（1 つぶんの場所を空けておく）で、

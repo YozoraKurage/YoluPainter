@@ -966,7 +966,7 @@ fn resizing_resamples_the_set_clears_its_history_and_asks_first() {
 
 #[test]
 fn a_shrink_that_removes_remembered_selections_says_so_in_the_result_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = S::new_in(64, 64, lang);
         np(&mut s, NpAction::OpenNew);
         np(&mut s, NpAction::Template(Template::ColorOnly));
@@ -1985,7 +1985,7 @@ fn a_list_that_no_longer_matches_the_window_is_shown_again_instead_of_applied() 
 fn a_model_added_to_a_project_without_one_is_listed_by_its_name_alone() {
     let dir = temp_dir("first-model");
     let new = cape_model(&dir, "new.fbx");
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = S::new_in(64, 64, lang);
         configure_with(&mut s, &new);
         np(&mut s, NpAction::Submit);
@@ -3163,7 +3163,7 @@ fn a_missing_or_foreign_file_is_told_with_a_reason_in_both_languages() {
     let dir = temp_dir("foreign");
     let png = dir.join("picture.png");
     std::fs::write(&png, [0x89, b'P', b'N', b'G', 13, 10, 26, 10]).unwrap();
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = S::new_in(64, 64, lang);
         np(&mut s, NpAction::OpenNew);
         for path in [dir.join("nothing.fbx"), png.clone()] {
@@ -3492,7 +3492,7 @@ fn shot_with_dropdown(h: &mut H, name: &str) {
 
 #[test]
 fn newproject_multimat_screens_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let tag = lang.pick("ja", "en");
         let dir = temp_dir(&format!("gui-multimat-{tag}"));
         let path = character(&dir, "c.fbx");
@@ -3635,7 +3635,7 @@ fn the_window_shows_preparing_canceled_and_failed_states_with_their_buttons() {
 fn the_preparing_row_adds_the_percentage_once_it_is_known_in_both_languages() {
     let dir = temp_dir("gui-prepare-progress");
     let path = character(&dir, "c.fbx");
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = gui();
         h.app_mut().set_language(lang);
         run_np(&mut h, NpAction::OpenNew);
@@ -3650,7 +3650,7 @@ fn the_preparing_row_adds_the_percentage_once_it_is_known_in_both_languages() {
         }
         let (label, cancel) = match lang {
             Lang::Ja => ("モデルを準備中", "準備を取り消す"),
-            Lang::En => ("Preparing the model", "Cancel preparation"),
+            _ => ("Preparing the model", "Cancel preparation"),
         };
         h.run();
         assert!(
@@ -3680,7 +3680,7 @@ fn the_preparing_row_adds_the_percentage_once_it_is_known_in_both_languages() {
 fn an_empty_model_box_says_nothing_and_a_model_called_none_is_shown_as_a_model() {
     let dir = temp_dir("gui-no-model");
     let named_none = character(&dir, "None");
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = gui();
         h.app_mut().set_language(lang);
         for configure in [false, true] {
@@ -3717,7 +3717,7 @@ fn an_empty_model_box_says_nothing_and_a_model_called_none_is_shown_as_a_model()
 fn the_window_follows_the_language_without_clipped_or_japanese_text() {
     let dir = temp_dir("gui-english");
     let path = character(&dir, "c.fbx");
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = gui();
         h.app_mut().set_language(lang);
         run_np(&mut h, NpAction::OpenNew);
@@ -3773,7 +3773,7 @@ fn the_windows_fixed_text_fits_without_being_cut_in_both_languages() {
     let dir = temp_dir("gui-fit");
     let old = character(&dir, "old.fbx");
     let new = cape_model(&dir, "new.fbx");
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = project_from(&old, 512);
         s.set_language(lang);
         let mut h = gui();

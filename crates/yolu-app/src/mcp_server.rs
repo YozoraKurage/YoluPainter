@@ -537,10 +537,7 @@ fn announce(state: &mut AppState, command: &str) {
         return;
     };
     let lang = state.lang;
-    let title = spec.title.pick(match lang {
-        Lang::Ja => yolu_ops::Lang::Ja,
-        Lang::En => yolu_ops::Lang::En,
-    });
+    let title = spec.title.pick(lang.ops());
     state.info(
         Source::Ops,
         lang.f("mcp_server-external-command", &[("title", &title)]),

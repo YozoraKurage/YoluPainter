@@ -2,7 +2,7 @@
 ; ビルドは `cargo xtask installer --target x86_64-pc-windows-msvc`。xtask が -D で次を渡す。
 ;   VERSION          SemVer の文字列（プレリリースの識別子つき。exe のバージョン情報の ProductVersion と同じ値）
 ;   VERSION_NUMERIC  a.b.c.0（バージョン情報の数字の欄）
-;   STAGE            入れるファイル（exe・コマンドラインの exe（yolupainter-cli.exe）・LICENSE・README.md・README.en.md・THIRD_PARTY.md・DEPENDENCIES.md・THIRD_PARTY_LICENSES.txt と、docs\ の文書）を集めたフォルダ
+;   STAGE            入れるファイル（exe・コマンドラインの exe（yolupainter-cli.exe）・LICENSE・README.md・README.en.md・THIRD_PARTY.md・DEPENDENCIES.md・THIRD_PARTY_LICENSES.txt と、docs\ の文書と、fonts\ の言語のフォント）を集めたフォルダ
 ;   OUTFILE          書き出すインストーラー
 ;   ICON             アイコン（crates/yolu-app/assets/logo/yolupainter.ico。exe と同じロゴ）
 ;
@@ -225,6 +225,17 @@ FunctionEnd
   !insertmacro ${ACTION} "docs\en" "GUIDE_3D.md"
   !insertmacro ${ACTION} "docs\en" "GUIDE_FILES.md"
 !macroend
+; 中国語・韓国語の画面のフォント（STAGE\fonts\…。アプリがその言語を選んだときだけ読む）と、その許諾の全文。xtask の配布物の一覧
+; （fonts/）と同じ名前の集まりで、xtask の試験が突き合わせる。入れる・消すは文書と同じマクロを使う（記録には書かない。名前がバージョンで変わらないため）。
+!macro FontFiles ACTION
+  !insertmacro ${ACTION} "fonts" "NotoSansTC-Regular.otf"
+  !insertmacro ${ACTION} "fonts" "NotoSansTC-Bold.otf"
+  !insertmacro ${ACTION} "fonts" "NotoSansSC-Regular.otf"
+  !insertmacro ${ACTION} "fonts" "NotoSansSC-Bold.otf"
+  !insertmacro ${ACTION} "fonts" "NotoSansKR-Regular.otf"
+  !insertmacro ${ACTION} "fonts" "NotoSansKR-Bold.otf"
+  !insertmacro ${ACTION} "fonts" "OFL-Noto.txt"
+!macroend
 !macro InstallDoc DIR NAME
   SetOutPath "$INSTDIR\${DIR}"
   File "${STAGE}\${DIR}\${NAME}"
@@ -308,6 +319,7 @@ Section "$(NAME_CORE)" SecCore
   Call RemoveOldDocs
   Call WriteDocList
   !insertmacro DocFiles InstallDoc
+  !insertmacro FontFiles InstallDoc
   ; ショートカットの作業フォルダ（$OUTDIR）を入れ先に戻す。
   SetOutPath "$INSTDIR"
   WriteUninstaller "$INSTDIR\${UNINSTALLER}"
@@ -374,6 +386,8 @@ Section "Uninstall"
   Delete "${DOC_LIST}"
   RMDir "$INSTDIR\docs\en"
   RMDir "$INSTDIR\docs"
+  !insertmacro FontFiles DeleteDoc
+  RMDir "$INSTDIR\fonts"
   Delete "$INSTDIR\${UNINSTALLER}"
   RMDir "$INSTDIR"
   Delete "$SMPROGRAMS\${PRODUCT}.lnk"

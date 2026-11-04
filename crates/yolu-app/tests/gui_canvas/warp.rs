@@ -125,7 +125,7 @@ fn headless_liquify_mouse_pen_restore_and_undo() {
 #[test]
 fn snapshot_warp_grid_and_options_both_languages() {
     let mut results = egui_kittest::SnapshotResults::new();
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = state();
         s.set_lang(lang);
         s.transform_mut().advanced.kind = Kind::Mesh;
@@ -394,7 +394,7 @@ fn review_liquify_input_at_limit_commits_one_undo() {
 }
 #[test]
 fn review_liquify_input_over_limit_refuses_whole_stroke() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let (s, before, revision, serial) = input_limit_stroke(true, lang);
         assert_eq!(
             s.doc().undo_count(),

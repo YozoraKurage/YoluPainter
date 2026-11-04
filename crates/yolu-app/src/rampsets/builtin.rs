@@ -5,17 +5,15 @@ use crate::engine::Rgba8;
 use crate::lang::Lang;
 use yolu_core::generator::{ColorStop, OpacityStop, Preset, Ramp};
 
-/// 組み込みの 1 つ（名前は日本語・英語）。
+/// 組み込みの 1 つ（名前は言語ごとに .ftl の文を引く）。
 pub struct Builtin {
-    pub ja: &'static str,
-    pub en: &'static str,
+    pub name: fn(Lang) -> &'static str,
     pub ramp: Ramp,
 }
 
 /// 組み込みの組。
 pub struct BuiltinGroup {
-    pub ja: &'static str,
-    pub en: &'static str,
+    pub name: fn(Lang) -> &'static str,
     pub items: Vec<Builtin>,
 }
 
@@ -38,11 +36,7 @@ fn ramp(stops: &[(f64, [u8; 3])]) -> Ramp {
 }
 
 fn item(name: fn(Lang) -> &'static str, ramp: Ramp) -> Builtin {
-    Builtin {
-        ja: name(Lang::Ja),
-        en: name(Lang::En),
-        ramp,
-    }
+    Builtin { name, ramp }
 }
 
 /// 暗い所を青みの沈んだ色へ、明るい所を暖かい淡い色へ寄せた 3 色（影が黒く潰れず、色が濁らない陰影用）。
@@ -60,8 +54,7 @@ pub fn groups(main: [f32; 4], sub: [f32; 4]) -> Vec<BuiltinGroup> {
     let (main, sub) = (opaque_rgba8(main), opaque_rgba8(sub));
     vec![
         BuiltinGroup {
-            ja: Lang::Ja.t("rampsets-basic"),
-            en: Lang::En.t("rampsets-basic"),
+            name: |l| l.t("rampsets-basic"),
             items: vec![
                 item(|l| l.t("rampsets-black-to-white"), Ramp::default()),
                 item(
@@ -83,8 +76,7 @@ pub fn groups(main: [f32; 4], sub: [f32; 4]) -> Vec<BuiltinGroup> {
             ],
         },
         BuiltinGroup {
-            ja: Lang::Ja.t("rampsets-shading"),
-            en: Lang::En.t("rampsets-shading"),
+            name: |l| l.t("rampsets-shading"),
             items: vec![
                 shade(
                     |l| l.t("rampsets-shade-red"),
@@ -125,8 +117,7 @@ pub fn groups(main: [f32; 4], sub: [f32; 4]) -> Vec<BuiltinGroup> {
             ],
         },
         BuiltinGroup {
-            ja: Lang::Ja.t("rampsets-tones"),
-            en: Lang::En.t("rampsets-tones"),
+            name: |l| l.t("rampsets-tones"),
             items: vec![
                 shade(
                     |l| l.t("rampsets-sepia"),
@@ -179,8 +170,7 @@ pub fn groups(main: [f32; 4], sub: [f32; 4]) -> Vec<BuiltinGroup> {
             ],
         },
         BuiltinGroup {
-            ja: Lang::Ja.t("rampsets-sky-and-light"),
-            en: Lang::En.t("rampsets-sky-and-light"),
+            name: |l| l.t("rampsets-sky-and-light"),
             items: vec![
                 item(
                     |l| l.t("rampsets-morning"),
@@ -234,8 +224,7 @@ pub fn groups(main: [f32; 4], sub: [f32; 4]) -> Vec<BuiltinGroup> {
             ],
         },
         BuiltinGroup {
-            ja: Lang::Ja.t("rampsets-special"),
-            en: Lang::En.t("rampsets-special"),
+            name: |l| l.t("rampsets-special"),
             items: vec![
                 item(
                     |l| l.t("rampsets-rainbow"),

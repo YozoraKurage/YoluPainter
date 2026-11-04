@@ -335,7 +335,7 @@ fn gradient_map_presets_reverse_stops_and_the_colour_of_the_selected_stop() {
     let sepia = yolu_app::rampsets::builtin::groups([0.0; 4], [0.0; 4])
         .into_iter()
         .flat_map(|g| g.items)
-        .find(|i| i.en == "Sepia")
+        .find(|i| (i.name)(Lang::En) == "Sepia")
         .unwrap()
         .ramp;
     assert_eq!(ramp_of(&h).ramp(), &sepia);
@@ -427,7 +427,7 @@ fn shown_texts(h: &Harness<'_, Panel>) -> Vec<String> {
 
 #[test]
 fn the_panels_show_names_and_values_only_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for kind in [
             AdjustmentType::GradientMap,
             AdjustmentType::ToneCurve,
@@ -472,7 +472,7 @@ fn snapshot_the_six_panels() {
     let sepia = yolu_app::rampsets::builtin::groups([0.0; 4], [0.0; 4])
         .into_iter()
         .flat_map(|g| g.items)
-        .find(|i| i.en == "Sepia")
+        .find(|i| (i.name)(Lang::En) == "Sepia")
         .unwrap()
         .ramp;
     let gradient = ColorAdjust::GradientMap(GradientMap::new(sepia, false));

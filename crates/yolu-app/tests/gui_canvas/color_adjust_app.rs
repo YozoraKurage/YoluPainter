@@ -93,7 +93,7 @@ fn every_kind_is_a_new_adjustment_layer_acting_on_the_channels_it_can() {
 
 #[test]
 fn the_new_adjustment_menus_list_every_kind_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 1400.0, 64);
         h.app_mut().set_language(lang);
         h.run();
@@ -459,7 +459,7 @@ fn the_panels_for_layers_and_stages_have_no_instruction_text_and_the_english_one
         }
         out
     }
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for kind in SIX {
             let mut h = app(1280.0, 1400.0, 64);
             h.app_mut().set_language(lang);

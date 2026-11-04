@@ -417,7 +417,7 @@ fn navigation_preferences_roundtrip_and_legacy_defaults() {
 
 #[test]
 fn navigation_settings_work_in_japanese_and_english() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut app = AppState::new_in(32, 32, lang);
         app.view3d_mut().load_demo();
         let mut ready = false;
@@ -549,7 +549,7 @@ fn view_settings_persist_through_the_real_window_and_restart() {
         .join("../../target/navigation-window-test")
         .join(std::process::id().to_string());
     std::fs::create_dir_all(&dir).unwrap();
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let path = dir.join(lang.pick("ja.conf", "en.conf"));
         yolu_app::settings::save(
             &path,

@@ -1572,10 +1572,7 @@ fn points_section(
             pos2(swatch.right() + 4.0, row.top()),
             pos2(row.right() - 26.0, row.bottom()),
         );
-        let name = match lang {
-            Lang::Ja => format!("点 {}", i + 1),
-            Lang::En => format!("Point {}", i + 1),
-        };
+        let name = lang.f("panels-point-number", &[("number", &(i + 1))]);
         if w::button(
             ui,
             name_rect,
@@ -1713,10 +1710,7 @@ fn point_color(
         |i: usize| egui::Id::new(("fill.points.color", doc, layer.0, channel.index(), i));
     let target = target_of(index);
     let current = Pick::rgb([color.r, color.g, color.b]);
-    let name = match lang {
-        Lang::Ja => format!("点 {} の色", index + 1),
-        Lang::En => format!("Point {} Color", index + 1),
-    };
+    let name = lang.f("panels-point-number-color", &[("number", &(index + 1))]);
     let last_id = egui::Id::new(("fill.points.color.last", doc, layer.0, channel.index()));
     let last = ctx.data(|d| d.get_temp::<usize>(last_id));
     ctx.data_mut(|d| d.insert_temp(last_id, index));

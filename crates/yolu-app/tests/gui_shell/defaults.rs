@@ -189,7 +189,7 @@ fn press(h: &mut egui_kittest::Harness<'static, yolu_app::YoluApp>, label: &str)
 #[test]
 fn closing_with_unsaved_changes_asks_with_three_buttons_and_the_first_choice_stays_open() {
     use egui_kittest::kittest::Queryable;
-    for lang in yolu_app::lang::Lang::ALL {
+    for lang in yolu_app::lang::Lang::JA_EN {
         let mut h = modified_app();
         h.set_lang(lang);
         h.act(yolu_app::state::Action::Quit);

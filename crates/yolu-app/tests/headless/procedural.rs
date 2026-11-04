@@ -106,10 +106,7 @@ fn headless_a_bundled_material_is_placed_as_a_group_in_one_undo_step() {
         assert_eq!(s.doc().undo_count(), undo + 1, "{}", s.message());
         let entry = smart_library::entries()[0];
         let group = s.selected_layer().unwrap();
-        assert_eq!(
-            s.doc().layer(group).unwrap().name(),
-            entry.name(lang == Lang::Ja)
-        );
+        assert_eq!(s.doc().layer(group).unwrap().name(), entry.name(lang.tag()));
         assert!(s.doc().layer(group).unwrap().is_group());
         assert!(s.doc().layers().len() > layers + 3);
         assert_ne!(color(&s), before);

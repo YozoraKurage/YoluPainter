@@ -378,7 +378,7 @@ mod tests {
 
     #[test]
     fn the_names_carry_no_numbers() {
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             for choice in GpuMemory::LEVELS.into_iter().chain([GpuMemory::Mib(1500)]) {
                 let name = choice.name(lang);
                 assert!(

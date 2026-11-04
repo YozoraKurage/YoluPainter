@@ -119,8 +119,11 @@ CI の定義は `actionlint .github/workflows/*.yml` で実行せずに検査で
 
 ## 画面の文字と、パネルだけの確かめ
 
-画面の文字は、日本語と英語を `crates/yolu-app/locales/{ja,en}/<モジュール>.ftl`（Fluent）に置き、コードはキーで引きます（引数の無い文は `Lang::t`、引数のある文は `Lang::f`、core の断りの理由は `Lang::reason`）。文は実行ファイルに埋め込むので、配る物は 1 つのファイルのままです。
-日英でキーの組と引数の名前が同じこと、コードが引くキーが両方にあること、どこからも引かれないキーが無いことは `cargo test -p yolu-app --test headless ftl_keys::` が見ます。数・配列・定数の選びは、今も `Lang::pick(日, 英)` を使います。
+画面の文字は、言語ごとに `crates/yolu-app/locales/<タグ>/<モジュール>.ftl`（Fluent。`ja`・`en`・`zh-TW`）に置き、コードはキーで引きます（引数の無い文は `Lang::t`、引数のある文は `Lang::f`、core の断りの理由は `Lang::reason`）。文は実行ファイルに埋め込みます（`build.rs` が `locales/` の下のフォルダを全部埋めます）。その言語に無いキーは英語の文で出ます。
+日英でキーの組と引数の名前が同じこと、コードが引くキーが両方にあること、どこからも引かれないキーが無いこと、ほかの言語のキーと引数が英語にあることは `cargo test -p yolu-app --test headless ftl_keys::` が見ます。
+言語ごとの名前・引用の印・括弧・句点・フォントは `crates/yolu-app/src/lang.rs` の言語の表に、タグと OS の言語の見分けは `crates/yolu-ops/src/text.rs` に置きます（訳の足し方は [CONTRIBUTING.md](../CONTRIBUTING.md)）。
+`Lang::pick(日, 英)` はテストと `yolu-mock` の下書きで日英の文を比べる・書くためのもので、本番の画面の文には使いません（日本語のほかの言語で英語になるため）。core・yolu-io の日本語の診断の文をそのまま出す所は `Lang::core_text(日, 英)` です。
+中国語・韓国語の画面のフォント（Noto Sans CJK）は配布物の `fonts/` の別のファイルで、開発では `cargo xtask fetch-fonts` で `crates/yolu-app/assets/fonts-cjk/` に取ります。
 
 画面を作る・直すときの見た目の確かめには、開発用のクレート `yolu-mock`（配らない）を使います。本物の部品（`yolu_app::ui`）とダミーの値で、パネルや下書きを開く・PNG に撮る入口です。
 

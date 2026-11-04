@@ -80,7 +80,7 @@ fn rulers_of(h: &H, layer: LayerId) -> Vec<yolu_core::Ruler> {
 
 #[test]
 fn only_a_layer_with_rulers_shows_the_icon_right_of_its_thumbnail_and_before_its_name() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let (mut h, a, _b) = two_layers(lang);
         assert!(
             icons(&h, lang).is_empty(),
@@ -103,7 +103,7 @@ fn only_a_layer_with_rulers_shows_the_icon_right_of_its_thumbnail_and_before_its
 
 #[test]
 fn a_plain_click_selects_the_row_and_opens_the_ruler_section_of_the_properties() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let (mut h, a, b) = two_layers(lang);
         common::rulers::symmetry_2d(h.app_mut(), (32.0, 32.0), (0.0, 1.0), 6, true);
         h.set_selected_layer(Some(b));
@@ -170,7 +170,7 @@ fn shift_click_hides_every_ruler_of_the_layer_and_again_shows_them_each_one_undo
 
 #[test]
 fn dragging_the_icon_to_another_row_moves_every_ruler_there_in_one_undo_step() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let (mut h, a, b) = two_layers(lang);
         {
             let s = h.app_mut();
@@ -282,7 +282,7 @@ fn disabled_at(h: &H, label: &str, at: Rect) -> bool {
 #[test]
 fn the_delete_buttons_of_the_options_bar_and_the_tool_properties_agree_and_follow_the_selected_ruler_of_this_layer(
 ) {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let (mut h, a, b) = two_layers(lang);
         h.act(Action::SelectTool(Tool::Ruler));
         h.run();
@@ -402,7 +402,7 @@ fn escape_and_losing_the_focus_drop_the_held_icon_without_moving_anything() {
 
 #[test]
 fn the_icon_menu_toggles_the_visibility_and_the_scope_and_deletes_in_one_undo_each() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let (mut h, a, _b) = two_layers(lang);
         {
             let s = h.app_mut();
@@ -623,7 +623,7 @@ fn props_of(lang: Lang) -> (H, LayerId) {
 
 #[test]
 fn the_ruler_section_lists_rows_with_eye_snap_mark_space_and_delete_and_each_edit_is_one_undo() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let (mut h, layer) = props_of(lang);
         let (line, sym2, sym3) = {
             let s = h.app_mut();
@@ -718,7 +718,7 @@ fn the_ruler_section_lists_rows_with_eye_snap_mark_space_and_delete_and_each_edi
 
 #[test]
 fn a_slider_drag_in_the_selected_ruler_fields_is_one_undo_step_and_scope_buttons_hide_and_show() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let (mut h, layer) = props_of(lang);
         let id = common::rulers::symmetry_2d(h.app_mut(), (32.0, 32.0), (0.0, 1.0), 4, true);
         h.doc_mut().clear_history().unwrap();
@@ -767,7 +767,7 @@ fn shot(h: &mut H, rect: Rect, name: &str) {
 
 #[test]
 fn snapshot_the_layer_list_with_ruler_icons() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let (mut h, a, _b) = two_layers(lang);
         {
             let s = h.app_mut();
@@ -811,7 +811,7 @@ fn snapshot_the_layer_list_with_ruler_icons() {
 
 #[test]
 fn snapshot_the_ruler_section_of_the_properties_for_2d_and_3d() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for three_d in [false, true] {
             let (mut h, _layer) = props_of(lang);
             {
@@ -828,9 +828,9 @@ fn snapshot_the_ruler_section_of_the_properties_for_2d_and_3d() {
             // 区分の終わり（2D は「キャンバスの中心」、3D は最後の「見えない面にも写す」）の下まで
             let last = match (three_d, lang) {
                 (false, Lang::Ja) => "キャンバスの中心",
-                (false, Lang::En) => "Canvas Center",
+                (false, _) => "Canvas Center",
                 (true, Lang::Ja) => "見えない面にも写す",
-                (true, Lang::En) => "Paint Hidden Surfaces",
+                (true, _) => "Paint Hidden Surfaces",
             };
             let end = rect_of(&h, last, |r| body.contains(r.center())).bottom() + 8.0;
             let group = common::shot::group(&h, yolu_app::Tab::Properties);
@@ -855,7 +855,7 @@ fn snapshot_the_ruler_section_of_the_properties_for_2d_and_3d() {
 
 #[test]
 fn snapshot_the_ruler_tool_properties() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1600.0, 1000.0, 64);
         {
             let s = h.app_mut();
@@ -891,7 +891,7 @@ fn snapshot_the_ruler_tool_properties() {
 
 #[test]
 fn snapshot_the_canvas_shows_the_effective_ruler_strong_and_the_other_special_ruler_faint() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 800.0, 64);
         {
             let s = h.app_mut();
@@ -967,7 +967,7 @@ fn clipped_texts(h: &H) -> Vec<String> {
 fn the_ruler_screens_have_no_instruction_text_and_the_english_ones_no_japanese() {
     let words_ja = ["クリックして", "ドラッグして", "押して", "ください"];
     let words_en = ["Click", "Drag", "Press", "Please"];
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let (mut h, layer) = props_of(lang);
         {
             let s = h.app_mut();

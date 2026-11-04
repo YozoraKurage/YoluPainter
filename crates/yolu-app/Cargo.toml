@@ -52,7 +52,7 @@ libc = "0.2"           # MIT OR Apache-2.0（落ちたときの記録: Linux は
 # objc2 系は MIT（objc2-app-kit・objc2-foundation は Zlib OR Apache-2.0 OR MIT）。macOS の配布物にだけ入る（`tools/third-party.py --target universal-apple-darwin` が数え、`tools/licenses-reviewed.json` に登録している。Windows の配布物には入らない）
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-core-foundation", "NSApplication", "NSEvent", "NSResponder", "NSView", "NSWindow"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSGeometry", "NSString"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSGeometry", "NSLocale", "NSString"] }
 block2 = "0.6"
 
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]

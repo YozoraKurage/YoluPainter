@@ -875,7 +875,7 @@ fn escape_focus_loss_and_switching_tools_drop_the_drag_without_painting() {
 
 #[test]
 fn snapshot_gradient_shapes_and_ruler_in_3d_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let (mut h, rect) = cube_view();
         h.set_lang(lang);
         h.color_mut().set_main([0.95, 0.55, 0.1, 1.0]);

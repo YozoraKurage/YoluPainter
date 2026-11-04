@@ -947,7 +947,7 @@ fn make_mask_on_an_inverted_mask_still_hides_the_outside_and_takes_one_undo() {
 /// 新しいレイヤーへのコピーは 1 回の操作の予算（`stroke_budget_bytes`）を上限にとる。超えたら断って何も積まない。
 #[test]
 fn copy_to_a_new_layer_over_the_budget_is_refused_and_changes_nothing() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 800.0, 256);
         h.set_lang(lang);
         h.color_mut().set_main([0.1, 0.8, 0.2, 1.0]);
@@ -1290,7 +1290,7 @@ fn the_layer_menu_shows_ctrl_j_for_duplicate_only_while_there_is_no_selection() 
                 _ => None,
             })
     };
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = AppState::new_in(64, 64, lang);
         let duplicate = lang.pick("複製", "Duplicate");
         assert_eq!(

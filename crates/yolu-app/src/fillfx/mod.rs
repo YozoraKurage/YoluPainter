@@ -183,7 +183,7 @@ impl Lang {
         match e {
             FillError::Invalid(what) => self.with_reason(
                 self.t("fillfx-invalid-projection"),
-                self.pick(
+                self.core_text(
                     (*what).to_owned(),
                     match *what {
                         "投影に有限でない値" | "箱に有限でない値" => {
@@ -201,7 +201,7 @@ impl Lang {
                     .to_owned(),
                 ),
             ),
-            other => self.pick(other.to_string(), "The projection cannot be used".into()),
+            other => self.core_text(other.to_string(), "The projection cannot be used".into()),
         }
     }
 }

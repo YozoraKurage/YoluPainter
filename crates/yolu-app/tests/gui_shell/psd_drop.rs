@@ -140,7 +140,7 @@ fn a_dropped_psd_becomes_a_row_of_the_import_files_window_and_starts_no_texture_
 
 #[test]
 fn several_dropped_psds_all_become_rows_of_one_window() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let dir = temp_dir(&format!("several-{lang:?}"));
         let first = psd_file(&dir, "a.psd", false);
         let second = psd_file(&dir, "b.psd", false);

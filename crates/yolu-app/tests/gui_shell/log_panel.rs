@@ -115,7 +115,7 @@ fn copied(h: &Harness<'_, AppState>) -> Option<String> {
 #[test]
 fn log_panel_snapshot() {
     let mut snapshots = egui_kittest::SnapshotResults::new();
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = harness(sample(lang), vec2(420.0, 220.0));
         h.run();
         h.snapshot(lang.pick("log_panel", "log_panel_english"));
@@ -180,7 +180,7 @@ fn the_same_notice_in_a_row_is_one_line_with_a_count_and_the_oldest_rows_go_past
 
 #[test]
 fn errors_only_copy_and_clear() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = harness(sample(lang), vec2(420.0, 220.0));
         assert_eq!(row_labels(&h).len(), 4);
         // エラーだけに絞る（切り替え）

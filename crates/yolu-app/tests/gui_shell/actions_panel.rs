@@ -54,7 +54,7 @@ fn sample(lang: Lang) -> AppState {
     yolu_app::automation::attach(&mut app, test_dir("actions-panel"));
     let names = match lang {
         Lang::Ja => ["汚しの下地", "縁の摩耗", "マスクを反転"],
-        Lang::En => ["Grime Base", "Edge Wear", "Invert Mask"],
+        _ => ["Grime Base", "Edge Wear", "Invert Mask"],
     };
     for name in names {
         let command = yolu_ops::parse_command(
@@ -70,7 +70,7 @@ fn sample(lang: Lang) -> AppState {
 #[test]
 fn actions_panel_snapshot() {
     let mut snapshots = egui_kittest::SnapshotResults::new();
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = harness(sample(lang), vec2(300.0, 160.0));
         h.run();
         if lang == Lang::Ja {

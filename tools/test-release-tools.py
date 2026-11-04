@@ -187,6 +187,18 @@ class LicenseChecks(unittest.TestCase):
         with patch.object(licenses, 'ROOT', self.root):
             self.assertIn('許容外', ' '.join(licenses.bundled_assets('fixture', config)[1]))
 
+    def test_fetched_font_is_checked_only_when_present(self):
+        """配布元から取って置くファイル（リポジトリに入れない）: 無ければ通り、置いてあれば SHA-256 を照合する。"""
+        config, item, _ = self.bundled()
+        item['fetched'] = [{'path': 'cjk/face.otf', 'sha256': hashlib.sha256(b'cjk').hexdigest()}]
+        with patch.object(licenses, 'ROOT', self.root):
+            self.assertFalse(licenses.bundled_assets('fixture', config)[1], '取る前は通る')
+            (self.root / 'cjk').mkdir()
+            (self.root / 'cjk' / 'face.otf').write_bytes(b'cjk')
+            self.assertFalse(licenses.bundled_assets('fixture', config)[1])
+            (self.root / 'cjk' / 'face.otf').write_bytes(b'other')
+            self.assertIn('SHA-256', ' '.join(licenses.bundled_assets('fixture', config)[1]))
+
     def test_bundled_font_outside_the_repository_is_rejected(self):
         config, item, _ = self.bundled()
         item['files'][0]['path'] = '../outside.ttf'

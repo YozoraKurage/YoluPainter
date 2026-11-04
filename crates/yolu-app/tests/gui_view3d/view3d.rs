@@ -537,7 +537,7 @@ fn two_material_model() -> yolu_protocol::Model {
 #[test]
 fn painting_a_face_without_a_material_names_the_slot_in_the_selected_language() {
     use yolu_app::lang::Lang;
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let (mut h, _) = cube_view(1000.0, 700.0, 256);
         h.set_lang(lang);
         let mut model = two_material_model();
@@ -554,7 +554,7 @@ fn painting_a_face_without_a_material_names_the_slot_in_the_selected_language() 
         let message = h.message().to_owned();
         match lang {
             Lang::Ja => assert!(message.contains("マテリアルなし"), "{message}"),
-            Lang::En => {
+            _ => {
                 assert!(message.contains("No material"), "{message}");
                 assert!(message.chars().all(|c| (c as u32) < 0x3000), "{message}");
             }
@@ -754,7 +754,7 @@ fn placeholder_new_project_is_unavailable_while_saving() {
     use egui_kittest::kittest::{NodeT, Queryable};
     use yolu_app::lang::Lang;
     use yolu_app::state::DialogRequest;
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1000.0, 700.0, 64);
         h.set_lang(lang);
         click_tab(&mut h, yolu_app::Tab::View3d);

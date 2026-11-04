@@ -1050,9 +1050,7 @@ pub fn is_starter_shape(doc: &Document) -> bool {
         return false;
     };
     let named = |l: &Layer, names: &dyn Fn(Lang) -> String| {
-        [Lang::Ja, Lang::En]
-            .into_iter()
-            .any(|lang| l.name() == names(lang))
+        Lang::ALL.into_iter().any(|lang| l.name() == names(lang))
     };
     let plain = |l: &Layer| {
         l.visible()

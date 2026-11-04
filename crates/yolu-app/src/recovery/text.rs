@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn settings_tooltips_name_the_setting_without_repeating_its_value() {
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             let (interval, keep) = (settings_tip(lang, "interval"), settings_tip(lang, "keep"));
             assert_ne!(interval, keep, "ラベルごとに別の文");
             for text in [interval, keep] {
@@ -286,7 +286,7 @@ mod tests {
         assert!(Lang::Ja
             .recovery_usage_tip(&other, 1, None)
             .contains("ほかのウィンドウ  5 MB"));
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             let tip = lang.recovery_usage_tip(&other, 2 << 30, Some(1 << 30));
             assert_eq!(has_japanese(&tip), lang == Lang::Ja, "{tip}");
         }
@@ -303,7 +303,7 @@ mod tests {
             needed: 9,
             reserve: 7,
         }));
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             let text = lang.recovery_failed(&low);
             assert!(
                 !text.chars().any(|c| c.is_ascii_digit()),

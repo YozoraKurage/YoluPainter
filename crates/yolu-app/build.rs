@@ -56,16 +56,32 @@ fn main() {
     }
 }
 
-/// 画面の文（`locales/<言語>/<モジュール>.ftl`）を `include_str!` で埋める一覧を `OUT_DIR/locales.rs` に書く（言語ごとに
-/// `(モジュール, 文)` の並び。ファイルの名前の順）。フォルダが無ければ空の一覧（存在しないパスは rerun-if-changed に渡さない）。
+/// 画面の文（`locales/<タグ>/<モジュール>.ftl`）を `include_str!` で埋める一覧を `OUT_DIR/locales.rs` に書く。`locales/` の下のフォルダを
+/// 全部数え、`LOCALES` に（タグ, `(モジュール, 文)` の並び）をタグの順に、`COUNT` にフォルダの数を置く（ファイルの名前の順）。
+/// タグと言語の対応は `src/lang.rs` の言語の表が持ち、表に行の無いフォルダはコンパイルの時に断る。
+/// フォルダが無ければ空の一覧（存在しないパスは rerun-if-changed に渡さない）。
 fn embed_locales() {
     let root = Path::new(&env::var("CARGO_MANIFEST_DIR").expect("cargo が渡す")).join("locales");
     if root.is_dir() {
         println!("cargo:rerun-if-changed={}", root.display());
     }
-    let mut out = String::new();
-    for (name, dir) in [("JA", "ja"), ("EN", "en")] {
-        let mut files: Vec<_> = std::fs::read_dir(root.join(dir))
+    let mut tags: Vec<String> = std::fs::read_dir(&root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .collect();
+    tags.sort();
+    let mut out = format!(
+        "pub(crate) const COUNT: usize = {};\npub(crate) const LOCALES: &[(&str, &[(&str, &str)])] = &[\n",
+        tags.len()
+    );
+    for tag in &tags {
+        let dir = root.join(tag);
+        // フォルダの中のファイルの足し・消しで埋め直す
+        println!("cargo:rerun-if-changed={}", dir.display());
+        let mut files: Vec<_> = std::fs::read_dir(&dir)
             .into_iter()
             .flatten()
             .flatten()
@@ -73,14 +89,15 @@ fn embed_locales() {
             .filter(|path| path.extension().is_some_and(|e| e == "ftl"))
             .collect();
         files.sort();
-        out.push_str(&format!("pub(super) const {name}: &[(&str, &str)] = &[\n"));
+        out.push_str(&format!("    ({tag:?}, &[\n"));
         for path in files {
             let module = path.file_stem().unwrap().to_string_lossy().into_owned();
             let path = path.to_string_lossy().into_owned();
-            out.push_str(&format!("    ({module:?}, include_str!({path:?})),\n"));
+            out.push_str(&format!("        ({module:?}, include_str!({path:?})),\n"));
         }
-        out.push_str("];\n");
+        out.push_str("    ]),\n");
     }
+    out.push_str("];\n");
     let target = Path::new(&env::var("OUT_DIR").expect("cargo が渡す")).join("locales.rs");
     std::fs::write(&target, out).expect("OUT_DIR に書ける");
 }

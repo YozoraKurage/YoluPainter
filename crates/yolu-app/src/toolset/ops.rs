@@ -96,10 +96,7 @@ impl Refusal {
             ),
             Refusal::LastOfKind(tool) => {
                 // 英語の文の中では名前を小文字にする
-                let name = match lang {
-                    Lang::Ja => tool.name_in(lang).to_owned(),
-                    Lang::En => tool.name_in(lang).to_lowercase(),
-                };
+                let name = lang.name_in_sentence(tool.name_in(lang));
                 lang.f("toolset-one-tool-stays", &[("name", &name)])
             }
             Refusal::NoGroups => lang.t("toolset-this-tool-has-no-brush").into(),

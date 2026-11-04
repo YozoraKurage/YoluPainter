@@ -1207,7 +1207,7 @@ mod tests {
 
     #[test]
     fn failure_texts_name_what_failed_in_both_languages() {
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             for failure in [
                 Failure::Network,
                 Failure::Verify,

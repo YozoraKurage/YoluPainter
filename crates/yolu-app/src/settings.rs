@@ -536,7 +536,7 @@ pub fn load(path: &Path) -> (Settings, Vec<Problem>) {
 }
 
 /// アプリの起動で設定を読む。`load` と同じで、設定に言語が読めなかったとき（ファイルが無い・読めない・`language` の行が無い・値が正しくない）だけ、
-/// 言語を `system`（OS の言語。`lang::system_lang`）にする。`language=ja|en` が読めたなら、いつもそれが先。
+/// 言語を `system`（OS の言語。`lang::system_lang`）にする。`language=<タグ>`（`ja`・`en`・`zh-TW` など）が読めたなら、いつもそれが先。
 pub fn load_for_startup(path: &Path, system: Lang) -> (Settings, Vec<Problem>) {
     let (mut settings, problems, has_language) = load_marked(path);
     if !has_language {
@@ -586,7 +586,7 @@ const PAINT_KEYS: [&str; 7] = [
     "view3d_paint_alignment",
 ];
 
-/// `parse` に、言語（`language=ja|en`）を読めたかを添えたもの。読めなかった設定の言語は既定のまま（呼ぶ側が決める）。
+/// `parse` に、言語（`language=<タグ>`）を読めたかを添えたもの。読めなかった設定の言語は既定のまま（呼ぶ側が決める）。
 fn parse_marked(text: &str) -> (Settings, Vec<Problem>, bool) {
     let mut settings = Settings::default();
     let mut problems = Vec::new();
@@ -605,12 +605,12 @@ fn parse_marked(text: &str) -> (Settings, Vec<Problem>, bool) {
             })
         };
         match key.trim() {
-            "language" => match value {
-                "ja" | "en" => {
-                    settings.lang = if value == "ja" { Lang::Ja } else { Lang::En };
+            "language" => match Lang::from_tag(value) {
+                Some(lang) => {
+                    settings.lang = lang;
                     has_language = true;
                 }
-                _ => problems.push(Problem::Language(value.to_owned())),
+                None => problems.push(Problem::Language(value.to_owned())),
             },
             "export_padding" => match parse_padding(value) {
                 Some(v) => settings.export_padding = v,
@@ -888,7 +888,7 @@ fn parse_folder(value: &str) -> Option<Option<PathBuf>> {
 
 /// 書く内容。言語は常に、ほかは既定でないものだけ（何も変えていない間は今までと同じ中身）。
 fn render(settings: &Settings) -> String {
-    let mut text = format!("language={}\n", settings.lang.t("settings-en"));
+    let mut text = format!("language={}\n", settings.lang.tag());
     let default = Settings::default();
     if settings.export_padding != default.export_padding {
         let value = if settings.export_padding < 0 {
@@ -1607,7 +1607,7 @@ mod tests {
             assert_eq!(problems, vec![]);
             // 言語が書いてあれば、OS の言語によらずそれ
             for saved in Lang::ALL {
-                let text = format!("language={}\nexport_padding=8\n", saved.pick("ja", "en"));
+                let text = format!("language={}\nexport_padding=8\n", saved.tag());
                 let (settings, problems) = startup(Some(&text), system);
                 assert_eq!((settings.lang, settings.export_padding), (saved, 8));
                 assert_eq!(problems, vec![]);
@@ -1787,7 +1787,7 @@ mod tests {
                 "view3d_bloom_threshold"
             ]
         );
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             for key in keys.iter().copied() {
                 let name = setting_name(lang, key);
                 assert_ne!(
@@ -1962,7 +1962,7 @@ mod tests {
                 "view3d_paint_alignment"
             ]
         );
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             for key in keys.iter().copied() {
                 assert_ne!(
                     setting_name(lang, key),
@@ -2392,7 +2392,7 @@ mod tests {
             },
             Problem::Backups("5000".into()),
         ];
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             let texts: Vec<String> = problems.iter().map(|p| p.text(lang)).collect();
             for (i, a) in texts.iter().enumerate() {
                 assert_eq!(a.is_ascii(), lang == Lang::En, "{lang:?} {a}");
@@ -2438,7 +2438,7 @@ mod tests {
         .into_iter()
         .chain(BudgetKind::ALL.iter().map(|k| k.key()))
         {
-            for lang in Lang::ALL {
+            for lang in Lang::JA_EN {
                 assert_ne!(
                     setting_name(lang, key),
                     setting_name(lang, "unknown"),
@@ -2728,7 +2728,7 @@ mod tests {
             parse("disk_cache=nonsense\n").0.disk_cache,
             "読めない値は入のまま"
         );
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             for key in ["disk_cache", "disk_cache_folder", "disk_cache_limit_gib"] {
                 assert_ne!(
                     setting_name(lang, key),

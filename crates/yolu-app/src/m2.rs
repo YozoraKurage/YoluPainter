@@ -698,39 +698,36 @@ pub fn dual_mode_label(lang: Lang, mode: DualBrushMode) -> &'static str {
     }
 }
 
-/// 合成モードの名前（日本語は Unity 版と同じ、英語は Photoshop の呼び名）。
+/// 合成モードの名前（日本語は以前の Unity 実装と同じ、英語ほかは PSD の合成モードとして通じる呼び名。文は `locales/<言語>/m2.ftl`）。
 pub fn blend_label(lang: Lang, mode: BlendMode) -> &'static str {
-    if lang == Lang::Ja {
-        return crate::state::blend_name(mode);
-    }
     match mode {
-        BlendMode::Normal => "Normal",
-        BlendMode::Multiply => "Multiply",
-        BlendMode::Screen => "Screen",
-        BlendMode::Overlay => "Overlay",
-        BlendMode::Darken => "Darken",
-        BlendMode::Lighten => "Lighten",
-        BlendMode::ColorDodge => "Color Dodge",
-        BlendMode::ColorBurn => "Color Burn",
-        BlendMode::LinearDodge => "Linear Dodge (Add)",
-        BlendMode::LinearBurn => "Linear Burn",
-        BlendMode::HardLight => "Hard Light",
-        BlendMode::SoftLight => "Soft Light",
-        BlendMode::VividLight => "Vivid Light",
-        BlendMode::LinearLight => "Linear Light",
-        BlendMode::PinLight => "Pin Light",
-        BlendMode::HardMix => "Hard Mix",
-        BlendMode::Difference => "Difference",
-        BlendMode::Exclusion => "Exclusion",
-        BlendMode::Subtract => "Subtract",
-        BlendMode::Divide => "Divide",
-        BlendMode::Hue => "Hue",
-        BlendMode::Saturation => "Saturation",
-        BlendMode::Color => "Color",
-        BlendMode::Luminosity => "Luminosity",
-        BlendMode::DarkerColor => "Darker Color",
-        BlendMode::LighterColor => "Lighter Color",
-        BlendMode::PassThrough => "Pass Through",
+        BlendMode::Normal => lang.t("m2-blend-normal"),
+        BlendMode::Multiply => lang.t("m2-blend-multiply"),
+        BlendMode::Screen => lang.t("m2-blend-screen"),
+        BlendMode::Overlay => lang.t("m2-blend-overlay"),
+        BlendMode::Darken => lang.t("m2-blend-darken"),
+        BlendMode::Lighten => lang.t("m2-blend-lighten"),
+        BlendMode::ColorDodge => lang.t("m2-blend-color-dodge"),
+        BlendMode::ColorBurn => lang.t("m2-blend-color-burn"),
+        BlendMode::LinearDodge => lang.t("m2-blend-linear-dodge"),
+        BlendMode::LinearBurn => lang.t("m2-blend-linear-burn"),
+        BlendMode::HardLight => lang.t("m2-blend-hard-light"),
+        BlendMode::SoftLight => lang.t("m2-blend-soft-light"),
+        BlendMode::VividLight => lang.t("m2-blend-vivid-light"),
+        BlendMode::LinearLight => lang.t("m2-blend-linear-light"),
+        BlendMode::PinLight => lang.t("m2-blend-pin-light"),
+        BlendMode::HardMix => lang.t("m2-blend-hard-mix"),
+        BlendMode::Difference => lang.t("m2-blend-difference"),
+        BlendMode::Exclusion => lang.t("m2-blend-exclusion"),
+        BlendMode::Subtract => lang.t("m2-blend-subtract"),
+        BlendMode::Divide => lang.t("m2-blend-divide"),
+        BlendMode::Hue => lang.t("m2-blend-hue"),
+        BlendMode::Saturation => lang.t("m2-blend-saturation"),
+        BlendMode::Color => lang.t("m2-blend-color"),
+        BlendMode::Luminosity => lang.t("m2-blend-luminosity"),
+        BlendMode::DarkerColor => lang.t("m2-blend-darker-color"),
+        BlendMode::LighterColor => lang.t("m2-blend-lighter-color"),
+        BlendMode::PassThrough => lang.t("m2-blend-pass-through"),
     }
 }
 
@@ -2430,7 +2427,7 @@ mod tests {
 
     #[test]
     fn labels_exist_in_both_languages() {
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             for p in presets() {
                 let (name, category) = preset_label(lang, p);
                 assert!(!name.is_empty() && !category.is_empty(), "{}", p.id);

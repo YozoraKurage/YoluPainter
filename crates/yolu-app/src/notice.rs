@@ -640,7 +640,7 @@ mod tests {
         let mut keys = std::collections::HashSet::new();
         for source in Source::ALL {
             assert!(keys.insert(source.key()), "{}", source.key());
-            for lang in Lang::ALL {
+            for lang in Lang::JA_EN {
                 assert!(!source.name(lang).is_empty());
             }
         }

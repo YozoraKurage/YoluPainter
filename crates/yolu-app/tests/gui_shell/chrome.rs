@@ -96,7 +96,7 @@ fn assert_status_bar_left_is_empty(h: &mut Harness<'_, YoluApp>, what: &str) {
 /// 短く出て、数秒で消える。message の中身と、`shell::status_text`・`state.message` を読む口は今のまま。
 #[test]
 fn the_status_bar_left_is_empty_and_the_message_shows_as_a_small_toast_in_it_that_goes_away() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 800.0, 512);
         h.set_lang(lang);
         h.act(Action::LoadDemoModel);
@@ -293,7 +293,7 @@ fn a_sentence_written_inside_a_frame_shows_again_when_it_repeats() {
 #[test]
 fn the_status_bar_right_end_shows_the_build_and_the_memory_with_a_breakdown_tooltip() {
     use yolu_app::usage::Usage;
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 800.0, 256);
         h.set_lang(lang);
         *h.message_mut() = String::new();
@@ -506,7 +506,7 @@ const NAMED: [&str; 14] = [
 
 #[test]
 fn the_texts_the_user_named_never_appear_on_screen() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for model in [false, true] {
             for tab in [Tab::Canvas, Tab::View3d] {
                 let mut h = app(1280.0, 800.0, 512);

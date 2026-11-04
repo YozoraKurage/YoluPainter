@@ -1004,7 +1004,7 @@ mod tests {
     #[test]
     fn every_command_has_a_japanese_and_an_english_name_and_english_has_no_japanese() {
         let mut app = AppState::new(32, 32);
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             app.lang = lang;
             app.session.selected_layer = None;
             for c in COMMANDS {

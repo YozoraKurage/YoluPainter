@@ -110,7 +110,7 @@ fn has_japanese(text: &str) -> bool {
 #[test]
 fn the_filter_menu_has_only_filters_and_anchors_without_a_heading() {
     let filter_count = yolu_app::fx::FilterKind::ALL.len();
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for edit_mask in [false, true] {
             let mut s = AppState::new(64, 64);
             s.set_lang(lang);
@@ -182,7 +182,7 @@ fn the_filter_menu_has_only_filters_and_anchors_without_a_heading() {
 
 #[test]
 fn an_anchor_that_cannot_be_read_says_why_in_a_tooltip_and_not_after_the_name() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = AppState::new(64, 64);
         s.set_lang(lang);
         let generators = yolu_app::fx::menu::add_generator_entries(&s, FilterTarget::Content);
@@ -220,7 +220,7 @@ fn an_anchor_that_cannot_be_read_says_why_in_a_tooltip_and_not_after_the_name() 
 
 #[test]
 fn the_filter_and_generator_buttons_open_separate_flat_lists() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = AppState::new(64, 64);
         s.set_lang(lang);
         let filters = yolu_app::m2_menu::entries(
@@ -247,7 +247,7 @@ fn the_filter_and_generator_buttons_open_separate_flat_lists() {
 
 #[test]
 fn the_mask_menu_adds_to_the_mask_and_has_the_mask_switches() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = AppState::new(64, 64);
         s.set_lang(lang);
         let layer = s.selected_layer().unwrap();
@@ -337,7 +337,7 @@ fn the_mask_menu_adds_to_the_mask_and_has_the_mask_switches() {
 
 #[test]
 fn the_layer_menu_is_one_list_for_the_menu_bar_and_the_right_click() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = AppState::new(64, 64);
         s.set_lang(lang);
         let id = s.selected_layer().unwrap();
@@ -372,7 +372,7 @@ fn the_layer_menu_is_one_list_for_the_menu_bar_and_the_right_click() {
 
 #[test]
 fn the_new_path_layer_entry_is_in_the_menu_bar_and_the_right_click_but_not_in_the_layers_toolbar() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let label = lang.pick("新規パスレイヤー", "New Path Layer");
         // 並びの項目: 押せる・描いている最中は押せない・キーは持たない
         let mut s = AppState::new(64, 64);
@@ -428,7 +428,7 @@ fn the_new_path_layer_entry_is_in_the_menu_bar_and_the_right_click_but_not_in_th
 
 #[test]
 fn the_layer_menu_goes_add_then_effects_then_groups_then_the_rest() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = AppState::new(64, 64);
         s.set_lang(lang);
         let v = shell::menu_entries(&s, 2);
@@ -512,7 +512,7 @@ fn the_layer_menu_goes_add_then_effects_then_groups_then_the_rest() {
 
 #[test]
 fn the_fill_submenus_list_the_shelf_images_and_the_file_import() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = AppState::new(64, 64);
         s.set_lang(lang);
         let import = lang.pick("ファイルから取り込む…", "Import from File…");
@@ -687,7 +687,7 @@ fn a_menu_gradient_fill_is_one_undo_and_opens_the_shape_for_editing() {
 #[test]
 fn the_gradient_entry_is_a_nested_choice_of_shapes_named_like_the_fill_panel() {
     use yolu_app::panels::fill_props::shape_name;
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = AppState::new(64, 64);
         s.set_lang(lang);
         let fills = submenu(
@@ -749,7 +749,7 @@ fn the_gradient_entry_is_a_nested_choice_of_shapes_named_like_the_fill_panel() {
 
 #[test]
 fn the_fill_panels_shape_choice_lists_the_same_names_in_the_same_order_as_the_menu() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = AppState::new(64, 64);
         s.set_lang(lang);
         s.act(Action::LayerMenu(Op::FillGradient(Shape::Sphere)));
@@ -1504,7 +1504,7 @@ fn escape_closes_the_fill_submenu_first_and_then_the_menu() {
 
 #[test]
 fn the_layers_toolbar_fill_and_adjustment_buttons_open_the_kinds() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 800.0, 64);
         h.set_lang(lang);
         h.run();
@@ -1554,7 +1554,7 @@ fn the_layers_toolbar_fill_and_adjustment_buttons_open_the_kinds() {
 #[test]
 fn the_layer_menu_adds_filters_and_generators_to_the_pixels_or_to_the_mask_being_edited() {
     use yolu_app::fx::FxOp;
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 800.0, 64);
         h.set_lang(lang);
         h.run();
@@ -1699,7 +1699,7 @@ fn toolbar_rects(h: &Harness<'_, YoluApp>, label: &str) -> Vec<Rect> {
 
 #[test]
 fn the_layers_toolbar_has_no_filter_generator_mask_or_move_buttons() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 800.0, 64);
         h.set_lang(lang);
         h.run();
@@ -1767,7 +1767,7 @@ fn the_blank_menu_of_the_layer_list_has_no_effect_entries_without_a_selected_lay
 
 #[test]
 fn the_layers_toolbar_buttons_all_fit_in_the_panel_at_the_minimum_window_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(960.0, 640.0, 64);
         h.set_lang(lang);
         h.run();
@@ -1817,7 +1817,7 @@ fn tool_label(lang: Lang, tool: Tool) -> String {
     match (lang, tool.key()) {
         (_, "") => tool.name_in(lang).to_string(),
         (Lang::Ja, key) => format!("{}（{key}）", tool.name_in(lang)),
-        (Lang::En, key) => format!("{} ({key})", tool.name_in(lang)),
+        (_, key) => format!("{} ({key})", tool.name_in(lang)),
     }
 }
 
@@ -1867,7 +1867,7 @@ fn the_two_colors_sit_at_the_bottom_of_the_tool_strip_and_never_overlap_the_tool
     use yolu_app::ui::theme::TOOL_STRIP_WIDTH;
     // 1000 はツールが帯を埋めない高さ（ツールが増えて、800 では帯がほぼ埋まる）
     for (width, height) in [(1280.0, 1000.0), (1280.0, 800.0), (960.0, 640.0)] {
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             let mut h = app(width, height, 64);
             h.set_lang(lang);
             h.run();
@@ -1924,7 +1924,7 @@ fn the_two_colors_sit_at_the_bottom_of_the_tool_strip_and_never_overlap_the_tool
 
 #[test]
 fn the_color_squares_swap_and_reset_and_the_color_panel_no_longer_holds_them() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 800.0, 64);
         h.set_lang(lang);
         h.color_mut().set_main([0.2, 0.4, 0.8, 1.0]);
@@ -1991,7 +1991,7 @@ fn color_panel(width: f32, height: f32, wheel: bool, lang: Lang) -> Harness<'sta
 
 #[test]
 fn the_color_panel_gives_the_freed_height_to_the_color_surface_and_holds_no_swatches() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for wheel in [false, true] {
             // 同じ幅で高さだけ増やすと、色の面（四角・円）が高くなる（2 枚の色の分の高さを取らない）
             let surface = |height: f32| {
@@ -2029,7 +2029,7 @@ fn the_color_panel_gives_the_freed_height_to_the_color_surface_and_holds_no_swat
 
 #[test]
 fn the_color_panel_wraps_hex_and_alpha_to_two_lines_when_narrow() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         // 幅が足りなければ 16 進とアルファは 2 行（どちらも欄の幅）、あれば 1 行に並ぶ
         let narrow = color_panel(150.0, 360.0, false, lang);
         let hex = narrow.get_all_by_value("#000000").next().unwrap().rect();
@@ -2074,7 +2074,7 @@ fn snapshot_open_menu(h: &mut Harness<'_, YoluApp>, name: &str) {
 
 #[test]
 fn snapshot_the_layer_menu_with_the_image_submenu_open_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 800.0, 64);
         h.set_lang(lang);
         let (_, _) = shelf_image(h.app_mut(), "四色");
@@ -2097,7 +2097,7 @@ fn snapshot_the_layer_menu_with_the_image_submenu_open_in_both_languages() {
 
 #[test]
 fn snapshot_the_layer_menu_with_the_gradient_shapes_open_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 800.0, 64);
         h.set_lang(lang);
         h.run();
@@ -2119,7 +2119,7 @@ fn snapshot_the_layer_menu_with_the_gradient_shapes_open_in_both_languages() {
 
 #[test]
 fn snapshot_the_filter_menu_and_the_layer_menu_generators_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         // メニューバーの「フィルター」: フィルターとアンカーだけ
         let mut h = app(1280.0, 800.0, 64);
         h.set_lang(lang);

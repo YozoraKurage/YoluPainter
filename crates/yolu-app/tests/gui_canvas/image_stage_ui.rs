@@ -304,7 +304,7 @@ fn right_texts(h: &Harness<'_, YoluApp>) -> Vec<String> {
 
 #[test]
 fn snapshot_the_image_stage_panel_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for (target, name) in [
             (FilterTarget::Content, "color"),
             (FilterTarget::Mask, "mask"),

@@ -39,7 +39,7 @@ fn label(lang: Lang) -> &'static str {
 
 #[test]
 fn the_seam_switch_needs_a_model_and_turns_the_document_setting() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 1000.0, 128);
         h.app_mut().set_language(lang);
         selected_filter(&mut h, FilterKind::Blur);

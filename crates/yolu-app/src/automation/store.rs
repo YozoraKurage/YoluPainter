@@ -503,7 +503,7 @@ mod tests {
         assert_eq!(problems.len(), 3);
         assert!(store.is_empty());
         for p in &problems {
-            for lang in Lang::ALL {
+            for lang in Lang::JA_EN {
                 let text = p.message(lang);
                 assert!(text.contains(&p.file), "{text}");
             }

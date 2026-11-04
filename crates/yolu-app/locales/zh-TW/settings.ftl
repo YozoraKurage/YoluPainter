@@ -44,5 +44,4 @@ settings-disk-cache = 磁碟快取
 settings-cache-folder = 快取資料夾
 settings-cache-limit = 快取上限
 settings-setting = 設定
-settings-en = zh-TW
 settings-alignment = 對齊

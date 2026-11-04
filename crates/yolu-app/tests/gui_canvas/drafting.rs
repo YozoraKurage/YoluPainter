@@ -449,7 +449,7 @@ fn ruler_snaps_a_stroke_started_near_it_and_ctrl_one_and_two_toggle_the_snaps() 
 #[test]
 fn ruler_tool_options_and_overlays_in_both_languages() {
     let mut snapshots = SnapshotResults::new();
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = state();
         s.set_lang(lang);
         s.set_tool(Tool::Ruler);
@@ -734,7 +734,7 @@ fn shift_eraser_and_effect_brush_use_the_same_atomic_stroke() {
 
 #[test]
 fn tool_strip_and_snap_buttons_fit_the_minimum_window_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = common::app(960.0, 640.0, 64);
         h.set_lang(lang);
         h.run();
@@ -745,7 +745,7 @@ fn tool_strip_and_snap_buttons_fit_the_minimum_window_in_both_languages() {
             let label = match (lang, tool.key()) {
                 (_, "") => tool.name_in(lang).to_string(),
                 (Lang::Ja, key) => format!("{}（{key}）", tool.name_in(lang)),
-                (Lang::En, key) => format!("{} ({key})", tool.name_in(lang)),
+                (_, key) => format!("{} ({key})", tool.name_in(lang)),
             };
             let r = h.get_by_label(&label).rect();
             assert!(

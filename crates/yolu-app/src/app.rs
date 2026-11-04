@@ -688,6 +688,8 @@ pub struct YoluApp {
     fit_window: bool,
     /// 外へ出したウィンドウ（OS のウィンドウ。中のドック・置き場所）。
     pub detached: crate::detach::Detached,
+    /// 画面の言語のフォント（中国語・韓国語。配布物の別のファイルを、その言語を選んだときに読む）。
+    lang_fonts: crate::ui::fonts::LangFonts,
     /// メインウィンドウで描いた、落としたファイルの行き先（ブラシの一覧・ライブラリの格子）。
     root_drops: crate::detach::DropRects,
     /// メインウィンドウの HWND の値（Windows。別ウィンドウの持ち主にする）。
@@ -1202,6 +1204,7 @@ impl YoluApp {
             window_checked: false,
             fit_window: false,
             detached: crate::detach::Detached::new(),
+            lang_fonts: Default::default(),
             root_drops: crate::detach::DropRects::default(),
             #[cfg(windows)]
             main_hwnd: None,
@@ -2975,6 +2978,9 @@ impl eframe::App for YoluApp {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         // フレームの外側（拾った色・合成・設定と並びの保存）が書いた文も、前と同じ文でも新しい知らせにする
         let prior = self.state.message_begin();
+        if let Some(text) = self.lang_fonts.sync(ui.ctx(), self.state.lang) {
+            self.state.warn(crate::notice::Source::Settings, text);
+        }
         crate::screen_pick::frame(&mut self.state, _frame);
         self.apply_compositing();
         self.apply_gpu_memory();

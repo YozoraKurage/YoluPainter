@@ -236,7 +236,7 @@ fn ctrl_minus_and_plus_do_not_zoom_the_whole_interface() {
 
 #[test]
 fn about_names_the_product_and_the_version_and_nothing_else() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = AppState::new_in(64, 64, lang);
         s.act(Action::About);
         // 正式版は製品名と版だけ。試験版（0.4.0-rc.1 のような版）には、版のあとに試験版の印が付く
@@ -246,7 +246,7 @@ fn about_names_the_product_and_the_version_and_nothing_else() {
         let mark = match (beta, lang) {
             (false, _) => "",
             (true, Lang::Ja) => "（ベータ版）",
-            (true, Lang::En) => " (beta)",
+            (true, _) => " (beta)",
         };
         assert_eq!(s.message(), format!("YoluPainter {version}{mark}"));
     }
@@ -284,7 +284,7 @@ fn the_save_notice_names_the_file_and_the_writer_is_the_product_name() {
 #[test]
 fn the_view_menu_has_no_test_cube_or_test_figure() {
     use yolu_app::view3d::pose::PoseAction;
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let s = AppState::new_in(64, 64, lang);
         let entries = yolu_app::shell::menu_entries(&s, 5);
         assert!(entries.len() > 8, "表示のメニューを引けている");

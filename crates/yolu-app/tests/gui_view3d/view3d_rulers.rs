@@ -1064,7 +1064,7 @@ fn in_orthographic_strokes_are_pulled_onto_the_projected_lines() {
 
 #[test]
 fn snapshots_of_the_3d_mirror_and_the_straight_ruler_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for what in ["symmetry", "line", "dim"] {
             let (mut h, rect) = cube_view();
             h.set_lang(lang);

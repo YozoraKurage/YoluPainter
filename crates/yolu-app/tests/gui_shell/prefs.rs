@@ -473,7 +473,7 @@ fn headless_the_choices_mark_the_current_value_and_add_an_odd_one() {
     );
     assert_eq!(
         labels(&entries(&s, PrefChoice::Language)),
-        ["日本語", "English"]
+        ["日本語", "English", "繁體中文"]
     );
     // ファイルに書いた中途半端な数も、選択肢に出る（選び直せる）
     s.prefs_mut().settings.undo_budget = Budget::Mib(777);
@@ -937,7 +937,7 @@ fn every_category_fits_the_window_without_scrolling_at_1280_by_800_in_both_langu
             "{what}: 右の欄 {pane} に、中身 {drawn} が収まらない"
         );
     };
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         english(&mut h, lang);
         for category in Category::ALL
             .into_iter()
@@ -1059,7 +1059,7 @@ fn the_pen_category_has_the_tablet_pressure_toggle_which_reaches_the_pen_input_a
 fn headless_wintab_unavailable_is_a_warning_from_settings_in_both_languages() {
     use yolu_app::notice::{Kind, Source};
     use yolu_app::pen::Unavailable;
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = AppState::new_in(64, 64, lang);
         s.wintab_unavailable(Unavailable::NoLibrary);
         let notice = s.current_notice().expect("知らせた").clone();
@@ -1151,7 +1151,7 @@ fn the_pen_category_has_the_pen_input_choice_which_reaches_the_pen_input_and_sur
 fn every_row_scrolls_into_view_in_a_low_window_in_both_languages() {
     let dir = settings_dir("small");
     let path = dir.join("YoluPainter").join("settings.conf");
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app_with_settings(&path, vec2(960.0, 400.0));
         // 「ペン」の区分（macOS のタブレットの筆圧と、Windows のペンの入力）も並べた形で確かめる
         h.prefs_mut().tablet_row = true;
@@ -1270,7 +1270,7 @@ fn every_row_scrolls_into_view_in_a_low_window_in_both_languages() {
 #[test]
 fn settings_is_the_last_item_of_the_edit_menu_after_a_separator_and_not_in_the_view_menu() {
     use yolu_app::ui::menu::Entry;
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = state();
         s.set_lang(lang);
         let edit = yolu_app::shell::menu_entries(&s, 1);
@@ -1331,7 +1331,7 @@ fn ctrl_comma_opens_the_settings_and_the_shortcut_list_names_it() {
         .find(|b| b.action() == Some(Action::Prefs(PrefsAction::Open)))
         .expect("一覧に設定のキーがある");
     assert_eq!(yolu_app::shortcuts::key_label(&binding), "Ctrl+,");
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         h.set_lang(lang);
         assert_eq!(
             yolu_app::commands::for_action(&binding.action().unwrap())

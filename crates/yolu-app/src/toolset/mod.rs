@@ -744,12 +744,11 @@ impl ToolSet {
     pub(crate) fn rename_slot(&mut self, id: SlotId, name: Option<&str>) -> Result<bool, Refusal> {
         self.check_unlocked()?;
         let slot = self.slot_mut(id).ok_or(Refusal::Missing)?;
-        let builtin = slot.tool.name_in(Lang::Ja);
-        let builtin_en = slot.tool.name_in(Lang::En);
-        // ツールの表の名前と同じ名前は、名前を持たない（言語を替えたら、その言語の名前になる）
+        let tool = slot.tool;
+        // ツールの表の名前（どれかの言語）と同じ名前は、名前を持たない（言語を替えたら、その言語の名前になる）
         let name = name
             .and_then(clean_name)
-            .filter(|n| n != builtin && n != builtin_en);
+            .filter(|n| Lang::ALL.iter().all(|l| n != tool.name_in(*l)));
         if slot.name == name {
             return Ok(false);
         }
@@ -843,7 +842,7 @@ impl ToolSet {
         // 組み込みのグループの名前と同じなら、名前を持たない（言語で替わる）
         let same_builtin = group
             .builtin
-            .is_some_and(|g| g.name(Lang::Ja) == name || g.name(Lang::En) == name);
+            .is_some_and(|g| Lang::ALL.iter().any(|l| g.name(*l) == name));
         let next = (!same_builtin).then_some(name);
         if group.name == next {
             return Ok(false);

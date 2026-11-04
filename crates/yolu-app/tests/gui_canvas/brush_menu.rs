@@ -62,7 +62,7 @@ fn group_tab(h: &H, name: &str) -> Rect {
 
 #[test]
 fn the_row_menu_starts_with_the_brush_settings_and_opens_the_detail_of_that_brush() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = window();
         language(&mut h, lang);
         let (settings, rename, duplicate) = lang.pick(
@@ -124,7 +124,7 @@ fn the_row_menu_renames_in_the_row_and_escape_leaves_the_name_alone() {
 
 #[test]
 fn the_row_menu_moves_a_brush_to_another_group_from_a_nested_list() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = window();
         language(&mut h, lang);
         let pencil = lang.pick("鉛筆", "Pencil");

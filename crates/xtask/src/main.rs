@@ -1,3 +1,4 @@
+mod fonts;
 mod macos;
 mod netguard;
 mod preflight;
@@ -22,7 +23,7 @@ const PRIVATE_KEY_ENV: &str = "YOLUPAINTER_UPDATE_PRIVATE_KEY";
 const PUBLIC_KEY_ENV: &str = "YOLUPAINTER_UPDATE_PUBLIC_KEY";
 /// exe とインストーラーのアイコン（ロゴ。build.rs も同じファイルを読む）。
 const LOGO_ICON: &str = "crates/yolu-app/assets/logo/yolupainter.ico";
-const USAGE: &str = "命令: preflight [--target T]... [--kind stable|prerelease] [--only 確かめ,...] [--installer] [--offline] / netguard / build --target T --release [--require-update-key] / bundle --target T（build・bundle の T は x86_64-pc-windows-msvc・x86_64-unknown-linux-gnu・aarch64-unknown-linux-gnu（試作）・universal-apple-darwin。universal-apple-darwin は macOS の上で） / installer --target T / mcpb --target T / symbols --target T / updater-json --version V --assets DIR [--sign] [--key-file PATH] / verify --version V --assets DIR --public-key HEX / beta-channel --version V --assets DIR --public-key HEX --output DIR [--existing PATH] / keygen --output PATH / pubkey --key-file PATH";
+const USAGE: &str = "命令: preflight [--target T]... [--kind stable|prerelease] [--only 確かめ,...] [--installer] [--offline] / netguard / fetch-fonts / build --target T --release [--require-update-key] / bundle --target T（build・bundle の T は x86_64-pc-windows-msvc・x86_64-unknown-linux-gnu・aarch64-unknown-linux-gnu（試作）・universal-apple-darwin。universal-apple-darwin は macOS の上で） / installer --target T / mcpb --target T / symbols --target T / updater-json --version V --assets DIR [--sign] [--key-file PATH] / verify --version V --assets DIR --public-key HEX / beta-channel --version V --assets DIR --public-key HEX --output DIR [--existing PATH] / keygen --output PATH / pubkey --key-file PATH";
 /// リポジトリの根（`crates/xtask` の 2 つ上）。`canonicalize` は使わない: Windows では `\\?\C:\…` の形になり、
 /// makensis や Python に渡す道が、その形に対応しているとは限らないため。
 fn root() -> PathBuf {
@@ -67,6 +68,9 @@ fn execute(mut args: impl Iterator<Item = String>) -> Result<()> {
     }
     if command == "netguard" {
         return netguard::run(args);
+    }
+    if command == "fetch-fonts" {
+        return fonts::fetch(args);
     }
     let mut target = None;
     let mut version = None;
@@ -330,6 +334,15 @@ fn cli_exe_name(target: &str) -> &'static str {
 fn executables(target: &str) -> [&'static str; 2] {
     [exe_name(target), cli_exe_name(target)]
 }
+/// 言語のフォントと、その許諾の全文の、配布物の中の名前（`fonts/…`。Mac は .app の `Contents/Resources/` の下に同じ名前で置く）。
+fn font_names() -> Vec<String> {
+    fonts::FONTS
+        .iter()
+        .map(|font| font.file)
+        .chain(["OFL-Noto.txt"])
+        .map(|file| format!("{}/{file}", fonts::PAYLOAD_DIR))
+        .collect()
+}
 /// アーカイブ（zip・tar.gz）とインストーラーの段に入れるファイルの、配布物の中の名前（`/` 区切り）。ここが唯一の一覧。
 fn payload_names(target: &str) -> Vec<String> {
     executables(target)
@@ -343,7 +356,17 @@ fn payload_names(target: &str) -> Vec<String> {
                 .filter(|_| target.contains("linux")),
         )
         .map(str::to_owned)
+        .chain(font_names())
         .collect()
+}
+/// 言語のフォントの配布物の中の名前（`fonts/…`）に対する元のファイル（許諾はリポジトリ、フォントは `cargo xtask fetch-fonts` の置き先）。
+fn font_source(root: &Path, name: &str) -> Option<PathBuf> {
+    let file = name.strip_prefix(&format!("{}/", fonts::PAYLOAD_DIR))?;
+    Some(if file == "OFL-Noto.txt" {
+        root.join(fonts::LICENSE)
+    } else {
+        fonts::dir(root).join(file)
+    })
 }
 /// docs/ の下のファイルの、リポジトリの根からの相対の名前（`/` 区切り・並べ替え済み）。.md 以外（画像など）も数える。
 fn docs_files(root: &Path) -> Result<Vec<String>> {
@@ -408,6 +431,7 @@ fn payload_source(root: &Path, target: &str, license_dir: &Path, name: &str) -> 
         "THIRD_PARTY_LICENSES.txt" => license_dir.join("THIRD_PARTY_LICENSES.txt"),
         LINUX_DESKTOP_SCRIPT => root.join("installer/linux").join(LINUX_DESKTOP_SCRIPT),
         LINUX_DESKTOP_ICON => root.join("crates/yolu-app/assets/logo/yolupainter-256.png"),
+        _ if font_source(root, name).is_some() => font_source(root, name).expect("上で確かめた"),
         _ if executables(target).contains(&name) => {
             root.join("target").join(target).join("release").join(name)
         }
@@ -451,6 +475,7 @@ fn third_party(root: &Path, target: &str) -> Command {
 /// アーカイブ・インストーラーに入れるファイル（名前 → 元）。許諾の全文の束もここで作る。
 fn payload(root: &Path, target: &str) -> Result<Vec<(String, PathBuf)>> {
     check_docs_listed(root)?;
+    fonts::verify(root)?;
     run(&mut third_party(root, target))?;
     let license_dir = root
         .join("target/third-party")
@@ -2515,6 +2540,16 @@ mod tests {
                     };
                     assert_eq!(path, &expected);
                     assert!(path.is_file(), "{name} が無い");
+                    continue;
+                }
+                // 言語のフォントは `cargo xtask fetch-fonts` の置き先（git に入れない）、許諾の全文はリポジトリのファイル
+                if let Some(file) = name.strip_prefix("fonts/") {
+                    let expected = if file == "OFL-Noto.txt" {
+                        root.join(fonts::LICENSE)
+                    } else {
+                        fonts::dir(&root).join(file)
+                    };
+                    assert_eq!(path, &expected);
                     continue;
                 }
                 assert_eq!(path, &root.join(name));

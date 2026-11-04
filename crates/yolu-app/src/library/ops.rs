@@ -85,11 +85,10 @@ fn stem_of(rel: &str) -> String {
 /// 1 つのファイルをライブラリへ入れた結果の文（「「Images/a.png」をライブラリに入れました。」・すでにあったとき）。
 fn put_note(lang: Lang, rel: &str, existed: bool) -> String {
     let name = lang.quote(rel);
-    match (lang, existed) {
-        (Lang::Ja, false) => format!("{name}をライブラリに入れました。"),
-        (Lang::Ja, true) => format!("{name}はすでにライブラリにあります。"),
-        (Lang::En, false) => format!("Added {name} to the library."),
-        (Lang::En, true) => format!("{name} is already in the library."),
+    if existed {
+        lang.f("library-is-already-in-the-library", &[("name", &name)])
+    } else {
+        lang.f("library-added-file-to-the-library", &[("name", &name)])
     }
 }
 
@@ -419,10 +418,7 @@ impl AppState {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default(),
-            many => match lang {
-                Lang::Ja => format!("{} 件", many.len()),
-                Lang::En => format!("{} files", many.len()),
-            },
+            many => lang.f("library-files-count", &[("count", &many.len())]),
         };
         self.library_spawn_write(name, Attempt::LibraryAdd, move |cancel, lang| {
             let (mut added, mut existing, mut refused) = (Vec::new(), Vec::new(), Vec::new());

@@ -32,7 +32,7 @@ pub enum SetsError {
     /// 範囲外の番号（組み込みの組は変えられない）。
     Index,
     /// 起動のとき読めなかったファイルが設定のフォルダに残っている（上書きしないので、足す・名前を変える・消すはしない）。理由は日本語・英語の順。
-    Unreadable(String, String),
+    Unreadable(crate::lang::Texts),
     Store(StoreError),
 }
 
@@ -45,11 +45,11 @@ impl SetsError {
             ),
             SetsError::Name => lang.t("rampsets-the-name-is-empty").to_owned(),
             SetsError::Index => lang.t("rampsets-built-in-gradients-cannot-be").to_owned(),
-            SetsError::Unreadable(ja, en) => {
-                let why = lang.pick(ja, en);
+            SetsError::Unreadable(texts) => {
+                let why = texts.get(lang);
                 lang.f(
                     "rampsets-cannot-save-the-gradients-because",
-                    &[("why", why)],
+                    &[("why", &why)],
                 )
             }
             SetsError::Store(e) => lang.with_reason(
@@ -121,7 +121,7 @@ impl RampSets {
     pub fn group_name(lang: Lang, group: usize) -> String {
         let builtins = builtin::groups([0.0; 4], [0.0; 4]);
         match builtins.get(group) {
-            Some(g) => lang.pick(g.ja, g.en).to_owned(),
+            Some(g) => (g.name)(lang).to_owned(),
             None => lang.t("rampsets-mine").to_owned(),
         }
     }
@@ -134,7 +134,7 @@ impl RampSets {
                 .items
                 .into_iter()
                 .map(|b| Entry {
-                    name: lang.pick(b.ja, b.en).to_owned(),
+                    name: (b.name)(lang).to_owned(),
                     ramp: b.ramp,
                 })
                 .collect(),
@@ -157,10 +157,9 @@ impl RampSets {
     fn persist(&mut self) -> Result<(), SetsError> {
         // 読めなかったファイルは上書きしない。保存できないまま一覧にだけ残すと、再起動で黙って消えるので、足す・名前を変える・消すを断って理由を出す
         if let Some(e) = &self.problem {
-            return Err(SetsError::Unreadable(
-                e.describe(Lang::Ja),
-                e.describe(Lang::En),
-            ));
+            return Err(SetsError::Unreadable(crate::lang::Texts::by_lang(|l| {
+                e.describe(l)
+            })));
         }
         match &self.store {
             Some(store) => store.save(&self.user).map_err(SetsError::Store),

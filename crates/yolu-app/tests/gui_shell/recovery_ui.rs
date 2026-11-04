@@ -296,7 +296,7 @@ fn discarding_asks_first_and_the_confirm_is_a_separate_modal_window() {
 
 #[test]
 fn an_empty_window_writes_nothing_where_the_list_would_be_in_either_language() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let dir = TempDir::new("empty");
         let mut h = started(&dir, lang);
         // 世代が 1 つも無くても、メニューから開ける（間隔と世代の数を選べる）。一覧の場所は空くだけで、文言は出さない
@@ -320,7 +320,7 @@ fn an_empty_window_writes_nothing_where_the_list_would_be_in_either_language() {
                 "捨てる",
                 "閉じる",
             ],
-            Lang::En => vec![
+            _ => vec![
                 "Recovery",
                 "restart_alt",
                 "Checkpoint interval",
@@ -690,7 +690,7 @@ fn row(name: &str, ago_ms: u64, documents: usize, problem: Option<&str>) -> Row 
 
 #[test]
 fn the_window_looks_the_same_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut state = AppState::new_in(64, 64, lang);
         let mut window = yolu_app::recovery::window::WindowState::default();
         window.set_rows(vec![
@@ -724,7 +724,7 @@ fn the_window_looks_the_same_in_both_languages() {
 
 #[test]
 fn the_details_open_to_the_limit_slider_and_a_custom_amount_is_marked_in_both_languages() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut state = AppState::new_in(64, 64, lang);
         let mut window = yolu_app::recovery::window::WindowState::default();
         window.set_rows(vec![row("作品.ylp", 150_000, 2, None)]);
@@ -762,7 +762,7 @@ fn the_details_open_to_the_limit_slider_and_a_custom_amount_is_marked_in_both_la
 
 #[test]
 fn the_disk_amount_is_chosen_with_the_level_names_and_the_details_slider_gives_a_custom_amount() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let dir = TempDir::new("disk");
         crashed_root(&dir, 1, None);
         let mut h = started(&dir, lang);
@@ -839,7 +839,7 @@ fn the_disk_amount_is_chosen_with_the_level_names_and_the_details_slider_gives_a
 
 #[test]
 fn the_used_amount_is_one_short_text_and_its_tooltip_breaks_it_down() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let dir = TempDir::new("usage");
         crashed_root(&dir, 2, None);
         let mut h = started(&dir, lang);

@@ -243,7 +243,7 @@ fn a_layer_drag_ends_cleanly_when_its_row_scrolls_out_of_view() {
 /// ふつうの幅では横に並べる。どちらでも一覧は不透明度の下から始まる。
 #[test]
 fn the_blend_mode_and_opacity_stack_when_the_layers_panel_is_too_narrow() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for (width, stacked) in [(1280.0, false), (960.0, true)] {
             let mut h = app(width, 800.0, 128);
             if stacked {
@@ -742,7 +742,7 @@ fn headless_deleting_a_group_takes_its_contents_and_undo_brings_them_back() {
 
 #[test]
 fn headless_a_document_that_is_only_one_group_cannot_lose_it() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = AppState::new(64, 64);
         s.set_lang(lang);
         let a = s.selected_layer().unwrap();

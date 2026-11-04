@@ -413,7 +413,7 @@ fn a_new_pie_menu_gets_items_and_a_key_and_opens_and_runs() {
 #[test]
 fn the_pie_editor_runs_to_the_right_edge_of_the_search_field_and_a_long_candidate_is_cut_with_dots()
 {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = editor(lang);
         section(&mut h, Section::Pies);
         // 名前の長い別のパイを足しておく（「別のパイ」の候補になる）

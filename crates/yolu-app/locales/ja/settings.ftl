@@ -44,5 +44,4 @@ settings-disk-cache = ディスクキャッシュ
 settings-cache-folder = キャッシュの場所
 settings-cache-limit = キャッシュの上限
 settings-setting = 設定
-settings-en = ja
 settings-alignment = アライメント

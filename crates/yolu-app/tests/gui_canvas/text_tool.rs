@@ -441,7 +441,7 @@ fn headless_moving_a_text_layer_moves_its_values_and_flipping_is_refused() {
             },
         ),
     ] {
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             s.set_lang(lang);
             s.message_mut().clear();
             let before = s.doc().undo_count();
@@ -500,7 +500,7 @@ fn headless_a_text_layer_whose_font_is_missing_shows_its_pixels_and_refuses_edit
     s.set_selected_layer(Some(id));
     // OS のフォントは空の一覧（この PC に入っているフォントで結果が変わらないように）
     s.text_mut().fonts.list = Some(Default::default());
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         s.set_lang(lang);
         assert!(s.text_font_problem(id).is_some());
         s.act(Action::Text(TextAction::Edit(id)));
@@ -823,7 +823,7 @@ fn the_text_color_choice_in_the_tool_properties_switches_the_source_and_the_laye
 }
 
 fn text_color_gpu() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 900.0, 256);
         h.set_lang(lang);
         h.act(Action::SelectTool(Tool::Text));
@@ -927,10 +927,10 @@ fn painted(
 }
 
 fn shots_gpu() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let tag = match lang {
             Lang::Ja => "ja",
-            Lang::En => "en",
+            _ => "en",
         };
         let mut h = app(1280.0, 1100.0, 512);
         h.set_lang(lang);

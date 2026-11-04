@@ -127,7 +127,7 @@ fn the_names_core_puts_in_its_texts_are_the_menu_names() {
                 yolu_core::FilterSpec::new(kind.settings()).channels(&[Channel::Color]),
             )
             .expect_err("色のチャンネルには足せない");
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             let text = lang.core_error(&error);
             for other in scalar_only {
                 assert!(text.contains(other.name(lang)), "{lang:?} {kind:?}: {text}");
@@ -324,7 +324,7 @@ fn a_slider_drag_is_one_undo_step_and_menu_choices_are_separate_steps() {
 
 #[test]
 fn locks_refuse_effect_edits_with_a_reason_in_both_languages_and_change_nothing() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = AppState::new(64, 64);
         s.set_lang(lang);
         let layer = s.selected_layer().unwrap();
@@ -577,7 +577,7 @@ fn a_mask_anchor_needs_the_mask_and_an_anchor_generator_needs_an_anchor_below() 
 #[test]
 fn the_add_menu_lists_every_kind_and_gives_a_reason_for_the_ones_a_channel_refuses() {
     use yolu_app::ui::menu::{leaves, Entry};
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut s = AppState::new(64, 64);
         s.set_lang(lang);
         // 入り口は 2 つ: 「フィルターを追加」はフィルターだけ、「ジェネレーターを追加」はジェネレーターだけを平らに並べる
@@ -2174,7 +2174,7 @@ fn decoded_images_share_one_budget_and_a_refusal_is_tried_again_only_when_it_cou
 
 #[test]
 fn an_image_that_cannot_be_decoded_says_why_in_the_read_only_reason_and_opens_once_it_can() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let dir = temp_dir(&format!("undecodable-{}", lang.pick("ja", "en")));
         let path = dir.join("two.ylp");
         let mut s = AppState::new(64, 64);

@@ -303,7 +303,7 @@ fn bake_current_set(h: &mut egui_kittest::Harness<'_, yolu_app::YoluApp>) {
 
 #[test]
 fn the_bake_button_sits_in_the_texture_set_bar_next_to_the_configuration_and_opens_the_window() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 800.0, 256);
         h.set_lang(lang);
         h.run();
@@ -362,7 +362,7 @@ fn set_panel(width: f32, lang: Lang) -> egui_kittest::Harness<'static, yolu_app:
 fn the_bar_buttons_never_overlap_and_the_bake_button_leaves_when_the_panel_is_too_narrow() {
     /// ベイクのボタンを出す、帯の幅の境（足す・消す・ベイク・設定の 4 つが並ぶ幅）。
     const BAKE_MIN_BAR_WIDTH: f32 = 128.0;
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let configure = lang.pick("プロジェクト設定…", "Project Configuration…");
         let add = lang.pick(
             "空のテクスチャセットを追加（今のセットと同じ大きさ・チャンネル）",
@@ -478,7 +478,7 @@ fn snapshot_set_bar(h: &mut egui_kittest::Harness<'_, yolu_app::YoluApp>, lang: 
 
 #[test]
 fn snapshot_the_bake_button_marked_with_its_reason_and_unmarked_once_baked() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut h = app(1280.0, 800.0, 128);
         h.set_lang(lang);
         h.act(Action::LoadDemoModel);

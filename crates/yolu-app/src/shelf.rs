@@ -61,8 +61,7 @@ fn build_builtin_material(id: &str, lang: Lang) -> Option<SmartMaterial> {
     let entry = smart_library::entries()
         .iter()
         .find(|e| format!("{BUILTIN_PREFIX}{}", e.id) == id)?;
-    let japanese = lang == Lang::Ja;
-    entry.build(entry.name(japanese), japanese).ok()
+    entry.build(entry.name(lang.tag()), lang.tag()).ok()
 }
 
 /// 同梱の素材の項目の ID の前置き（プロジェクトの棚の ID は UUID なので重ならない）。
@@ -442,48 +441,35 @@ pub(crate) fn from_cached(cached: Cached) -> (Inspected, Option<SmartKind>) {
     (out, kind)
 }
 
-/// 棚を読めなかった理由。日本語は yolu-io の診断のまま、英語は種類ごとの短い文（診断の本文は日本語なので、英語のウィンドウには出さない）。
+/// 棚を読めなかった理由（選べる言語ごとの文）。日本語は yolu-io の診断のまま、ほかの言語は種類ごとの短い文（診断の本文は日本語なので、
+/// ほかの言語のウィンドウには出さない）。
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Unreadable {
-    ja: String,
-    en: String,
-}
+pub struct Unreadable(crate::lang::Texts);
 
 impl Unreadable {
+    /// その言語の文（無ければ英語）。
     pub fn reason(&self, lang: Lang) -> &str {
-        lang.pick(&self.ja, &self.en)
+        self.0.get(lang)
     }
 
-    /// yolu-io の失敗の種類から（日本語は診断のまま、英語は短い文）。
+    /// 言語ごとの文（選べる言語の全部で `text` を呼ぶ）。
+    pub fn by_lang(text: impl Fn(Lang) -> String) -> Unreadable {
+        Unreadable(crate::lang::Texts::by_lang(text))
+    }
+
+    /// yolu-io の失敗の種類から（日本語は診断のまま、ほかの言語は短い文）。
     pub fn from_error(e: &yolu_io::Error) -> Unreadable {
-        Unreadable {
-            ja: Lang::Ja.io_error(e),
-            en: Lang::En.io_error(e),
-        }
+        Unreadable::by_lang(|l| l.io_error(e))
     }
 
-    /// 言語ごとの文（`|l| l.t("キー")` で、.ftl の文を両方の言語で引く）。
+    /// 言語ごとの文（`|l| l.t("キー")` で、.ftl の文を全部の言語で引く）。
     pub fn keyed(text: impl Fn(Lang) -> &'static str) -> Unreadable {
-        Unreadable {
-            ja: text(Lang::Ja).to_owned(),
-            en: text(Lang::En).to_owned(),
-        }
+        Unreadable::by_lang(|l| text(l).to_owned())
     }
 
-    /// 言語ごとの文（呼ぶ側が言語ごとに作った文）。
-    pub fn pair(ja: &str, en: &str) -> Unreadable {
-        Unreadable {
-            ja: ja.to_owned(),
-            en: en.to_owned(),
-        }
-    }
-
-    /// 両方の言語で同じ文。
+    /// どの言語でも同じ文。
     pub fn same(text: &str) -> Unreadable {
-        Unreadable {
-            ja: text.to_owned(),
-            en: text.to_owned(),
-        }
+        Unreadable::by_lang(|_| text.to_owned())
     }
 }
 
@@ -717,12 +703,11 @@ impl ShelfState {
         if self.builtin_lang == Some(lang) {
             return;
         }
-        let japanese = lang == Lang::Ja;
         self.builtin = smart_library::entries()
             .iter()
             .map(|e| {
                 let id = format!("{BUILTIN_PREFIX}{}", e.id);
-                let name = e.name(japanese).to_owned();
+                let name = e.name(lang.tag()).to_owned();
                 Resource {
                     // 棚のファイルの索引の項目ではない（読む所は `metadata` の寸法だけで、無ければ 0）
                     metadata: Default::default(),
@@ -1413,10 +1398,7 @@ fn smart_block(file: &SmartFile, e: &yolu_io::Error) -> Block {
             if issues.is_empty() {
                 Block::Unreadable(Unreadable::from_error(e))
             } else {
-                Block::Unsupported(Unreadable {
-                    ja: Lang::Ja.unsupported_features(&issues),
-                    en: Lang::En.unsupported_features(&issues),
-                })
+                Block::Unsupported(Unreadable::by_lang(|l| l.unsupported_features(&issues)))
             }
         }
         block => block,
@@ -2458,29 +2440,26 @@ impl Attempt {
             .to_owned();
         };
         let q = lang.quote(name);
-        match lang {
-            Lang::Ja => match self {
-                Attempt::ShelfSave => format!("{q}をアセットに保存できません"),
-                Attempt::ShelfImport => format!("{q}をアセットに読み込めません"),
-                Attempt::ShelfChange => "アセットを変えられません".to_owned(),
-                Attempt::ShelfRemove => format!("{q}をアセットから消せません"),
-                Attempt::Place => format!("{q}を置けません"),
-                Attempt::LibraryUse => format!("{q}をライブラリから取り込めません"),
-                Attempt::LibraryAdd => format!("{q}をライブラリに入れられません"),
-                Attempt::LibraryRemove => format!("{q}をライブラリから消せません"),
-                Attempt::MaterialSave => format!("{q}をマテリアルとして保存できません"),
-            },
-            Lang::En => match self {
-                Attempt::ShelfSave => format!("Cannot save {q} to the project's assets"),
-                Attempt::ShelfImport => format!("Cannot import {q} into the project's assets"),
-                Attempt::ShelfChange => "Cannot change the project's assets".to_owned(),
-                Attempt::ShelfRemove => format!("Cannot remove {q} from the project's assets"),
-                Attempt::Place => format!("Cannot place {q}"),
-                Attempt::LibraryUse => format!("Cannot import {q} from the library"),
-                Attempt::LibraryAdd => format!("Cannot add {q} to the library"),
-                Attempt::LibraryRemove => format!("Cannot remove {q} from the library"),
-                Attempt::MaterialSave => format!("Cannot save {q} as a material"),
-            },
+        match self {
+            Attempt::ShelfSave => lang.f("shelf-cannot-save-name-to-the-assets", &[("name", &q)]),
+            Attempt::ShelfImport => {
+                lang.f("shelf-cannot-import-name-into-the-assets", &[("name", &q)])
+            }
+            Attempt::ShelfChange => lang.t("shelf-cannot-change-the-project-s-2").to_owned(),
+            Attempt::ShelfRemove => {
+                lang.f("shelf-cannot-remove-name-from-the-assets", &[("name", &q)])
+            }
+            Attempt::Place => lang.f("shelf-cannot-place-name", &[("name", &q)]),
+            Attempt::LibraryUse => {
+                lang.f("shelf-cannot-import-name-from-the-library", &[("name", &q)])
+            }
+            Attempt::LibraryAdd => lang.f("shelf-cannot-add-name-to-the-library", &[("name", &q)]),
+            Attempt::LibraryRemove => {
+                lang.f("shelf-cannot-remove-name-from-the-library", &[("name", &q)])
+            }
+            Attempt::MaterialSave => {
+                lang.f("shelf-cannot-save-name-as-a-material", &[("name", &q)])
+            }
         }
     }
 }
@@ -2490,10 +2469,10 @@ fn resized_note(lang: Lang, material: &SmartMaterial, resampled: bool) -> String
     if !resampled {
         return String::new();
     }
-    match lang {
-        Lang::Ja => format!("、{}×{} から変更", material.width(), material.height()),
-        Lang::En => format!(", resized from {}×{}", material.width(), material.height()),
-    }
+    lang.f(
+        "shelf-resized-from",
+        &[("width", &material.width()), ("height", &material.height())],
+    )
 }
 
 #[cfg(test)]

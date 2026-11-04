@@ -140,7 +140,7 @@ def bundled_assets(package, config):
             errors.append(f'{name}: 許諾または同梱ファイルの登録がありません')
         for pattern in item.get('file_globs', []):
             actual = {p.relative_to(ROOT).as_posix() for p in ROOT.glob(pattern) if p.is_file()}
-            reviewed = {spec['path'] for spec in item['files']}
+            reviewed = {spec['path'] for spec in [*item['files'], *item.get('fetched', [])]}
             for path in sorted(actual - reviewed):
                 errors.append(f'{name}: 未登録の同梱ファイル: {path}')
         verified = {}
@@ -162,6 +162,14 @@ def bundled_assets(package, config):
                 errors.append(f"{name}: {spec['path']} の SHA-256 が違います（確認済みの内容から変わっています）")
             else:
                 verified[spec['path']] = data
+        # 配布元から取って置くファイル（リポジトリに入れない。`cargo xtask fetch-fonts`）: 置いてあれば SHA-256 を照合する
+        # （無いときは配布物を作る段が断る）
+        for spec in item.get('fetched', []):
+            path = (ROOT / spec['path']).resolve()
+            if not path.is_relative_to(ROOT):
+                errors.append(f"{name}: リポジトリ外のパスは使えません: {spec['path']}")
+            elif path.is_file() and digest(path.read_bytes()) != spec['sha256']:
+                errors.append(f"{name}: {spec['path']} の SHA-256 が違います（確認済みの内容から変わっています）")
         license_file = item['license_file']
         if license_file['path'] in verified:
             try:

@@ -745,7 +745,7 @@ fn the_3d_aligned_destination_survives_reloading_the_brush_like_the_2d_offset() 
 
 #[test]
 fn the_offset_fields_are_disabled_with_the_reason_while_only_the_3d_view_can_be_painted() {
-    for lang in yolu_app::lang::Lang::ALL {
+    for lang in yolu_app::lang::Lang::JA_EN {
         let (mut h, rect) = cube_view();
         h.act(yolu_app::state::Action::M2Ui(yolu_app::m2::UiOp::Language(
             lang,

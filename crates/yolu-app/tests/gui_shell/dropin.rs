@@ -413,7 +413,7 @@ fn a_psd_and_two_images_go_to_two_texture_sets_and_the_assets_and_undo_per_set()
 /// ウィンドウのスクリーンショット: 入れ先の一覧を開いた形（画像の行・PSD の行）と、PSD の行の取り込みの確かめを開いた形（日英）。
 #[test]
 fn the_import_files_window_looks_right() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let dir = temp_dir(&format!("shots-{lang:?}"));
         let psd = psd_file(&dir, "body.psd", 32, true);
         let small = psd_file(&dir, "small.psd", 8, false);

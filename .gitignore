@@ -13,3 +13,4 @@
 # Python のバイトコードのキャッシュ（ツールの試験を回すと tools/ に出る）
 __pycache__/
 *.pyc
+/crates/yolu-app/assets/fonts-cjk/

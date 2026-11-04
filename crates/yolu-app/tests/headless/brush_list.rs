@@ -439,7 +439,7 @@ fn headless_built_in_brushes_are_taken_out_of_the_layout_and_become_copies_when_
     assert_eq!(chalk.name_in(Lang::En), "Chalk");
     assert_eq!(chalk.name_in(Lang::Ja), "チョーク");
     for e in s.brushes().lib.entries() {
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             assert!(!e.name_in(lang).is_empty());
         }
     }
@@ -795,7 +795,7 @@ fn headless_broken_brush_files_are_skipped_and_the_reason_is_shown_in_both_langu
     )
     .unwrap();
     let newer = std::fs::read(folder.join("brush-00000065.ylbrush")).unwrap();
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         let mut back = AppState::new_in(64, 64, lang);
         back.attach_brush_store(dir.clone());
         // 読めるものは読む
@@ -948,7 +948,7 @@ fn headless_when_the_brush_numbers_run_out_adding_is_refused_and_nothing_is_over
             std::fs::write(&top, "ごみ").unwrap();
         }
         let before = snapshot_of(&dir);
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             let mut back = AppState::new_in(64, 64, lang);
             back.attach_brush_store(dir.clone());
             let current = back.brushes().lib.current();
@@ -1178,7 +1178,7 @@ mod row_menu {
 
     #[test]
     fn headless_the_menu_starts_with_the_settings_and_lists_every_action_in_both_languages() {
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             let mut s = AppState::new(64, 64);
             s.set_lang(lang);
             let entries = menu_for(&mut s, b("pencil"));
@@ -1345,7 +1345,7 @@ mod row_menu {
         select(&mut s, b("pencil"));
         let id = s.selected_layer().unwrap();
         let stroke = s.begin_paint_stroke(id, false).unwrap();
-        for lang in Lang::ALL {
+        for lang in Lang::JA_EN {
             s.set_lang(lang);
             let entries = menu_for(&mut s, b("pencil"));
             let why = yolu_app::lang::refusals::during_stroke(lang);

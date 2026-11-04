@@ -1355,7 +1355,7 @@ fn drawn_texts(h: &H) -> Vec<String> {
 
 #[test]
 fn the_brush_panel_and_the_detail_window_speak_both_languages_without_clipped_text() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for (width, height) in [(1600.0, 960.0), (1280.0, 800.0)] {
             let mut h = app(width, height, 128);
             language(&mut h, lang);

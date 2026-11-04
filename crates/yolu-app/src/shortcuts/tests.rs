@@ -142,7 +142,7 @@ fn the_keys_in_button_tooltips_follow_the_shortcut_settings() {
 #[test]
 fn every_binding_has_a_localized_name_and_every_context_key_a_label() {
     let mut app = AppState::new(32, 32);
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         app.lang = lang;
         app.session.selected_layer = None;
         for binding in bindings() {
@@ -834,7 +834,7 @@ const HAND_WRITTEN_MENU_KEYS: [(usize, &str, &str, &str); 53] = [
 #[cfg(not(target_os = "macos"))]
 #[test]
 fn the_menu_keys_equal_the_hand_written_ones_the_menus_had_before() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         // 0: レイヤーを 1 つ選んでいる、1: 選択範囲がある、2: グループを選んでいる
         for state in 0..3 {
             let mut app = AppState::new_in(32, 32, lang);
@@ -916,7 +916,7 @@ fn the_menu_keys_equal_the_hand_written_ones_the_menus_had_before() {
 
 #[test]
 fn the_menu_key_text_is_the_primary_row_of_the_operations_own_command() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         // 選択範囲が無いときと、あるとき
         for selected in [false, true] {
             let mut app = AppState::new_in(32, 32, lang);
@@ -1016,7 +1016,7 @@ const MODE_COMMANDS: [&str; 4] = ["mode.paint", "mode.edit", "mode.pose", "mode.
 #[test]
 fn the_menu_names_are_the_names_in_the_command_table() {
     let mut checked = std::collections::BTreeSet::new();
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for (state, app) in naming_states(lang) {
             let mut items = all_menu_items(&app);
             // 選んでいるレイヤー以外のレイヤーを右クリックしたときのメニュー
@@ -1075,7 +1075,7 @@ fn the_menu_names_are_the_names_in_the_command_table() {
 /// 選んでいるレイヤーで言い方が変わる名前（複製・結合）は、レイヤーのメニューの項目と、キーの一覧の名前で同じ。
 #[test]
 fn the_layer_dependent_names_follow_the_selected_layer_in_both_the_menu_and_the_list() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for (state, app) in naming_states(lang) {
             let menu = crate::ui::menu::leaves(&crate::shell::menu_entries(&app, 2))
                 .into_iter()

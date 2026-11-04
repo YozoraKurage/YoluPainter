@@ -157,11 +157,21 @@ def expand(variable):
     return to_unix(out)
 
 
-def script_docs():
-    """スクリプトの DocFiles の一覧（入れ先からの相対。例: docs\\en\\GUIDE.md）。
+def script_files():
+    """スクリプトの DocFiles と FontFiles の一覧（入れ先からの相対。例: docs\\en\\GUIDE.md・fonts\\NotoSansTC-Regular.otf）。
     一覧が xtask の配布物の一覧と同じことは xtask の試験が確かめる。ここでは、一覧のとおりに入って・消えるかを確かめる。"""
     text = SCRIPT.read_text(encoding='utf-8-sig')
     return [f'{folder}\\{name}' for folder, name in re.findall(r'!insertmacro \$\{ACTION\} "([^"]+)" "([^"]+)"', text)]
+
+
+def script_docs():
+    """スクリプトの DocFiles の一覧（docs\\ の下だけ。バージョンごとの記録 docs\\.installed に載る物）。"""
+    return [name for name in script_files() if name.startswith('docs\\')]
+
+
+def script_fonts():
+    """スクリプトの FontFiles の一覧（fonts\\ の下）。"""
+    return [name for name in script_files() if name.startswith('fonts\\')]
 
 
 def build_installer(version, numeric, name, wait_steps=None, extra_docs=()):
@@ -192,7 +202,7 @@ def build_installer(version, numeric, name, wait_steps=None, extra_docs=()):
         patched = patched.replace(marker, ''.join(lines) + marker, 1)
         script = WORK / f'{name}.nsi'
         script.write_text(patched, encoding='utf-8-sig')
-    for doc in [*script_docs(), *extra_docs]:
+    for doc in [*script_files(), *extra_docs]:
         path = stage.joinpath(*doc.split('\\'))
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f'{doc} {version}\n')
@@ -303,6 +313,9 @@ def run(args):
     check((install / 'docs/en/GUIDE.md').read_text() == 'docs\\en\\GUIDE.md 0.1.0\n', '入った文書の中身は、その版の段のもの')
     recorded = (install / 'docs/.installed').read_text().split()
     check(recorded == docs, '入れた文書の名前の記録（docs\\.installed）が、一覧のとおりにある')
+    fonts = script_fonts()
+    missing = [font for font in fonts if not (install / Path(*font.split('\\'))).is_file()]
+    check(not missing and len(fonts) >= 7, f'言語のフォントが一覧のとおり fonts\\ に入る（{len(fonts)} 件。無いもの {missing}）')
     check(shortcut() is not None, 'スタートメニューのショートカットができる')
     # 文書を入れると出力先（$OUTDIR）が docs\en に移るので、SetOutPath で入れ先へ戻していないと、ショートカットの作業フォルダが docs\en になる。
     working = shortcut_working_dir(shortcut()) if shortcut() else None
@@ -456,6 +469,7 @@ def run(args):
         check(not (install / name).exists(), f'消える: {name}')
     left = [doc for doc in docs if (install / Path(*doc.split('\\'))).exists()]
     check(not left and not (install / 'docs/.installed').exists(), f'入れた文書と記録が全部消える（残り {left}）')
+    check(not (install / 'fonts').exists(), '言語のフォントと fonts\\ のフォルダが消える')
     check((install / 'docs/en/mine.txt').exists(), '利用者が docs\\ に置いたファイルは消さない（docs のフォルダも残る）')
     check((install / 'my-notes.txt').exists(), '入れていないファイルは消さない（入れ先も残る）')
     check(shortcut() is None, 'ショートカットが消える')

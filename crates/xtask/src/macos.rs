@@ -73,6 +73,12 @@ fn app_files() -> Vec<String> {
         SIGNATURE_FILE.to_owned(),
     ]
     .into_iter()
+    // 言語のフォント（アプリが実行ファイルの `../Resources/fonts/` から読む）
+    .chain(
+        super::font_names()
+            .into_iter()
+            .map(|name| format!("Contents/Resources/{name}")),
+    )
     .map(|name| format!("{APP_DIR}/{name}"))
     .collect()
 }
@@ -407,6 +413,7 @@ pub(crate) fn bundle() -> Result<()> {
     remove_if_present(&destination)?;
 
     check_docs_listed(&root)?;
+    super::fonts::verify(&root)?;
     run(&mut third_party(&root, MACOS_ARCHIVE))?;
     let license_dir = root
         .join("target/third-party")
@@ -444,6 +451,14 @@ pub(crate) fn bundle() -> Result<()> {
     )?;
     for (document, source) in &documents {
         copy_into(source, &folder.join(document), false)?;
+    }
+    for name in super::font_names() {
+        let source = super::font_source(&root, &name).expect("言語のフォントの名前");
+        copy_into(
+            &source,
+            &app.join(format!("Contents/Resources/{name}")),
+            false,
+        )?;
     }
 
     // 署名は束の中身が全部そろってから 1 回だけ（署名のあとに束の中を変えると、署名が崩れる）
@@ -651,6 +666,8 @@ mod tests {
             "YoluPainter.app/Contents/MacOS/yolupainter-cli",
             "YoluPainter.app/Contents/Resources/YoluPainter.icns",
             "YoluPainter.app/Contents/_CodeSignature/CodeResources",
+            "YoluPainter.app/Contents/Resources/fonts/NotoSansTC-Regular.otf",
+            "YoluPainter.app/Contents/Resources/fonts/OFL-Noto.txt",
             "LICENSE",
             "README.md",
             "README.en.md",
@@ -672,9 +689,11 @@ mod tests {
             assert!(!names.iter().any(|n| n.ends_with(left_out)), "{left_out}");
         }
         // 文書と許諾の表記は、Windows・Linux の配布物と同じ一覧（実行ファイルと、Linux だけのメニューの登録の台本とアイコンを除く）
+        // 言語のフォントは .app の中（`Contents/Resources/fonts/`）に置くので、ここでは比べない
         let others: Vec<String> = super::super::payload_names(yolu_update::WINDOWS_ARCHIVE)
             .into_iter()
             .skip(2)
+            .filter(|n| !n.starts_with("fonts/"))
             .collect();
         let ours: Vec<String> = payload_names()
             .into_iter()

@@ -404,7 +404,7 @@ fn builtin(en: &str) -> Ramp {
     yolu_app::rampsets::builtin::groups([0.9, 0.2, 0.1, 1.0], [0.1, 0.2, 0.9, 1.0])
         .into_iter()
         .flat_map(|g| g.items)
-        .find(|i| i.en == en)
+        .find(|i| (i.name)(Lang::En) == en)
         .unwrap()
         .ramp
 }
@@ -1213,7 +1213,7 @@ fn a_disabled_panel_changes_nothing_and_opens_nothing() {
 
 #[test]
 fn the_panel_shows_names_and_values_only_in_both_languages_even_with_everything_open() {
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for features in [MAP, FILL] {
             let mut ramp = three().with_mixing(MixMode::Perceptual, LuminanceCorrection::High);
             if features.mixing {
@@ -1277,7 +1277,7 @@ fn a_narrow_panel_wraps_its_buttons_and_swatches_and_no_text_leaves_the_panel() 
             _ => {}
         }
     }
-    for lang in Lang::ALL {
+    for lang in Lang::JA_EN {
         for width in [200.0_f32, 240.0, 300.0] {
             let ramp = three().with_mixing(MixMode::Perceptual, LuminanceCorrection::High);
             let mut h = panel_with(ramp, MAP, lang, 1000.0);

@@ -173,3 +173,10 @@ lang-the-canvas-edge-exceeds-the = { $text }
 lang-too-many-layers-limit-2048 = { $text }
 lang-size-count-or-memory-limit = { $text }
 lang-unsupported-value-or-operation = { $text }
+
+lang-in-texture-set = テクスチャセット{ $set }で、{ $sentence }
+lang-the-layer-has-locked = レイヤーの{ $locks }がロックされています
+lang-a-parent-group-has-locked = 親グループの{ $locks }がロックされています
+lang-inactive-effects-are-not-in = { $set }の効いていない効果 { $count } 件は合成の PNG に入っていません
+lang-features-separator = 、
+lang-unsupported-project-features = 編集に対応していない中身（{ $text }）
