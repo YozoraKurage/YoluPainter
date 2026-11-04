@@ -45,6 +45,8 @@ pub struct RegionState {
     pub references: std::collections::HashSet<(u128, yolu_core::LayerId)>,
     pub leftover_drag: Option<bucket::Drag>,
     pub job: Option<bucket::Job>,
+    /// 描き始めの手前で、バケツの裏の仕事の終わりを待つ長さの上限（超えたら仕事を取り消す。既定 10 秒。テストが小さくする）。
+    pub pending_wait: std::time::Duration,
     /// 消す（画素は透明に。マスクは黒 = 隠す）か、塗る（描画色と不透明度。マスクは白 = 見せる）か。
     pub erase: bool,
     /// ID の色で選ぶときの許し幅（8 bit のチャンネルの差の最大）。
@@ -76,6 +78,7 @@ impl Default for RegionState {
             references: Default::default(),
             leftover_drag: None,
             job: None,
+            pending_wait: std::time::Duration::from_secs(10),
             erase: false,
             id_tolerance: yolu_core::id_colors::DEFAULT_TOLERANCE,
             modifiers: crate::state::key::Modifiers::NONE,

@@ -7,6 +7,7 @@ region-no-reference-layers = 参照レイヤーがありません
 region-cannot-start-the-fill = 塗りつぶしを始められません。
 region-fill-cancelled = 塗りつぶしを取り消しました。
 region-fill-failed = 塗りつぶしに失敗しました
+region-fill-discarded = 内容が変わったので、塗りつぶしをやめました。
 region-stroke-is-too-long = ストロークが長すぎます
 region-no-model = モデルがありません
 region-no-id-map = ID マップがありません

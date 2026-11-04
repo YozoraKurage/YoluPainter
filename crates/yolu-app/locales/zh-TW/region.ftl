@@ -7,6 +7,7 @@ region-no-reference-layers = 沒有參照圖層
 region-cannot-start-the-fill = 無法開始填色。
 region-fill-cancelled = 已取消填色。
 region-fill-failed = 填色失敗
+region-fill-discarded = 文件已變更，已中止填色。
 region-stroke-is-too-long = 筆畫過長
 region-no-model = 沒有模型
 region-no-id-map = 沒有 ID 貼圖

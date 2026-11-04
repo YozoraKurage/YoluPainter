@@ -1649,19 +1649,26 @@ fn start_fill_job(
     hold
 }
 
-/// 点 `at` へペンかマウスで触れて離す（1 点ごとに 1 フレーム）。
-fn tap(h: &mut H, pen: bool, points: &[Pos2]) {
+/// 点 `at` へペンかマウスで触れて離す（1 点ごとに 1 フレーム）。最初のフレーム（ストロークの始まり）にかかった時間を返す。
+fn tap(h: &mut H, pen: bool, points: &[Pos2]) -> std::time::Duration {
     let end = *points.last().unwrap();
+    let mut first = std::time::Duration::ZERO;
     if pen {
         for (i, p) in points.iter().enumerate() {
             h.state().pen().push(sample(*p, true, i as u32 * 10));
+            let started = std::time::Instant::now();
             h.step();
+            if i == 0 {
+                first = started.elapsed();
+            }
         }
         h.state().pen().push(sample(end, false, 100));
         h.step();
     } else {
         press_with(h, points[0], Modifiers::NONE);
+        let started = std::time::Instant::now();
         h.step();
+        first = started.elapsed();
         for p in &points[1..] {
             move_to(h, *p);
             h.step();
@@ -1669,24 +1676,144 @@ fn tap(h: &mut H, pen: bool, points: &[Pos2]) {
         release_with(h, end, Modifiers::NONE);
         h.step();
     }
+    first
 }
 
+/// 結果が少し遅れて届く仕事を置く: 左上の 8 画素四方を塗る結果が、`delay` の後に別のスレッドから届く裏の仕事。
+/// 最初のフレームの頭の `bucket::poll` は空振りし、結果は描き始めの手前の待ち（`finish_pending`）の中で届く。
+fn start_delayed_fill_job(h: &mut H, delay: std::time::Duration) {
+    let hold = start_fill_job(h);
+    let mask = yolu_app::engine::SelectionMask::rectangle(h.doc(), 0, 0, 8, 8);
+    std::thread::spawn(move || {
+        std::thread::sleep(delay);
+        let _ = hold.send(Ok(mask));
+    });
+}
+
+fn fill_pixel(h: &H) -> Rgba8 {
+    let layer = h.selected_layer().expect("レイヤー");
+    h.doc()
+        .layer(layer)
+        .unwrap()
+        .pixel(yolu_app::engine::Channel::Color, 1, 1)
+        .unwrap()
+}
+
+/// 裏の仕事が残っているときにブラシで描き始めると、先に仕事の結果を当ててからストロークが始まる（操作した順のとおり。2 段: 塗りつぶし → ブラシ）。
+/// 結果は最初のフレームの頭の `poll` には間に合わず、描き始めの手前の待ちの中で届く（最初のフレームが、結果の遅れの分だけかかる）。
+/// ペンでもマウスでも、2D でも 3D でも。
 #[test]
-fn a_brush_press_while_the_fill_job_runs_still_paints_with_the_pen_and_the_mouse() {
-    for pen in [true, false] {
-        let (mut h, rect) = scene_big();
-        let points = line(&h, View::Canvas, rect);
-        let before = seen(&h);
-        let _hold = start_fill_job(&mut h);
-        tap(&mut h, pen, &points);
-        let s = seen(&h);
-        assert_eq!(
-            s.strokes,
-            before.strokes + 1,
-            "ペン {pen}: ストロークが 1 段増えた"
-        );
-        assert!(s.ink > before.ink, "ペン {pen}: 画素が変わった");
-        assert_eq!(s.notice, None, "ペン {pen}: 知らせは出ない");
+fn a_brush_press_while_the_fill_job_runs_fills_first_and_then_paints() {
+    const DELAY: std::time::Duration = std::time::Duration::from_millis(300);
+    for view in VIEWS {
+        for pen in [true, false] {
+            let (mut h, rect) = scene(view);
+            let points = line(&h, view, rect);
+            let before = seen(&h);
+            start_delayed_fill_job(&mut h, DELAY);
+            let first = tap(&mut h, pen, &points);
+            settle(&mut h);
+            let s = seen(&h);
+            let what = format!("{view:?} ペン {pen}");
+            assert!(
+                first >= DELAY / 2,
+                "{what}: 最初のフレームは結果を待った（{first:?}）"
+            );
+            assert!(h.region().job.is_none(), "{what}: 仕事は済んだ");
+            assert_eq!(s.strokes, before.strokes + 2, "{what}: 塗りつぶし → ブラシ");
+            assert_eq!(
+                h.doc().history().last(),
+                Some(yolu_app::engine::HistoryKind::Brush)
+            );
+            assert!(fill_pixel(&h).a > 0, "{what}: 塗りつぶしが入った");
+            assert!(s.ink > before.ink, "{what}: 画素が変わった");
+            assert_eq!(
+                s.notice,
+                Some((Kind::Info, Source::Fill, "塗りました。".to_owned())),
+                "{what}"
+            );
+            // ブラシだけを取り消すと、塗りつぶしは残る
+            h.act(Action::Undo);
+            assert_eq!(h.doc().undo_count(), before.strokes + 1, "{what}");
+            assert!(fill_pixel(&h).a > 0, "{what}: 塗りつぶしは残る");
+        }
+    }
+}
+
+/// 仕事の間に別のレイヤーを選んでからブラシを押すと、塗りつぶしは取り消して知らせ、ブラシは今選んでいるレイヤーに描く。
+#[test]
+fn a_brush_press_after_selecting_another_layer_cancels_the_fill_and_paints_the_new_layer() {
+    const DELAY: std::time::Duration = std::time::Duration::from_millis(300);
+    for view in VIEWS {
+        for pen in [true, false] {
+            let (mut h, rect) = scene(view);
+            let points = line(&h, view, rect);
+            let filled = h.selected_layer().expect("レイヤー");
+            let other = h.doc_mut().add_layer("別").unwrap();
+            h.run();
+            h.set_selected_layer(Some(filled));
+            let before = seen(&h);
+            start_delayed_fill_job(&mut h, DELAY);
+            // 仕事の間に、選ぶレイヤーを替える（文書は変わらない）
+            h.set_selected_layer(Some(other));
+            tap(&mut h, pen, &points);
+            settle(&mut h);
+            let s = seen(&h);
+            let what = format!("{view:?} ペン {pen}");
+            assert!(h.region().job.is_none(), "{what}: 仕事は済んだ");
+            assert_eq!(s.strokes, before.strokes + 1, "{what}: ブラシの 1 段だけ");
+            assert!(s.ink > before.ink, "{what}: ブラシは描いた");
+            assert_eq!(
+                h.doc()
+                    .layer(filled)
+                    .unwrap()
+                    .pixel(yolu_app::engine::Channel::Color, 1, 1)
+                    .unwrap()
+                    .a,
+                0,
+                "{what}: 元のレイヤーに塗りつぶしは入らない"
+            );
+            assert_eq!(
+                s.notice,
+                Some((
+                    Kind::Warning,
+                    Source::Fill,
+                    "塗りつぶしを取り消しました。".to_owned()
+                )),
+                "{what}"
+            );
+        }
+    }
+}
+
+/// 待ちの上限を超えたら、仕事を取り消して知らせ、ブラシは描く。ペンでもマウスでも。
+#[test]
+fn a_brush_press_gives_up_waiting_for_the_fill_job_after_the_limit() {
+    for view in VIEWS {
+        for pen in [true, false] {
+            let (mut h, rect) = scene(view);
+            let points = line(&h, view, rect);
+            let before = seen(&h);
+            let _hold = start_fill_job(&mut h);
+            h.region_mut().pending_wait = std::time::Duration::from_millis(30);
+            tap(&mut h, pen, &points);
+            settle(&mut h);
+            let s = seen(&h);
+            let what = format!("{view:?} ペン {pen}");
+            assert!(h.region().job.is_none(), "{what}: 仕事は取り消された");
+            assert_eq!(s.strokes, before.strokes + 1, "{what}: ブラシの 1 段だけ");
+            assert!(s.ink > before.ink, "{what}");
+            assert_eq!(fill_pixel(&h).a, 0, "{what}: 塗りつぶしは入らない");
+            assert_eq!(
+                s.notice,
+                Some((
+                    Kind::Warning,
+                    Source::Fill,
+                    "塗りつぶしを取り消しました。".to_owned()
+                )),
+                "{what}"
+            );
+        }
     }
 }
 

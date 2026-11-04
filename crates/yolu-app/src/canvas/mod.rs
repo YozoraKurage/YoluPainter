@@ -384,6 +384,8 @@ fn begin_stroke(
     if let Some(began) = crate::selection::quick::begin(app, source, eraser) {
         return began;
     }
+    // 裏のバケツの仕事が残っていれば、先に結果を当てる（操作した順のとおり）
+    crate::region::bucket::finish_pending(app);
     let layer = match crate::stroke_gate::layer(app) {
         Ok(id) => id,
         Err(reason) => {

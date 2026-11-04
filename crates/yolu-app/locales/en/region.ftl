@@ -7,6 +7,7 @@ region-no-reference-layers = No reference layers
 region-cannot-start-the-fill = Cannot start the fill.
 region-fill-cancelled = Fill cancelled.
 region-fill-failed = Fill failed
+region-fill-discarded = The fill was dropped because the document changed.
 region-stroke-is-too-long = Stroke is too long
 region-no-model = No model
 region-no-id-map = No ID map

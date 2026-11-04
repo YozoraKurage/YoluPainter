@@ -215,6 +215,8 @@ fn begin(
         super::quick::begin(app, &model, rect, at, pressure, source, erase, true);
         return;
     }
+    // 裏のバケツの仕事が残っていれば、先に結果を当てる（操作した順のとおり）
+    crate::region::bucket::finish_pending(app);
     let layer = match crate::stroke_gate::layer(app) {
         Ok(id) => id,
         Err(reason) => {

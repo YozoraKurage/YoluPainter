@@ -2,6 +2,7 @@
 use crate::common::drive::Drive;
 use egui::{pos2, vec2, Rect};
 use std::sync::atomic::AtomicBool;
+use yolu_app::canvas::view::CanvasView;
 use yolu_app::{
     notice::{Kind, Source},
     region::{
@@ -198,6 +199,82 @@ fn leftovers_interpolate_stroke_and_are_one_undo_or_cancel() {
             > 0
     );
 }
+/// 32 四方の文書に、縦の軸 x = 16 で左右に向き合う 2 つの箱（外周の 10 画素四方が壁）を置く。左の箱の中のなぞり塗りが、右の箱も塗るかを見る。
+fn two_boxes() -> (AppState, CanvasView) {
+    let mut s = AppState::new(32, 32);
+    let lines = s.doc_mut().add_layer("線").unwrap();
+    for i in 3..13 {
+        for (x, y) in [(i, 3), (i, 12), (3, i), (12, i)] {
+            paint(&mut s, lines, x, y, Rgba8::new(0, 0, 0, 255));
+            paint(&mut s, lines, 31 - x, y, Rgba8::new(0, 0, 0, 255));
+        }
+    }
+    s.region_mut().color.reference = Reference::Visible;
+    s.region_mut().color.leftovers = true;
+    s.brush_mut().radius = 0.8;
+    s.doc_mut().clear_history().unwrap();
+    let view = s.view().view(
+        Rect::from_min_size(pos2(0.0, 0.0), vec2(320.0, 320.0)),
+        32,
+        32,
+    );
+    (s, view)
+}
+fn filled_at(s: &AppState, x: u32, y: u32) -> bool {
+    s.doc()
+        .layer(s.selected_layer().unwrap())
+        .unwrap()
+        .pixel(Channel::Color, x, y)
+        .unwrap()
+        .a
+        > 0
+}
+fn trace_left_box(s: &mut AppState, view: &CanvasView) {
+    assert!(bucket::begin(s, view, view.to_screen(5.5, 7.5)));
+    bucket::drag(s, view, view.to_screen(10.5, 7.5));
+    assert!(bucket::finish(s, false));
+}
+#[test]
+fn leftovers_are_filled_on_both_sides_of_a_symmetry_ruler() {
+    let (mut s, view) = two_boxes();
+    crate::common::rulers::vertical(&mut s, 16.0);
+    s.doc_mut().clear_history().unwrap();
+    trace_left_box(&mut s, &view);
+    assert!(filled_at(&s, 7, 7), "なぞった箱");
+    assert!(filled_at(&s, 24, 7), "写した側の箱");
+    assert!(!filled_at(&s, 0, 0), "壁の外は塗らない");
+    assert_eq!(s.doc().undo_count(), 1, "1 回の Undo");
+    s.doc_mut().undo().unwrap();
+    assert!(!filled_at(&s, 7, 7) && !filled_at(&s, 24, 7));
+}
+#[test]
+fn leftovers_ignore_the_symmetry_ruler_when_the_snap_is_off_or_there_is_none() {
+    let (mut s, view) = two_boxes();
+    crate::common::rulers::vertical(&mut s, 16.0);
+    s.region_mut().snap_symmetry = false;
+    trace_left_box(&mut s, &view);
+    assert!(filled_at(&s, 7, 7));
+    assert!(!filled_at(&s, 24, 7), "切なら写さない");
+    let (mut s, view) = two_boxes();
+    trace_left_box(&mut s, &view);
+    assert!(filled_at(&s, 7, 7));
+    assert!(!filled_at(&s, 24, 7), "定規が無ければ写さない");
+}
+#[test]
+fn leftovers_with_two_symmetry_axes_fill_only_the_copies_that_have_a_box() {
+    let (mut s, view) = two_boxes();
+    // 縦の軸の左右 + 上下: 4 つに写す（右上・左下・右下には箱が無いので、塗られるのは左の箱と右の箱だけ）
+    crate::common::rulers::both(&mut s, (16.0, 16.0));
+    s.doc_mut().clear_history().unwrap();
+    trace_left_box(&mut s, &view);
+    assert!(filled_at(&s, 7, 7) && filled_at(&s, 24, 7));
+    // 上下に写った線は下の何も無い所を通るだけ（箱が無いので何も塗らない）
+    assert!(!filled_at(&s, 7, 24) && !filled_at(&s, 24, 24));
+    assert!(
+        !filled_at(&s, 16, 7),
+        "箱と箱の間の線を、塗り残しの範囲にしない"
+    );
+}
 #[test]
 fn selection_is_applied_after_expansion_and_fill_undo_restores_pixels() {
     let mut s = app();
@@ -340,6 +417,9 @@ fn asynchronous_result_is_discarded_after_document_changes() {
     let count = s.doc().undo_count();
     wait(&mut s);
     assert_eq!(s.doc().undo_count(), count);
+    let notice = s.last_notice().clone().expect("捨てたと知らせる");
+    assert_eq!((notice.source, notice.kind), (Source::Fill, Kind::Warning));
+    assert_eq!(notice.text, "内容が変わったので、塗りつぶしをやめました。");
     assert_eq!(
         s.doc()
             .layer(id)
@@ -349,6 +429,75 @@ fn asynchronous_result_is_discarded_after_document_changes() {
             .a,
         0
     );
+}
+/// 終わらない仕事（結果を送る口つき）を置く。
+fn parked_job(s: &mut AppState) -> std::sync::mpsc::Sender<Result<SelectionMask, CoreError>> {
+    let layer = s.selected_layer().unwrap();
+    let (job, tx) = bucket::Job::parked(s, layer);
+    s.region_mut().job = Some(job);
+    tx
+}
+#[test]
+fn finish_pending_waits_for_the_result_and_applies_it_as_one_undo() {
+    let mut s = AppState::new(257, 257);
+    s.color_mut().set_main([1.0, 0.0, 0.0, 1.0]);
+    let id = s.selected_layer().unwrap();
+    let tx = parked_job(&mut s);
+    let mask = SelectionMask::rectangle(s.doc(), 0, 0, 4, 4);
+    let sender = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        tx.send(Ok(mask)).unwrap();
+    });
+    let started = std::time::Instant::now();
+    bucket::finish_pending(&mut s);
+    assert!(started.elapsed().as_millis() >= 100, "結果が届くまで待った");
+    sender.join().unwrap();
+    assert!(s.region().job.is_none());
+    assert_eq!(s.doc().undo_count(), 1);
+    assert_eq!(
+        s.doc()
+            .layer(id)
+            .unwrap()
+            .pixel(Channel::Color, 1, 1)
+            .unwrap(),
+        Rgba8::new(255, 0, 0, 255)
+    );
+    let notice = s.last_notice().clone().expect("知らせ");
+    assert_eq!((notice.source, notice.kind), (Source::Fill, Kind::Info));
+    // 仕事が無ければ何もしない
+    bucket::finish_pending(&mut s);
+    assert_eq!(s.doc().undo_count(), 1);
+}
+#[test]
+fn finish_pending_cancels_the_job_after_the_limit_and_says_so() {
+    let mut s = AppState::new(257, 257);
+    let _tx = parked_job(&mut s);
+    s.region_mut().pending_wait = std::time::Duration::from_millis(30);
+    let started = std::time::Instant::now();
+    bucket::finish_pending(&mut s);
+    assert!(started.elapsed().as_millis() >= 30);
+    assert!(s.region().job.is_none());
+    assert_eq!(s.doc().undo_count(), 0);
+    let notice = s.last_notice().clone().expect("知らせ");
+    assert_eq!((notice.source, notice.kind), (Source::Fill, Kind::Warning));
+    assert_eq!(notice.text, "塗りつぶしを取り消しました。");
+}
+#[test]
+fn finish_pending_drops_a_job_of_a_changed_document_without_waiting() {
+    let mut s = AppState::new(257, 257);
+    let id = s.selected_layer().unwrap();
+    let tx = parked_job(&mut s);
+    paint(&mut s, id, 0, 0, Rgba8::new(0, 255, 0, 255));
+    let count = s.doc().undo_count();
+    let started = std::time::Instant::now();
+    bucket::finish_pending(&mut s);
+    assert!(started.elapsed().as_secs() < 5, "待たない");
+    assert!(s.region().job.is_none());
+    assert_eq!(s.doc().undo_count(), count);
+    let notice = s.last_notice().clone().expect("知らせ");
+    assert_eq!((notice.source, notice.kind), (Source::Fill, Kind::Warning));
+    assert_eq!(notice.text, "内容が変わったので、塗りつぶしをやめました。");
+    drop(tx);
 }
 #[test]
 fn asynchronous_escape_cancels_without_undo() {
@@ -1045,6 +1194,44 @@ mod in_3d {
         s.doc_mut().undo().unwrap();
         assert_eq!(s.doc().undo_count(), undo - 1);
         assert!(!filled(&s, 7, 7));
+    }
+
+    /// 画素 (`cx`, `cy`) を中心にした、外周が壁の箱（中は 3 画素四方）。
+    fn small_box(s: &mut AppState, lines: yolu_app::engine::LayerId, cx: u32, cy: u32) {
+        for i in 0..5 {
+            for (x, y) in [(i, 0), (i, 4), (0, i), (4, i)] {
+                paint(s, lines, cx + x - 2, cy + y - 2, Rgba8::new(0, 0, 0, 255));
+            }
+        }
+    }
+
+    /// 3D ビューのなぞり塗りに、UV の平面の対称（2D の対称定規）が効く: 押した画素の箱と、縦の軸で映した画素の箱の両方が塗られる。
+    #[test]
+    fn a_3d_leftover_drag_is_mirrored_by_the_2d_symmetry_ruler_in_the_uv_plane() {
+        for snap in [true, false] {
+            let mut s = cube();
+            let (_, at, (x, y)) = spot(&s);
+            // 画素の列 x の中心を、7 画素離れた列 x2 へ映す軸
+            let x2 = if x < 8 { x + 7 } else { x - 7 };
+            let axis = (x as f64 + x2 as f64 + 1.0) / 2.0;
+            assert!(y >= 2 && y + 2 < SIZE, "テストの前提: 箱が文書に収まる {y}");
+            let lines = s.doc_mut().add_layer("線").unwrap();
+            small_box(&mut s, lines, x, y);
+            small_box(&mut s, lines, x2, y);
+            s.region_mut().color.reference = Reference::Visible;
+            s.region_mut().color.leftovers = true;
+            s.brush_mut().radius = 0.8;
+            s.region_mut().snap_symmetry = snap;
+            crate::common::rulers::vertical(&mut s, axis);
+            s.doc_mut().clear_history().unwrap();
+            let rect = viewport();
+            assert!(tools::surface_press(&mut s, rect, at, StrokeSource::Mouse));
+            bucket::drag_surface(&mut s, rect, at + vec2(1.0, 0.0));
+            assert!(tools::finish_drag(&mut s, false));
+            assert!(filled(&s, x, y), "snap {snap}: 押した画素の箱");
+            assert_eq!(filled(&s, x2, y), snap, "snap {snap}: 映した画素の箱");
+            assert_eq!(s.doc().undo_count(), 1, "snap {snap}: 1 回の Undo");
+        }
     }
 
     #[test]

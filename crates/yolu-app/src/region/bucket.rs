@@ -19,6 +19,8 @@ pub struct Drag {
     revision: u64,
     /// 3D: 前に標本を取った画面の点（そこから今の位置までを標本する）。
     last: Option<Pos2>,
+    /// 3D ビューのドラッグか（点は面の UV が指す文書の点。対称は UV の平面で写す）。
+    surface: bool,
 }
 impl Drag {
     /// 通った文書の点（区切りは NaN の点）。
@@ -246,6 +248,27 @@ pub fn start(app: &mut AppState, points: Vec<(f64, f64)>) {
     app.info(Source::Fill, app.lang.t("region-filling"));
 }
 
+/// 文書が替わった・変わった（仕事を始めたときの文書の id・revision と違う）ので結果を入れられない仕事か。
+fn is_stale(app: &AppState, job: &Job) -> bool {
+    job.document != app.session.doc.id() || job.revision != app.session.doc.revision()
+}
+
+/// 結果を入れられない仕事を捨てて、捨てたと知らせる。
+fn discard(app: &mut AppState) {
+    app.region.job = None;
+    app.warn(Source::Fill, app.lang.t("region-fill-discarded"));
+}
+
+/// 終わった仕事の結果を文書へ当てる（`poll` と `finish_pending` の共通の入口）。描くレイヤーが仕事を始めたときと変わっていたら入れない。
+fn finish_job(app: &mut AppState, finished: Job, result: Result<SelectionMask, CoreError>) {
+    let Job { layer, style, .. } = finished;
+    match crate::stroke_gate::paint(app) {
+        Ok(now) if now == layer => deliver(app, layer, style, result),
+        _ => app.warn(Source::Fill, app.lang.t("region-fill-cancelled")),
+    }
+}
+
+/// 毎フレーム: 裏の仕事の結果が届いていれば文書へ入れる（待たない）。Esc で取り消す。
 pub fn poll(app: &mut AppState, ctx: &Context) {
     if app.region.job.is_none() {
         return;
@@ -258,25 +281,60 @@ pub fn poll(app: &mut AppState, ctx: &Context) {
         return;
     }
     let job = app.region.job.as_ref().unwrap();
-    if job.document != app.session.doc.id() || job.revision != app.session.doc.revision() {
-        app.region.job = None;
+    if is_stale(app, job) {
+        discard(app);
         return;
     }
     match job.worker.poll() {
         Polled::Message(result) => {
-            let layer = job.layer;
-            let mut finished = app.region.job.take().unwrap();
-            let style = std::mem::replace(&mut finished.style, Style::capture(app, layer));
-            match crate::stroke_gate::paint(app) {
-                Ok(now) if now == layer => deliver(app, layer, style, result),
-                _ => app.warn(Source::Fill, app.lang.t("region-fill-cancelled")),
-            }
+            let finished = app.region.job.take().unwrap();
+            finish_job(app, finished, result);
         }
         Polled::Lost => {
             app.region.job = None;
             app.fail(Source::Fill, app.lang.t("region-fill-failed"));
         }
         Polled::Empty => ctx.request_repaint_after(std::time::Duration::from_millis(16)),
+    }
+}
+
+/// 待ちの長さがこれを超えたら、診断のログに残す（画面には出さない）。
+const SLOW_WAIT: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// 描き始め（ブラシのストローク）の手前で、裏のバケツの仕事が残っていれば、終わるまで待って結果を当てる（操作した順のとおりに、塗りの後にストロークが乗る）。
+/// 待つのは `RegionState::pending_wait` まで（既定 10 秒）。超えたら仕事を取り消して知らせる。待っている間は画面が止まるので、`SLOW_WAIT` を超えたら
+/// 診断のログに残す。文書が変わっていて入れられない仕事は、待たずに捨てて知らせる。
+pub fn finish_pending(app: &mut AppState) {
+    let Some(job) = app.region.job.as_ref() else {
+        return;
+    };
+    if is_stale(app, job) {
+        discard(app);
+        return;
+    }
+    let started = std::time::Instant::now();
+    let polled = job.worker.wait(app.region.pending_wait);
+    let waited = started.elapsed();
+    if waited > SLOW_WAIT {
+        crate::crash::note(&format!(
+            "bucket fill: waited {} ms before the brush stroke",
+            waited.as_millis()
+        ));
+    }
+    match polled {
+        Polled::Message(result) => {
+            let finished = app.region.job.take().unwrap();
+            finish_job(app, finished, result);
+        }
+        Polled::Lost => {
+            app.region.job = None;
+            app.fail(Source::Fill, app.lang.t("region-fill-failed"));
+        }
+        // 仕事を捨てる（受け口を捨てると取り消しの旗が立つ）
+        Polled::Empty => {
+            app.region.job = None;
+            app.warn(Source::Fill, app.lang.t("region-fill-cancelled"));
+        }
     }
 }
 
@@ -301,6 +359,7 @@ pub fn begin(app: &mut AppState, view: &CanvasView, at: Pos2) -> bool {
         document: app.session.doc.id(),
         revision: app.session.doc.revision(),
         last: None,
+        surface: false,
     });
     true
 }
@@ -326,6 +385,7 @@ pub fn begin_surface(app: &mut AppState, rect: Rect, at: Pos2) -> bool {
         document: app.session.doc.id(),
         revision: app.session.doc.revision(),
         last: Some(at),
+        surface: true,
     });
     true
 }
@@ -499,7 +559,41 @@ pub fn finish(app: &mut AppState, cancel: bool) -> bool {
         && drag.document == app.session.doc.id()
         && drag.revision == app.session.doc.revision()
     {
-        start(app, drag.points);
+        let points = mirrored(app, drag.points, drag.surface);
+        start(app, points);
     }
     true
+}
+
+/// なぞった線を、効いている 2D の対称定規の変換ごとに写し、元の線の後ろに並べる。線と線の間は `NaN` の点で区切る（区切りをまたいで線を引かない）。
+/// 3D のドラッグは UV の平面の対称（3D ビューのブラシが 3D の写しの後に当てる 2D の対称）で写す。切（`snap_symmetry`）か対称定規が無ければ、そのまま。
+/// 最初の点は元の線の最初の点のまま（その点がキャンバスの中にあることを、始めるときに確かめている）。
+fn mirrored(app: &AppState, points: Vec<(f64, f64)>, surface: bool) -> Vec<(f64, f64)> {
+    let place = if surface {
+        crate::rulers::Place::View3d
+    } else {
+        crate::rulers::Place::Canvas
+    };
+    let transforms = app
+        .region
+        .snap_symmetry
+        .then(|| app.rulers_active(place).canvas_symmetry)
+        .flatten()
+        .and_then(|s| s.transforms().ok())
+        .unwrap_or_default();
+    if transforms.len() < 2 {
+        return points;
+    }
+    let mut all = points.clone();
+    for t in transforms.iter().skip(1) {
+        all.push((f64::NAN, f64::NAN));
+        all.extend(points.iter().map(|&(x, y)| {
+            if x.is_finite() {
+                t.map(x, y)
+            } else {
+                (f64::NAN, f64::NAN)
+            }
+        }));
+    }
+    all
 }

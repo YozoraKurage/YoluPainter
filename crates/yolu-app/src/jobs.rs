@@ -118,8 +118,7 @@ impl<M> Worker<M> {
         }
     }
 
-    /// 届くまで、`timeout` まで待つ（試験の待ち）。待ちきれなければ `Empty`。
-    #[doc(hidden)]
+    /// 届くまで、`timeout` まで待つ（画面の側が止まって待つ。描き始めの手前で結果を当てる所だけが使う）。待ちきれなければ `Empty`。
     pub fn wait(&self, timeout: std::time::Duration) -> Polled<M> {
         match self.rx.recv_timeout(timeout) {
             Ok(m) => Polled::Message(m),
