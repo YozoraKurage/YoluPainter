@@ -154,6 +154,11 @@ impl<'a> ImageMipChain<'a> {
     pub fn bytes(&self) -> u64 {
         self.bytes
     }
+    /// 段 0 の画素もこのミップマップが持つ（共有する元の画像が無い。ベイクしたマップから作った画素）ときに、段 0 も予算の数に入れる。
+    pub(crate) fn counting_original(mut self) -> Self {
+        self.bytes += self.original.bytes().len() as u64;
+        self
+    }
     pub fn level_count(&self) -> usize {
         self.levels.len()
     }

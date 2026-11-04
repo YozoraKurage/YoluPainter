@@ -4,8 +4,8 @@ use yolu_core::{look::MaterialLook, Document, SelectionMask};
 use yolu_io::{
     entry_form, mesh_map, pose, saved_selections, MaterialRef, NativeDocument, Project, Selection,
     SetSpec, WriterInfo, ADJUST_VERSION, ANTI_ALIAS_VERSION, BAKE_PRIORITY_VERSION,
-    EFFECTS_VERSION, LAYER_SETS_VERSION, LAYER_SET_CHANNELS_VERSION, MAX_FORMAT,
-    MAX_NATIVE_VERSION, MIXING_VERSION, MULTI_MATERIAL_FORMAT, PATHS_VERSION,
+    EFFECTS_VERSION, LAYER_FILL_MAPS_VERSION, LAYER_SETS_VERSION, LAYER_SET_CHANNELS_VERSION,
+    MAX_FORMAT, MAX_NATIVE_VERSION, MIXING_VERSION, MULTI_MATERIAL_FORMAT, PATHS_VERSION,
     POINT_GRADIENT_VERSION, PROCEDURAL_VERSION, RESOURCE_ENTRIES, ROOT_ENTRIES, RULERS_VERSION,
     SAVED_SELECTIONS_FORMAT, SEAMS_VERSION, SET_ENTRIES, SPLIT_VERSION, TEXT_VERSION,
     UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
@@ -192,6 +192,7 @@ fn every_version_is_in_the_spec() {
         ("FORMAT_VERSION", mesh_map::FORMAT_VERSION),
         ("LAYER_SETS_VERSION", LAYER_SETS_VERSION),
         ("LAYER_SET_CHANNELS_VERSION", LAYER_SET_CHANNELS_VERSION),
+        ("LAYER_FILL_MAPS_VERSION", LAYER_FILL_MAPS_VERSION),
     ] {
         assert!(
             constants.contains(&format!("::{name}` | {value} |")),
@@ -290,6 +291,7 @@ fn every_version_is_in_the_spec() {
         RULERS_VERSION,
         LAYER_SETS_VERSION,
         LAYER_SET_CHANNELS_VERSION,
+        LAYER_FILL_MAPS_VERSION,
     ]) {
         assert!(
             natives.contains(&format!("\n| {v} |")),

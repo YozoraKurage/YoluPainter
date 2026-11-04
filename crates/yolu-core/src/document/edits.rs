@@ -103,15 +103,18 @@ impl Document {
         // 変化として数える）
         self.ensure_pixels_editable(id, false)?;
         if old.map_or(0, |v| v.a) != value.map_or(0, |v| v.a)
-            || value.is_none() && layer.fill_images.contains_key(&channel)
+            || value.is_none()
+                && (layer.fill_images.contains_key(&channel)
+                    || layer.fill_maps.contains_key(&channel))
         {
             self.refuse_lock(id, super::LayerLocks::TRANSPARENCY)?;
         }
-        // 画像・グラデーションのあるチャンネルの値を消すと、画像・グラデーションも一緒に外れる（1 回の Undo で一緒に戻る）
+        // 画像・グラデーション・ベイクしたマップのあるチャンネルの値を消すと、それらも一緒に外れる（1 回の Undo で一緒に戻る）
         if value.is_none()
             && (layer.fill_images.contains_key(&channel)
                 || layer.fill_gradients.contains_key(&channel)
-                || layer.fill_points.contains_key(&channel))
+                || layer.fill_points.contains_key(&channel)
+                || layer.fill_maps.contains_key(&channel))
         {
             let before = super::effects::FillChannelState::of(layer, channel);
             let mut after = before.clone();
@@ -119,6 +122,7 @@ impl Document {
             after.image = None;
             after.gradient = None;
             after.points = None;
+            after.map = None;
             return self.execute(
                 Command::FillChannel {
                     id,

@@ -131,6 +131,15 @@ impl MapInput {
         Ok(())
     }
 
+    /// 同じ種類・大きさ・成分・被覆か（共有していれば中身を見ない）。塗りつぶしの源にしたマップの画素は、これだけで決まる。
+    pub(crate) fn same_pixels(&self, other: &MapInput) -> bool {
+        self.kind == other.kind
+            && self.width == other.width
+            && self.height == other.height
+            && (Arc::ptr_eq(&self.data, &other.data) || self.data == other.data)
+            && (Arc::ptr_eq(&self.coverage, &other.coverage) || self.coverage == other.coverage)
+    }
+
     pub(crate) fn as_generator(&self) -> generator::Map<'_> {
         generator::Map {
             kind: self.kind,
@@ -316,14 +325,11 @@ impl EffectInputs {
             && self.maps.len() == other.maps.len()
             && self.maps.iter().all(|m| {
                 other.map(m.kind).is_some_and(|o| {
-                    o.width == m.width
-                        && o.height == m.height
-                        && o.state == m.state
+                    o.state == m.state
                         && o.condition_key == m.condition_key
                         && o.bounds_min == m.bounds_min
                         && o.bounds_max == m.bounds_max
-                        && (Arc::ptr_eq(&o.data, &m.data) || o.data == m.data)
-                        && (Arc::ptr_eq(&o.coverage, &m.coverage) || o.coverage == m.coverage)
+                        && o.same_pixels(m)
                 })
             })
             && self.images.len() == other.images.len()

@@ -88,6 +88,7 @@ impl Document {
         // Anchor の署名は写さない（写しは空のキャッシュから評価し直す。持ち込むと別の内容に同じ鍵が付き得る — edit_copy と同じ決まり）
         copy.effects.inputs = effects.inputs.clone();
         copy.effects.inputs_revision = effects.inputs_revision;
+        copy.effects.map_serials = effects.map_serials.clone();
         copy.effects.topology_revision = effects.topology_revision;
         copy.effects.working_budget = effects.working_budget;
         copy.effects.cache_budget = effects.cache_budget;
@@ -350,5 +351,82 @@ mod tests {
                 .tile_count()
         );
         assert!(shared >= 16);
+    }
+
+    /// 投影した（ミップマップを使う）マップの源は、snapshot・`edit_copy` の写しでも、元と同じ通し番号の鍵で評価する（作り直さず、元が持つミップマップを
+    /// 使う。通し番号が写らないと、評価のたびに新しい鍵になってブロックごとに作り直す）。
+    #[test]
+    fn copies_evaluate_a_projected_map_source_with_the_originals_mip_chain() {
+        use crate::fill_image::{Projection, ProjectionMode};
+        use crate::generator::{MapKind, MapState};
+        use crate::{EffectInputs, MapInput, ModelFrame, Rect};
+        const KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let (w, h) = (16u32, 16u32);
+        let n = (w * h) as usize;
+        let map = |kind: MapKind, data: Vec<u16>| {
+            MapInput::new(
+                kind,
+                w,
+                h,
+                data,
+                vec![1; n],
+                [0.0; 3],
+                [1.0; 3],
+                KEY,
+                MapState::Current,
+            )
+            .unwrap()
+        };
+        let mut position = Vec::new();
+        for y in 0..h {
+            for x in 0..w {
+                position.extend([
+                    ((x as f64 + 0.5) / w as f64 * 65535.0).round() as u16,
+                    ((y as f64 + 0.5) / h as f64 * 65535.0).round() as u16,
+                    32768,
+                ]);
+            }
+        }
+        let inputs = EffectInputs::new()
+            .with_map(map(MapKind::Position, position))
+            .unwrap()
+            .with_map(map(MapKind::WorldNormal, [32768, 32768, 65535].repeat(n)))
+            .unwrap()
+            .with_map(map(
+                MapKind::Curvature,
+                (0..n).map(|i| (i * 251 % 65536) as u16).collect(),
+            ))
+            .unwrap()
+            .with_frame(Some(
+                ModelFrame::new([0.0; 3], [0.0, 0.0, 0.0, 1.0]).unwrap(),
+            ));
+        let mut doc = Document::with_tile_size(w, h, 8).unwrap();
+        let fill = doc
+            .add_fill_layer(
+                "塗り",
+                &[(Channel::Color, Rgba8::new(90, 90, 90, 255))],
+                None,
+            )
+            .unwrap();
+        doc.set_effect_inputs(inputs).unwrap();
+        let planar = Projection {
+            mode: ProjectionMode::Planar,
+            ..Projection::default()
+        };
+        doc.set_fill_projection(fill, planar, false).unwrap();
+        doc.set_fill_map(fill, Channel::Color, Some(MapKind::Curvature))
+            .unwrap();
+        let rect = Rect::new(0, 0, w, h);
+        let original = doc.composite_channel(Channel::Color, rect).unwrap();
+        assert_eq!(doc.effect_counters().mip_chains_built, 1);
+        for copy in [doc.capture_snapshot().unwrap(), doc.edit_copy().unwrap()] {
+            assert_eq!(copy.effect_counters().mip_chains_built, 0);
+            assert_eq!(
+                copy.composite_channel(Channel::Color, rect).unwrap(),
+                original
+            );
+            let c = copy.effect_counters();
+            assert_eq!((c.mip_chains_built, c.mip_chains_shared), (0, 1), "{c:?}");
+        }
     }
 }

@@ -564,3 +564,4 @@ reason-sweep-range = 삐침(0–1)
 reason-post-correction-range = 후보정 강도(0–100)와 뷰 배율
 reason-layer-set-channels = 레이어 세트의 채널에 프로젝트에 없는 채널이 있습니다
 reason-channel-not-in-layer-set = 레이어 세트가 그 채널을 다루지 않습니다
+reason-fill-map-channel = 채우기 베이크한 맵 채널

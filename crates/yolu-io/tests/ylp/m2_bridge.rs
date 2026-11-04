@@ -843,7 +843,7 @@ fn unity_0_2_0_reader_refuses_version_22_before_touching_the_file() {
     assert_eq!(yolu_io::EFFECTS_VERSION, 28);
     assert_eq!(
         yolu_io::MAX_NATIVE_VERSION,
-        yolu_io::LAYER_SET_CHANNELS_VERSION
+        yolu_io::LAYER_FILL_MAPS_VERSION
     );
 }
 

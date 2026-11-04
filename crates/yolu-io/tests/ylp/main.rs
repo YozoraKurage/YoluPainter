@@ -14,6 +14,7 @@ mod bundle_layout;
 mod compatibility;
 mod core_bridge;
 mod effects_bridge;
+mod fill_maps_bridge;
 mod filters_v28;
 mod format_doc;
 mod gradient_mixing_bridge;

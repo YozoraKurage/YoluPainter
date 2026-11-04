@@ -176,6 +176,9 @@ pub struct Layer {
     pub(crate) anchor: Option<Anchor>,
     /// 塗りつぶしのチャンネルごとの画像（プロジェクトの画像リソースの ID。そのチャンネルの値は画像が使えない所に出る）。
     pub(crate) fill_images: BTreeMap<Channel, ImageId>,
+    /// 塗りつぶしのチャンネルごとの、このテクスチャセットのベイクしたマップの種類（画像の代わりの源。1 つのチャンネルは画像かマップの
+    /// どちらか一方で、グラデーション・点のグラデーションとも同じチャンネルに置かない。焼き直すと結果も追従する）。
+    pub(crate) fill_maps: BTreeMap<Channel, crate::generator::MapKind>,
     /// 塗りつぶしの画像を異方性のフィルターなしで読むチャンネル（既定は異方性で読む。画像のあるチャンネルだけ）。
     pub(crate) fill_isotropic: BTreeSet<Channel>,
     /// 塗りつぶしの画像の投影（レイヤーで 1 つ。画像が無くてもデカールは投影を使う）。
@@ -218,6 +221,7 @@ impl Layer {
             filters: Vec::new(),
             anchor: None,
             fill_images: BTreeMap::new(),
+            fill_maps: BTreeMap::new(),
             fill_isotropic: BTreeSet::new(),
             projection: Projection::default(),
             fill_gradients: BTreeMap::new(),
@@ -419,6 +423,14 @@ impl Layer {
     pub fn fill_images(&self) -> impl Iterator<Item = (Channel, ImageId)> + '_ {
         self.fill_images.iter().map(|(c, i)| (*c, *i))
     }
+    /// 塗りつぶしのチャンネルが読むベイクしたマップの種類（無ければ None）。
+    pub fn fill_map(&self, channel: Channel) -> Option<crate::generator::MapKind> {
+        self.fill_maps.get(&channel).copied()
+    }
+    /// ベイクしたマップを源に持つチャンネルと種類（番号の順）。
+    pub fn fill_maps(&self) -> impl Iterator<Item = (Channel, crate::generator::MapKind)> + '_ {
+        self.fill_maps.iter().map(|(c, k)| (*c, *k))
+    }
     /// 内容とマスクのフィルターのスタックの、画像の段（Generator の種類 Image）が読む画像（選んでいない段は除く。無効な段も含む）。
     pub fn generator_images(&self) -> impl Iterator<Item = ImageId> + '_ {
         self.filters
@@ -461,10 +473,11 @@ impl Layer {
         self.kind == LayerKind::Fill
             && self.projection.mode == crate::fill_image::ProjectionMode::Decal
     }
-    /// 画素が投影から来る塗りつぶしのチャンネルか: 画像のあるチャンネルと、デカールの値のある全チャンネル（C# の `IsProjectedFill`）。
+    /// 画素が投影から来る塗りつぶしのチャンネルか: 画像・ベイクしたマップのあるチャンネルと、デカールの値のある全チャンネル（C# の `IsProjectedFill`）。
     pub(crate) fn is_projected_fill(&self, channel: Channel) -> bool {
         self.kind == LayerKind::Fill
             && (self.fill_images.contains_key(&channel)
+                || self.fill_maps.contains_key(&channel)
                 || self.is_decal() && self.fill.contains_key(&channel))
     }
     /// レイヤーのそのチャンネルの画素が、保存した値でなく評価で決まるか（有効なフィルター・グラデーション・投影。C# の `HasEvaluatedOutput`）。
@@ -486,6 +499,7 @@ impl Layer {
         self.kind == LayerKind::Fill
             && (!self.fill_gradients.is_empty()
                 || !self.fill_images.is_empty()
+                || !self.fill_maps.is_empty()
                 || self.is_decal()
                 || self
                     .fill_points

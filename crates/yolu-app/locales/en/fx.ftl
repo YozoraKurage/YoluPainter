@@ -174,3 +174,4 @@ fx-coverage = Coverage
 fx-inputs-separator = { "; " }
 fx-inputs-and-more = { " " }and { $more } more
 fx-inputs-are-missing = Effect inputs are missing ({ $text })
+fx-baked-map = Baked map ({ $c })

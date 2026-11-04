@@ -564,3 +564,4 @@ reason-sweep-range = はらい（0〜1）
 reason-post-correction-range = 後補正の強さ（0〜100）・表示倍率
 reason-layer-set-channels = レイヤーセットのチャンネルの組に、プロジェクトに無いチャンネルがある
 reason-channel-not-in-layer-set = レイヤーセットがそのチャンネルを扱わない
+reason-fill-map-channel = 塗りつぶしの焼いたマップのチャンネル

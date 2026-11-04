@@ -178,6 +178,7 @@ impl Document {
         // 作業メモリ）を本物と同じ決まりにする
         d.effects.inputs = effects.inputs.clone();
         d.effects.inputs_revision = effects.inputs_revision;
+        d.effects.map_serials = effects.map_serials.clone();
         d.effects.topology_revision = effects.topology_revision;
         d.effects.working_budget = effects.working_budget;
         d.effects.cache_budget = effects.cache_budget;

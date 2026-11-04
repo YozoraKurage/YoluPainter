@@ -401,6 +401,16 @@ impl Lang {
             (true, InactiveTarget::FillPoints(c)) => {
                 format!("{name}（{c:?}）の点のグラデーションは値を見せています")
             }
+            // 焼いていない時は値を見せ、古い・照合できない時はそのマップを読んでいる（理由ごとに言い分ける）
+            (true, InactiveTarget::FillMap(c)) => match effect.reason {
+                InactiveReason::Generator(generator::Inactive::StaleMap(_)) => {
+                    format!("{name}（{c:?}）の焼いたマップは今の条件で焼いた物ではありません")
+                }
+                InactiveReason::Generator(generator::Inactive::UnverifiedMap(_)) => {
+                    format!("{name}（{c:?}）の焼いたマップは今の条件で焼いた物か照合できません")
+                }
+                _ => format!("{name}（{c:?}）は焼いたマップがないので値を見せています"),
+            },
             (false, target) => {
                 let what = match target {
                     InactiveTarget::Generator { mask, kind } => format!(
@@ -412,8 +422,21 @@ impl Lang {
                     InactiveTarget::Decal => "decal".into(),
                     InactiveTarget::FillImage(c) => format!("image ({c:?})"),
                     InactiveTarget::FillPoints(c) => format!("point gradient ({c:?})"),
+                    InactiveTarget::FillMap(c) => format!("baked map ({c:?})"),
                 };
-                format!("{name} {what} has no effect")
+                // 焼いたマップの源は、古い・照合できないマップをそのまま読んでいる（効いていないのではない）
+                let verb = match (target, &effect.reason) {
+                    (
+                        InactiveTarget::FillMap(_),
+                        InactiveReason::Generator(generator::Inactive::StaleMap(_)),
+                    ) => "is not current",
+                    (
+                        InactiveTarget::FillMap(_),
+                        InactiveReason::Generator(generator::Inactive::UnverifiedMap(_)),
+                    ) => "cannot be verified as current",
+                    _ => "has no effect",
+                };
+                format!("{name} {what} {verb}")
             }
         };
         fmt.with_reason(what, fmt.inactive_reason(&effect.reason))
@@ -1218,6 +1241,49 @@ mod tests {
                 lines[0].trim_end_matches('.')
             )
         );
+    }
+
+    /// 塗りつぶしのマップの源の文は、焼いていない・古い・照合できないで言い分ける（古いマップは読んでいるので、英語で "has no effect" と言わない）。
+    #[test]
+    fn a_fill_map_source_is_told_per_reason() {
+        use yolu_core::generator::{Inactive as I, MapKind};
+        use yolu_core::{Channel, LayerId};
+        let effect = |why: I| InactiveEffect {
+            layer: LayerId(1),
+            layer_name: "Fill".into(),
+            target: InactiveTarget::FillMap(Channel::Color),
+            reason: InactiveReason::Generator(why),
+        };
+        let kind = MapKind::Curvature;
+        let (missing, stale, unverified) = (
+            effect(I::MissingMap(kind)),
+            effect(I::StaleMap(kind)),
+            effect(I::UnverifiedMap(kind)),
+        );
+        for lang in [Lang::En, Lang::Ko] {
+            assert!(lang
+                .inactive_effect(&missing)
+                .contains("baked map (Color) has no effect"));
+            let stale = lang.inactive_effect(&stale);
+            assert!(stale.contains("is not current") && !stale.contains("no effect"));
+            let unverified = lang.inactive_effect(&unverified);
+            assert!(
+                unverified.contains("cannot be verified as current")
+                    && !unverified.contains("no effect")
+            );
+        }
+        let ja: Vec<String> = [&missing, &stale, &unverified]
+            .iter()
+            .map(|e| Lang::Ja.inactive_effect(e))
+            .collect();
+        assert!(ja[0].contains("値を見せています"), "{}", ja[0]);
+        assert!(
+            ja[1].contains("今の条件で焼いた物ではありません"),
+            "{}",
+            ja[1]
+        );
+        assert!(ja[2].contains("照合できません"), "{}", ja[2]);
+        assert!(ja.iter().all(|line| !line.contains(": ")), "{ja:?}");
     }
 
     /// 位置のマップが使えなくて UV の空間で評価しているノイズ・グランジの 1 行が、画面の言語で出る（レイヤーの名前はそのまま）。

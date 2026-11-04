@@ -105,7 +105,7 @@ impl ExportControl<'_> {
 /// 塗りつぶしの画素が何から来るか（PSD の単色の塗りつぶしに形が無いもの）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FillSources {
-    /// 画像を読む。
+    /// 画像か、このテクスチャセットのベイクしたマップを読む（どちらも、書き出す時の評価した画素を書く）。
     pub image: bool,
     /// グラデーション（ワールドスペースなど。ランプ付きの形のグラデーションと、点のグラデーション）。
     pub gradient: bool,
@@ -116,7 +116,7 @@ pub struct FillSources {
 }
 impl FillSources {
     fn of(l: &CoreLayer, c: Channel) -> Self {
-        let image = l.fill_image(c).is_some();
+        let image = l.fill_image(c).is_some() || l.fill_map(c).is_some();
         let decal = l.is_decal() && l.fill_value(c).is_some();
         Self {
             image,

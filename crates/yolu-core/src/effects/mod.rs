@@ -566,6 +566,8 @@ pub enum InactiveTarget {
     FillImage(Channel),
     /// 塗りつぶしのチャンネルの点のグラデーション（値を見せている）。
     FillPoints(Channel),
+    /// 塗りつぶしのチャンネルのベイクしたマップの源（焼いていない・投影が組めない所は値を見せ、古いマップはその値のまま使う）。
+    FillMap(Channel),
 }
 
 /// 入力のまま通している効果 1 件（[`crate::Document::inactive_effect_list`]）。
@@ -604,6 +606,12 @@ impl fmt::Display for InactiveEffect {
                 write!(
                     f,
                     "「{name}」（{c:?}）: 点のグラデーションは値を見せています。{why}"
+                )
+            }
+            InactiveTarget::FillMap(c) => {
+                write!(
+                    f,
+                    "「{name}」（{c:?}）: 焼いたマップが今の物ではありません。{why}"
                 )
             }
         }

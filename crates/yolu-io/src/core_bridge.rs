@@ -4,10 +4,11 @@
 //! （版 9・11・13・15）、Anchor（版 20）、塗りつぶしの画像と投影（版 16・17）、塗りつぶしのグラデーション（版 21））と、編集できる 2D・3D のパス
 //! （版 8・10・18）、レイヤーの後の手動の ID の色（版 19）。core に無い項目は先に検査して断り、部分変換を返さない。
 use crate::native::{
-    ADJUST_VERSION, ANTI_ALIAS_VERSION, BAKE_PRIORITY_VERSION, EFFECTS_VERSION, LAYER_SETS_VERSION,
-    LAYER_SET_CHANNELS_VERSION, MANUAL_ID_COLORS_VERSION, MIXING_VERSION, PATHS_VERSION,
-    POINT_GRADIENT_VERSION, PROCEDURAL_VERSION, RULERS_VERSION, SEAMS_VERSION, TEXT_VERSION,
-    UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
+    ADJUST_VERSION, ANTI_ALIAS_VERSION, BAKE_PRIORITY_VERSION, EFFECTS_VERSION,
+    LAYER_FILL_MAPS_VERSION, LAYER_SETS_VERSION, LAYER_SET_CHANNELS_VERSION,
+    MANUAL_ID_COLORS_VERSION, MIXING_VERSION, PATHS_VERSION, POINT_GRADIENT_VERSION,
+    PROCEDURAL_VERSION, RULERS_VERSION, SEAMS_VERSION, TEXT_VERSION, UNITY_NATIVE_VERSION,
+    USER_CHANNELS_VERSION,
 };
 use crate::{
     check, check_budget, Error, NativeDocument, NativeValue as V, Result, Unwritable,
@@ -198,6 +199,8 @@ fn unsupported(path: &str, fields: &HashMap<&str, &V>) -> Option<(String, &'stat
         | "paths"
         | "point_gradient_count"
         | "point_gradients"
+        | "fill_map_count"
+        | "fill_maps"
         | "text"
         | "ruler_count"
         | "rulers"
@@ -565,7 +568,8 @@ fn path_brush(path: &LayerPath) -> BrushSettings {
     }
 }
 
-/// 文書の正本のバージョン（使う機能で決まる）: 扱うチャンネルの組が文書の全部のチャンネルでないレイヤーセットがあれば 37（バージョン 27〜36 の中身も読み書きできるバージョン）、
+/// 文書の正本のバージョン（使う機能で決まる）: ベイクしたマップの源を持つ塗りつぶしレイヤーがあれば 38（バージョン 27〜37 の中身も読み書きできる
+/// バージョン）、扱うチャンネルの組が文書の全部のチャンネルでないレイヤーセットがあれば 37（バージョン 27〜36 の中身も読み書きできるバージョン）、
 /// レイヤーセットが既定の形（名前の空の 1 つに全部のチャンネルを割り当てた形）でなければ 36（バージョン 27〜35 の中身も
 /// 読み書きできる版）、定規を持つレイヤー（グループ）か、線対称の 2D のパスがあれば 35（版 27〜34 の中身も読み書きできる版）、
 /// パスのブラシのアンチエイリアス（なし 以外）があれば 34（版 27〜33 の中身も読み書きできる版）、
@@ -580,7 +584,9 @@ fn path_brush(path: &LayerPath) -> BrushSettings {
 pub(crate) fn version_of(doc: &Document) -> i32 {
     let user = doc.channels().into_iter().any(|c| !c.is_standard());
     let all = doc.channel_bits();
-    if doc.layer_sets().iter().any(|s| s.channels != all) {
+    if doc.layers().iter().any(|l| l.fill_maps().next().is_some()) {
+        LAYER_FILL_MAPS_VERSION
+    } else if doc.layer_sets().iter().any(|s| s.channels != all) {
         LAYER_SET_CHANNELS_VERSION
     } else if !doc.has_default_layer_sets() {
         LAYER_SETS_VERSION
@@ -1063,39 +1069,7 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
                 Error::from(e).in_context("塗りつぶしのグラデーションをcoreにできません")
             })?;
     }
-    if ext & 1 != 0 {
-        let mut list = Vec::new();
-        for k in 0..f.int(&format!("{p}.point_gradient_count"))? {
-            let g = format!("{p}.point_gradients[{k}]");
-            let space = match f.int(&format!("{g}.space"))? {
-                0 => PointSpace::Model,
-                _ => PointSpace::Uv,
-            };
-            let mut points = Vec::new();
-            for j in 0..f.int(&format!("{g}.point_count"))? {
-                let q = format!("{g}.points[{j}]");
-                points.push(GradientPoint {
-                    position: [
-                        f.float(&format!("{q}.x"))?,
-                        f.float(&format!("{q}.y"))?,
-                        f.float(&format!("{q}.z"))?,
-                    ],
-                    color: f.rgba(&format!("{q}.rgba"))?,
-                });
-            }
-            list.push((
-                f.channel(&format!("{g}.channel"))?,
-                PointGradient {
-                    space,
-                    spread: f.float(&format!("{g}.spread"))?,
-                    points,
-                },
-            ));
-        }
-        doc.set_fill_points_for_load(id, list).map_err(|e| {
-            Error::from(e).in_context("塗りつぶしの点のグラデーションをcoreにできません")
-        })?;
-    }
+    load_fill_points_and_maps(doc, f, p, id, ext)?;
     if version >= 8 && f.boolean(&format!("{p}.has_surface_path"))? {
         let path = erase_kind(read_path(f, &format!("{p}.surface_path"), true, version)?);
         doc.set_path_for_load(id, path)
@@ -1168,6 +1142,63 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
             .map_err(|e| Error::from(e).in_context("定規をcoreにできません"))?;
     }
     Ok(locks)
+}
+
+/// 塗りつぶしの点のグラデーション（続きの属性の印のビット 0）と、ベイクしたマップの源（ビット 3。バージョン 38）。
+fn load_fill_points_and_maps(
+    doc: &mut Document,
+    f: &Fields<'_>,
+    p: &str,
+    id: LayerId,
+    ext: i32,
+) -> Result<()> {
+    if ext & 1 != 0 {
+        let mut list = Vec::new();
+        for k in 0..f.int(&format!("{p}.point_gradient_count"))? {
+            let g = format!("{p}.point_gradients[{k}]");
+            let space = match f.int(&format!("{g}.space"))? {
+                0 => PointSpace::Model,
+                _ => PointSpace::Uv,
+            };
+            let mut points = Vec::new();
+            for j in 0..f.int(&format!("{g}.point_count"))? {
+                let q = format!("{g}.points[{j}]");
+                points.push(GradientPoint {
+                    position: [
+                        f.float(&format!("{q}.x"))?,
+                        f.float(&format!("{q}.y"))?,
+                        f.float(&format!("{q}.z"))?,
+                    ],
+                    color: f.rgba(&format!("{q}.rgba"))?,
+                });
+            }
+            list.push((
+                f.channel(&format!("{g}.channel"))?,
+                PointGradient {
+                    space,
+                    spread: f.float(&format!("{g}.spread"))?,
+                    points,
+                },
+            ));
+        }
+        doc.set_fill_points_for_load(id, list).map_err(|e| {
+            Error::from(e).in_context("塗りつぶしの点のグラデーションをcoreにできません")
+        })?;
+    }
+    if ext & 8 != 0 {
+        let mut maps = Vec::new();
+        for k in 0..f.int(&format!("{p}.fill_map_count"))? {
+            let m = format!("{p}.fill_maps[{k}]");
+            let index = f.int(&format!("{m}.map"))?;
+            let kind = map_kind(index)
+                .ok_or_else(|| Error::InvalidData(format!("{m}.map {index} は範囲外です")))?;
+            maps.push((f.channel(&format!("{m}.channel"))?, kind));
+        }
+        doc.set_fill_maps_for_load(id, &maps).map_err(|e| {
+            Error::from(e).in_context("塗りつぶしのベイクしたマップの源をcoreにできません")
+        })?;
+    }
+    Ok(())
 }
 
 /// 定規 1 つ（`{p}` の下の項目。版 35）。
@@ -2353,6 +2384,8 @@ struct Out<'s> {
     anti_alias: bool,
     /// 版 35 の定規と、パスの線対称（種類 5）を書けるか。
     rulers: bool,
+    /// バージョン 38 の塗りつぶしのベイクしたマップの源を書けるか。
+    fill_maps: bool,
 }
 impl<'s> Out<'s> {
     /// 正本の版 `version` の並びで書く。
@@ -2364,6 +2397,7 @@ impl<'s> Out<'s> {
             text: version >= TEXT_VERSION,
             anti_alias: version >= ANTI_ALIAS_VERSION,
             rulers: version >= RULERS_VERSION,
+            fill_maps: version >= LAYER_FILL_MAPS_VERSION,
         }
     }
 }
@@ -2404,6 +2438,38 @@ impl Out<'_> {
     }
 }
 
+/// 塗りつぶしの点のグラデーション（続きの属性の印のビット 0）と、ベイクしたマップの源（ビット 3。バージョン 38）。空なら何も書かない。
+fn write_fill_points_and_maps(
+    w: &mut Out<'_>,
+    points: &[(Channel, &PointGradient)],
+    maps: &[(Channel, MapKind)],
+) -> Result<()> {
+    if !points.is_empty() {
+        w.int(points.len() as i32)?;
+        for (c, g) in points {
+            w.int(c.index() as i32)?;
+            w.int(1)?; // アルゴリズムのバージョン（逆距離の 2 乗の重みと広がり）
+            w.int(g.space as i32)?;
+            w.float(g.spread)?;
+            w.int(g.points.len() as i32)?;
+            for p in &g.points {
+                for v in p.position {
+                    w.float(v)?;
+                }
+                w.value(&p.color.to_array())?;
+            }
+        }
+    }
+    if !maps.is_empty() {
+        w.int(maps.len() as i32)?;
+        for (c, k) in maps {
+            w.int(c.index() as i32)?;
+            w.int(*k as i32)?;
+        }
+    }
+    Ok(())
+}
+
 /// 1 つのレイヤー（C# の `DocumentBinary.Write` のレイヤーの並び）。
 fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
     let named = |why: &str| format!("レイヤー「{}」の{why}", layer.name());
@@ -2440,9 +2506,15 @@ fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
         w.rulers || layer.rulers().is_empty(),
         named("定規はバージョン 35 で書く"),
     )?;
+    let maps: Vec<(Channel, MapKind)> = layer.fill_maps().collect();
+    check(
+        w.fill_maps || maps.is_empty(),
+        named("ベイクしたマップの源はバージョン 38 で書く"),
+    )?;
     let ext: i32 = if points.is_empty() { 0 } else { 1 }
         | if layer.text().is_some() { 2 } else { 0 }
-        | if layer.rulers().is_empty() { 0 } else { 4 };
+        | if layer.rulers().is_empty() { 0 } else { 4 }
+        | if maps.is_empty() { 0 } else { 8 };
     w.byte(
         u8::from(layer.clipping())
             | if locks == LayerLocks::NONE { 0 } else { 2 }
@@ -2499,22 +2571,7 @@ fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
             write_generator(w, g)?;
         }
     }
-    if !points.is_empty() {
-        w.int(points.len() as i32)?;
-        for (c, g) in &points {
-            w.int(c.index() as i32)?;
-            w.int(1)?; // アルゴリズムの版（逆距離の 2 乗の重みと広がり）
-            w.int(g.space as i32)?;
-            w.float(g.spread)?;
-            w.int(g.points.len() as i32)?;
-            for p in &g.points {
-                for v in p.position {
-                    w.float(v)?;
-                }
-                w.value(&p.color.to_array())?;
-            }
-        }
-    }
+    write_fill_points_and_maps(w, &points, &maps)?;
     if layer.kind() == LayerKind::Adjustment {
         let a = layer
             .adjustment()

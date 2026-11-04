@@ -174,3 +174,4 @@ fx-coverage = 覆蓋率
 fx-inputs-separator = 、
 fx-inputs-and-more = { " " }等 { $more } 項
 fx-inputs-are-missing = 效果的輸入不齊全（{ $text }）
+fx-baked-map = 已烘焙的貼圖（{ $c }）

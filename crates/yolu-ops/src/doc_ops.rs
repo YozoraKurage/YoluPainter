@@ -455,6 +455,7 @@ fn inactive_text(e: &InactiveEffect) -> Text {
         InactiveTarget::Decal => "decal".to_owned(),
         InactiveTarget::FillImage(c) => format!("image ({c:?})"),
         InactiveTarget::FillPoints(c) => format!("point gradient ({c:?})"),
+        InactiveTarget::FillMap(c) => format!("baked map ({c:?})"),
     };
     let why = match &e.reason {
         InactiveReason::Generator(I::MissingMap(k)) => format!("no {k:?} map is available"),

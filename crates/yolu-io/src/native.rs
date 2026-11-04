@@ -64,11 +64,16 @@ pub const LAYER_SETS_VERSION: i32 = 36;
 /// レイヤーセットのある文書だけがこのバージョンになり、0.7.x までのスタンドアロンはバージョンの範囲の外として断る（形式は docs/YLP_FORMAT.md、理由は
 /// docs/YLP_DECISIONS.md）。このバージョンの文書はバージョン 27〜36 の中身も読み書きできる。
 pub const LAYER_SET_CHANNELS_VERSION: i32 = 37;
+/// 塗りつぶしのチャンネルの源に、このテクスチャセットのベイクしたマップの種類を置けるようにしたバージョン（レイヤーの続きの属性の印のビット 3 と、
+/// 点のグラデーションの後の `fill_map_count`・`fill_maps[i]`）。マップの源を持つ塗りつぶしレイヤーのある文書だけがこのバージョンになり、0.7.x までの
+/// スタンドアロンはバージョンの範囲の外として断る（形式は docs/YLP_FORMAT.md、理由は docs/YLP_DECISIONS.md）。このバージョンの文書はバージョン
+/// 27〜37 の中身も読み書きできる。
+pub const LAYER_FILL_MAPS_VERSION: i32 = 38;
 /// この読み手が読める一番新しい版。読める版の集合は 1〜`MIXING_VERSION`・`SPLIT_VERSION`（26。分けた正本の識別）・`PATHS_VERSION`（27）・
 /// `EFFECTS_VERSION`（28）・`POINT_GRADIENT_VERSION`（29）・`TEXT_VERSION`（30）・`SEAMS_VERSION`（32）・`BAKE_PRIORITY_VERSION`（33）・
-/// `ANTI_ALIAS_VERSION`（34）・`RULERS_VERSION`（35）・`LAYER_SETS_VERSION`（36）・`LAYER_SET_CHANNELS_VERSION`（37）で、間の 31 は意味を
-/// 決めておらず断る（バージョンを割り振ったら `is_known_version` へ足す）。
-pub const MAX_NATIVE_VERSION: i32 = LAYER_SET_CHANNELS_VERSION;
+/// `ANTI_ALIAS_VERSION`（34）・`RULERS_VERSION`（35）・`LAYER_SETS_VERSION`（36）・`LAYER_SET_CHANNELS_VERSION`（37）・
+/// `LAYER_FILL_MAPS_VERSION`（38）で、間の 31 は意味を決めておらず断る（バージョンを割り振ったら `is_known_version` へ足す）。
+pub const MAX_NATIVE_VERSION: i32 = LAYER_FILL_MAPS_VERSION;
 /// レイヤーの後に手動の ID の色の塊（`YLID`）を置ける版。書き手の版（21 以上）はどれもこれ以上なので、色のために版を上げることは無い。
 pub(crate) const MANUAL_ID_COLORS_VERSION: i32 = 19;
 /// 標準のチャンネルの数（番号 0〜5。Unity 版の PaintChannel）。
@@ -444,7 +449,7 @@ impl ByteSource for PartStream {
 pub const SPLIT_VERSION: i32 = 26;
 
 /// 正本の版の数（外の版）が、意味の決まった版か。1〜`MIXING_VERSION`・`SPLIT_VERSION`・`PATHS_VERSION`・`EFFECTS_VERSION`・
-/// `POINT_GRADIENT_VERSION`・`TEXT_VERSION`・`SEAMS_VERSION`・`BAKE_PRIORITY_VERSION`・`ANTI_ALIAS_VERSION`・`RULERS_VERSION`・`LAYER_SETS_VERSION`・`LAYER_SET_CHANNELS_VERSION` だけで、間の 31 は読まない（`MAX_NATIVE_VERSION` までの範囲で通すと、意味の無い版を版 25 の並びとして読んでしまう）。
+/// `POINT_GRADIENT_VERSION`・`TEXT_VERSION`・`SEAMS_VERSION`・`BAKE_PRIORITY_VERSION`・`ANTI_ALIAS_VERSION`・`RULERS_VERSION`・`LAYER_SETS_VERSION`・`LAYER_SET_CHANNELS_VERSION`・`LAYER_FILL_MAPS_VERSION` だけで、間の 31 は読まない（`MAX_NATIVE_VERSION` までの範囲で通すと、意味の無いバージョンをバージョン 25 の並びとして読んでしまう）。
 fn is_known_version(version: i32) -> bool {
     (1..=MIXING_VERSION).contains(&version)
         || version == SPLIT_VERSION
@@ -458,6 +463,7 @@ fn is_known_version(version: i32) -> bool {
         || version == RULERS_VERSION
         || version == LAYER_SETS_VERSION
         || version == LAYER_SET_CHANNELS_VERSION
+        || version == LAYER_FILL_MAPS_VERSION
 }
 
 /// 正本をレイヤーごとに読む（頭 → レイヤー 0, 1, … → 終わり）。レイヤーごとに項目を取り出せる（流して core へ入れる読みが、レイヤー 1 枚ぶんだけ持つため）。
@@ -521,7 +527,7 @@ impl<'a> Parse<'a> {
             check(
                 is_known_version(stored),
                 format!(
-                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{PATHS_VERSION}・{EFFECTS_VERSION}・{POINT_GRADIENT_VERSION}・{TEXT_VERSION}・{SEAMS_VERSION}・{BAKE_PRIORITY_VERSION}・{ANTI_ALIAS_VERSION}・{RULERS_VERSION}・{LAYER_SETS_VERSION}・{LAYER_SET_CHANNELS_VERSION})"
+                    ".version の値 {stored} は未対応または範囲外です (1..={MIXING_VERSION}・{SPLIT_VERSION}・{PATHS_VERSION}・{EFFECTS_VERSION}・{POINT_GRADIENT_VERSION}・{TEXT_VERSION}・{SEAMS_VERSION}・{BAKE_PRIORITY_VERSION}・{ANTI_ALIAS_VERSION}・{RULERS_VERSION}・{LAYER_SETS_VERSION}・{LAYER_SET_CHANNELS_VERSION}・{LAYER_FILL_MAPS_VERSION})"
                 ),
             )?;
             check(parts.is_none(), "分けていない正本に部分があります")?;
@@ -1012,6 +1018,67 @@ fn user_channels(r: &mut Reader<'_>, version: i32) -> Result<UserChannels> {
     }
     Ok(user)
 }
+/// 塗りつぶしの点のグラデーション（続きの属性の印のビット 0）と、ベイクしたマップの源（ビット 3。バージョン 38）。どちらも、塗りつぶしの値があって、
+/// 画像・グラデーション（とお互い）の無いチャンネルだけ。
+fn fill_points_and_maps(
+    r: &mut Reader<'_>,
+    ext: i32,
+    kind: i32,
+    fills: &HashSet<i32>,
+    images: &HashSet<i32>,
+    gradients: &HashSet<i32>,
+) -> Result<()> {
+    let mut points = HashSet::new();
+    if ext & 1 != 0 {
+        check(kind == 1, "塗りつぶし以外に点のグラデーションがあります")?;
+        let n = r.int("point_gradient_count", 1, 6)?;
+        for i in 0..n {
+            r.block(&format!("point_gradients[{i}]"), |r| {
+                let c = unique_channel(r, &mut points)?;
+                check(
+                    c != 4 && fills.contains(&c) && !images.contains(&c) && !gradients.contains(&c),
+                    "点のグラデーションのチャンネル・塗りつぶし元が不正です",
+                )?;
+                r.int("algorithm", 1, 1)?;
+                let space = r.int("space", 0, 1)?;
+                r.unit("spread")?;
+                let count = r.int("point_count", 1, 64)?;
+                for k in 0..count {
+                    r.block(&format!("points[{k}]"), |r| {
+                        r.float("x", -1e6, 1e6)?;
+                        r.float("y", -1e6, 1e6)?;
+                        let z = r.float("z", -1e6, 1e6)?;
+                        check(space == 0 || z == 0., "UV の空間の点の z が 0 でありません")?;
+                        r.blob("rgba", 4)?;
+                        Ok(())
+                    })?;
+                }
+                Ok(())
+            })?;
+        }
+    }
+    if ext & 8 != 0 {
+        check(kind == 1, "塗りつぶし以外にベイクしたマップの源があります")?;
+        let n = r.int("fill_map_count", 1, 6)?;
+        let mut seen = HashSet::new();
+        for i in 0..n {
+            r.block(&format!("fill_maps[{i}]"), |r| {
+                let c = unique_channel(r, &mut seen)?;
+                check(
+                    fills.contains(&c)
+                        && !images.contains(&c)
+                        && !gradients.contains(&c)
+                        && !points.contains(&c),
+                    "ベイクしたマップの源のチャンネル・塗りつぶし元が不正です",
+                )?;
+                // マップの種類（メッシュマップの種類の番号: 0 World Normal 〜 9 Opacity）
+                r.int("map", 0, 9)?;
+                Ok(())
+            })?;
+        }
+    }
+    Ok(())
+}
 fn layer(
     r: &mut Reader<'_>,
     v: i32,
@@ -1043,11 +1110,14 @@ fn layer(
         if flags & 2 != 0 {
             r.int("locks", 1, 15)?;
         }
-        // 続きの属性の印（ビット 7 のとき。ロックの直後）: ビット 0 塗りつぶしの点のグラデーション（版 29）、ビット 1 文字の値（版 30）
+        // 続きの属性の印（ビット 7 のとき。ロックの直後）: ビット 0 塗りつぶしの点のグラデーション（バージョン 29）、ビット 1 文字の値
+        // （バージョン 30）、ビット 2 定規（バージョン 35）、ビット 3 塗りつぶしのベイクしたマップの源（バージョン 38）
         if flags & 128 != 0 {
             ext = r.int("attributes_ext", 1, i32::MAX)?;
-            let known_ext =
-                1 | if v >= TEXT_VERSION { 2 } else { 0 } | if v >= RULERS_VERSION { 4 } else { 0 };
+            let known_ext = 1
+                | if v >= TEXT_VERSION { 2 } else { 0 }
+                | if v >= RULERS_VERSION { 4 } else { 0 }
+                | if v >= LAYER_FILL_MAPS_VERSION { 8 } else { 0 };
             check(ext & !known_ext == 0, "未知の続きのレイヤー属性ビットです")?;
         }
         if flags & 4 != 0 {
@@ -1151,35 +1221,7 @@ fn layer(
         }
         gradients.extend(seen);
     }
-    if ext & 1 != 0 {
-        check(kind == 1, "塗りつぶし以外に点のグラデーションがあります")?;
-        let n = r.int("point_gradient_count", 1, 6)?;
-        let mut seen = HashSet::new();
-        for i in 0..n {
-            r.block(&format!("point_gradients[{i}]"), |r| {
-                let c = unique_channel(r, &mut seen)?;
-                check(
-                    c != 4 && fills.contains(&c) && !images.contains(&c) && !gradients.contains(&c),
-                    "点のグラデーションのチャンネル・塗りつぶし元が不正です",
-                )?;
-                r.int("algorithm", 1, 1)?;
-                let space = r.int("space", 0, 1)?;
-                r.unit("spread")?;
-                let count = r.int("point_count", 1, 64)?;
-                for k in 0..count {
-                    r.block(&format!("points[{k}]"), |r| {
-                        r.float("x", -1e6, 1e6)?;
-                        r.float("y", -1e6, 1e6)?;
-                        let z = r.float("z", -1e6, 1e6)?;
-                        check(space == 0 || z == 0., "UV の空間の点の z が 0 でありません")?;
-                        r.blob("rgba", 4)?;
-                        Ok(())
-                    })?;
-                }
-                Ok(())
-            })?;
-        }
-    }
+    fill_points_and_maps(r, ext, kind, &fills, &images, &gradients)?;
     if kind == 2 {
         r.block("adjustment", |r| {
             let t = r.int(

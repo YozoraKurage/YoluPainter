@@ -564,3 +564,4 @@ reason-sweep-range = 扫笔（0～1）
 reason-post-correction-range = 后修正强度（0～100）与显示倍率
 reason-layer-set-channels = 图层集的通道包含项目中不存在的通道
 reason-channel-not-in-layer-set = 图层集不处理该通道
+reason-fill-map-channel = 填充已烘焙的贴图通道

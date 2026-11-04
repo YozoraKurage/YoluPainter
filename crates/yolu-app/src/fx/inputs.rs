@@ -185,8 +185,14 @@ pub fn space_of(resource: &yolu_io::Resource) -> (&'static str, yolu_core::Image
 /// 入力がそろわないことが理由の、効いていない効果（Anchor を選んでいない・ID の色が無いなど、文書の中の設定の不備は含めない）。
 /// モデルが無いこと（`NoModel`: アイランドごとのばらつきのアイランドの図を渡せない）も、モデルのルートが無いこと（`MissingFrame`）と同じく入力の不足。
 /// アイランドの図を予算で断ったこと（`IslandMap`）は、文書の大きさと予算の設定なので含めない。
+/// 塗りつぶしのマップの源は、マップが無いこと（`MissingMap`）だけが入力の不足（古い・照合できないは注意の印だけ）。
 pub fn is_input_problem(effect: &InactiveEffect) -> bool {
     use generator::Inactive as I;
+    // 塗りつぶしのマップの源は、古い・照合できないマップをそのまま読む（開き直しても合成は保存した時と同じ）ので、読むだけにせず注意の印だけにする。
+    // マップが無いときは、値が保存した時の合成と変わるので入力の不足に数える。
+    if matches!(effect.target, InactiveTarget::FillMap(_)) {
+        return matches!(effect.reason, InactiveReason::Generator(I::MissingMap(_)));
+    }
     match &effect.reason {
         InactiveReason::Generator(
             I::MissingMap(_)
@@ -230,6 +236,7 @@ fn what(
         InactiveTarget::Decal => lang.t("fx-decal").to_owned(),
         InactiveTarget::FillImage(c) => lang.f("fx-image", &[("c", &channel_name(c))]),
         InactiveTarget::FillPoints(c) => lang.f("fx-point-gradient", &[("c", &channel_name(c))]),
+        InactiveTarget::FillMap(c) => lang.f("fx-baked-map", &[("c", &channel_name(c))]),
     }
 }
 
@@ -257,6 +264,10 @@ pub fn needed_maps(doc: &Document) -> Vec<MeshMapKind> {
         }
         for (_, g) in layer.fill_gradients() {
             add_settings(&mut want, g);
+        }
+        // 塗りつぶしのベイクしたマップの源は、その種類のマップを読む（焼き直すと結果も追従する）
+        for (_, kind) in layer.fill_maps() {
+            want[mesh_kind(kind) as usize] = true;
         }
         // モデルの空間の点のグラデーションは、位置のマップを読む
         if layer
@@ -1067,5 +1078,115 @@ mod tests {
         assert_eq!(s.view, view, "表示は今のまま");
         assert_eq!(s.ui.layer_scroll, 0.0);
         assert!(s.session.selected_layer.is_some());
+    }
+
+    /// 塗りつぶしのベイクしたマップの源は、その種類のマップを文書へ渡させ（焼き直すと渡し直す）、焼いていない時の理由はマップの源と言う。
+    #[test]
+    fn a_fill_map_source_asks_for_its_map_and_names_it_when_missing() {
+        let (mut doc, _) = crate::state::blank_document(32, 32);
+        let fill = doc
+            .add_fill_layer("塗り", &[(Channel::Color, Rgba8::new(9, 9, 9, 255))], None)
+            .unwrap();
+        assert!(!needed_maps(&doc).contains(&MeshMapKind::Curvature));
+        doc.set_fill_map(fill, Channel::Color, Some(MapKind::Curvature))
+            .unwrap();
+        assert_eq!(needed_maps(&doc), vec![MeshMapKind::Curvature]);
+        let missing = missing_inputs(&doc);
+        assert_eq!(missing.len(), 1);
+        assert_eq!(missing[0].target, InactiveTarget::FillMap(Channel::Color));
+        let names = |_: Channel| "Color".to_owned();
+        let none = |_: &InactiveEffect| None;
+        let ja = missing_text(Lang::Ja, &missing, &names, &none);
+        assert!(ja.contains("焼いたマップ（Color）"), "{ja}");
+        let en = missing_text(Lang::En, &missing, &names, &none);
+        assert!(en.contains("Baked map (Color)"), "{en}");
+    }
+
+    /// 塗りつぶしのマップの源の入力の不足: マップが無いことだけが数えられ、古い・照合できないマップは注意の印だけ（そのまま読むので、開き直しても合成は同じ）。
+    #[test]
+    fn only_a_missing_map_is_an_input_problem_for_a_fill_map_source() {
+        let effect = |why: generator::Inactive| InactiveEffect {
+            layer: yolu_core::LayerId(1),
+            layer_name: "Fill".into(),
+            target: InactiveTarget::FillMap(Channel::Color),
+            reason: InactiveReason::Generator(why),
+        };
+        let kind = MapKind::Curvature;
+        assert!(is_input_problem(&effect(generator::Inactive::MissingMap(
+            kind
+        ))));
+        assert!(!is_input_problem(&effect(generator::Inactive::StaleMap(
+            kind
+        ))));
+        assert!(!is_input_problem(&effect(
+            generator::Inactive::UnverifiedMap(kind)
+        )));
+    }
+
+    /// 開いた時、マップの源が指すマップが無いセットだけ読むだけになり、マップが古い・照合できないときは（そのまま読むので）編集できて注意の印が残る。
+    #[test]
+    fn a_set_with_a_stale_fill_map_opens_editable_but_a_missing_one_is_read_only() {
+        let kind = MeshMapKind::Curvature;
+        let build = |with_map: bool| {
+            let mut a = AppState::new(16, 16);
+            let fill = a
+                .session
+                .doc
+                .add_fill_layer("塗り", &[(Channel::Color, Rgba8::new(9, 9, 9, 255))], None)
+                .unwrap();
+            a.session
+                .doc
+                .set_fill_map(fill, Channel::Color, Some(MapKind::Curvature))
+                .unwrap();
+            if with_map {
+                let size = 16usize;
+                let provenance = yolu_core::mesh_maps::MeshMapProvenance {
+                    kind,
+                    engine_version: 1,
+                    mesh_hash: String::new(),
+                    topology_hash: String::new(),
+                    uv_channel: 0,
+                    width: size as i32,
+                    height: size as i32,
+                    target_slot: 0,
+                    target_slots: vec![0],
+                    padding: 0,
+                    antialiasing: 1,
+                    settings_key: String::new(),
+                    space: String::new(),
+                    pose: String::new(),
+                    source: String::new(),
+                    bounds_min: [0.0; 3],
+                    bounds_max: [1.0; 3],
+                };
+                let map = yolu_core::mesh_maps::BakedMeshMap::new(
+                    provenance,
+                    vec![30000; size * size],
+                    vec![1; size * size],
+                )
+                .unwrap();
+                a.session.sets.get_mut(0).unwrap().mesh_maps.put(vec![map]);
+            }
+            a
+        };
+        let mut missing = build(false);
+        assert_eq!(missing.lock_sets_missing_inputs().len(), 1);
+        assert!(missing.read_only_reason().is_some());
+        let mut unverified = build(true);
+        assert!(unverified.lock_sets_missing_inputs().is_empty());
+        assert!(unverified.read_only_reason().is_none());
+        let list = unverified.session.doc.inactive_effect_list();
+        assert!(
+            list.iter()
+                .any(|e| e.target == InactiveTarget::FillMap(Channel::Color)
+                    && matches!(
+                        e.reason,
+                        InactiveReason::Generator(
+                            generator::Inactive::StaleMap(_)
+                                | generator::Inactive::UnverifiedMap(_)
+                        )
+                    )),
+            "注意の印は残る: {list:?}"
+        );
     }
 }

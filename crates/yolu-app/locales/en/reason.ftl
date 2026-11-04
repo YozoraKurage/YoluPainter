@@ -564,3 +564,4 @@ reason-sweep-range = Sweep (0–1)
 reason-post-correction-range = Post correction strength (0–100) and view scale
 reason-layer-set-channels = The layer set's channels include a channel that is not in the project
 reason-channel-not-in-layer-set = The layer set does not handle that channel
+reason-fill-map-channel = Fill baked map channel

@@ -572,6 +572,7 @@ pub enum Reason {
     PostCorrectionRange,
     LayerSetChannels,
     ChannelNotInLayerSet,
+    FillMapChannel,
 }
 
 impl Reason {
@@ -1142,6 +1143,7 @@ impl Reason {
             Reason::PostCorrectionRange => "後補正の強さ（0〜100）・表示倍率",
             Reason::LayerSetChannels => "レイヤーセットのチャンネルの組に、プロジェクトに無いチャンネルがある",
             Reason::ChannelNotInLayerSet => "レイヤーセットがそのチャンネルを扱わない",
+            Reason::FillMapChannel => "塗りつぶしの焼いたマップのチャンネル",
         }
     }
 }

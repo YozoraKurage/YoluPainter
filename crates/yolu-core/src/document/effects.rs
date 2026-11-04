@@ -33,6 +33,8 @@ pub(crate) struct FillChannelState {
     pub anisotropic: bool,
     pub gradient: Option<generator::Settings>,
     pub points: Option<PointGradient>,
+    /// このテクスチャセットのベイクしたマップの種類（画像の代わりの源。画像・グラデーションとは同時に持たない）。
+    pub map: Option<generator::MapKind>,
 }
 
 impl FillChannelState {
@@ -44,6 +46,7 @@ impl FillChannelState {
             anisotropic: layer.fill_anisotropic(channel),
             gradient: layer.fill_gradients.get(&channel).cloned(),
             points: layer.fill_points.get(&channel).cloned(),
+            map: layer.fill_maps.get(&channel).copied(),
         }
     }
     fn put(&self, layer: &mut Layer, channel: Channel) {
@@ -68,6 +71,10 @@ impl FillChannelState {
         match &self.gradient {
             Some(g) => layer.fill_gradients.insert(channel, g.clone()),
             None => layer.fill_gradients.remove(&channel),
+        };
+        match self.map {
+            Some(k) => layer.fill_maps.insert(channel, k),
+            None => layer.fill_maps.remove(&channel),
         };
         layer.set_enabled(channel, self.enabled);
     }
@@ -1179,7 +1186,7 @@ impl Document {
     }
 
     /// 塗りつぶしのチャンネルが読む画像を置く（None で外す。1 回の Undo）。値の無いチャンネルに置くと、既定の値
-    /// （画像が使えない所に出る）を持ち、チャンネルを有効にする。外しても値は残る。置くとそのチャンネルのグラデーションは外れる
+    /// （画像が使えない所に出る）を持ち、チャンネルを有効にする。外しても値は残る。置くとそのチャンネルのグラデーション・ベイクしたマップは外れる
     /// （Undo で戻る）。渡した入力に無い画像・ミップマップが画像の予算を超える画像は断る。
     pub fn set_fill_image(
         &mut self,
@@ -1222,6 +1229,7 @@ impl Document {
         if image.is_some() {
             new.gradient = None;
             new.points = None;
+            new.map = None;
             if new.value.is_none() {
                 new.value = Some(default_fill_fallback(kind));
             }
@@ -1236,6 +1244,78 @@ impl Document {
             },
             96,
         )
+    }
+
+    /// 塗りつぶしのチャンネルの源に、このテクスチャセットのベイクしたマップの種類を置く（None で外す。1 回の Undo）。マップは文書が持たず、
+    /// 評価のたびに効果の入力（[`Self::set_effect_inputs`]）から種類で引くので、焼き直すと結果も新しいマップに追従する。まだ焼いていない種類も
+    /// 置ける（焼くまでは値を見せ、[`Self::inactive_effect_list`] が理由を言う）。値の無いチャンネルに置くと既定の値を持ち、チャンネルを
+    /// 有効にする。置くとそのチャンネルの画像・グラデーション・点のグラデーションは外れ、外しても値は残る（Undo で戻る）。
+    pub fn set_fill_map(
+        &mut self,
+        layer: LayerId,
+        channel: Channel,
+        map: Option<generator::MapKind>,
+    ) -> Result<(), CoreError> {
+        self.ensure_no_stroke()?;
+        let kind = self.channel_kind(channel)?;
+        require_standard(channel)?;
+        let index = self.fill_layer_index(layer)?;
+        let old = FillChannelState::of(&self.layers[index], channel);
+        if old.map == map {
+            return Ok(());
+        }
+        // マップも場所ごとに不透明度を変える（覆いの無い所は値）ので、画像と同じロックで断る
+        self.ensure_pixels_rewritable(layer)?;
+        let mut new = old.clone();
+        new.map = map;
+        if map.is_some() {
+            new.image = None;
+            new.anisotropic = true;
+            new.gradient = None;
+            new.points = None;
+            if new.value.is_none() {
+                new.value = Some(default_fill_fallback(kind));
+            }
+            new.enabled = true;
+        }
+        self.execute(
+            Command::FillChannel {
+                id: layer,
+                channel,
+                old: Box::new(old),
+                new: Box::new(new),
+            },
+            96,
+        )
+    }
+
+    /// 読み込み用: 履歴なしで塗りつぶしのベイクしたマップの源を置く。値の無いチャンネル・画像・グラデーション・点のグラデーションのある
+    /// チャンネル・同じチャンネルの 2 つ目・標準でないチャンネルは断る（黙って直さない）。
+    pub fn set_fill_maps_for_load(
+        &mut self,
+        layer: LayerId,
+        maps: &[(Channel, generator::MapKind)],
+    ) -> Result<(), CoreError> {
+        self.ensure_no_stroke()?;
+        let index = self.fill_layer_index(layer)?;
+        let mut seen = BTreeMap::new();
+        for (c, k) in maps {
+            require_standard(*c)?;
+            let l = &self.layers[index];
+            if !l.fill.contains_key(c)
+                || l.fill_images.contains_key(c)
+                || l.fill_gradients.contains_key(c)
+                || l.fill_points.contains_key(c)
+                || seen.insert(*c, *k).is_some()
+            {
+                return Err(CoreError::InvalidArgument(Reason::FillMapChannel));
+            }
+        }
+        let l = &mut self.layers[index];
+        l.fill_isotropic.retain(|c| !seen.contains_key(c));
+        l.fill_maps = seen;
+        self.external_mutation();
+        Ok(())
     }
 
     /// 塗りつぶしのチャンネルの画像を異方性のフィルターで読むか（1 回の Undo）。画像の無いチャンネルは断る。
@@ -1309,6 +1389,7 @@ impl Document {
         // 画像のあるレイヤー・デカール（前か後）は画素を変えるので、画像・透明部分のロックでも断る。それ以外は、すべてのロックだけ
         // （C# の SetFillProjection）
         if !self.layers[index].fill_images.is_empty()
+            || !self.layers[index].fill_maps.is_empty()
             || old.mode == ProjectionMode::Decal
             || projection.mode == ProjectionMode::Decal
         {
@@ -1361,6 +1442,7 @@ impl Document {
         if new.gradient.is_some() {
             new.image = None;
             new.points = None;
+            new.map = None;
             if new.value.is_none() {
                 new.value = Some(default_fill_fallback(kind));
             }
@@ -1411,6 +1493,7 @@ impl Document {
             new.image = None;
             new.anisotropic = true;
             new.gradient = None;
+            new.map = None;
             if new.value.is_none() {
                 new.value = Some(default_fill_fallback(kind));
             }
@@ -1444,6 +1527,7 @@ impl Document {
             if !l.fill.contains_key(&c)
                 || l.fill_images.contains_key(&c)
                 || l.fill_gradients.contains_key(&c)
+                || l.fill_maps.contains_key(&c)
                 || map.insert(c, g).is_some()
             {
                 return Err(CoreError::InvalidArgument(Reason::FillPointGradientChannel));
@@ -1539,6 +1623,7 @@ impl Document {
                 || !self.layers[index].fill.contains_key(c)
                 || self.layers[index].fill_gradients.contains_key(c)
                 || self.layers[index].fill_points.contains_key(c)
+                || self.layers[index].fill_maps.contains_key(c)
             {
                 return Err(CoreError::InvalidArgument(Reason::FillImageChannelOrId));
             }
@@ -1565,6 +1650,7 @@ impl Document {
             validate_fill_gradient(c, &g)?;
             if !self.layers[index].fill.contains_key(&c)
                 || self.layers[index].fill_images.contains_key(&c)
+                || self.layers[index].fill_maps.contains_key(&c)
                 || map.insert(c, g).is_some()
             {
                 return Err(CoreError::InvalidArgument(Reason::FillGradientChannel));
@@ -1674,6 +1760,9 @@ impl Document {
         } else {
             // 同じ UV の位相なら今の物を使い続ける（覚えたアイランドの図・帯の写しを捨てない）
             inputs.topology = self.effects.inputs.topology.clone();
+        }
+        if data {
+            self.renew_map_serials(&inputs);
         }
         self.effects.inputs = inputs;
         if topology {
@@ -1902,7 +1991,8 @@ impl Document {
         out
     }
 
-    /// 効かない効果（有効な Generator の段で使えるマップ・Anchor が無いもの・値を見せているグラデーションと画像・出ていないデカール）の一覧。
+    /// 効かない効果（有効な Generator の段で使えるマップ・Anchor が無いもの・値を見せているグラデーションと画像・出ていないデカール・
+    /// 焼いていないか古いベイクしたマップの源）の一覧。
     pub fn inactive_effect_list(&self) -> Vec<InactiveEffect> {
         let mut out = Vec::new();
         for (i, l) in self.layers.iter().enumerate() {
@@ -1954,6 +2044,13 @@ impl Document {
                 if l.is_channel_enabled(*c) {
                     if let Some(why) = self.points_reason(g) {
                         push(InactiveTarget::FillPoints(*c), why);
+                    }
+                }
+            }
+            for (c, k) in &l.fill_maps {
+                if l.is_channel_enabled(*c) {
+                    if let Some(why) = self.fill_map_problem(i, *k) {
+                        push(InactiveTarget::FillMap(*c), why);
                     }
                 }
             }

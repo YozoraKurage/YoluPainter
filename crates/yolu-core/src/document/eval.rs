@@ -171,6 +171,9 @@ pub(crate) struct EffectState {
     pub inputs_revision: u64,
     /// モデルの UV の位相が別の物に替わるたびに増える（継ぎ目をまたぐ段の評価の鍵。マップや画像の差し替えでは増えない）。
     pub topology_revision: u64,
+    /// 入力のマップの種類ごとの、画素の通し番号（[`next_map_serial`]。画素が替わったときだけ新しい番号）。塗りつぶしの源にしたマップの
+    /// ミップマップの鍵（焼き直したマップに、前のマップのミップマップを使わない）。
+    pub map_serials: std::collections::BTreeMap<MapKind, u64>,
     /// 読み込みと、元画素の変化の記録を通らない直接の書き込み（`external_mutation`）のたびに増える（キャッシュを全部無効にする）。画素・タイルの直接の書き込みは
     /// 元画素の変化の記録を通るので増やさない（`pixel_mutation`）。
     pub generation: u64,
@@ -206,6 +209,7 @@ impl Default for EffectState {
             inputs: EffectInputs::default(),
             inputs_revision: 1,
             topology_revision: 1,
+            map_serials: std::collections::BTreeMap::new(),
             generation: 1,
             clock: 0,
             source: HashMap::new(),
@@ -240,8 +244,26 @@ pub struct EffectCounters {
     pub image_cache_bytes: u64,
 }
 
-/// 画像のミップマップの鍵（中身のハッシュ・色の変換・輝度）。
+/// 画像のミップマップの鍵（中身のハッシュ・色の変換・輝度）。塗りつぶしの源にしたベイクしたマップは、ハッシュの代わりに `map:` と
+/// マップの画素の通し番号。
 type ChainKey = (String, u8, bool);
+
+/// マップの画素の通し番号（プロセスの中で重ならない。文書のあいだで共有するミップマップの鍵に入るので、文書ごとの番号にしない）。
+pub(super) fn next_map_serial() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// ベイクしたマップの源のミップマップの鍵の、ハッシュの欄。
+fn map_chain_name(serial: u64) -> String {
+    format!("map:{serial}")
+}
+
+/// UV の投影で、置き方が既定（繰り返し 1・ずらし 0・回転 0）か。ベイクしたマップの源は、文書の画素とマップの画素が同じ所を指すので、
+/// ミップマップを作らずに直に読む。
+fn is_plain_uv(p: &Projection) -> bool {
+    p.mode == ProjectionMode::Uv && p.tiles == [1.0; 2] && p.offset == [0.0; 2] && p.rotation == 0.0
+}
 
 /// チャンネルの種類で決まる画像の読み方（変換と輝度）と、その鍵。
 fn chain_key(
@@ -356,6 +378,8 @@ struct FillConfig {
     /// デカールの形に使う別チャンネルの画像（チャンネルの順で最初の画像のチャンネル。自分なら None）。
     shape: Option<(Channel, ImageId)>,
     decal: bool,
+    /// このテクスチャセットのベイクしたマップの源（画像とは同時に持たない）。
+    map: Option<MapKind>,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -498,6 +522,10 @@ struct FillSource<'a> {
     scalar: bool,
     sampler: Option<FillSampler<'a>>,
     decal: bool,
+    /// UV で置き方が既定のベイクしたマップの源（マップを直に読む）。
+    baked: Option<fill_image::BakedSource<'a>>,
+    /// ベイクしたマップの源を `sampler` で読む（デカールでない）。マップの値の届かない所はチャンネルの値。
+    map: bool,
 }
 
 impl filter::Source for FillSource<'_> {
@@ -536,8 +564,25 @@ impl filter::Source for FillSource<'_> {
             }
             return v.to_array();
         }
+        if let Some(b) = &self.baked {
+            return b
+                .sample(x, y, self.width, self.height)
+                .unwrap_or(self.value)
+                .to_array();
+        }
         if let Some(s) = &self.sampler {
-            return s.pixel(x, y).unwrap_or(self.value).to_array();
+            let p = s.pixel(x, y).unwrap_or(self.value);
+            // ベイクしたマップの源: 覆いの無い所・繰り返さない外（透明）はチャンネルの値、覆いの重みがあればマップの値（画像の
+            // ミップマップは覆いの重みで混ぜてある）
+            if self.map {
+                return if p.a == 0 {
+                    self.value
+                } else {
+                    Rgba8::new(p.r, p.g, p.b, 255)
+                }
+                .to_array();
+            }
+            return p.to_array();
         }
         self.value.to_array()
     }
@@ -876,6 +921,8 @@ impl Document {
             SourceKey::Channel(c) => {
                 let kind = self.channel_kind(c).unwrap_or(ChannelKind::Color);
                 let fill = (layer.kind == LayerKind::Fill).then(|| {
+                    // デカールの形は、画像（`fill_images`）の最初のチャンネルからだけ取る。マップの源のチャンネルでは、マップの覆いを形に使わない
+                    // （覆いの無い画素は値を見せるだけ）
                     let shape = if layer.is_decal() {
                         layer
                             .fill_images
@@ -897,6 +944,7 @@ impl Document {
                         projection: layer.projection,
                         shape,
                         decal: layer.is_decal(),
+                        map: layer.fill_maps.get(&c).copied(),
                     }
                 });
                 (value_type_of(kind), fill)
@@ -931,9 +979,9 @@ impl Document {
         let seam = self.seam_shape(chain.iter().map(|e| e.settings.halo()));
         // 継ぎ目をまたぐ評価が読むモデルの UV の位相は、マップ・画像とは別の鍵（`Stamp::topology`）で見る
         let reads_inputs = chain.iter().any(|e| e.settings.is_generator())
-            || fill
-                .as_ref()
-                .is_some_and(|f| f.image.is_some() || f.gradient.is_some() || f.decal);
+            || fill.as_ref().is_some_and(|f| {
+                f.image.is_some() || f.map.is_some() || f.gradient.is_some() || f.decal
+            });
         let reads_anchor = anchors.iter().any(Option::is_some);
         let reads_islands = chain.iter().any(|e| e.settings.reads_islands());
         Spec {
@@ -1530,7 +1578,7 @@ impl Document {
         Ok(out)
     }
 
-    /// どのブロックの評価も使う、全域の統計（正規化）と画像のミップマップを、ブロックを並べて評価する前に 1 回ずつ作ってキャッシュへ入れる。
+    /// どのブロックの評価も使う、全域の統計（正規化）と画像（ベイクしたマップの源を含む）のミップマップを、ブロックを並べて評価する前に 1 回ずつ作ってキャッシュへ入れる。
     /// 並べてから各ブロックが取りに行くと、キャッシュが空の最初のバッチでは全ブロックが同じものを同時に作り、作業メモリが予算の
     /// 並列数倍に届き（統計は呼ぶたびに予算いっぱいまで使う）、画像のミップマップも重複して作る。
     fn prepare_shared(&self, spec: &Spec, cancel: Option<&AtomicBool>) -> Result<(), CoreError> {
@@ -1542,14 +1590,8 @@ impl Document {
             self.stage_statistics(spec, cancel)?;
         }
         if let Some(f) = &spec.config.fill {
-            if let Some(id) = f.image {
-                let _ = self.mip_chain(id, f.kind);
-            }
-            if let Some((sc, id)) = f.shape {
-                if let Ok(kind) = self.channel_kind(sc) {
-                    let _ = self.mip_chain(id, kind);
-                }
-            }
+            // 自分の画像（または投影するベイクしたマップ）と、デカールの形の画像
+            let _ = self.fill_chains(f);
         }
         Ok(())
     }
@@ -2084,16 +2126,9 @@ impl Document {
         }
         let stage_input = StageInput { bound, scalar };
 
-        // 塗りつぶしの画像のミップマップ（読み元より長く生きる）
+        // 塗りつぶしの画像・ベイクしたマップのミップマップ（読み元より長く生きる）
         let (own, shape) = match &cfg.fill {
-            Some(f) => (
-                f.image.and_then(|id| self.mip_chain(id, f.kind).ok()),
-                f.shape.and_then(|(sc, id)| {
-                    self.channel_kind(sc)
-                        .ok()
-                        .and_then(|k| self.mip_chain(id, k).ok())
-                }),
-            ),
+            Some(f) => self.fill_chains(f),
             None => (None, None),
         };
         // 読み元
@@ -2110,52 +2145,13 @@ impl Document {
                     failed: OnceLock::new(),
                 })
             }
-            Some(f) => {
-                let gradient = f.gradient.as_ref().and_then(|g| {
-                    BoundGenerator::bind(g, &maps, frame, dims, Err(anchor::Issue::NotChosen)).ok()
-                });
-                let projected = f.image.is_some() || f.decal;
-                let sampler = if projected {
-                    let position = inputs.map(MapKind::Position);
-                    let normal = inputs.map(MapKind::WorldNormal);
-                    let input = FillInput {
-                        projection: f.projection,
-                        width: self.width,
-                        height: self.height,
-                        image: own.as_deref(),
-                        shape: shape.as_deref(),
-                        fallback: f.value,
-                        missing_image: f.decal && f.image.is_some() && own.is_none(),
-                        positions: usable_map(position).map(|m| m.as_fill()),
-                        normals: usable_map(normal).map(|m| m.as_fill()),
-                        bounds_min: position.map_or([0.; 3], |m| m.bounds_min),
-                        bounds_max: position.map_or([1.; 3], |m| m.bounds_max),
-                        frame: inputs.frame.map(|fr| fr.for_fill()),
-                        stale_position: position.is_some_and(|m| m.state != MapState::Current),
-                        stale_normal: normal.is_some_and(|m| m.state != MapState::Current),
-                        anisotropic: f.anisotropic,
-                        shape_anisotropic: f.shape_anisotropic,
-                    };
-                    Some(FillSampler::bind(input).map_err(map_fill_error)?)
-                } else {
-                    None
-                };
-                let points = f.points.as_ref().and_then(|g| {
-                    let position = maps.iter().find(|m| m.kind == MapKind::Position).cloned();
-                    crate::fill_points::BoundPoints::bind(g, position, frame, dims)
-                });
-                ChainSource::Fill(Box::new(FillSource {
-                    value: f.value,
-                    width: self.width,
-                    height: self.height,
-                    gradient,
-                    points,
-                    has_points: f.points.is_some(),
-                    scalar: f.kind != ChannelKind::Color,
-                    sampler,
-                    decal: f.decal,
-                }))
-            }
+            Some(f) => ChainSource::Fill(Box::new(self.fill_source(
+                f,
+                own.as_deref(),
+                shape.as_deref(),
+                &maps,
+                frame,
+            )?)),
         };
         let result = body(&Env {
             source: &source,
@@ -2170,6 +2166,93 @@ impl Document {
             }
         }
         result
+    }
+
+    /// 塗りつぶしのチャンネルが読む、自分の画像（またはベイクしたマップ）のミップマップと、デカールの形の画像のミップマップ。UV で置き方が
+    /// 既定のマップの源はミップマップを作らない（[`Self::fill_source`] が直に読む）。読めないものは None（値を見せる）。
+    fn fill_chains(
+        &self,
+        f: &FillConfig,
+    ) -> (
+        Option<Arc<ImageMipChain<'static>>>,
+        Option<Arc<ImageMipChain<'static>>>,
+    ) {
+        let own = match (f.image, f.map) {
+            (Some(id), _) => self.mip_chain(id, f.kind).ok(),
+            (None, Some(k)) if !is_plain_uv(&f.projection) => self.map_chain(k, f.kind).ok(),
+            _ => None,
+        };
+        let shape = f.shape.and_then(|(sc, id)| {
+            self.channel_kind(sc)
+                .ok()
+                .and_then(|k| self.mip_chain(id, k).ok())
+        });
+        (own, shape)
+    }
+
+    /// 塗りつぶしレイヤーのチャンネルの読み元（値・グラデーション・点のグラデーション・投影した画像・ベイクしたマップ）。
+    fn fill_source<'a>(
+        &'a self,
+        f: &'a FillConfig,
+        own: Option<&'a ImageMipChain<'static>>,
+        shape: Option<&'a ImageMipChain<'static>>,
+        maps: &'a [generator::Map<'a>],
+        frame: Option<generator::ModelFrame>,
+    ) -> Result<FillSource<'a>, CoreError> {
+        let inputs = &self.effects.inputs;
+        let dims = (self.width, self.height);
+        let gradient = f.gradient.as_ref().and_then(|g| {
+            BoundGenerator::bind(g, maps, frame, dims, Err(anchor::Issue::NotChosen)).ok()
+        });
+        let projected = f.image.is_some() || f.decal || own.is_some();
+        let baked = match f.map {
+            Some(k) if is_plain_uv(&f.projection) => {
+                inputs.map(k).and_then(|m| baked_source(m, f.kind).ok())
+            }
+            _ => None,
+        };
+        let sampler = if projected {
+            let position = inputs.map(MapKind::Position);
+            let normal = inputs.map(MapKind::WorldNormal);
+            let input = FillInput {
+                projection: f.projection,
+                width: self.width,
+                height: self.height,
+                image: own,
+                shape,
+                fallback: f.value,
+                missing_image: f.decal && (f.image.is_some() || f.map.is_some()) && own.is_none(),
+                positions: usable_map(position).map(|m| m.as_fill()),
+                normals: usable_map(normal).map(|m| m.as_fill()),
+                bounds_min: position.map_or([0.; 3], |m| m.bounds_min),
+                bounds_max: position.map_or([1.; 3], |m| m.bounds_max),
+                frame: inputs.frame.map(|fr| fr.for_fill()),
+                stale_position: position.is_some_and(|m| m.state != MapState::Current),
+                stale_normal: normal.is_some_and(|m| m.state != MapState::Current),
+                anisotropic: f.anisotropic,
+                shape_anisotropic: f.shape_anisotropic,
+            };
+            Some(FillSampler::bind(input).map_err(map_fill_error)?)
+        } else {
+            None
+        };
+        let points = f.points.as_ref().and_then(|g| {
+            let position = maps.iter().find(|m| m.kind == MapKind::Position).cloned();
+            crate::fill_points::BoundPoints::bind(g, position, frame, dims)
+        });
+        Ok(FillSource {
+            value: f.value,
+            width: self.width,
+            height: self.height,
+            gradient,
+            points,
+            has_points: f.points.is_some(),
+            scalar: f.kind != ChannelKind::Color,
+            sampler,
+            decal: f.decal,
+            baked,
+            map: f.map.is_some() && !f.decal,
+        })
     }
 
     /// 画像のミップマップ（変換と輝度はチャンネルの種類で決まる。同じ中身・変換・輝度は 1 つを共有し、予算で古いものから捨てる）。
@@ -2208,6 +2291,66 @@ impl Document {
             .get(&id)
             .ok_or_else(|| InactiveReason::Rejected("プロジェクトにその画像が無い".into()))?;
         let (key, conversion, luminance) = chain_key(image, color, luminance);
+        self.cached_chain(key, |budget| {
+            ImageMipChain::build_shared(
+                image.pixels.clone(),
+                image.width,
+                image.height,
+                conversion,
+                luminance,
+                budget,
+                None,
+            )
+        })
+    }
+
+    /// 塗りつぶしの源にしたベイクしたマップの、画像と同じ置き方で引くミップマップ（UV 以外の投影・置き方を変えた UV）。マップを 8 bit の
+    /// 画像（覆いの無い画素は透明）にして作り、マップの画素の通し番号を鍵にして持つ（焼き直したら別の鍵）。色の変換はしない（マップの値は
+    /// データ）。段 0 もこのミップマップが持つので、画像の予算に段 0 も数える。マップが無ければ `MissingMap`。
+    fn map_chain(
+        &self,
+        kind: MapKind,
+        channel: ChannelKind,
+    ) -> Result<Arc<ImageMipChain<'static>>, InactiveReason> {
+        let map = self
+            .effects
+            .inputs
+            .map(kind)
+            .ok_or(InactiveReason::Generator(generator::Inactive::MissingMap(
+                kind,
+            )))?;
+        // 通し番号は入力を置くときに必ず付き（`renew_map_serials`）、写し（snapshot・`edit_copy`）へも入力と一緒に写る。無ければ、評価のたびに
+        // 新しい鍵になってミップマップを毎回作り直す（ブロックごとの評価で何度も作る）ので、使い回さず作らずに理由つきで断る
+        let Some(serial) = self.effects.map_serials.get(&kind).copied() else {
+            debug_assert!(false, "マップの通し番号が無い: {kind:?}");
+            return Err(InactiveReason::Rejected(
+                "マップの画素の通し番号が無い".into(),
+            ));
+        };
+        let luminance = channel == ChannelKind::Scalar && kind.channels() == 3;
+        let key = (map_chain_name(serial), Conversion::None as u8, luminance);
+        self.cached_chain(key, |budget| {
+            fill_image::budget(map_chain_bytes(map)?, budget)?;
+            let pixels = baked_source(map, ChannelKind::Color)?.rgba8(None)?;
+            Ok(ImageMipChain::build_shared(
+                pixels.into(),
+                map.width,
+                map.height,
+                Conversion::None,
+                luminance,
+                budget,
+                None,
+            )?
+            .counting_original())
+        })
+    }
+
+    /// 鍵のミップマップ（この文書のキャッシュ、無ければほかの文書が持つ物、それも無ければ `build` に画像の予算を渡して作る）。
+    fn cached_chain(
+        &self,
+        key: ChainKey,
+        build: impl FnOnce(u64) -> Result<ImageMipChain<'static>, fill_image::FillError>,
+    ) -> Result<Arc<ImageMipChain<'static>>, InactiveReason> {
         {
             let mut c = self.cache();
             c.clock += 1;
@@ -2227,18 +2370,8 @@ impl Document {
         let chain = match shared {
             Some(chain) => chain,
             None => {
-                let chain = Arc::new(
-                    ImageMipChain::build_shared(
-                        image.pixels.clone(),
-                        image.width,
-                        image.height,
-                        conversion,
-                        luminance,
-                        budget,
-                        None,
-                    )
-                    .map_err(|e| InactiveReason::Rejected(e.to_string()))?,
-                );
+                let chain =
+                    Arc::new(build(budget).map_err(|e| InactiveReason::Rejected(e.to_string()))?);
                 let mut registry = shared_chains();
                 registry.retain(|_, w| w.strong_count() > 0);
                 registry.insert(key.clone(), Arc::downgrade(&chain));
@@ -2265,6 +2398,42 @@ impl Document {
         }
         self.trim_effect_cache();
         Ok(chain)
+    }
+
+    /// 入力を `next` に替える前に、マップの種類ごとの画素の通し番号を付け直す（画素の同じマップは前の番号のまま）。画素の替わった・
+    /// 無くなったマップのミップマップは、もう誰も引かないのでキャッシュから外す。
+    pub(super) fn renew_map_serials(&mut self, next: &EffectInputs) {
+        let mut serials = std::collections::BTreeMap::new();
+        for m in &next.maps {
+            let kept = self
+                .effects
+                .inputs
+                .map(m.kind)
+                .filter(|old| old.same_pixels(m))
+                .and_then(|_| self.effects.map_serials.get(&m.kind).copied());
+            serials.insert(m.kind, kept.unwrap_or_else(next_map_serial));
+        }
+        let dropped: Vec<String> = self
+            .effects
+            .map_serials
+            .iter()
+            .filter(|(k, s)| serials.get(*k) != Some(*s))
+            .map(|(_, s)| map_chain_name(*s))
+            .collect();
+        self.effects.map_serials = serials;
+        if dropped.is_empty() {
+            return;
+        }
+        let mut c = self.cache();
+        let mut freed = 0;
+        c.chains.retain(|k, e| {
+            let keep = !dropped.contains(&k.0);
+            if !keep {
+                freed += e.chain.bytes();
+            }
+            keep
+        });
+        c.chain_bytes -= freed;
     }
 
     // ───────── Anchor ─────────
@@ -2928,6 +3097,49 @@ impl Document {
         }
         self.projection_problem(&l.projection)
     }
+
+    /// ベイクしたマップの源のチャンネルが、今の焼いたマップを読んでいない理由: 焼いていない（値を見せる）・古い・条件を照合できない
+    /// （どちらもその値のまま使う）・ミップマップが画像の予算を超える・投影が組めない（値を見せる）。
+    pub(super) fn fill_map_problem(&self, index: usize, kind: MapKind) -> Option<InactiveReason> {
+        use generator::Inactive as I;
+        let l = &self.layers[index];
+        let why = match self.effects.inputs.map(kind) {
+            None => I::MissingMap(kind),
+            Some(m) if m.state == MapState::Stale => I::StaleMap(kind),
+            Some(m) if m.state != MapState::Current => I::UnverifiedMap(kind),
+            Some(_) if is_plain_uv(&l.projection) => return None,
+            Some(m) => {
+                let fits = map_chain_bytes(m)
+                    .and_then(|need| fill_image::budget(need, self.effects.image_cache_budget));
+                if let Err(e) = fits {
+                    return Some(InactiveReason::Rejected(e.to_string()));
+                }
+                return self.projection_problem(&l.projection);
+            }
+        };
+        Some(InactiveReason::Generator(why))
+    }
+}
+
+/// ベイクしたマップの源を、塗りつぶしの画素として読む口（スカラーのチャンネルは 3 つの成分を輝度にする）。
+fn baked_source(
+    m: &crate::effects::MapInput,
+    kind: ChannelKind,
+) -> Result<fill_image::BakedSource<'_>, fill_image::FillError> {
+    fill_image::BakedSource::new(
+        m.width,
+        m.height,
+        &m.data,
+        &m.coverage,
+        m.kind.channels(),
+        kind == ChannelKind::Scalar,
+    )
+}
+
+/// ベイクしたマップの源のミップマップのバイト数（段 0 の RGBA8 と、ほかの段）。
+fn map_chain_bytes(m: &crate::effects::MapInput) -> Result<u64, fill_image::FillError> {
+    Ok(ImageMipChain::extra_bytes(m.width, m.height)?
+        + u64::from(m.width) * u64::from(m.height) * 4)
 }
 
 /// 評価したタイルの画素。全部同じ色（透明も）なら一様なタイルにする。透明の一様なタイルは「評価したが何も無い」印
