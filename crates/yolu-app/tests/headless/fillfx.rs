@@ -7,7 +7,7 @@ use crate::common::drive::Drive;
 use std::path::PathBuf;
 
 use egui::{pos2, vec2, Rect};
-use yolu_app::bake::{BakeAction, BakeBackend};
+use yolu_app::bake::{kind_label, BakeAction, BakeBackend};
 use yolu_app::engine::{Channel, Document, LayerId, Rgba8, TileCoord};
 use yolu_app::fillfx::{gizmo, inputs, FillOp};
 use yolu_app::gradient::{End, GradientOp};
@@ -626,7 +626,10 @@ fn headless_a_decal_outside_its_box_is_transparent_and_the_reason_is_told_withou
         },
     );
     let why = s.decal_problem(layer).expect("マップが無い");
-    assert!(why.contains("Position"), "{why}");
+    assert!(
+        why.contains(kind_label(Lang::Ja, MeshMapKind::Position)),
+        "{why}"
+    );
     s.set_lang(Lang::En);
     assert_eq!(s.decal_problem(layer).unwrap(), "No Position map");
     let why = s
@@ -766,7 +769,9 @@ fn headless_a_decal_without_baked_maps_is_placed_with_the_reason() {
     let id = s.selected_layer().unwrap();
     assert_eq!(layer_projection(&s, id).mode, ProjectionMode::Decal);
     assert!(
-        s.message().contains("まだ出ません") && s.message().contains("Position"),
+        s.message().contains("まだ出ません")
+            && s.message()
+                .contains(kind_label(Lang::Ja, MeshMapKind::Position)),
         "{}",
         s.message()
     );

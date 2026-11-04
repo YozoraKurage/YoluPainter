@@ -76,6 +76,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     let ctx = ui.ctx().clone();
     let lang = app.lang;
     app.shelf.use_language(lang);
+    app.sync_baked_assets();
     app.library.set_waker(repaint_waker(&ctx));
     let source = app.library.source;
     // 項目の情報とサムネイルは別のスレッドで作る。できた分を受け取り、見えている項目の分は格子を描くときに頼む
@@ -120,6 +121,10 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
             app.library.source = s;
             app.shelf.scroll = 0.0;
             if s == Source::Library {
+                // ライブラリには焼いたマップが無い
+                if app.shelf.filter == Some(ItemKind::BakedMap) {
+                    app.shelf.filter = None;
+                }
                 app.library.refresh();
             }
         }
@@ -165,12 +170,11 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     // 種類の絞り込み（左）と、ファイルの読み込み（右）
     let row = rows.row(26.0, 4.0);
     let mut x = row.left();
-    let mut filters: Vec<(Option<ItemKind>, &str, &str)> =
-        vec![(None, "grid_dots", lang.t("panels-all"))];
-    for kind in ItemKind::ALL {
-        filters.push((Some(kind), kind.icon(), kind.name(lang)));
-    }
-    for (kind, icon, name) in filters {
+    for (kind, icon, name) in filter_kinds(lang, source) {
+        // 右の読み込みのボタンに重ならない数だけ（細い列では後ろの種類が隠れる）
+        if x + 26.0 > row.right() - 30.0 {
+            break;
+        }
         let b = Rect::from_min_size(pos2(x, row.top()), vec2(26.0, row.height()));
         x += 28.0;
         let id = ("shelf.filter", kind.map_or(0, |k| k as u8 + 1));
@@ -817,6 +821,21 @@ fn footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
     }
 }
 
+/// 種類の絞り込みの並び（「全部」と各種類。ライブラリには焼いたマップが無いので出さない）。
+fn filter_kinds(
+    lang: crate::lang::Lang,
+    source: Source,
+) -> Vec<(Option<ItemKind>, &'static str, &'static str)> {
+    let mut filters = vec![(None, "grid_dots", lang.t("panels-all"))];
+    for kind in ItemKind::ALL {
+        if kind == ItemKind::BakedMap && source == Source::Library {
+            continue;
+        }
+        filters.push((Some(kind), kind.icon(), kind.name(lang)));
+    }
+    filters
+}
+
 fn project_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let lang = app.lang;
     let info = Rect::from_min_size(r.min, vec2(r.width(), 18.0));
@@ -909,7 +928,7 @@ fn project_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
         "save",
         lang.t("panels-export-ylsmart-tip"),
         false,
-        id.as_deref().is_some_and(|i| !shelf::is_builtin(i))
+        id.as_deref().is_some_and(|i| !shelf::is_derived(i))
             && kind.is_some_and(ItemKind::is_smart),
         16.0,
     )
@@ -930,7 +949,7 @@ fn project_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
         "library",
         lang.t("panels-put-into-the-library-tip"),
         false,
-        id.as_deref().is_some_and(|i| !shelf::is_builtin(i))
+        id.as_deref().is_some_and(|i| !shelf::is_derived(i))
             && !app.is_stroking()
             && !matches!(block, Some(shelf::Block::Unreadable(_))),
         16.0,
@@ -952,7 +971,7 @@ fn project_footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
         "delete",
         lang.t("panels-remove-from-the-project-s-tip"),
         false,
-        id.as_deref().is_some_and(|i| !shelf::is_builtin(i))
+        id.as_deref().is_some_and(|i| !shelf::is_derived(i))
             && !app.is_stroking()
             && app.shelf.unavailable.is_none(),
         16.0,
@@ -1281,8 +1300,8 @@ pub fn layer_list_drop(
                 PlaceTarget::Mask(row.id)
             })
         }
-        // 画像は 1 枚のペイントのレイヤー、マテリアルは塗りつぶしレイヤーとして、スマートマテリアルと同じ所へ置く
-        ItemKind::SmartMaterial | ItemKind::Material | ItemKind::Image => {
+        // 画像は 1 枚のペイントのレイヤー、マテリアルと焼いたマップは塗りつぶしレイヤーとして、スマートマテリアルと同じ所へ置く
+        ItemKind::SmartMaterial | ItemKind::Material | ItemKind::Image | ItemKind::BakedMap => {
             let target = gap_or_group(rows, position);
             match target {
                 DropTarget::Gap(gap) => {
@@ -1334,7 +1353,7 @@ pub fn menu_entries(app: &AppState) -> Vec<Entry<Action>> {
     let id = res.id.clone();
     let free = !app.is_stroking();
     let blocked = app.shelf.block_of(&id).is_some();
-    let builtin = shelf::is_builtin(&id);
+    let builtin = shelf::is_derived(&id);
     let label = if kind == Some(ItemKind::SmartMask) {
         lang.t("panels-apply-to-mask")
     } else {
@@ -1456,6 +1475,7 @@ pub fn frame(ctx: &egui::Context, state: &mut AppState) {
     state.shelf.waker = Some(waker.clone());
     // 棚の項目の絵（アセットの欄・塗りつぶしの画像の箱が頼む）は、欄が見えていなくても受け取る
     state.shelf.attach_repaint(waker);
+    state.sync_baked_assets();
     state.shelf.poll_inspections(shelf::INSPECTIONS_PER_FRAME);
     state.shelf_poll();
     state.library_poll();

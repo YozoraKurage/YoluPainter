@@ -857,3 +857,4 @@ panels-point-number-color = 점 { $number } 색상
 panels-effects-on-the-mask = 마스크에 효과 { $count }개
 panels-auto-rotate-light-tip = 라이트 자동 회전
 panels-auto-rotate-light = 자동 회전
+panels-remove-the-baked-map = 베이크한 맵 제거

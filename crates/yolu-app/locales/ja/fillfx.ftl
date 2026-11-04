@@ -29,3 +29,5 @@ fillfx-image-too-large-to-read = 画像が大きすぎて読めません
 fillfx-pbr-material-added = マテリアル{ $name }を追加しました（{ $n } 枚）
 fillfx-pbr-materials-added = マテリアルを { $count } 個追加しました（{ $n } 枚）
 fillfx-pbr-images-added = 画像として { $n } 枚を追加
+fillfx-baked-map-set = 焼いたマップを差しました
+fillfx-baked-map-removed = 焼いたマップを外しました

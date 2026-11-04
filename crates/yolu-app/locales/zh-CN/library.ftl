@@ -13,6 +13,7 @@ library-no-library-location = 没有资源库的位置
 library-writing-to-the-library = 正在写入资源库
 library-the-write-stopped-midway = 写入中途停止
 library-built-in-items-cannot-be = 内置项目无法加入资源库。
+library-baked-maps-cannot-be = 已烘焙的贴图无法加入资源库。
 library-layer-not-found = 找不到图层
 library-removed-from-the-library = 已从资源库移除
 library-not-a-fill-layer = 不是填充图层

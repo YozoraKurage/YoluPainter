@@ -29,3 +29,5 @@ fillfx-image-too-large-to-read = 圖片太大，無法讀取
 fillfx-pbr-material-added = 已加入材質 { $name }（{ $n } 張圖片）
 fillfx-pbr-materials-added = 已加入 { $count } 個材質（{ $n } 張圖片）
 fillfx-pbr-images-added = 另有 { $n } 張以圖片加入
+fillfx-baked-map-set = 已設定已烘焙的貼圖
+fillfx-baked-map-removed = 已移除已烘焙的貼圖

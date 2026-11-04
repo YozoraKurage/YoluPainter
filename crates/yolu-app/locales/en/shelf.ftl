@@ -82,3 +82,7 @@ shelf-cannot-add-name-to-the-library = Cannot add { $name } to the library
 shelf-cannot-remove-name-from-the-library = Cannot remove { $name } from the library
 shelf-cannot-save-name-as-a-material = Cannot save { $name } as a material
 shelf-resized-from = { ", " }resized from { $width }×{ $height }
+shelf-baked-maps = Baked Maps
+shelf-baked-map = Baked Map
+shelf-baked-maps-cannot-be = Baked maps cannot be removed
+shelf-baked-maps-cannot-be-2 = Baked maps cannot be exported

@@ -59,6 +59,22 @@ pub fn mesh_kind(kind: MapKind) -> MeshMapKind {
     }
 }
 
+/// `mesh_kind` の逆（焼いたマップの種類から、Generator・塗りつぶしの源が読む種類へ）。
+pub fn map_kind(kind: MeshMapKind) -> MapKind {
+    match kind {
+        MeshMapKind::WorldNormal => MapKind::WorldNormal,
+        MeshMapKind::Position => MapKind::Position,
+        MeshMapKind::AmbientOcclusion => MapKind::AmbientOcclusion,
+        MeshMapKind::Curvature => MapKind::Curvature,
+        MeshMapKind::Thickness => MapKind::Thickness,
+        MeshMapKind::TangentNormal => MapKind::TangentNormal,
+        MeshMapKind::Height => MapKind::Height,
+        MeshMapKind::Id => MapKind::Id,
+        MeshMapKind::BentNormal => MapKind::BentNormal,
+        MeshMapKind::Opacity => MapKind::Opacity,
+    }
+}
+
 fn map_state(state: MeshMapState) -> MapState {
     match state {
         MeshMapState::Current => MapState::Current,

@@ -1442,7 +1442,7 @@ fn a_generator_row_without_maps_has_a_mark_whose_tooltip_gives_the_reason() {
         for _ in 0..90 {
             h.step();
         }
-        let reason = lang.pick("Curvature のマップがありません", "No Curvature map");
+        let reason = lang.pick("曲率のマップがありません", "No Curvature map");
         let texts = shown_texts(&h);
         // 欄の警告の行にも同じ理由が出ているので、ポインタの近く（行のすぐ下）に出た文字を見る
         assert!(
@@ -1475,7 +1475,7 @@ fn over_the_warning_mark_only_the_mark_tooltip_shows_and_elsewhere_on_the_row_th
             lang.pick("乗算", "Multiply")
         );
         let row = h.get_by_label(&label).rect();
-        let reason = lang.pick("Curvature のマップがありません", "No Curvature map");
+        let reason = lang.pick("曲率のマップがありません", "No Curvature map");
         // 印の上: 理由だけの 1 つ（行のツールチップ「名前＋理由」は出さない）
         move_to(&h, pos2(row.right() - 4.0 - 60.0 - 10.0, row.center().y));
         for _ in 0..90 {

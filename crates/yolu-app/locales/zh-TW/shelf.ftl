@@ -76,3 +76,7 @@ shelf-cannot-add-name-to-the-library = 無法將{ $name }加入資源庫
 shelf-cannot-remove-name-from-the-library = 無法從資源庫移除{ $name }
 shelf-cannot-save-name-as-a-material = 無法將{ $name }儲存為材質
 shelf-resized-from = ，已從 { $width }×{ $height } 調整
+shelf-baked-maps = 已烘焙的貼圖
+shelf-baked-map = 已烘焙的貼圖
+shelf-baked-maps-cannot-be = 已烘焙的貼圖無法移除
+shelf-baked-maps-cannot-be-2 = 已烘焙的貼圖無法匯出

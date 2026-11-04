@@ -61,6 +61,12 @@ pub enum FillOp {
         channel: Channel,
         image: Option<ImageId>,
     },
+    /// チャンネルの源に、このテクスチャセットのベイクしたマップの種類を差す・外す（画像・グラデーション・点のグラデーションは外れる。外しても値は残る）。
+    BakedMap {
+        layer: LayerId,
+        channel: Channel,
+        map: Option<yolu_core::generator::MapKind>,
+    },
     /// チャンネルの画像を異方性のフィルターで読むか（斜めから当てた画像のにじみを減らす。既定は読む）。
     Anisotropic {
         layer: LayerId,
@@ -150,6 +156,7 @@ impl FillOp {
         matches!(
             self,
             FillOp::Image { .. }
+                | FillOp::BakedMap { .. }
                 | FillOp::Anisotropic { .. }
                 | FillOp::Projection { .. }
                 | FillOp::ProjectionMode { .. }
@@ -256,6 +263,37 @@ impl AppState {
         }
     }
 
+    /// チャンネルの源を、ベイクしたマップ（`None` なら外す）にする。焼き直すと結果も追従する。
+    fn fill_set_map(&mut self, op: FillOp) {
+        let FillOp::BakedMap {
+            layer,
+            channel,
+            map,
+        } = op
+        else {
+            return;
+        };
+        let lang = self.lang;
+        let Some(layer) = self.fill_layer(layer) else {
+            return;
+        };
+        self.session.doc.end_coalescing();
+        match self.session.doc.set_fill_map(layer, channel, map) {
+            Ok(()) => self.info(
+                Source::FillLayer,
+                match map {
+                    Some(kind) => format!(
+                        "{}: {}",
+                        lang.t("fillfx-baked-map-set"),
+                        crate::bake::kind_label(lang, crate::fx::inputs::mesh_kind(kind))
+                    ),
+                    None => lang.t("fillfx-baked-map-removed").into(),
+                },
+            ),
+            Err(e) => self.fill_refusal(&e),
+        }
+    }
+
     /// 塗りつぶしの操作を当てる。断られたら何も変えず、理由を状態の帯へ。
     pub fn fill_apply(&mut self, op: FillOp) {
         let lang = self.lang;
@@ -302,6 +340,7 @@ impl AppState {
                     }
                 }
             }
+            op @ FillOp::BakedMap { .. } => self.fill_set_map(op),
             FillOp::Anisotropic { layer, channel, on } => {
                 let Some(layer) = self.fill_layer(layer) else {
                     return;

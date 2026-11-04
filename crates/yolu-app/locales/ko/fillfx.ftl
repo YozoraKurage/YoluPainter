@@ -29,3 +29,5 @@ fillfx-image-too-large-to-read = 이미지가 너무 커서 읽을 수 없습니
 fillfx-pbr-material-added = 머티리얼 { $name }을(를) 추가했습니다 (이미지 { $n }개)
 fillfx-pbr-materials-added = 머티리얼 { $count }개를 추가했습니다 (이미지 { $n }개)
 fillfx-pbr-images-added = 이미지로 { $n }개 추가
+fillfx-baked-map-set = 베이크한 맵을 지정했습니다
+fillfx-baked-map-removed = 베이크한 맵을 제거했습니다

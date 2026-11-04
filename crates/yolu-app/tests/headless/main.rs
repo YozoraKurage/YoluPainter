@@ -8,6 +8,7 @@
 mod common;
 
 mod automation;
+mod baked_assets;
 mod bigdoc;
 mod brush_import;
 mod brush_list;

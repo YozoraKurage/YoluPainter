@@ -1162,6 +1162,7 @@ fn image_source_rows(
             key: "fx.image",
             box_key: "fx.image",
             image,
+            map: None,
             enabled,
             popup: Popup::Fx(FxChoice::Image),
             clear_tip: lang.t("panels-remove-the-image-the-stage-tip"),

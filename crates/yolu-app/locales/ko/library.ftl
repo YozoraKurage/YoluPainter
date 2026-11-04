@@ -13,6 +13,7 @@ library-no-library-location = 라이브러리 위치가 없습니다
 library-writing-to-the-library = 라이브러리에 쓰는 중
 library-the-write-stopped-midway = 쓰기가 중간에 멈췄습니다
 library-built-in-items-cannot-be = 기본 제공 항목은 라이브러리에 추가할 수 없습니다.
+library-baked-maps-cannot-be = 베이크한 맵은 라이브러리에 추가할 수 없습니다.
 library-layer-not-found = 레이어를 찾을 수 없습니다
 library-removed-from-the-library = 라이브러리에서 제거했습니다
 library-not-a-fill-layer = 채우기 레이어가 아닙니다

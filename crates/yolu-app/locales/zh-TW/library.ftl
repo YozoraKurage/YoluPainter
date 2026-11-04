@@ -13,6 +13,7 @@ library-no-library-location = 沒有資源庫的位置
 library-writing-to-the-library = 正在寫入資源庫
 library-the-write-stopped-midway = 寫入中途停止
 library-built-in-items-cannot-be = 內建項目無法加入資源庫。
+library-baked-maps-cannot-be = 已烘焙的貼圖無法加入資源庫。
 library-layer-not-found = 找不到圖層
 library-removed-from-the-library = 已從資源庫移除
 library-not-a-fill-layer = 不是填色圖層

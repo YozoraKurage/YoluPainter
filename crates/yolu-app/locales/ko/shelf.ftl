@@ -76,3 +76,7 @@ shelf-cannot-add-name-to-the-library = { $name }을(를) 라이브러리에 추�
 shelf-cannot-remove-name-from-the-library = { $name }을(를) 라이브러리에서 제거할 수 없습니다
 shelf-cannot-save-name-as-a-material = { $name }을(를) 머티리얼로 저장할 수 없습니다
 shelf-resized-from = { ", " }{ $width }×{ $height }에서 크기를 조정함
+shelf-baked-maps = 베이크한 맵
+shelf-baked-map = 베이크한 맵
+shelf-baked-maps-cannot-be = 베이크한 맵은 제거할 수 없습니다
+shelf-baked-maps-cannot-be-2 = 베이크한 맵은 내보낼 수 없습니다

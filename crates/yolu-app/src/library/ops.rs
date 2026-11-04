@@ -122,7 +122,7 @@ fn kind_of_extension(path: &Path) -> Option<files::Kind> {
 
 fn resource_kind(kind: ItemKind) -> Option<(files::Kind, ResourceKind)> {
     Some(match kind {
-        ItemKind::Image => return None,
+        ItemKind::Image | ItemKind::BakedMap => return None,
         ItemKind::Brush => (files::Kind::Brush, ResourceKind::Brush),
         ItemKind::Material => (files::Kind::Material, ResourceKind::Material),
         ItemKind::SmartMaterial => (files::Kind::Smart, ResourceKind::SmartMaterial),
@@ -272,6 +272,9 @@ impl AppState {
         let Some(res) = self.shelf.get(id) else {
             return;
         };
+        if crate::shelf::is_baked(id) {
+            return self.refuse(Source::Library, lang.t("library-baked-maps-cannot-be"));
+        }
         if is_builtin(id) {
             return self.refuse(Source::Library, lang.t("library-built-in-items-cannot-be"));
         }

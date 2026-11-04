@@ -338,7 +338,26 @@ impl Lang {
     pub fn inactive_reason(self, reason: &InactiveReason) -> String {
         use generator::Inactive as I;
         if self == Self::Ja {
-            return reason.to_string();
+            // core の文は種類を英語の名前（`Curvature`）で書くので、マップの種類は画面の名前に替える
+            let label = |k: &generator::MapKind| self.t(map_kind_key(*k));
+            return match reason {
+                InactiveReason::Generator(I::MissingMap(k)) => {
+                    format!("{}のマップがありません", label(k))
+                }
+                InactiveReason::Generator(I::StaleMap(k)) => {
+                    format!("{}のマップが古い条件で焼かれています", label(k))
+                }
+                InactiveReason::Generator(I::UnverifiedMap(k)) => {
+                    format!("{}のマップの条件を照合できません", label(k))
+                }
+                InactiveReason::Generator(I::MapSize(k)) => {
+                    format!("{}のマップの大きさがテクスチャセットと違います", label(k))
+                }
+                InactiveReason::Generator(I::PinMismatch(k)) => {
+                    format!("{}のマップがピンした焼きと違います", label(k))
+                }
+                _ => reason.to_string(),
+            };
         }
         match reason {
             InactiveReason::Generator(I::MissingMap(k)) => format!("No {k:?} map"),
@@ -1026,6 +1045,23 @@ pub(crate) fn pose_preset_save_error(lang: Lang, e: &PoseStoreError) -> String {
     lang.with_reason(lang.t("lang-cannot-save-the-pose"), e.describe(lang))
 }
 
+/// マップの種類の画面の名前のキー（焼くパネルの種類の名前と同じキー。`bake::kind_label` と同じ表）。
+fn map_kind_key(kind: generator::MapKind) -> &'static str {
+    use generator::MapKind as K;
+    match kind {
+        K::WorldNormal => "bake-world-normal",
+        K::Position => "bake-position",
+        K::AmbientOcclusion => "bake-ambient-occlusion",
+        K::Curvature => "bake-curvature",
+        K::Thickness => "bake-thickness",
+        K::TangentNormal => "bake-tangent-normal",
+        K::Height => "bake-height",
+        K::Id => "bake-id",
+        K::BentNormal => "bake-bent-normal",
+        K::Opacity => "bake-opacity",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1159,7 +1195,25 @@ mod tests {
             .map(|r| Lang::En.inactive_reason(r))
             .collect();
         for (i, (reason, en)) in reasons.iter().zip(&english).enumerate() {
-            assert_eq!(Lang::Ja.inactive_reason(reason), reason.to_string());
+            let ja = Lang::Ja.inactive_reason(reason);
+            if i < 5 {
+                // マップの種類は core の文の英語の名前でなく、画面の名前で言う
+                let InactiveReason::Generator(
+                    I::MissingMap(k)
+                    | I::StaleMap(k)
+                    | I::UnverifiedMap(k)
+                    | I::MapSize(k)
+                    | I::PinMismatch(k),
+                ) = reason
+                else {
+                    unreachable!()
+                };
+                let label = Lang::Ja.t(map_kind_key(*k));
+                assert!(ja.starts_with(label), "{ja}");
+                assert!(!ja.contains(&format!("{k:?}")), "{ja}");
+            } else {
+                assert_eq!(ja, reason.to_string());
+            }
             assert!(en.is_ascii() && !en.is_empty(), "{en}");
             assert!(english[i + 1..].iter().all(|other| other != en), "{en}");
         }
@@ -1172,7 +1226,7 @@ mod tests {
         };
         assert_eq!(
             Lang::Ja.core_error(&refused),
-            "効いていない効果は焼き込めません（Thickness のマップがありません）。"
+            "効いていない効果は焼き込めません（厚みのマップがありません）。"
         );
         assert_eq!(
             Lang::En.core_error(&refused),

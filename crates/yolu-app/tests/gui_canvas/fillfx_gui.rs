@@ -1610,3 +1610,164 @@ fn the_image_row_has_an_anisotropic_toggle_that_is_one_undo_step() {
         assert!(on(&h));
     }
 }
+
+/// 塗りつぶしレイヤーを足して、描くチャンネルの画像の箱が見える所まで右の列を送る（箱の探し方は上の試験と同じ）。
+fn fill_layer_with_the_box_in_view(h: &mut Harness<'_, YoluApp>) -> LayerId {
+    apply(h, Action::M2(yolu_app::m2::Edit::NewFill));
+    let layer = st(h).selected_layer().unwrap();
+    let in_column = |r: Rect| r.left() > rx() && r.height() < 40.0 && r.width() > 100.0;
+    let first = rect_of(h, h.lang().pick("画像", "Image"), in_column);
+    let scroll = st(h).m2().props_scroll + (first.top() - props_mid(h)).max(0.0);
+    h.m2_mut().props_scroll = scroll;
+    h.run();
+    layer
+}
+
+#[test]
+fn a_baked_map_card_drops_onto_the_image_box_the_list_picks_one_and_the_clear_button_takes_it_off()
+{
+    use yolu_app::bake::kind_label;
+    use yolu_app::lang::Lang;
+    let (mut h, rect) = window();
+    let (_, image) = shelf_image(&mut h, "石の模様");
+    let layer = fill_layer_with_the_box_in_view(&mut h);
+    let position = kind_label(Lang::Ja, MeshMapKind::Position);
+    let normal = kind_label(Lang::Ja, MeshMapKind::WorldNormal);
+    let in_column = |r: Rect| r.left() > rx() && r.height() < 40.0 && r.width() > 100.0;
+    let map = |h: &Harness<'_, YoluApp>| st(h).doc().layer(layer).unwrap().fill_map(Channel::Color);
+    let image_of =
+        |h: &Harness<'_, YoluApp>| st(h).doc().layer(layer).unwrap().fill_image(Channel::Color);
+    // 箱を押すと一覧に「焼いたマップ」の節があり、焼いた種類を選ぶと源になる（1 回の Undo）
+    let boxed = rect_of(&h, "画像", in_column);
+    click(&mut h, boxed.center());
+    assert!(st(&h).popup().is_some(), "一覧が開く");
+    let steps = st(&h).doc().undo_count();
+    let item = popup_item(&h, position);
+    click(&mut h, item.center());
+    assert_eq!(
+        map(&h),
+        Some(yolu_core::generator::MapKind::Position),
+        "{}",
+        st(&h).message()
+    );
+    assert_eq!(st(&h).doc().undo_count(), steps + 1);
+    undo(&mut h);
+    assert_eq!(map(&h), None);
+    // 焼いたマップの格子の項目をドラッグして落とす
+    let from = card(&h, normal).center();
+    let boxed_empty = rect_of(&h, "画像", in_column);
+    drag(
+        &mut h,
+        &[
+            from,
+            from + vec2(30.0, 10.0),
+            boxed_empty.center() + vec2(0.0, -30.0),
+            boxed_empty.center(),
+        ],
+    );
+    assert_eq!(
+        map(&h),
+        Some(yolu_core::generator::MapKind::WorldNormal),
+        "{}",
+        st(&h).message()
+    );
+    assert!(!egui::DragAndDrop::has_any_payload(&h.ctx));
+    // 外す（✕）: 源がマップのときはマップが外れる。1 回の Undo で戻る
+    let boxed = rect_of(&h, normal, in_column);
+    let steps = st(&h).doc().undo_count();
+    click(&mut h, pos2(boxed.right() + 14.0, boxed.center().y));
+    assert_eq!(map(&h), None, "{}", st(&h).message());
+    assert_eq!(st(&h).doc().undo_count(), steps + 1);
+    undo(&mut h);
+    assert_eq!(map(&h), Some(yolu_core::generator::MapKind::WorldNormal));
+    // 一覧でアセットの画像を選ぶとマップが外れ、焼いたマップをドラッグすると画像が外れる
+    let boxed = rect_of(&h, normal, in_column);
+    click(&mut h, boxed.center());
+    let item = popup_item(&h, "石の模様  (2 × 2)");
+    click(&mut h, item.center());
+    assert_eq!(image_of(&h), Some(image));
+    assert_eq!(map(&h), None);
+    let from = card(&h, position).center();
+    let boxed = rect_of(&h, "石の模様", in_column);
+    drag(
+        &mut h,
+        &[
+            from,
+            from + vec2(30.0, 10.0),
+            boxed.center() + vec2(0.0, -30.0),
+            boxed.center(),
+        ],
+    );
+    assert_eq!(image_of(&h), None);
+    assert_eq!(map(&h), Some(yolu_core::generator::MapKind::Position));
+    // 3D ビューへ落としても、デカールは置かない（画像でないので）
+    let layers = st(&h).doc().layers().len();
+    let from = card(&h, normal).center();
+    let to = rect.center();
+    drag(&mut h, &[from, from + vec2(30.0, 10.0), to]);
+    assert_eq!(st(&h).doc().layers().len(), layers);
+}
+
+#[test]
+fn snapshot_the_image_list_and_the_row_with_a_baked_map_source() {
+    use yolu_app::bake::kind_label;
+    use yolu_app::lang::Lang;
+    for lang in Lang::JA_EN {
+        let (mut h, _) = window();
+        h.act(Action::M2Ui(yolu_app::m2::UiOp::Language(lang)));
+        let layer = fill_layer_with_the_box_in_view(&mut h);
+        let in_column = |r: Rect| r.left() > rx() && r.height() < 40.0 && r.width() > 100.0;
+        let tag = lang.pick("ja", "en");
+        // 一覧の「焼いたマップ」の節（今の源に印）
+        apply(
+            &mut h,
+            Action::Fill(FillOp::BakedMap {
+                layer,
+                channel: Channel::Color,
+                map: Some(yolu_core::generator::MapKind::WorldNormal),
+            }),
+        );
+        h.shelf_mut().wait_inspections();
+        h.run();
+        let name = kind_label(lang, MeshMapKind::WorldNormal);
+        let boxed = rect_of(&h, name, in_column);
+        // 欄が伸びて箱の位置が動いたので、右の列の真ん中へ送り直す
+        let scroll = (st(&h).m2().props_scroll + boxed.center().y - props_mid(&h)).max(0.0);
+        h.m2_mut().props_scroll = scroll;
+        h.run();
+        let boxed = rect_of(&h, name, in_column);
+        click(&mut h, boxed.center());
+        let rect = crate::common::shot::popup(&h);
+        common::shot::region(&mut h, &format!("fillfx_baked_map_list_{tag}"), rect);
+        h.event(egui::Event::Key {
+            key: Key::Escape,
+            physical_key: Some(Key::Escape),
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        });
+        h.run();
+        // 源がマップの欄（サムネイルと種類の名前）
+        let rect = crate::common::shot::group(&h, yolu_app::Tab::Properties);
+        crate::common::shot::clean_region(&mut h, &format!("fillfx_baked_map_row_{tag}"), rect);
+        // 焼いていない種類の源は、効いていない印を出す
+        if lang == Lang::Ja {
+            apply(
+                &mut h,
+                Action::Fill(FillOp::BakedMap {
+                    layer,
+                    channel: Channel::Color,
+                    map: Some(yolu_core::generator::MapKind::Curvature),
+                }),
+            );
+            assert!(st(&h)
+                .doc()
+                .inactive_effect_list()
+                .iter()
+                .any(|e| e.layer == layer
+                    && e.target == yolu_core::InactiveTarget::FillMap(Channel::Color)));
+            let rect = crate::common::shot::group(&h, yolu_app::Tab::Properties);
+            crate::common::shot::clean_region(&mut h, "fillfx_baked_map_row_inactive_ja", rect);
+        }
+    }
+}

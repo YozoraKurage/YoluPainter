@@ -6,7 +6,7 @@
 use egui::{pos2, vec2, DragAndDrop, Rect, Sense, Ui, WidgetInfo, WidgetType};
 use yolu_core::fill_image::{Projection, ProjectionMode, Wrap};
 use yolu_core::fill_points::{GradientPoint, PointGradient, PointSpace};
-use yolu_core::generator::{Preset, Ramp, Settings, Shape};
+use yolu_core::generator::{MapKind, Preset, Ramp, Settings, Shape};
 use yolu_core::{Channel, ChannelKind, ImageId, InactiveEffect, InactiveTarget, LayerId, Rgba8};
 
 use super::color_window::{self, Pick};
@@ -236,6 +236,16 @@ fn image_section(
         .doc
         .layer(id)
         .and_then(|l| l.fill_image(channel));
+    // 源はチャンネルごとに画像かベイクしたマップのどちらか（画像を選ぶとマップが外れ、マップを選ぶと画像が外れる）
+    let map = app.session.doc.layer(id).and_then(|l| l.fill_map(channel));
+    app.sync_baked_assets();
+    let set_map = |map| {
+        Action::Fill(FillOp::BakedMap {
+            layer: id,
+            channel,
+            map,
+        })
+    };
     image_row(
         ui,
         app,
@@ -244,6 +254,10 @@ fn image_section(
             key: "fill.image",
             box_key: ("fill.image", channel.index()),
             image,
+            map: Some(MapSlot {
+                current: map,
+                set: &set_map,
+            }),
             enabled,
             popup: Popup::FillImage(id, channel),
             clear_tip: lang.t("panels-remove-the-image-the-channel-tip"),
@@ -256,38 +270,57 @@ fn image_section(
             })
         },
     );
-    if image.is_some() {
-        // 異方性のフィルター（斜めから当てた画像を、画素の細長い足跡に沿って読む）
-        let anisotropic = app
-            .session
-            .doc
-            .layer(id)
-            .is_some_and(|l| l.fill_anisotropic(channel));
-        let label = lang.t("panels-anisotropic-filtering");
-        let h = w::toggle_height(ui.painter(), rows.width(), label);
-        let r = rows.row(h, 4.0);
-        let next = w::toggle(
-            ui,
-            r,
-            "fill.image.anisotropic",
-            label,
-            anisotropic,
-            Some(lang.t("panels-reads-images-projected-at-an-tip")),
-            enabled,
+    if image.is_some() || map.is_some() {
+        image_options(ui, app, rows, id, channel, problems, enabled, lang);
+    }
+}
+
+/// 源（画像かマップ）があるチャンネルの、異方性のフィルターの切り替えと、効いていない理由の印。
+#[allow(clippy::too_many_arguments)]
+fn image_options(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    id: LayerId,
+    channel: Channel,
+    problems: &[InactiveEffect],
+    enabled: bool,
+    lang: Lang,
+) {
+    // 異方性のフィルター（斜めから当てた画像を、画素の細長い足跡に沿って読む）
+    let anisotropic = app
+        .session
+        .doc
+        .layer(id)
+        .is_some_and(|l| l.fill_anisotropic(channel));
+    let label = lang.t("panels-anisotropic-filtering");
+    let h = w::toggle_height(ui.painter(), rows.width(), label);
+    let r = rows.row(h, 4.0);
+    let next = w::toggle(
+        ui,
+        r,
+        "fill.image.anisotropic",
+        label,
+        anisotropic,
+        Some(lang.t("panels-reads-images-projected-at-an-tip")),
+        enabled,
+    );
+    if next != anisotropic {
+        fill(
+            app,
+            FillOp::Anisotropic {
+                layer: id,
+                channel,
+                on: next,
+            },
         );
-        if next != anisotropic {
-            fill(
-                app,
-                FillOp::Anisotropic {
-                    layer: id,
-                    channel,
-                    on: next,
-                },
-            );
-        }
-        if let Some(why) = problem(problems, lang, |t| *t == InactiveTarget::FillImage(channel)) {
-            warn_row(ui, rows, &why);
-        }
+    }
+    if let Some(why) = problem(problems, lang, |t| *t == InactiveTarget::FillImage(channel)) {
+        warn_row(ui, rows, &why);
+    }
+    // マップが効いていない（焼いていない・古い）ときも、画像と同じ印で理由を出す
+    if let Some(why) = problem(problems, lang, |t| *t == InactiveTarget::FillMap(channel)) {
+        warn_row(ui, rows, &why);
     }
 }
 
@@ -298,11 +331,25 @@ pub struct ImageRow<'a, K> {
     /// 画像の箱の ID。
     pub box_key: K,
     pub image: Option<ImageId>,
+    /// 源にベイクしたマップを選べる行か（塗りつぶしのチャンネルの源。選べない行は `None`）。
+    pub map: Option<MapSlot<'a>>,
     pub enabled: bool,
     /// 箱を押すと開く一覧（[`image_list`] の項目を出すもの）。
     pub popup: Popup,
     /// 外すボタンのツールチップ。
     pub clear_tip: &'a str,
+}
+
+/// 画像の行の源に選べるベイクしたマップ（今のマップと、差す・外す操作）。
+pub struct MapSlot<'a> {
+    pub current: Option<MapKind>,
+    pub set: &'a dyn Fn(Option<MapKind>) -> Action,
+}
+
+/// 箱へ落とした物（アセットの画像か、焼いたマップ）。
+enum Dropped {
+    Image(ImageId),
+    Map(MapKind),
 }
 
 /// 画像の箱と外すボタンの行、選んでいれば読み方（アセットの画像の色空間）の行。`set` は差す・外す操作（落とした画像も同じ）。
@@ -319,19 +366,36 @@ pub fn image_row<K: egui::AsIdSalt>(
         key,
         box_key,
         image,
+        map,
         enabled,
         popup,
         clear_tip,
     } = spec;
+    let source_map = map.as_ref().and_then(|m| m.current);
     let row = rows.row(26.0, 4.0);
-    let clear_w = if image.is_some() { 28.0 } else { 0.0 };
-    let box_rect = Rect::from_min_max(row.min, pos2(row.right() - clear_w, row.bottom()));
-    if let Some(dropped) = image_box(ui, app, box_rect, box_key, image, enabled, lang, popup) {
-        app.apply(set(Some(dropped)));
-    }
-    let Some(image) = image else {
-        return;
+    let clear_w = if image.is_some() || source_map.is_some() {
+        28.0
+    } else {
+        0.0
     };
+    let box_rect = Rect::from_min_max(row.min, pos2(row.right() - clear_w, row.bottom()));
+    let source = BoxSource {
+        image,
+        map: source_map,
+        takes_maps: map.is_some(),
+    };
+    match image_box(ui, app, box_rect, box_key, source, enabled, lang, popup) {
+        Some(Dropped::Image(dropped)) => app.apply(set(Some(dropped))),
+        Some(Dropped::Map(kind)) => {
+            if let Some(slot) = &map {
+                app.apply((slot.set)(Some(kind)));
+            }
+        }
+        None => {}
+    }
+    if image.is_none() && source_map.is_none() {
+        return;
+    }
     let b = Rect::from_min_size(
         pos2(row.right() - 26.0, row.top()),
         vec2(26.0, row.height()),
@@ -348,9 +412,16 @@ pub fn image_row<K: egui::AsIdSalt>(
     )
     .clicked()
     {
-        app.apply(set(None));
+        // 外すのは今の源（マップなら、マップの外し。画像の外しはマップを外さない）
+        match map.as_ref().filter(|m| m.current.is_some()) {
+            Some(slot) => app.apply((slot.set)(None)),
+            None => app.apply(set(None)),
+        }
     }
     // 読み方（棚の画像の色空間。この画像を読む全部のレイヤーに効く）
+    let Some(image) = image else {
+        return;
+    };
     if let Some(space) = app
         .shelf
         .get(&inputs::resource_id(image))
@@ -373,18 +444,69 @@ pub fn image_row<K: egui::AsIdSalt>(
     }
 }
 
-/// 画像の箱: サムネイルと名前（無ければ印だけ）。押すと `popup`（棚の画像の一覧）を開く。棚の素材のドラッグを受け、落とした画像を返す。
+/// 画像の箱が見せる源。
+#[derive(Clone, Copy)]
+struct BoxSource {
+    image: Option<ImageId>,
+    /// 源のベイクしたマップ（画像とは同時に持たない）。
+    map: Option<MapKind>,
+    /// 焼いたマップの項目のドラッグを受けるか。
+    takes_maps: bool,
+}
+
+/// 画像の箱の源の名前（棚の項目の ID と名前。焼いていないマップの源は ID が空で、種類の名前だけ）とサムネイル。サムネイルは別のスレッドで作る
+/// （大きな画像でも画面を止めない）ので、できるまでは `None`（種類のアイコンを出す）。源がマップのときは、焼いたマップの項目の絵と名前。
+fn box_source_picture(
+    app: &mut AppState,
+    ctx: &egui::Context,
+    lang: Lang,
+    image: Option<ImageId>,
+    map: Option<MapKind>,
+) -> (Option<(String, String)>, Option<egui::TextureHandle>) {
+    let rid = match map {
+        Some(kind) => Some(crate::shelf::baked_id(crate::fx::inputs::mesh_kind(kind))),
+        None => image.map(inputs::resource_id),
+    };
+    let found = rid
+        .as_deref()
+        .and_then(|rid| app.shelf.get(rid))
+        .map(|res| (res.id.clone(), res.name.clone()));
+    // 焼いていないマップの源も、種類の名前は出す（効いていない理由は欄の下の印）
+    let resource = match (found, map) {
+        (None, Some(kind)) => Some((
+            String::new(),
+            crate::bake::kind_label(lang, crate::fx::inputs::mesh_kind(kind)).to_owned(),
+        )),
+        (found, _) => found,
+    };
+    let Some((rid, _)) = resource.as_ref().filter(|(rid, _)| !rid.is_empty()) else {
+        return (resource, None);
+    };
+    let cache = app.library.cache().cloned();
+    app.shelf
+        .request_inspections(std::slice::from_ref(rid), cache.as_ref());
+    let texture = app.shelf.texture(ctx, rid);
+    (resource, texture)
+}
+
+/// 画像の箱: サムネイルと名前（無ければ印だけ）。押すと `popup`（棚の画像の一覧）を開く。棚の素材のドラッグを受け、落とした画像（焼いたマップを
+/// 受ける箱では焼いたマップ）を返す。源がマップのときは、マップのサムネイルと種類の名前を出す。
 #[allow(clippy::too_many_arguments)]
 fn image_box(
     ui: &mut Ui,
     app: &mut AppState,
     r: Rect,
     key: impl egui::AsIdSalt,
-    image: Option<ImageId>,
+    source: BoxSource,
     enabled: bool,
     lang: Lang,
     popup: Popup,
-) -> Option<ImageId> {
+) -> Option<Dropped> {
+    let BoxSource {
+        image,
+        map,
+        takes_maps,
+    } = source;
     let ctx = ui.ctx().clone();
     let id = ui.make_persistent_id(key);
     let look = w::look(&ctx, id, enabled);
@@ -397,23 +519,10 @@ fn image_box(
             Sense::hover()
         },
     );
-    let dragged: Option<std::sync::Arc<ShelfDrag>> =
-        DragAndDrop::payload::<ShelfDrag>(&ctx).filter(|d| d.kind == ItemKind::Image);
+    let dragged: Option<std::sync::Arc<ShelfDrag>> = DragAndDrop::payload::<ShelfDrag>(&ctx)
+        .filter(|d| d.kind == ItemKind::Image || (takes_maps && d.kind == ItemKind::BakedMap));
     let dropping = enabled && dragged.is_some() && ui.rect_contains_pointer(r);
-    let rid = image.map(inputs::resource_id);
-    let resource = rid
-        .as_deref()
-        .and_then(|rid| app.shelf.get(rid))
-        .map(|res| (res.id.clone(), res.name.clone()));
-    // サムネイルは別のスレッドで作る（大きな画像でも画面を止めない）。できるまでは種類のアイコン
-    if let Some((rid, _)) = &resource {
-        let cache = app.library.cache().cloned();
-        app.shelf
-            .request_inspections(std::slice::from_ref(rid), cache.as_ref());
-    }
-    let thumb_tex = resource
-        .as_ref()
-        .and_then(|(rid, _)| app.shelf.texture(&ctx, rid));
+    let (resource, thumb_tex) = box_source_picture(app, &ctx, lang, image, map);
     let p = ui.painter();
     w::rounded(
         p,
@@ -447,6 +556,8 @@ fn image_box(
             thumb,
             if image.is_some() && resource.is_none() {
                 "link_off"
+            } else if map.is_some() {
+                ItemKind::BakedMap.icon()
             } else {
                 "texture"
             },
@@ -496,7 +607,11 @@ fn image_box(
     }
     let mut dropped = None;
     if dropping && ui.input(|i| i.pointer.any_released()) {
-        dropped = dragged.and_then(|drag| inputs::image_id(&drag.id));
+        dropped = dragged.and_then(|drag| match drag.kind {
+            ItemKind::BakedMap => crate::shelf::baked_kind(&drag.id)
+                .map(|kind| Dropped::Map(crate::fx::inputs::map_kind(kind))),
+            _ => inputs::image_id(&drag.id).map(Dropped::Image),
+        });
         DragAndDrop::clear_payload(&ctx);
     }
     dropped
@@ -534,20 +649,55 @@ fn space_entries(app: &AppState, image: ImageId) -> Vec<Entry<Action>> {
     .collect()
 }
 
-/// 画像の一覧のポップアップ（棚の画像・ファイルから取り込む・外す）。
+/// 塗りつぶしのチャンネルの源の一覧のポップアップ（棚の画像・焼いたマップ・ファイルから取り込む・外す）。
 fn image_entries(app: &AppState, layer: LayerId, channel: Channel) -> Vec<Entry<Action>> {
-    let current = app
-        .session
-        .doc
-        .layer(layer)
-        .and_then(|l| l.fill_image(channel));
-    image_list(app, current, |image| {
-        Action::Fill(FillOp::Image {
+    let l = app.session.doc.layer(layer);
+    let current = l.and_then(|l| l.fill_image(channel));
+    let map = l.and_then(|l| l.fill_map(channel));
+    let free = !app.is_stroking();
+    let set_map = |map| {
+        Action::Fill(FillOp::BakedMap {
             layer,
             channel,
-            image,
+            map,
         })
-    })
+    };
+    // 焼いたマップの節（今のテクスチャセットで焼いた種類。今の源が焼いていない種類でも、印のために出す）
+    let set = app.session.sets.current();
+    let mut kinds: Vec<MapKind> = set
+        .mesh_maps
+        .iter()
+        .map(|m| crate::fx::inputs::map_kind(m.kind()))
+        .collect();
+    if let Some(kind) = map.filter(|k| !kinds.contains(k)) {
+        kinds.push(kind);
+    }
+    let baked: Vec<Entry<Action>> = if kinds.is_empty() {
+        Vec::new()
+    } else {
+        std::iter::once(Entry::Heading(ItemKind::BakedMap.name(app.lang).to_owned()))
+            .chain(kinds.into_iter().map(|kind| {
+                let name = crate::bake::kind_label(app.lang, crate::fx::inputs::mesh_kind(kind));
+                Entry::item(name, set_map(Some(kind)))
+                    .radio(map == Some(kind))
+                    .enabled(free)
+            }))
+            .collect()
+    };
+    let remove = map.map(|_| set_map(None));
+    image_list_with(
+        app,
+        current,
+        |image| {
+            Action::Fill(FillOp::Image {
+                layer,
+                channel,
+                image,
+            })
+        },
+        baked,
+        remove,
+    )
 }
 
 /// 画像の一覧の項目（棚の画像・ファイルから取り込む・外す）。`current` は今の画像、`set` は差す・外す操作。
@@ -555,6 +705,17 @@ pub fn image_list(
     app: &AppState,
     current: Option<ImageId>,
     set: impl Fn(Option<ImageId>) -> Action,
+) -> Vec<Entry<Action>> {
+    image_list_with(app, current, set, Vec::new(), None)
+}
+
+/// `image_list` に、画像の次に並べる項目（焼いたマップの節）と、今の源がマップのときの外す操作がつく形。
+fn image_list_with(
+    app: &AppState,
+    current: Option<ImageId>,
+    set: impl Fn(Option<ImageId>) -> Action,
+    sections: Vec<Entry<Action>>,
+    remove_map: Option<Action>,
 ) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
@@ -576,6 +737,10 @@ pub fn image_list(
     if !v.is_empty() {
         v.push(Entry::Separator);
     }
+    if !sections.is_empty() {
+        v.extend(sections);
+        v.push(Entry::Separator);
+    }
     v.push(
         Entry::item(
             lang.t("panels-import-from-file"),
@@ -585,6 +750,9 @@ pub fn image_list(
     );
     if current.is_some() {
         v.push(Entry::item(lang.t("panels-remove-the-image"), set(None)).enabled(free));
+    }
+    if let Some(remove) = remove_map {
+        v.push(Entry::item(lang.t("panels-remove-the-baked-map"), remove).enabled(free));
     }
     v
 }

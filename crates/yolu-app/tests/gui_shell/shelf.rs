@@ -3423,4 +3423,164 @@ mod ui {
     fn snapshot_shelf_context_menu_english() {
         snapshot_context_menu(Lang::En, "assets_shelf_menu_english");
     }
+
+    /// 値が左から右へ明るくなる、焼いたマップ（覆いは全体。`size` 画素四方）。
+    fn baked_gradient(
+        kind: yolu_core::mesh_maps::MeshMapKind,
+        size: usize,
+    ) -> yolu_core::mesh_maps::BakedMeshMap {
+        let provenance = yolu_core::mesh_maps::MeshMapProvenance {
+            kind,
+            engine_version: 1,
+            mesh_hash: String::new(),
+            topology_hash: String::new(),
+            uv_channel: 0,
+            width: size as i32,
+            height: size as i32,
+            target_slot: 0,
+            target_slots: vec![0],
+            padding: 0,
+            antialiasing: 1,
+            settings_key: String::new(),
+            space: String::new(),
+            pose: String::new(),
+            source: String::new(),
+            bounds_min: [0.0; 3],
+            bounds_max: [1.0; 3],
+        };
+        let channels = kind.channels();
+        let data = (0..size * size)
+            .flat_map(|i| {
+                let v = ((i % size) as f32 / (size - 1) as f32 * 65535.0) as u16;
+                std::iter::repeat_n(v, channels)
+            })
+            .collect();
+        yolu_core::mesh_maps::BakedMeshMap::new(provenance, data, vec![1; size * size]).unwrap()
+    }
+
+    /// 焼いたマップ（曲率・AO・厚み）を持った、プロジェクトの棚の無い画面（棚の格子には焼いたマップだけが出る）。
+    fn window_with_baked_maps() -> Harness<'static, YoluApp> {
+        use yolu_core::mesh_maps::MeshMapKind;
+        let mut h = window();
+        *h.shelf_mut() = ShelfState::default();
+        h.shelf_mut().show_builtin = false;
+        h.sets_mut().get_mut(0).unwrap().mesh_maps.put(
+            [
+                MeshMapKind::AmbientOcclusion,
+                MeshMapKind::Curvature,
+                MeshMapKind::Thickness,
+            ]
+            .map(|k| baked_gradient(k, 32))
+            .to_vec(),
+        );
+        h.run();
+        settle(&mut h);
+        h
+    }
+
+    #[test]
+    fn baked_maps_are_cards_in_the_grid_and_dragging_one_onto_the_layer_list_places_a_fill_layer() {
+        let mut h = window_with_baked_maps();
+        // 焼いた種類ごとに 1 つ（焼いていない種類は出ない）。棚の項目ではないので、消す・書き出す・ライブラリへ入れるは効かない
+        for name in ["アンビエントオクルージョン", "曲率", "厚み"] {
+            assert!(card_shown(&h, name), "{name}");
+        }
+        assert!(!card_shown(&h, "高さ"));
+        let at = card(&h, "曲率").center();
+        click(&mut h, at);
+        assert_eq!(st(&h).shelf().selected.as_deref(), Some("baked:Curvature"));
+        assert!(!h.get_by_label("置く").accesskit_node().is_disabled());
+        assert!(h
+            .get_by_label("書き出す…（.ylsmart）")
+            .accesskit_node()
+            .is_disabled());
+        assert!(h
+            .get_by_label("アセットから消す（置いたレイヤーはそのまま）")
+            .accesskit_node()
+            .is_disabled());
+        assert_eq!(
+            menu_enabled(&h),
+            [
+                ("置く".to_owned(), true),
+                ("書き出す…".to_owned(), false),
+                ("ライブラリへ入れる".to_owned(), false),
+                ("アセットから消す…".to_owned(), false),
+            ]
+        );
+        // 焼き直すとサムネイルが替わる（作り直しの頼みが出る）
+        assert!(st(&h)
+            .shelf()
+            .info("baked:Curvature")
+            .unwrap()
+            .has_thumbnail());
+        h.sets_mut()
+            .get_mut(0)
+            .unwrap()
+            .mesh_maps
+            .put(vec![baked_gradient(
+                yolu_core::mesh_maps::MeshMapKind::Curvature,
+                32,
+            )]);
+        h.run();
+        settle(&mut h);
+        assert!(st(&h)
+            .shelf()
+            .info("baked:Curvature")
+            .unwrap()
+            .has_thumbnail());
+        // レイヤーの一覧のレイヤー 2 の下の線（レイヤー 1 との間）へ落とすと、焼いたマップが源の塗りつぶしレイヤーが 1 回の Undo で入る
+        three_layers(&mut h);
+        let from = card(&h, "曲率").center();
+        let r2 = row(&h, "レイヤー 2");
+        let to = pos2(r2.left() + 120.0, r2.top() + r2.height() * 0.8);
+        drag(
+            &mut h,
+            &[from, offset(from, 30.0, 10.0), offset(to, 0.0, -40.0), to],
+        );
+        assert_eq!(st(&h).doc().layers().len(), 4, "{}", st(&h).message());
+        let placed = st(&h).selected_layer().unwrap();
+        assert_eq!(
+            st(&h).doc().layers()[1].id(),
+            placed,
+            "レイヤー 2 の下の線（レイヤー 1 の上）"
+        );
+        assert_eq!(
+            st(&h).doc().layer(placed).unwrap().fill_map(Channel::Color),
+            Some(yolu_core::generator::MapKind::Curvature)
+        );
+        undo(&mut h);
+        assert_eq!(st(&h).doc().layers().len(), 3);
+    }
+
+    #[test]
+    fn the_baked_map_filter_is_only_in_the_project_view_and_leaves_the_library_alone() {
+        let mut h = window_with_baked_maps();
+        h.shelf_mut().filter = Some(ItemKind::BakedMap);
+        h.run();
+        assert_eq!(st(&h).shelf().visible().len(), 3);
+        // ライブラリに切り替えると、焼いたマップの絞り込みは外れる（ライブラリに焼いたマップは無い）
+        let body = top_right_body(&h);
+        let library = rect_of(&h, "ライブラリ", |r| body.contains(r.center()));
+        click(&mut h, library.center());
+        assert_eq!(st(&h).shelf().filter, None);
+    }
+
+    fn snapshot_baked_maps(lang: Lang, name: &str) {
+        let mut h = window_with_baked_maps();
+        h.set_lang(lang);
+        h.run();
+        settle(&mut h);
+        let panel = crate::shots::group(&h, yolu_app::Tab::Assets);
+        common::shot::region(&mut h, name, panel);
+    }
+
+    #[test]
+    fn snapshot_shelf_baked_maps() {
+        snapshot_baked_maps(Lang::Ja, "assets_baked_maps");
+    }
+
+    #[test]
+    fn snapshot_shelf_baked_maps_english() {
+        snapshot_baked_maps(Lang::En, "assets_baked_maps_english");
+    }
 }

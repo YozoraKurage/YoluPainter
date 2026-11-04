@@ -21,15 +21,18 @@
 //!   見えている項目だけ頼み、できた分を `poll_inspections` が 1 フレームに数個ずつ受け取る。スクロールで見えなくなった項目の仕事は
 //!   始めずに捨てる）。同じ中身の絵は、利用者のキャッシュのフォルダに中身の札で覚える（`library::cache`）。画素は文書の合成の参照の式で
 //!   64 点に標本化する（保存の正本には使わない）。
+//! - 焼いたマップ: 今のテクスチャセットのベイクしたマップを、種類ごとに 1 つずつ棚の格子に並べる（`baked`。プロジェクトの棚には入らず、
+//!   焼き直す・セットを替えると一覧が替わる）。塗りつぶしのチャンネルの源に選べ、新しい塗りつぶしレイヤーとしても置ける。
 //! - 個人のライブラリ（`library`）のファイルを「プロジェクトで使う」は、別のスレッドで読んで検証し、写しを棚の写しへ足す
 //!   （`spawn_import`。出どころは `library`。保存と同じく 1 つずつで、やめられる）。ライブラリへ入れる・置く・消すは `library::ops`。
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use egui::{ColorImage, TextureHandle, TextureOptions};
+use yolu_core::mesh_maps::BakedMeshMap;
 use yolu_core::smart::{SmartKind, SmartMaterial, SmartPlacement};
 use yolu_core::smart_library;
 use yolu_io::shelf::{ResourceKind, Shelf, MAX_RESOURCES};
@@ -64,6 +67,9 @@ fn build_builtin_material(id: &str, lang: Lang) -> Option<SmartMaterial> {
     entry.build(entry.name(lang.tag()), lang.tag()).ok()
 }
 
+mod baked;
+pub use baked::{baked_id, baked_kind, is_baked, is_derived, BAKED_PREFIX};
+
 /// 同梱の素材の項目の ID の前置き（プロジェクトの棚の ID は UUID なので重ならない）。
 pub const BUILTIN_PREFIX: &str = "builtin:";
 
@@ -80,15 +86,18 @@ pub enum ItemKind {
     Material,
     SmartMaterial,
     SmartMask,
+    /// 今のテクスチャセットのベイクしたマップ（プロジェクトの棚には入らない。焼いたマップの一覧を写した表示。`baked`）。
+    BakedMap,
 }
 
 impl ItemKind {
-    pub const ALL: [ItemKind; 5] = [
+    pub const ALL: [ItemKind; 6] = [
         ItemKind::Image,
         ItemKind::Brush,
         ItemKind::Material,
         ItemKind::SmartMaterial,
         ItemKind::SmartMask,
+        ItemKind::BakedMap,
     ];
 
     /// 索引の種類の文字列から。
@@ -99,6 +108,7 @@ impl ItemKind {
             "material" => ItemKind::Material,
             "smartMaterial" => ItemKind::SmartMaterial,
             "smartMask" => ItemKind::SmartMask,
+            baked::KIND => ItemKind::BakedMap,
             _ => return None,
         })
     }
@@ -110,6 +120,7 @@ impl ItemKind {
             ItemKind::Material => "view_in_ar",
             ItemKind::SmartMaterial => "layers",
             ItemKind::SmartMask => "vignette",
+            ItemKind::BakedMap => "contrast",
         }
     }
 
@@ -120,6 +131,7 @@ impl ItemKind {
             ItemKind::Material => lang.t("shelf-materials"),
             ItemKind::SmartMaterial => lang.t("shelf-smart-materials"),
             ItemKind::SmartMask => lang.t("shelf-smart-masks"),
+            ItemKind::BakedMap => lang.t("shelf-baked-maps"),
         }
     }
 
@@ -131,6 +143,7 @@ impl ItemKind {
             ItemKind::Material => lang.t("shelf-material"),
             ItemKind::SmartMaterial => lang.t("shelf-smart-material"),
             ItemKind::SmartMask => lang.t("shelf-smart-mask"),
+            ItemKind::BakedMap => lang.t("shelf-baked-map"),
         }
     }
 
@@ -306,6 +319,8 @@ struct Input {
     width: u32,
     height: u32,
     builtin: Option<Lang>,
+    /// 焼いたマップの項目の中身（種類が `BakedMap` のときだけ）。
+    baked: Option<Weak<BakedMeshMap>>,
     preview_budget: u64,
     image_thumb_pixels: u64,
 }
@@ -355,6 +370,10 @@ impl Input {
                 })
                 .0
             }
+            ItemKind::BakedMap => baked::inspect(
+                self.baked.as_ref().and_then(Weak::upgrade).as_deref(),
+                stopped,
+            ),
             ItemKind::Brush => Inspected::bare(Some(Block::Kind(self.kind))),
         }
     }
@@ -513,6 +532,8 @@ pub struct ShelfState {
     builtin_lang: Option<Lang>,
     /// 同梱の素材を一覧に出すか（既定は出す。プロジェクトの棚だけの並びを調べる試験が false にする）。
     pub show_builtin: bool,
+    /// 今のテクスチャセットのベイクしたマップの項目（棚の中身ではない。`sync_baked` が写す）。
+    baked: baked::Baked,
     /// 見えている項目の情報とサムネイルを作る別のスレッドの仕事場（棚を替えると、前の棚の仕事は捨てる）。
     inspector: Service<Inspection>,
 }
@@ -694,6 +715,7 @@ impl ShelfState {
             builtin: Vec::new(),
             builtin_lang: None,
             show_builtin: true,
+            baked: Default::default(),
             inspector: Service::new(INSPECT_WORKERS),
         }
     }
@@ -936,6 +958,7 @@ impl ShelfState {
         self.shelf
             .resources()
             .iter()
+            .chain(self.baked.items())
             .chain(self.builtin_items())
             .find(|r| r.id == id)
     }
@@ -959,6 +982,7 @@ impl ShelfState {
         self.shelf
             .resources()
             .iter()
+            .chain(self.baked.items())
             .chain(self.builtin_items())
             .filter(|r| self.filter.is_none_or(|f| ItemKind::of(&r.kind) == Some(f)))
             .filter(|r| needle.is_empty() || r.name.to_lowercase().contains(&needle))
@@ -986,7 +1010,7 @@ impl ShelfState {
             id: id.to_owned(),
             kind,
             content: r.content.clone(),
-            bytes: if is_builtin(id) || kind == ItemKind::Brush {
+            bytes: if is_derived(id) || kind == ItemKind::Brush {
                 None
             } else {
                 self.shelf.content_arc(id)
@@ -994,6 +1018,7 @@ impl ShelfState {
             width: r.metadata["width"].as_u64().unwrap_or(0) as u32,
             height: r.metadata["height"].as_u64().unwrap_or(0) as u32,
             builtin: self.builtin_lang,
+            baked: self.baked.map(id),
             preview_budget: self.preview_budget,
             image_thumb_pixels: self.image_thumb_pixels,
         })
@@ -1174,7 +1199,7 @@ pub(crate) fn describe(
 ) -> String {
     let size = |w: u32, h: u32| format!("{w} × {h}");
     match (kind, info) {
-        (ItemKind::Image, _) => size(image_size.0, image_size.1),
+        (ItemKind::Image | ItemKind::BakedMap, _) => size(image_size.0, image_size.1),
         (ItemKind::SmartMaterial, Some(i)) if i.width > 0 => {
             let mut text = lang.f("shelf-layer-count", &[("n", &Count(i.layers))]);
             if !builtin {
@@ -1674,6 +1699,15 @@ impl AppState {
         | ShelfOp::ExportDialog(id)
         | ShelfOp::ExportFile { id, .. } = &op
         {
+            if is_baked(id) {
+                let reason = match op {
+                    ShelfOp::Remove(_) | ShelfOp::AskRemove(_) => {
+                        self.lang.t("shelf-baked-maps-cannot-be")
+                    }
+                    _ => self.lang.t("shelf-baked-maps-cannot-be-2"),
+                };
+                return self.refuse(Source::Assets, self.lang.with_reason(reason, ""));
+            }
             if is_builtin(id) {
                 let reason = match op {
                     ShelfOp::Remove(_) | ShelfOp::AskRemove(_) => {
@@ -2082,6 +2116,9 @@ impl AppState {
             res.metadata["width"].as_u64().unwrap_or(0) as u32,
             res.metadata["height"].as_u64().unwrap_or(0) as u32,
         );
+        if let Some(map) = baked_kind(id) {
+            return self.place_baked_map(map, &name, target);
+        }
         if !kind.is_some_and(|k| k.is_smart_file() || k == ItemKind::Image) {
             let block = Block::Kind(kind.unwrap_or(ItemKind::Brush));
             return self.refuse(Source::Assets, lang.with_reason(block.reason(lang), ""));
@@ -2738,6 +2775,7 @@ mod tests {
                 ItemKind::Material => "material",
                 ItemKind::SmartMaterial => "smartMaterial",
                 ItemKind::SmartMask => "smartMask",
+                ItemKind::BakedMap => "bakedMap",
             };
             assert_eq!(ItemKind::of(name), Some(k));
         }

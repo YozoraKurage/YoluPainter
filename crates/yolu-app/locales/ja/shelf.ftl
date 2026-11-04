@@ -76,3 +76,7 @@ shelf-cannot-add-name-to-the-library = { $name }をライブラリに入れら�
 shelf-cannot-remove-name-from-the-library = { $name }をライブラリから消せません
 shelf-cannot-save-name-as-a-material = { $name }をマテリアルとして保存できません
 shelf-resized-from = 、{ $width }×{ $height } から変更
+shelf-baked-maps = 焼いたマップ
+shelf-baked-map = 焼いたマップ
+shelf-baked-maps-cannot-be = 焼いたマップは消せません
+shelf-baked-maps-cannot-be-2 = 焼いたマップは書き出せません

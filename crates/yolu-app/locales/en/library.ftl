@@ -13,6 +13,7 @@ library-no-library-location = No library location
 library-writing-to-the-library = Writing to the library
 library-the-write-stopped-midway = The write stopped midway
 library-built-in-items-cannot-be = Built-in items cannot be added to the library.
+library-baked-maps-cannot-be = Baked maps cannot be added to the library.
 library-layer-not-found = Layer not found
 library-removed-from-the-library = Removed from the library
 library-not-a-fill-layer = Not a fill layer

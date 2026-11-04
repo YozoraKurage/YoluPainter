@@ -1191,7 +1191,7 @@ impl AppState {
     /// 今のレイヤーセットに足すときの、上のレイヤーと移す先。選んでいるレイヤーがあればそのすぐ上（同じレイヤーセット）。無ければ今の
     /// レイヤーセットの一番上だが、core は上のレイヤーが無いと最初のレイヤーセットへ足すので、最初でないレイヤーセット（選ぶレイヤーが
     /// 無いのは、レイヤーが 1 枚も無いときだけ）は足してから移す（移す先 Some）。
-    fn new_layer_slot(&self) -> (Option<LayerId>, Option<LayerSetId>) {
+    pub(crate) fn new_layer_slot(&self) -> (Option<LayerId>, Option<LayerSetId>) {
         let above = self.above_selected();
         let set = self.layer_set();
         let first = self.session.doc.layer_sets()[0].id;

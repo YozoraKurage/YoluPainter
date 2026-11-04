@@ -13,6 +13,7 @@ library-no-library-location = ライブラリの場所がありません
 library-writing-to-the-library = ライブラリへ書き込み中
 library-the-write-stopped-midway = 書き込みが途中で止まりました
 library-built-in-items-cannot-be = 組み込みはライブラリへ入れられません。
+library-baked-maps-cannot-be = 焼いたマップはライブラリへ入れられません。
 library-layer-not-found = レイヤーがありません
 library-removed-from-the-library = ライブラリから消しました
 library-not-a-fill-layer = 塗りつぶしのレイヤーではありません

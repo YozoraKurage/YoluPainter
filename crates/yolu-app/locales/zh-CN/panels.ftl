@@ -857,3 +857,4 @@ panels-point-number-color = 点 { $number } 的颜色
 panels-effects-on-the-mask = 蒙版上有 { $count } 个效果
 panels-auto-rotate-light-tip = 自动旋转光源
 panels-auto-rotate-light = 自动旋转
+panels-remove-the-baked-map = 移除已烘焙的贴图

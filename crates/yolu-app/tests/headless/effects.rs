@@ -718,7 +718,12 @@ fn a_generator_says_which_map_is_missing_until_the_maps_are_baked_and_then_works
         .unwrap()
         .expect("マップが無い");
     assert!(
-        s.lang().inactive_reason(&why).contains("Curvature"),
+        s.lang()
+            .inactive_reason(&why)
+            .contains(yolu_app::bake::kind_label(
+                s.lang(),
+                yolu_core::mesh_maps::MeshMapKind::Curvature
+            )),
         "{why:?}"
     );
     assert_eq!(Lang::En.inactive_reason(&why), "No Curvature map");
@@ -1317,7 +1322,13 @@ fn a_set_with_generators_is_read_only_until_its_inputs_arrive_and_then_editable(
         .expect("入力がそろわない")
         .to_owned();
     assert!(reason.contains("効果の入力がそろっていない"), "{reason}");
-    assert!(reason.contains("Curvature"), "足りない入力を言う: {reason}");
+    assert!(
+        reason.contains(yolu_app::bake::kind_label(
+            again.lang(),
+            yolu_core::mesh_maps::MeshMapKind::Curvature
+        )),
+        "足りない入力を言う: {reason}"
+    );
     assert!(again.sets().current().waiting_inputs);
     // 読むだけのあいだは文書を変える操作を断る
     let steps = again.doc().undo_count();
